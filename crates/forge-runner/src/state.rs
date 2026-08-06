@@ -1,0 +1,473 @@
+//! Shared runner state: the store handle, the live-output buffers, and the
+//! event bus every connected client tails.
+//!
+//! Output is deliberately *not* in SQLite. It is a throttled tail for glancing
+//! at, not an audit record — §6 sends `output_chunk` over the wire and forgets
+//! it. Keeping it in memory means a chatty agent can't grow the database.
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
+
+use forge_core::store::{SqliteStore, Store};
+use forge_core::types::{Approval, Decision};
+use forge_gateway::{AnthropicClient, Gateway};
+use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
+
+/// Where this runner is reachable, once a relay is configured.
+#[derive(Debug, Clone)]
+pub struct RelayInfo {
+    pub url: String,
+    pub channel: String,
+}
+
+/// The gateway as the runner holds it: the real store, the real provider.
+///
+/// `Option` because the runner must start and serve the read-only API with no
+/// API key configured — a fresh clone should show you the UI before it asks for
+/// a credential.
+pub type RunnerGateway = Gateway<Arc<SqliteStore>, AnthropicClient>;
+
+/// Lines retained per session. A phone showing more than this would need to
+/// scroll past what a glance can use anyway.
+const OUTPUT_TAIL_CAPACITY: usize = 200;
+
+/// Resolve this runner's machine row, creating it on first start.
+///
+/// The id is derived from the hostname rather than random, so restarting the
+/// runner — or reopening the same database from a rebuilt binary — re-attaches
+/// to the existing machine instead of orphaning its repos.
+fn ensure_machine(store: &SqliteStore) -> String {
+    let name = machine_name();
+    let id = format!("machine-{name}");
+    let now = forge_core::time::now_ms();
+
+    let created_at = store
+        .get_machine(&id)
+        .ok()
+        .flatten()
+        .map(|machine| machine.created_at)
+        .unwrap_or(now);
+
+    // A failure here is not fatal: the read-only API still works, and the hook
+    // bridge will report the real error when it tries to use the machine.
+    let _ = store.upsert_machine(&forge_core::types::Machine {
+        id: cloned(&id),
+        name,
+        // Filled in by device pairing (M3). Empty until then rather than fake.
+        pubkey: String::new(),
+        last_seen_at: Some(now),
+        created_at,
+    });
+    id
+}
+
+fn cloned(value: &str) -> String {
+    value.to_owned()
+}
+
+fn machine_name() -> String {
+    if let Ok(name) = std::env::var("FORGE_MACHINE_NAME")
+        && !name.trim().is_empty()
+    {
+        return name.trim().to_owned();
+    }
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "runner".to_owned())
+}
+
+/// How many events a slow client may fall behind before it is dropped and told
+/// to re-fetch. Bounded so one stalled phone cannot pin memory.
+const EVENT_BUFFER: usize = 256;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputLine {
+    /// Monotonic per session, so a reconnecting client can tell what it missed.
+    pub seq: u64,
+    pub text: String,
+    pub at_ms: i64,
+}
+
+/// Everything pushed to connected clients. Mirrors the §6 runner→relay
+/// contract; the relay forwards these as encrypted payloads, so it round-trips
+/// through `Deserialize` on the device side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerEvent {
+    /// A session's status, plan progress, or spend changed — re-fetch it.
+    SessionUpsert {
+        session_id: String,
+    },
+    OutputChunk {
+        session_id: String,
+        #[serde(flatten)]
+        line: OutputLine,
+    },
+    ApprovalRequest {
+        approval: Approval,
+    },
+    ApprovalDecision {
+        approval_id: String,
+        session_id: String,
+        decision: Decision,
+    },
+    /// Stage-1 budget guard fired (C5). `pct` is the fraction of cap consumed.
+    BudgetAlert {
+        session_id: String,
+        pct: f64,
+        hard_stop: bool,
+    },
+    /// A native agent task changed state — most importantly, reached
+    /// `awaiting_review` with a diff somebody has to look at.
+    ///
+    /// Carries the headline rather than only an id, so a notification can say
+    /// "3 files, +42 −17" without the client fetching the task first. The diff
+    /// itself is not in here: it can be megabytes, and this goes to every
+    /// connected device on every state change.
+    TaskUpsert {
+        task_id: String,
+        session_id: String,
+        status: forge_core::types::TaskStatus,
+        /// `3 files, +42 −17`.
+        summary: String,
+    },
+}
+
+struct OutputBuffer {
+    next_seq: u64,
+    lines: VecDeque<OutputLine>,
+}
+
+impl Default for OutputBuffer {
+    fn default() -> Self {
+        Self {
+            next_seq: 0,
+            lines: VecDeque::with_capacity(OUTPUT_TAIL_CAPACITY),
+        }
+    }
+}
+
+pub struct AppState {
+    pub store: Arc<SqliteStore>,
+    /// This runner's long-term keypair. Devices encrypt to its public half.
+    pub identity: Arc<forge_crypto::Identity>,
+    /// Outstanding pairing codes. In memory only — an unredeemed code should not
+    /// survive a restart.
+    pub pairing: Mutex<forge_crypto::PairingBroker>,
+    /// The relay channel this runner publishes on, if a relay is configured.
+    pub relay: Option<RelayInfo>,
+    /// This runner's machine row. Hook callbacks resolve their `cwd` to a repo
+    /// on this machine, so it has to exist before the first callback lands.
+    pub machine_id: String,
+    pub gateway: Option<RunnerGateway>,
+    pub events: broadcast::Sender<ServerEvent>,
+    /// Questions the terminal watcher has already raised, so a prompt sitting on
+    /// screen across several polls produces one approval rather than one per
+    /// poll. See [`crate::watcher`].
+    pub seen_prompts: crate::watcher::SeenPrompts,
+    /// Local additions to the destructive-command rules (D3). Empty by default;
+    /// the built-ins stand on their own.
+    pub policy: forge_core::risk::Policy,
+    /// The terminal backend. One instance, because the PTY backend owns its
+    /// panes — `TmuxTerminal` is stateless only because tmux holds the state.
+    pub terminal: Arc<crate::terminal::AnyTerminal>,
+    /// Native agent tasks drafting right now.
+    ///
+    /// In memory rather than counted from the database, because that is what it
+    /// describes: a spawned loop, which does not survive a restart. The rows
+    /// left behind by one are reconciled at startup — see
+    /// [`crate::task::reconcile_after_restart`].
+    pub running_tasks: std::sync::atomic::AtomicUsize,
+    output: Mutex<HashMap<String, OutputBuffer>>,
+    /// Last pane snapshot per session, for [`AppState::new_output_lines`].
+    snapshots: Mutex<HashMap<String, Vec<String>>>,
+}
+
+impl AppState {
+    /// Build state, letting the caller construct a gateway over the same store
+    /// handle. The closure keeps the `Arc` in one place rather than making the
+    /// caller re-wrap it.
+    /// Build state with a throwaway identity and no relay. Tests only — the
+    /// daemon loads a persistent key so paired devices survive a restart.
+    #[cfg(test)]
+    pub fn with_gateway(
+        store: SqliteStore,
+        build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
+    ) -> Arc<Self> {
+        Self::build(
+            store,
+            build,
+            Arc::new(forge_crypto::Identity::generate()),
+            None,
+        )
+    }
+
+    pub fn build(
+        store: SqliteStore,
+        build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
+        identity: Arc<forge_crypto::Identity>,
+        relay: Option<RelayInfo>,
+    ) -> Arc<Self> {
+        Self::build_with_terminal(store, build, identity, relay, None)
+    }
+
+    /// [`AppState::build`] with the terminal backend chosen explicitly.
+    ///
+    /// `None` means tmux, which is what every existing caller wants and what a
+    /// server should use — panes that survive a runner restart.
+    /// [`AppState::build_with_terminal`] plus local destructive-command rules.
+    pub fn build_with_policy(
+        store: SqliteStore,
+        build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
+        identity: Arc<forge_crypto::Identity>,
+        relay: Option<RelayInfo>,
+        terminal: Option<Arc<crate::terminal::AnyTerminal>>,
+        policy: forge_core::risk::Policy,
+    ) -> Arc<Self> {
+        let state = Self::build_with_terminal(store, build, identity, relay, terminal);
+        // Set after construction so the many existing callers keep their
+        // signature; nothing has classified anything yet at this point.
+        let mut owned = Arc::try_unwrap(state).unwrap_or_else(|_| unreachable!("sole owner"));
+        owned.policy = policy;
+        Arc::new(owned)
+    }
+
+    pub fn build_with_terminal(
+        store: SqliteStore,
+        build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
+        identity: Arc<forge_crypto::Identity>,
+        relay: Option<RelayInfo>,
+        terminal: Option<Arc<crate::terminal::AnyTerminal>>,
+    ) -> Arc<Self> {
+        let (events, _) = broadcast::channel(EVENT_BUFFER);
+        let machine_id = ensure_machine(&store);
+        let store = Arc::new(store);
+        Arc::new(Self {
+            gateway: build(Arc::clone(&store)),
+            store,
+            identity,
+            pairing: Mutex::new(forge_crypto::PairingBroker::new()),
+            relay,
+            machine_id,
+            events,
+            seen_prompts: crate::watcher::SeenPrompts::default(),
+            policy: forge_core::risk::Policy::default(),
+            terminal: terminal.unwrap_or_else(|| {
+                Arc::new(crate::terminal::AnyTerminal::Tmux(
+                    crate::terminal::TmuxTerminal::default(),
+                ))
+            }),
+            running_tasks: std::sync::atomic::AtomicUsize::new(0),
+            output: Mutex::new(HashMap::new()),
+            snapshots: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Publish an event. A send with no subscribers is not an error — the
+    /// runner keeps working whether or not a phone is watching.
+    pub fn publish(&self, event: ServerEvent) {
+        let _ = self.events.send(event);
+    }
+
+    /// Append a line to a session's tail and broadcast it.
+    pub fn push_output(&self, session_id: &str, text: impl Into<String>, at_ms: i64) {
+        let line = {
+            let mut buffers = self.output.lock().expect("output buffers poisoned");
+            let buffer = buffers.entry(session_id.to_owned()).or_default();
+            let line = OutputLine {
+                seq: buffer.next_seq,
+                text: text.into(),
+                at_ms,
+            };
+            buffer.next_seq += 1;
+            if buffer.lines.len() == OUTPUT_TAIL_CAPACITY {
+                buffer.lines.pop_front();
+            }
+            buffer.lines.push_back(line.clone());
+            line
+        };
+
+        self.publish(ServerEvent::OutputChunk {
+            session_id: session_id.to_owned(),
+            line,
+        });
+    }
+
+    /// Which lines of a pane snapshot have not been sent yet.
+    ///
+    /// `tmux capture-pane` returns the *visible pane*, not a stream, so polling
+    /// it naively would re-send every line on every tick. This diffs against the
+    /// previous snapshot by finding the longest overlap between the old tail and
+    /// the new head — which is exactly what a scrolled pane looks like — and
+    /// returns only what is genuinely new.
+    pub fn new_output_lines(&self, session_id: &str, snapshot: &str) -> Vec<String> {
+        // tmux pads the pane to its full height; those blanks are not output.
+        let fresh: Vec<String> = snapshot
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .skip_while(|line| line.trim().is_empty())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+
+        let mut snapshots = self.snapshots.lock().expect("snapshots poisoned");
+        let previous = snapshots.get(session_id).cloned().unwrap_or_default();
+
+        // Longest suffix of the old snapshot that is a prefix of the new one.
+        let overlap = (1..=previous.len().min(fresh.len()))
+            .rev()
+            .find(|&k| previous[previous.len() - k..] == fresh[..k])
+            .unwrap_or(0);
+
+        let new_lines = fresh[overlap..].to_vec();
+        snapshots.insert(session_id.to_owned(), fresh);
+        new_lines
+    }
+
+    /// The most recent `limit` lines, oldest first.
+    pub fn output_tail(&self, session_id: &str, limit: usize) -> Vec<OutputLine> {
+        let buffers = self.output.lock().expect("output buffers poisoned");
+        let Some(buffer) = buffers.get(session_id) else {
+            return Vec::new();
+        };
+        buffer
+            .lines
+            .iter()
+            .skip(buffer.lines.len().saturating_sub(limit))
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> Arc<AppState> {
+        AppState::with_gateway(SqliteStore::open_in_memory().unwrap(), |_| None)
+    }
+
+    #[test]
+    fn sequence_numbers_are_monotonic_per_session() {
+        let state = state();
+        state.push_output("s1", "one", 0);
+        state.push_output("s2", "other session", 0);
+        state.push_output("s1", "two", 1);
+
+        let tail = state.output_tail("s1", 10);
+        assert_eq!(tail.iter().map(|l| l.seq).collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(state.output_tail("s2", 10)[0].seq, 0);
+    }
+
+    #[test]
+    fn the_tail_is_bounded_and_keeps_the_newest_lines() {
+        let state = state();
+        for i in 0..(OUTPUT_TAIL_CAPACITY + 50) {
+            state.push_output("s1", format!("line {i}"), i as i64);
+        }
+
+        let tail = state.output_tail("s1", usize::MAX);
+        assert_eq!(tail.len(), OUTPUT_TAIL_CAPACITY);
+        assert_eq!(
+            tail.last().unwrap().text,
+            format!("line {}", OUTPUT_TAIL_CAPACITY + 49)
+        );
+        // Sequence numbers keep counting past the eviction point, so a client
+        // can tell that lines were dropped rather than silently missing them.
+        assert_eq!(tail[0].seq, 50);
+    }
+
+    #[test]
+    fn an_unknown_session_has_an_empty_tail_rather_than_erroring() {
+        assert!(state().output_tail("never-seen", 10).is_empty());
+    }
+
+    #[test]
+    fn output_reaches_a_subscriber() {
+        let state = state();
+        let mut rx = state.events.subscribe();
+        state.push_output("s1", "hello", 7);
+
+        match rx.try_recv().unwrap() {
+            ServerEvent::OutputChunk { session_id, line } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(line.text, "hello");
+                assert_eq!(line.at_ms, 7);
+            }
+            other => panic!("expected output chunk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_repeated_snapshot_produces_no_new_lines() {
+        let state = state();
+        assert_eq!(
+            state.new_output_lines("s1", "one\ntwo\n"),
+            vec!["one", "two"]
+        );
+        assert!(state.new_output_lines("s1", "one\ntwo\n").is_empty());
+    }
+
+    #[test]
+    fn appended_lines_are_the_only_ones_returned() {
+        let state = state();
+        state.new_output_lines("s1", "one\ntwo\n");
+        assert_eq!(
+            state.new_output_lines("s1", "one\ntwo\nthree\n"),
+            vec!["three"]
+        );
+    }
+
+    #[test]
+    fn a_scrolled_pane_does_not_resend_what_is_still_visible() {
+        let state = state();
+        state.new_output_lines("s1", "one\ntwo\nthree\n");
+        // The pane scrolled: `one` fell off the top, `four` appeared.
+        assert_eq!(
+            state.new_output_lines("s1", "two\nthree\nfour\n"),
+            vec!["four"]
+        );
+    }
+
+    #[test]
+    fn a_cleared_pane_sends_everything_again() {
+        let state = state();
+        state.new_output_lines("s1", "one\ntwo\n");
+        // No overlap at all — the agent ran `clear`.
+        assert_eq!(state.new_output_lines("s1", "fresh\n"), vec!["fresh"]);
+    }
+
+    #[test]
+    fn tmux_padding_is_not_mistaken_for_output() {
+        let state = state();
+        assert_eq!(state.new_output_lines("s1", "one\n\n\n\n"), vec!["one"]);
+        // The padding grew; still nothing new happened.
+        assert!(state.new_output_lines("s1", "one\n\n\n\n\n\n").is_empty());
+    }
+
+    #[test]
+    fn blank_lines_inside_output_are_preserved() {
+        let state = state();
+        assert_eq!(
+            state.new_output_lines("s1", "one\n\ntwo\n"),
+            vec!["one", "", "two"]
+        );
+    }
+
+    #[test]
+    fn publishing_with_nobody_listening_is_fine() {
+        let state = state();
+        state.publish(ServerEvent::SessionUpsert {
+            session_id: "s1".into(),
+        });
+    }
+}

@@ -1,0 +1,33 @@
+/target
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+
+# Secrets — never commit.
+#
+# forge.key is the runner's long-lived Ed25519 identity (forge-crypto's
+# keystore writes it 0600). Every paired device trusts that public key, so
+# leaking it lets an attacker impersonate the runner to the whole fleet, and
+# losing it unpairs every device. vapid.key is the relay's Web Push signing
+# key with the same "regenerating it breaks every subscription" property.
+*.key
+*.pem
+.env
+.env.*
+!.env.example
+
+# Built clients
+web/dist/
+*.tsbuildinfo
+
+# Swift Package Manager
+.build/
+
+# Expo prebuild output — generated from app.config.ts, never hand-edited.
+# The watch target's *sources* live in mobile/watch and are checked in; the
+# Xcode project that hosts them is not.
+mobile/ios/
+mobile/android/
+.expo/

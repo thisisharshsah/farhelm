@@ -1,0 +1,36 @@
+[package]
+name = "forge-relay"
+description = "RelayForge relay: stateless ciphertext fan-out and push trigger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-crypto.workspace = true
+
+axum = { version = "0.8", features = ["ws"] }
+# WebPush (RFC 8291/8292). RustCrypto throughout, matching `forge-crypto`.
+aes-gcm = "0.10"
+base64 = "0.22"
+hkdf = "0.12"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+
+[dev-dependencies]
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
+tokio-tungstenite = "0.28"
+
+[lints]
+workspace = true
