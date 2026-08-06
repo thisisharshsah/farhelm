@@ -1,9 +1,11 @@
 //! Unified diffs, computed here rather than shelled out to `git diff`.
 //!
 //! The review screen is the product: a task's whole output is a patch a human
-//! reads on a phone and says yes or no to. That makes the diff a *domain type*,
-//! not a string a subprocess printed — the clients need per-file counts and
-//! per-line tags to render it, and a phone should not be parsing `@@` headers.
+//! reads on a phone and says yes or no to. That makes the diff a *structured
+//! type*, not a string a subprocess printed — the clients need per-file counts
+//! and per-line tags to render it, and a phone should not be parsing `@@`
+//! headers. The types themselves live in [`forge_proto::diff`], because three
+//! client implementations mirror them; what is left here is the computation.
 //!
 //! It also means a proposed change can be shown before anything touches the
 //! working tree. `git diff` can only describe edits that have already happened;
@@ -22,9 +24,9 @@
 //! alternative — quadratic memory on a machine-generated 200k-line file — is a
 //! runner that gets OOM-killed while its user waits for a review card.
 
-use std::fmt::Write as _;
-
-use serde::{Deserialize, Serialize};
+/// The shapes a diff is *described* in live in `forge-proto`, because three
+/// client implementations mirror them. This module computes them.
+pub use forge_proto::diff::{ChangeKind, ChangeSet, DiffLine, FileDiff, Hunk, Tag};
 
 /// Lines of unchanged context on each side of a change.
 pub const DEFAULT_CONTEXT: usize = 3;
@@ -32,140 +34,6 @@ pub const DEFAULT_CONTEXT: usize = 3;
 /// Ceiling on the LCS table. ~4M cells is a 2000×2000 differing region, which
 /// no hand-written source file reaches after prefix/suffix trimming.
 const MAX_LCS_CELLS: usize = 4_000_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Tag {
-    Context,
-    Add,
-    Remove,
-}
-
-impl Tag {
-    /// The character a unified diff prefixes this line with.
-    pub const fn marker(self) -> char {
-        match self {
-            Tag::Context => ' ',
-            Tag::Add => '+',
-            Tag::Remove => '-',
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiffLine {
-    pub tag: Tag,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Hunk {
-    pub old_start: usize,
-    pub old_len: usize,
-    pub new_start: usize,
-    pub new_len: usize,
-    pub lines: Vec<DiffLine>,
-}
-
-impl Hunk {
-    /// The `@@ -a,b +c,d @@` header.
-    pub fn header(&self) -> String {
-        format!(
-            "@@ -{},{} +{},{} @@",
-            self.old_start, self.old_len, self.new_start, self.new_len
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ChangeKind {
-    Added,
-    Modified,
-    Deleted,
-}
-
-/// One file's worth of proposed change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileDiff {
-    /// Repo-relative, forward slashes, on every platform.
-    pub path: String,
-    pub kind: ChangeKind,
-    pub added: usize,
-    pub removed: usize,
-    pub hunks: Vec<Hunk>,
-    /// True when the file could not be read as text. `hunks` is empty; a binary
-    /// file is reported rather than rendered, because a phone cannot review one
-    /// and a truncated hex dump would only pretend otherwise.
-    pub binary: bool,
-}
-
-impl FileDiff {
-    /// This file's patch, in the format `git apply` reads.
-    pub fn render(&self) -> String {
-        let mut out = String::new();
-        if self.binary {
-            let _ = writeln!(out, "Binary file {} differs", self.path);
-            return out;
-        }
-
-        let (old_label, new_label) = match self.kind {
-            ChangeKind::Added => ("/dev/null".to_owned(), format!("b/{}", self.path)),
-            ChangeKind::Deleted => (format!("a/{}", self.path), "/dev/null".to_owned()),
-            ChangeKind::Modified => (format!("a/{}", self.path), format!("b/{}", self.path)),
-        };
-
-        let _ = writeln!(out, "--- {old_label}");
-        let _ = writeln!(out, "+++ {new_label}");
-        for hunk in &self.hunks {
-            let _ = writeln!(out, "{}", hunk.header());
-            for line in &hunk.lines {
-                let _ = writeln!(out, "{}{}", line.tag.marker(), line.text);
-            }
-        }
-        out
-    }
-}
-
-/// Every file a change set touches, plus the totals a review card leads with.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChangeSet {
-    pub files: Vec<FileDiff>,
-}
-
-impl ChangeSet {
-    pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
-    }
-
-    pub fn added(&self) -> usize {
-        self.files.iter().map(|file| file.added).sum()
-    }
-
-    pub fn removed(&self) -> usize {
-        self.files.iter().map(|file| file.removed).sum()
-    }
-
-    /// `3 files, +42 −17`. What the notification says, and the one line that has
-    /// to survive being read on a watch.
-    pub fn summary(&self) -> String {
-        let files = self.files.len();
-        format!(
-            "{files} file{}, +{} −{}",
-            if files == 1 { "" } else { "s" },
-            self.added(),
-            self.removed()
-        )
-    }
-
-    pub fn render(&self) -> String {
-        self.files
-            .iter()
-            .map(FileDiff::render)
-            .collect::<Vec<_>>()
-            .join("")
-    }
-}
 
 /// Split into lines without inventing a trailing empty one.
 ///

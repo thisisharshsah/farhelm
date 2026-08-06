@@ -18,4 +18,5 @@ pub mod state;
 pub mod task;
 pub mod terminal;
 pub mod test_support;
+pub mod views;
 pub mod watcher;

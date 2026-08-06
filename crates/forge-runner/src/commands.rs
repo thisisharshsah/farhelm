@@ -14,80 +14,15 @@ use forge_core::plan::{self};
 use forge_core::store::{DecisionOutcome, Store};
 use forge_core::time::now_ms;
 use forge_core::types::{DecidedVia, Decision, PlanStepStatus};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::session::SessionManager;
 use crate::state::{AppState, ServerEvent};
 
-/// A command from a paired device.
-///
-/// This is the wire shape the relay carries, sealed. It is deliberately small:
-/// anything a device can make the runner do is on this list, and adding to it is
-/// a decision rather than an accident.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Command {
-    /// Approve or deny a pending permission request.
-    Decide {
-        approval_id: String,
-        decision: Decision,
-    },
-    /// Send a short instruction to a running session (A4).
-    Instruct { session_id: String, text: String },
-    /// Pause, resume, or skip a plan step (B3).
-    PlanControl {
-        session_id: String,
-        action: PlanAction,
-    },
-    /// Ask for one session's detail: plan, output tail, pending approval.
-    SessionSnapshot { session_id: String },
-    /// Ask for one session's cost dashboard — the third snapshot type.
-    ///
-    /// `since_ms` bounds the window the same way `?since_ms=` does on the HTTP
-    /// endpoint. `None` means everything, which is what the screen opens with.
-    DashboardSnapshot {
-        session_id: String,
-        #[serde(default)]
-        since_ms: Option<i64>,
-    },
-    /// Approve or reject a native agent task's proposed change set.
-    ///
-    /// The diff equivalent of [`Command::Decide`], and the reason the review
-    /// screen works from a phone at all. Approving *writes files*, which is why
-    /// it goes through the same gated path as everything else here rather than
-    /// being an HTTP-only endpoint.
-    ReviewTask {
-        task_id: String,
-        decision: crate::task::Review,
-        #[serde(default)]
-        note: Option<String>,
-    },
-    /// Ask for one task's detail, including the diff to review.
-    TaskSnapshot { task_id: String },
-    /// Ask for the task list. No diffs — see [`crate::api::TaskView`].
-    TaskList,
-    /// Take an applied change set back off the working tree.
-    ///
-    /// Available from a phone for the same reason approving is: the overlay kept
-    /// both sides, so this writes back only what the agent replaced, and it
-    /// refuses outright if anything has moved since.
-    RevertTask { task_id: String },
-    /// Ask for the current fleet.
-    ///
-    /// A device on the relay has no request/response channel — it receives
-    /// events on one socket and sends on the same one — so "what is the state
-    /// right now" has to be a message like any other. The HTTP client uses
-    /// `GET /v1/fleet` instead and never sends this.
-    Snapshot,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanAction {
-    Pause,
-    Resume,
-    Skip,
-}
+/// The command contract moved to `forge-proto`: it is what a device sends, and
+/// both transports plus three client implementations agree on it. Re-exported so
+/// `commands::Command` keeps resolving.
+pub use forge_proto::commands::{Command, PlanAction};
 
 #[derive(Debug)]
 pub enum CommandError {
@@ -144,11 +79,11 @@ pub enum Outcome {
     },
     /// The answer to [`Command::Snapshot`]. Goes back to the asking device only,
     /// not to every paired device — nobody else asked.
-    Snapshot(Box<crate::api::FleetView>),
+    Snapshot(Box<forge_proto::views::FleetView>),
     /// The answer to [`Command::SessionSnapshot`], likewise addressed.
-    SessionSnapshot(Box<crate::api::SessionDetail>),
+    SessionSnapshot(Box<forge_proto::views::SessionDetail>),
     /// The answer to [`Command::DashboardSnapshot`], likewise addressed.
-    DashboardSnapshot(Box<crate::api::DashboardView>),
+    DashboardSnapshot(Box<forge_proto::views::DashboardView>),
     TaskReviewed {
         task_id: String,
         status: forge_core::types::TaskStatus,
@@ -156,13 +91,15 @@ pub enum Outcome {
         recorded: bool,
     },
     /// The answer to [`Command::TaskSnapshot`], likewise addressed.
-    TaskSnapshot(Box<crate::api::TaskDetail>),
+    TaskSnapshot(Box<forge_proto::views::TaskDetail>),
     /// The answer to [`Command::TaskList`].
     ///
     /// Wrapped in a struct rather than sent as a bare array: the relay matches
     /// replies to waiting requests by *shape*, and a bare array is the one shape
     /// that cannot be told apart from any other bare array.
-    TaskList { tasks: Vec<crate::api::TaskView> },
+    TaskList {
+        tasks: Vec<forge_proto::views::TaskView>,
+    },
 }
 
 /// Run a device command. `via` records which surface it arrived from.
@@ -181,14 +118,14 @@ pub async fn execute(
             plan_control(state, &session_id, action).await
         }
         Command::SessionSnapshot { session_id } => Ok(Outcome::SessionSnapshot(Box::new(
-            crate::api::build_session_detail(state, &session_id)
+            crate::views::build_session_detail(state, &session_id)
                 .map_err(|err| CommandError::NotFound(err.to_string()))?,
         ))),
         Command::DashboardSnapshot {
             session_id,
             since_ms,
         } => Ok(Outcome::DashboardSnapshot(Box::new(
-            crate::api::build_dashboard(state, &session_id, since_ms)
+            crate::views::build_dashboard(state, &session_id, since_ms)
                 .map_err(|err| CommandError::NotFound(err.to_string()))?,
         ))),
         Command::ReviewTask {
@@ -197,11 +134,11 @@ pub async fn execute(
             note,
         } => review_task(state, &task_id, decision, note.as_deref(), via),
         Command::TaskSnapshot { task_id } => Ok(Outcome::TaskSnapshot(Box::new(
-            crate::api::build_task_detail(state, &task_id)
+            crate::views::build_task_detail(state, &task_id)
                 .map_err(|err| CommandError::NotFound(err.to_string()))?,
         ))),
         Command::TaskList => Ok(Outcome::TaskList {
-            tasks: crate::api::build_task_list(state)
+            tasks: crate::views::build_task_list(state)
                 .map_err(|err| CommandError::Internal(err.to_string()))?,
         }),
         Command::RevertTask { task_id } => {
@@ -213,7 +150,7 @@ pub async fn execute(
             })
         }
         Command::Snapshot => Ok(Outcome::Snapshot(Box::new(
-            crate::api::build_fleet_view(state)
+            crate::views::build_fleet_view(state)
                 .map_err(|err| CommandError::Internal(err.to_string()))?,
         ))),
     }

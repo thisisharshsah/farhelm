@@ -18,13 +18,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use forge_core::id::new_id;
-use forge_core::plan::PlanProgress;
 use forge_core::store::{Store, TimeRange};
 use forge_core::time::now_ms;
-use forge_core::types::{
-    Approval, Budget, DecidedVia, Decision, PlanStep, PlanStepStatus, Session, SessionStatus,
-    TaskType,
-};
+use forge_core::types::{Approval, DecidedVia, Decision, Session, SessionStatus, TaskType};
 use forge_gateway::prompt::{StableContext, Turn};
 use forge_gateway::{CompleteRequest as GatewayRequest, GatewayError};
 use futures_util::stream::Stream;
@@ -36,7 +32,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::commands;
 use crate::session::SessionManager;
-use crate::state::{AppState, OutputLine, ServerEvent};
+use crate::state::{AppState, ServerEvent};
 
 /// Build the API router, optionally serving a built PWA from `app_dir`.
 ///
@@ -120,6 +116,19 @@ impl From<crate::commands::CommandError> for ApiError {
     }
 }
 
+impl From<ViewError> for ApiError {
+    fn from(err: ViewError) -> Self {
+        let status = match &err {
+            ViewError::NotFound(_) => StatusCode::NOT_FOUND,
+            ViewError::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            message: err.to_string(),
+        }
+    }
+}
+
 impl From<forge_core::store::StoreError> for ApiError {
     fn from(err: forge_core::store::StoreError) -> Self {
         Self {
@@ -168,14 +177,6 @@ impl IntoResponse for ApiError {
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
-/// What is waiting in the Batch API queue, and what it has cost so far (C6).
-#[derive(Debug, Clone, Serialize)]
-pub struct BatchQueueView {
-    pub queued: usize,
-    pub in_flight: usize,
-    pub items: Vec<forge_core::types::BatchItem>,
-}
-
 /// `GET /v1/batch` — the deferred-work queue.
 ///
 /// Exists because queued work is invisible otherwise: a deferrable call returns
@@ -196,105 +197,9 @@ async fn batch_queue(State(state): State<Arc<AppState>>) -> ApiResult<BatchQueue
 
 /* --------------------------------------------------- native agent tasks */
 
-/// A task as a list renders it.
-///
-/// Deliberately without `diff_json` or `staged_json`: the change set can be
-/// megabytes, and a list of twenty tasks would ship all twenty copies of it to
-/// a phone that is showing one line each.
-#[derive(Debug, Clone, Serialize)]
-pub struct TaskView {
-    pub id: String,
-    pub session_id: String,
-    pub repo_id: String,
-    pub repo_name: String,
-    /// The absolute path on this machine. Needed to retry a rejected task —
-    /// `repo_name` is a display label and would resolve to nothing.
-    pub repo_path: String,
-    pub prompt: String,
-    pub status: forge_core::types::TaskStatus,
-    /// The agent's closing message.
-    pub summary: String,
-    pub files_changed: i64,
-    pub lines_added: i64,
-    pub lines_removed: i64,
-    /// `3 files, +42 −17`.
-    pub change_summary: String,
-    pub steps: i64,
-    pub cost_usd: f64,
-    pub error: Option<String>,
-    pub review_note: Option<String>,
-    /// C10's verdict: `pass` | `concerns` | `fail`. `null` means **not judged**,
-    /// which a client must not render as a pass.
-    pub verify_grade: Option<String>,
-    pub verify_notes: Option<String>,
-    pub verify_model: Option<String>,
-    pub decided_via: Option<DecidedVia>,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub decided_at: Option<i64>,
-}
-
-/// One task, with the diff a reviewer decides on.
-#[derive(Debug, Clone, Serialize)]
-pub struct TaskDetail {
-    #[serde(flatten)]
-    pub task: TaskView,
-    /// Parsed, not the stored string — a client should not have to JSON-decode
-    /// a field it just JSON-decoded.
-    pub changes: forge_agent::ChangeSet,
-    /// The patch as text, for copying out or piping to `git apply`.
-    pub patch: String,
-    pub output: Vec<OutputLine>,
-}
-
-fn task_view(state: &AppState, task: forge_core::types::AgentTask) -> TaskView {
-    let repo = state.store.get_repo(&task.repo_id).ok().flatten();
-    let repo_name = repo
-        .as_ref()
-        .map(|repo| repo.name.clone())
-        .unwrap_or_default();
-    let repo_path = repo.map(|repo| repo.path).unwrap_or_default();
-
-    TaskView {
-        change_summary: task.change_summary(),
-        id: task.id,
-        session_id: task.session_id,
-        repo_id: task.repo_id,
-        repo_name,
-        repo_path,
-        prompt: task.prompt,
-        status: task.status,
-        summary: task.summary,
-        files_changed: task.files_changed,
-        lines_added: task.lines_added,
-        lines_removed: task.lines_removed,
-        steps: task.steps,
-        cost_usd: task.cost_usd,
-        error: task.error,
-        review_note: task.review_note,
-        verify_grade: task.verify_grade,
-        verify_notes: task.verify_notes,
-        verify_model: task.verify_model,
-        decided_via: task.decided_via,
-        created_at: task.created_at,
-        updated_at: task.updated_at,
-        decided_at: task.decided_at,
-    }
-}
-
 /// `GET /v1/tasks` — every task, newest first.
 async fn list_tasks(State(state): State<Arc<AppState>>) -> ApiResult<Vec<TaskView>> {
     Ok(Json(build_task_list(&state)?))
-}
-
-/// Shared with the relay, so a phone and a browser see the same list.
-pub(crate) fn build_task_list(state: &Arc<AppState>) -> Result<Vec<TaskView>, ApiError> {
-    Ok(state
-        .store
-        .list_tasks(100)?
-        .into_iter()
-        .map(|task| task_view(state, task))
-        .collect())
 }
 
 /// `POST /v1/tasks` — start the native agent on a repo.
@@ -316,28 +221,6 @@ async fn task_detail(
     Path(id): Path<String>,
 ) -> ApiResult<TaskDetail> {
     Ok(Json(build_task_detail(&state, &id)?))
-}
-
-/// The same payload the relay serves, so a phone reviewing over a relay and a
-/// browser on loopback are looking at the same bytes.
-pub(crate) fn build_task_detail(state: &Arc<AppState>, id: &str) -> Result<TaskDetail, ApiError> {
-    let task = state
-        .store
-        .get_task(id)?
-        .ok_or_else(|| ApiError::not_found(format!("task {id}")))?;
-
-    // A change set that will not parse is reported as an empty one rather than
-    // a 500: the rest of the row — what it cost, what went wrong, the output
-    // tail — is exactly what somebody debugging that would want to see.
-    let changes: forge_agent::ChangeSet = serde_json::from_str(&task.diff_json).unwrap_or_default();
-    let output = state.output_tail(&task.session_id, 200);
-
-    Ok(TaskDetail {
-        patch: changes.render(),
-        changes,
-        task: task_view(state, task),
-        output,
-    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -391,24 +274,6 @@ async fn revert_task(
     Ok(Json(task_view(&state, task)))
 }
 
-/// One agent the runner can start, and how honest it can be about supervising it.
-#[derive(Debug, Clone, Serialize)]
-pub struct AgentView {
-    pub id: String,
-    pub name: String,
-    pub binary: String,
-    /// Whether the binary is on this machine's PATH right now.
-    pub installed: bool,
-    /// `hook` | `prompt` | `none`. How a decision reaches the agent.
-    pub approvals: &'static str,
-    /// False when nothing is gated — a plain shell, for instance.
-    pub supervised: bool,
-    /// True when the approval path has been checked against the real binary.
-    /// The prompt dialects are pattern matching on terminal output and say so.
-    pub verified: bool,
-    pub note: String,
-}
-
 /// `GET /v1/agents` — what this machine can start, and what it cannot.
 ///
 /// `installed` is computed per request rather than cached: agents get installed
@@ -446,193 +311,25 @@ async fn list_agents() -> Json<Vec<AgentView>> {
 }
 
 // ---------------------------------------------------------------- read models
+//
+// The shapes moved to `forge-proto`. They are what four client implementations
+// agree on, and keeping them here forced `commands::execute` — the path both
+// transports share — to depend on this module for its reply types. Assembly
+// stays here; the contract does not.
 
-/// Budget as the UI needs it: the bar, the number, and the traffic light.
-#[derive(Debug, Clone, Serialize)]
-pub struct BudgetView {
-    pub cap_usd: Option<f64>,
-    pub spent_usd: f64,
-    pub pct: Option<f64>,
-    /// `ok` | `warn` (≥80%) | `stop` (≥100%).
-    pub state: &'static str,
-}
+pub use forge_proto::views::{
+    AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, PlanStepView,
+    SessionDetail, SessionView, SpendBucket, TaskDetail, TaskView, TierSlice,
+};
 
-impl From<Budget> for BudgetView {
-    fn from(budget: Budget) -> Self {
-        Self {
-            cap_usd: budget.cap_usd,
-            spent_usd: budget.spent_usd,
-            pct: budget.pct(),
-            state: if budget.is_exhausted() {
-                "stop"
-            } else if budget.is_warning() {
-                "warn"
-            } else {
-                "ok"
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionView {
-    pub id: String,
-    pub repo_name: String,
-    pub machine_name: String,
-    pub agent: String,
-    pub status: SessionStatus,
-    /// True when the session is live enough to act on — the ● / ○ glyph.
-    pub is_live: bool,
-    pub plan: Option<PlanProgress>,
-    pub budget: BudgetView,
-    pub started_at: i64,
-    pub ended_at: Option<i64>,
-    pub awaiting_approval_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PlanStepView {
-    pub ordinal: i64,
-    pub title: String,
-    pub status: PlanStepStatus,
-    pub checkpoint_sha: Option<String>,
-}
-
-impl From<&PlanStep> for PlanStepView {
-    fn from(step: &PlanStep) -> Self {
-        Self {
-            ordinal: step.ordinal,
-            title: step.title.clone(),
-            status: step.status,
-            checkpoint_sha: step.checkpoint_sha.clone(),
-        }
-    }
-}
-
-/// An approval card. Carries the budget because §4's wireframe review found the
-/// moment of approval is the moment of spend — the bar belongs on the card.
-#[derive(Debug, Clone, Serialize)]
-pub struct ApprovalView {
-    #[serde(flatten)]
-    pub approval: Approval,
-    pub repo_name: String,
-    /// False for destructive commands: they must be decided on the phone (D3).
-    pub allows_watch_decision: bool,
-    pub budget: BudgetView,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionDetail {
-    #[serde(flatten)]
-    pub session: SessionView,
-    pub steps: Vec<PlanStepView>,
-    pub output: Vec<OutputLine>,
-    pub pending_approval: Option<ApprovalView>,
-}
-
-/// The home screen: every session plus the cost strip along the bottom.
-#[derive(Debug, Clone, Serialize)]
-pub struct FleetView {
-    pub sessions: Vec<SessionView>,
-    pub pending_approvals: Vec<ApprovalView>,
-    /// Change sets waiting on a human, oldest first.
-    ///
-    /// Carried on the fleet snapshot rather than behind a second request so a
-    /// relayed device gets them for free — a phone that has just been woken has
-    /// one round trip's patience, and this is the thing it was woken *for*.
-    /// `TaskView` has no diff in it, so this stays a few hundred bytes however
-    /// large the change sets are.
-    pub tasks_awaiting_review: Vec<TaskView>,
-    pub today_usd: f64,
-    pub cache_hit_ratio: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TierSlice {
-    pub tier: String,
-    pub usd: f64,
-    pub share: f64,
-}
-
-/// Flow 4 — the cost dashboard.
-#[derive(Debug, Clone, Serialize)]
-pub struct DashboardView {
-    pub session_id: String,
-    pub repo_name: String,
-    pub calls: usize,
-    pub total_usd: f64,
-    pub cache_hit_ratio: Option<f64>,
-    pub by_tier: Vec<TierSlice>,
-    pub avoided_calls: usize,
-    /// Spend per hour over the requested window, oldest first — the sparkline.
-    pub spend_series: Vec<SpendBucket>,
-    pub budget: BudgetView,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SpendBucket {
-    pub at_ms: i64,
-    pub usd: f64,
-}
+// Assembly lives in `crate::views`, which knows nothing about HTTP. These
+// handlers are the thin part: a route, a body, a status code.
+use crate::views::{
+    ViewError, approval_view, build_dashboard, build_fleet_view, build_session_detail,
+    build_task_detail, build_task_list, task_view, view_of,
+};
 
 // ---------------------------------------------------------------- assembly
-
-/// Builds a [`SessionView`]. Issues a handful of small reads per session rather
-/// than one join, keeping the `Store` trait narrow enough to reimplement.
-fn view_of(state: &AppState, session: &Session) -> Result<SessionView, ApiError> {
-    let repo = state
-        .store
-        .get_repo(&session.repo_id)?
-        .ok_or_else(|| ApiError::not_found(format!("repo {}", session.repo_id)))?;
-    let machine = state.store.get_machine(&repo.machine_id)?;
-
-    let plan = match &session.plan_id {
-        Some(plan_id) => {
-            let steps = state.store.list_plan_steps(plan_id)?;
-            (!steps.is_empty()).then(|| PlanProgress::of(&steps))
-        }
-        None => None,
-    };
-
-    let awaiting_approval_id = state
-        .store
-        .list_pending_approvals()?
-        .into_iter()
-        .find(|approval| approval.session_id == session.id)
-        .map(|approval| approval.id);
-
-    Ok(SessionView {
-        id: session.id.clone(),
-        repo_name: repo.name,
-        machine_name: machine.map(|m| m.name).unwrap_or_else(|| "unknown".into()),
-        agent: session.agent.to_string(),
-        status: session.status,
-        is_live: matches!(
-            session.status,
-            SessionStatus::Running | SessionStatus::AwaitingApproval | SessionStatus::Paused
-        ),
-        plan,
-        budget: state.store.session_budget(&session.id)?.into(),
-        started_at: session.started_at,
-        ended_at: session.ended_at,
-        awaiting_approval_id,
-    })
-}
-
-fn approval_view(state: &AppState, approval: Approval) -> Result<ApprovalView, ApiError> {
-    let session = state
-        .store
-        .get_session(&approval.session_id)?
-        .ok_or_else(|| ApiError::not_found(format!("session {}", approval.session_id)))?;
-    let repo = state.store.get_repo(&session.repo_id)?;
-
-    Ok(ApprovalView {
-        allows_watch_decision: approval.allows_watch_decision(),
-        repo_name: repo.map(|r| r.name).unwrap_or_else(|| "unknown".into()),
-        budget: state.store.session_budget(&approval.session_id)?.into(),
-        approval,
-    })
-}
 
 // ---------------------------------------------------------------- handlers
 
@@ -653,100 +350,11 @@ async fn fleet(State(state): State<Arc<AppState>>) -> ApiResult<FleetView> {
     Ok(Json(build_fleet_view(&state)?))
 }
 
-/// The home screen, assembled.
-///
-/// Shared with the relay link: a remote device has no request/response channel,
-/// so it asks for this over the same socket it receives events on.
-pub(crate) fn build_fleet_view(state: &Arc<AppState>) -> Result<FleetView, ApiError> {
-    let sessions = state.store.list_sessions()?;
-    let views = sessions
-        .iter()
-        .map(|session| view_of(state, session))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let pending_approvals = state
-        .store
-        .list_pending_approvals()?
-        .into_iter()
-        .map(|approval| approval_view(state, approval))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // "Today" is the last 24h rather than a calendar day: the runner has no
-    // notion of the phone's timezone, and a rolling window is what the strip
-    // actually means to someone glancing at it.
-    let since = TimeRange::since(now_ms() - 24 * 60 * 60 * 1_000);
-    let mut today_usd = 0.0;
-    let mut cache_reads: u64 = 0;
-    let mut fresh_input: u64 = 0;
-    for session in &sessions {
-        for event in state.store.list_usage(&session.id, since)? {
-            today_usd += event.cost_usd;
-            cache_reads += u64::from(event.usage.cache_read_tokens);
-            fresh_input += u64::from(event.usage.input_tokens);
-        }
-    }
-
-    let tasks_awaiting_review = state
-        .store
-        .list_tasks_awaiting_review()?
-        .into_iter()
-        .map(|task| task_view(state, task))
-        .collect();
-
-    Ok(FleetView {
-        sessions: views,
-        pending_approvals,
-        tasks_awaiting_review,
-        today_usd,
-        cache_hit_ratio: (cache_reads + fresh_input > 0)
-            .then(|| cache_reads as f64 / (cache_reads + fresh_input) as f64),
-    })
-}
-
 async fn session_detail(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<SessionDetail> {
     Ok(Json(build_session_detail(&state, &id)?))
-}
-
-/// One session, assembled. Shared with the relay link for the same reason
-/// [`build_fleet_view`] is.
-pub(crate) fn build_session_detail(
-    state: &Arc<AppState>,
-    id: &str,
-) -> Result<SessionDetail, ApiError> {
-    let session = state
-        .store
-        .get_session(id)?
-        .ok_or_else(|| ApiError::not_found(format!("session {id}")))?;
-    let view = view_of(state, &session)?;
-
-    let steps = match &session.plan_id {
-        Some(plan_id) => state
-            .store
-            .list_plan_steps(plan_id)?
-            .iter()
-            .map(PlanStepView::from)
-            .collect(),
-        None => Vec::new(),
-    };
-
-    let pending_approval = match &view.awaiting_approval_id {
-        Some(approval_id) => state
-            .store
-            .get_approval(approval_id)?
-            .map(|approval| approval_view(state, approval))
-            .transpose()?,
-        None => None,
-    };
-
-    Ok(SessionDetail {
-        session: view,
-        steps,
-        output: state.output_tail(id, 80),
-        pending_approval,
-    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -877,70 +485,6 @@ async fn session_dashboard(
     Query(query): Query<UsageQuery>,
 ) -> ApiResult<DashboardView> {
     Ok(Json(build_dashboard(&state, &id, query.since_ms)?))
-}
-
-/// Flow 4, assembled.
-///
-/// Shared with the relay link — the third snapshot type. Until this existed the
-/// cost dashboard was the one screen a paired phone could not open, because a
-/// remote device has no request/response channel and there was nothing for it to
-/// ask for. Both surfaces now render the same bytes.
-pub(crate) fn build_dashboard(
-    state: &Arc<AppState>,
-    id: &str,
-    since_ms: Option<i64>,
-) -> Result<DashboardView, ApiError> {
-    let session = state
-        .store
-        .get_session(id)?
-        .ok_or_else(|| ApiError::not_found(format!("session {id}")))?;
-    let repo = state.store.get_repo(&session.repo_id)?;
-
-    let range = TimeRange {
-        since_ms,
-        until_ms: None,
-    };
-    let events = state.store.list_usage(id, range)?;
-    let summary = forge_core::ledger::Summary::from_events(&events);
-
-    let by_tier = summary
-        .usd_by_tier
-        .iter()
-        .map(|(tier, usd)| TierSlice {
-            tier: tier.to_string(),
-            usd: *usd,
-            share: if summary.total_usd > 0.0 {
-                usd / summary.total_usd
-            } else {
-                0.0
-            },
-        })
-        .collect();
-
-    const BUCKET_MS: i64 = 60 * 60 * 1_000;
-    let mut spend_series: Vec<SpendBucket> = Vec::new();
-    for event in &events {
-        let bucket = event.created_at - event.created_at.rem_euclid(BUCKET_MS);
-        match spend_series.last_mut() {
-            Some(last) if last.at_ms == bucket => last.usd += event.cost_usd,
-            _ => spend_series.push(SpendBucket {
-                at_ms: bucket,
-                usd: event.cost_usd,
-            }),
-        }
-    }
-
-    Ok(DashboardView {
-        session_id: id.to_owned(),
-        repo_name: repo.map(|r| r.name).unwrap_or_else(|| "unknown".into()),
-        calls: summary.calls,
-        total_usd: summary.total_usd,
-        cache_hit_ratio: summary.cache_read_ratio(),
-        by_tier,
-        avoided_calls: summary.avoided_calls.values().sum(),
-        spend_series,
-        budget: state.store.session_budget(id)?.into(),
-    })
 }
 
 /* --------------------------------------------------- session lifecycle */

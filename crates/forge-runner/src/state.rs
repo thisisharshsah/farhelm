@@ -9,9 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use forge_core::store::{SqliteStore, Store};
-use forge_core::types::{Approval, Decision};
 use forge_gateway::{AnthropicClient, Gateway};
-use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 /// Where this runner is reachable, once a relay is configured.
@@ -85,58 +83,12 @@ fn machine_name() -> String {
 /// to re-fetch. Bounded so one stalled phone cannot pin memory.
 const EVENT_BUFFER: usize = 256;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OutputLine {
-    /// Monotonic per session, so a reconnecting client can tell what it missed.
-    pub seq: u64,
-    pub text: String,
-    pub at_ms: i64,
-}
-
-/// Everything pushed to connected clients. Mirrors the §6 runner→relay
-/// contract; the relay forwards these as encrypted payloads, so it round-trips
-/// through `Deserialize` on the device side.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ServerEvent {
-    /// A session's status, plan progress, or spend changed — re-fetch it.
-    SessionUpsert {
-        session_id: String,
-    },
-    OutputChunk {
-        session_id: String,
-        #[serde(flatten)]
-        line: OutputLine,
-    },
-    ApprovalRequest {
-        approval: Approval,
-    },
-    ApprovalDecision {
-        approval_id: String,
-        session_id: String,
-        decision: Decision,
-    },
-    /// Stage-1 budget guard fired (C5). `pct` is the fraction of cap consumed.
-    BudgetAlert {
-        session_id: String,
-        pct: f64,
-        hard_stop: bool,
-    },
-    /// A native agent task changed state — most importantly, reached
-    /// `awaiting_review` with a diff somebody has to look at.
-    ///
-    /// Carries the headline rather than only an id, so a notification can say
-    /// "3 files, +42 −17" without the client fetching the task first. The diff
-    /// itself is not in here: it can be megabytes, and this goes to every
-    /// connected device on every state change.
-    TaskUpsert {
-        task_id: String,
-        session_id: String,
-        status: forge_core::types::TaskStatus,
-        /// `3 files, +42 −17`.
-        summary: String,
-    },
-}
+/// The event contract and the output line moved to `forge-proto`: four client
+/// implementations parse them, and they had no business living in the same
+/// module as the runner's in-memory buffers. Re-exported so `state::ServerEvent`
+/// keeps resolving for the modules that publish them.
+pub use forge_proto::events::ServerEvent;
+pub use forge_proto::views::OutputLine;
 
 struct OutputBuffer {
     next_seq: u64,

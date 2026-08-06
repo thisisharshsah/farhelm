@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 forge-core.workspace = true
+forge-proto.workspace = true
 forge-gateway.workspace = true
 
 ignore = "0.4"
