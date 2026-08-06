@@ -32,7 +32,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::commands::{self, Command};
 use crate::state::{AppState, ServerEvent};
-use forge_core::store::Store;
+use forge_core::store::prelude::*;
 use forge_core::types::DecidedVia;
 
 /// First reconnect delay; doubles up to [`MAX_BACKOFF`].

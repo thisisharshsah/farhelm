@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use forge_agent::{Outcome, TaskSpec, Verdict, Workspace};
 use forge_core::id::new_id;
-use forge_core::store::{Store, TaskOutcome};
+use forge_core::store::{TaskOutcome, prelude::*};
 use forge_core::time::now_ms;
 use forge_core::types::{
     Agent, AgentTask, Approval, DecidedVia, Decision, Repo, Session, SessionStatus, TaskStatus,

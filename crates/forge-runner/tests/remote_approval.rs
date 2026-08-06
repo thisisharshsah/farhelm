@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use forge_core::store::{SqliteStore, Store};
+use forge_core::store::{SqliteStore, prelude::*};
 use forge_core::types::{
     Agent, Approval, Decision, Device, DeviceKind, Machine, Repo, Risk, Session, SessionStatus,
 };

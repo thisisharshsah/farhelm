@@ -33,7 +33,7 @@
 
 use std::path::{Path, PathBuf};
 
-use forge_core::store::Store;
+use forge_core::store::prelude::*;
 use forge_core::types::TaskType;
 use forge_gateway::prompt::{StableContext, Turn};
 use forge_gateway::{CompleteRequest, Gateway, GatewayError, ModelClient, ToolCall};

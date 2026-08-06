@@ -9,7 +9,7 @@ use std::fmt;
 
 use crate::id::new_id;
 use crate::price::{CacheTtl, QuoteContext, UnknownModel, quote};
-use crate::store::{Store, StoreError, TimeRange};
+use crate::store::{LedgerStore, StoreError, TimeRange};
 use crate::time::now_ms;
 use crate::types::{Avoided, TaskType, Tier, Usage, UsageEvent};
 
@@ -103,7 +103,7 @@ pub struct Ledger<S> {
     store: S,
 }
 
-impl<S: Store> Ledger<S> {
+impl<S: LedgerStore> Ledger<S> {
     pub fn new(store: S) -> Self {
         Self { store }
     }
@@ -228,7 +228,7 @@ impl fmt::Display for Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::SqliteStore;
+    use crate::store::{FleetStore, SessionStore, SqliteStore};
     use crate::types::{Agent, Machine, Repo, Session, SessionStatus};
 
     const NOW_MS: i64 = 1_785_369_600_000;

@@ -105,16 +105,14 @@ impl TimeRange {
     }
 }
 
-/// Declares the [`Store`] port once, and derives every forwarding impl from it.
+/// Declares one role port, and derives its forwarding impls.
 ///
-/// The trait has forty-odd methods and three implementations that are pure
-/// delegation: `Arc<S>`, `&S`, and — in tests — decorators that wrap a real
-/// store to observe it. Those were written out by hand, which made adding a
-/// method a four-place edit and made a *typo* in one of them a silent bug: a
-/// forwarding impl that called the wrong method still compiles, because every
-/// one of them has a plausible-looking sibling with the same shape.
-///
-/// Now there is one list, and the two delegating impls are generated from it.
+/// Every port here has three implementations that are pure delegation: the real
+/// store, `Arc<S>`, and `&S`. Those were written out by hand — 294 lines whose
+/// entire content was `(**self).method(args)` — which made adding a method a
+/// multi-place edit, and made a *typo* in one of them a silent bug: a forwarding
+/// impl that delegates to the wrong method still compiles, because every method
+/// in this file has a plausible-looking sibling with the same shape.
 ///
 /// Only `Arc<S>` and `&S` are generated: both are used here, where the `Result`
 /// alias and the type imports resolve. Exporting a general forwarding macro for
@@ -123,16 +121,16 @@ impl TimeRange {
 /// worth.
 macro_rules! store_port {
     (
-        $(
-            $(#[$meta:meta])*
-            fn $name:ident(&self $(, $arg:ident : $ty:ty)* $(,)?) -> $ret:ty;
-        )*
+        $(#[$trait_meta:meta])*
+        $port:ident {
+            $(
+                $(#[$meta:meta])*
+                fn $name:ident(&self $(, $arg:ident : $ty:ty)* $(,)?) -> $ret:ty;
+            )*
+        }
     ) => {
-        /// Everything above this line talks to `Store`, never to SQLite.
-        ///
-        /// Synchronous on purpose: SQLite is a single-writer embedded engine, so
-        /// there is nothing to await.
-        pub trait Store {
+        $(#[$trait_meta])*
+        pub trait $port {
             $(
                 $(#[$meta])*
                 fn $name(&self $(, $arg: $ty)*) -> $ret;
@@ -141,40 +139,58 @@ macro_rules! store_port {
 
         /// Shared stores are stores, so a long-lived component can hold an `Arc`
         /// of one without the trait needing to know.
-        impl<S: Store + ?Sized> Store for std::sync::Arc<S> {
+        impl<S: $port + ?Sized> $port for std::sync::Arc<S> {
             $( fn $name(&self $(, $arg: $ty)*) -> $ret { (**self).$name($($arg),*) } )*
         }
 
         /// Borrowed stores are stores. Lets a caller hand a `&SqliteStore` to
-        /// anything generic over `S: Store` — notably [`crate::ledger::Ledger`],
+        /// anything generic over the port — notably [`crate::ledger::Ledger`],
         /// which takes ownership — without giving up the original handle.
-        impl<S: Store + ?Sized> Store for &S {
+        impl<S: $port + ?Sized> $port for &S {
             $( fn $name(&self $(, $arg: $ty)*) -> $ret { (**self).$name($($arg),*) } )*
         }
-
     };
 }
 
 store_port! {
+    /// Machines and the repositories on them — the topology a session hangs off.
+    FleetStore {
     fn upsert_machine(&self, machine: &Machine) -> Result<()>;
+
     fn get_machine(&self, id: &str) -> Result<Option<Machine>>;
 
     fn upsert_repo(&self, repo: &Repo) -> Result<()>;
+
     fn get_repo(&self, id: &str) -> Result<Option<Repo>>;
 
+    /// Repos are unique per (machine, path), which is how a hook's `cwd`
+    /// resolves to the repo it is working in.
+    fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>>;
+    }
+}
+
+store_port! {
+    /// Agent process lifecycles.
+    SessionStore {
     fn upsert_session(&self, session: &Session) -> Result<()>;
+
     fn get_session(&self, id: &str) -> Result<Option<Session>>;
+
     fn list_sessions(&self) -> Result<Vec<Session>>;
 
     /// Find a session by the *agent's* session id. This is how a hook callback
     /// re-attaches to the session it belongs to instead of creating a new one
     /// on every tool call.
     fn find_session_by_agent_id(&self, agent_session_id: &str) -> Result<Option<Session>>;
+    }
+}
 
-    /// Repos are unique per (machine, path), which is how a hook's `cwd`
-    /// resolves to the repo it is working in.
-    fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>>;
-
+store_port! {
+    /// The append-only cost record, and the budgets read off it.
+///
+/// The narrowest port and the most widely used: the gateway consults it on
+/// every model call and needs nothing else from storage.
+    LedgerStore {
     /// Append one ledger row and add its cost to `session.spent_usd`.
     ///
     /// Both writes happen in one transaction: a recorded call that did not move
@@ -189,8 +205,14 @@ store_port! {
     /// Budget for a repo: the repo cap against the summed spend of every
     /// session in it.
     fn repo_budget(&self, repo_id: &str) -> Result<Budget>;
+    }
+}
 
+store_port! {
+    /// `PLAN.md`, mirrored.
+    PlanStore {
     fn upsert_plan(&self, plan: &Plan) -> Result<()>;
+
     fn get_plan(&self, id: &str) -> Result<Option<Plan>>;
 
     /// Replace a plan's steps wholesale, in one transaction.
@@ -204,16 +226,36 @@ store_port! {
 
     /// Persist one step's status/checkpoint after a state-machine transition.
     fn update_plan_step(&self, step: &PlanStep) -> Result<()>;
+    }
+}
 
+store_port! {
+    /// Permission requests and their outcomes. Kept forever: both the audit
+/// trail and the training data for auto-approve policy.
+    ApprovalStore {
     fn create_approval(&self, approval: &Approval) -> Result<()>;
+
     fn get_approval(&self, id: &str) -> Result<Option<Approval>>;
 
     /// Every approval still waiting on a human, oldest first — what the fleet
     /// view and the push trigger read.
     fn list_pending_approvals(&self) -> Result<Vec<Approval>>;
 
-    /* ------------------------------------------------- batch queue (C6) */
+    /// Record a decision. Two devices can see the same notification, so this
+    /// resolves the race explicitly rather than letting the last tap win.
+    fn decide_approval(
+        &self,
+        id: &str,
+        decision: Decision,
+        via: DecidedVia,
+        decided_at: i64,
+    ) -> Result<DecisionOutcome>;
+    }
+}
 
+store_port! {
+    /// The deferred-work queue (C6).
+    BatchStore {
     /// Queue a deferrable call instead of dispatching it live.
     fn enqueue_batch_item(&self, item: &BatchItem) -> Result<()>;
 
@@ -249,9 +291,12 @@ store_port! {
         error: Option<&str>,
         settled_at: i64,
     ) -> Result<()>;
+    }
+}
 
-    /* --------------------------------------------- native agent tasks */
-
+store_port! {
+    /// Native agent tasks and the change sets awaiting review.
+    TaskStore {
     /// Create or update a task row.
     fn upsert_task(&self, task: &AgentTask) -> Result<()>;
 
@@ -278,17 +323,12 @@ store_port! {
         note: Option<&str>,
         decided_at: i64,
     ) -> Result<TaskOutcome>;
+    }
+}
 
-    /// Record a decision. Two devices can see the same notification, so this
-    /// resolves the race explicitly rather than letting the last tap win.
-    fn decide_approval(
-        &self,
-        id: &str,
-        decision: Decision,
-        via: DecidedVia,
-        decided_at: i64,
-    ) -> Result<DecisionOutcome>;
-
+store_port! {
+    /// Pipeline stage 3.
+    ResponseCache {
     /// Pipeline stage 3. Returns the cached response only if it has not
     /// expired, and counts the hit — a cache nobody reads from is a bug worth
     /// seeing in the dashboard.
@@ -300,7 +340,13 @@ store_port! {
 
     /// Drop expired entries. Returns how many went.
     fn cache_purge_expired(&self, now_ms: i64) -> Result<usize>;
+    }
+}
 
+store_port! {
+    /// Paired devices. The relay link verifies every incoming envelope
+/// against exactly this list.
+    DeviceStore {
     /// Register a paired device, or update one that re-paired.
     fn upsert_device(&self, device: &Device) -> Result<()>;
 
@@ -309,6 +355,57 @@ store_port! {
     fn list_devices(&self) -> Result<Vec<Device>>;
 
     fn get_device(&self, id: &str) -> Result<Option<Device>>;
+    }
+}
+
+/// Everything, for a caller that genuinely needs everything.
+///
+/// The runner's `AppState` holds one store and its handlers touch all of it, so
+/// a single bound stays the honest signature there. Narrower callers name only
+/// the ports they use — `Ledger` takes a [`LedgerStore`], and the gateway's four
+/// ports are the reason a test double for it is now a few methods rather than
+/// forty.
+///
+/// No methods of its own: it is an alias, and the blanket impl means anything
+/// implementing the parts implements the whole without saying so.
+pub trait Store:
+    FleetStore
+    + SessionStore
+    + LedgerStore
+    + PlanStore
+    + ApprovalStore
+    + BatchStore
+    + TaskStore
+    + ResponseCache
+    + DeviceStore
+{
+}
+
+/// Every port at once, for a caller that wants the whole surface in scope.
+///
+/// Rust resolves a method through the trait that declares it, not through a
+/// supertrait, so `use store::Store` alone brings in the *bound* and none of the
+/// methods. That is the one ergonomic cost of splitting the port, and this is
+/// the answer to it: callers that genuinely want everything glob this, and
+/// callers that want four ports name four ports.
+pub mod prelude {
+    pub use super::{
+        ApprovalStore, BatchStore, DeviceStore, FleetStore, LedgerStore, PlanStore, ResponseCache,
+        SessionStore, Store, TaskStore,
+    };
+}
+
+impl<T> Store for T where
+    T: FleetStore
+        + SessionStore
+        + LedgerStore
+        + PlanStore
+        + ApprovalStore
+        + BatchStore
+        + TaskStore
+        + ResponseCache
+        + DeviceStore
+{
 }
 
 /// The result of racing a task review against another device.

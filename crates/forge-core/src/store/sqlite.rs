@@ -10,7 +10,10 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::{DecisionOutcome, Result, Store, StoreError, TaskOutcome, TimeRange};
+use super::{
+    ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, LedgerStore, PlanStore,
+    ResponseCache, Result, SessionStore, StoreError, TaskOutcome, TaskStore, TimeRange,
+};
 use crate::types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
     Device, DeviceKind, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo, Risk,
@@ -504,7 +507,7 @@ const SESSION_COLUMNS: &str = "id, repo_id, agent, tmux_target, status, plan_id,
 const USAGE_COLUMNS: &str = "id, session_id, model, tier, task_type, input_tokens, output_tokens, \
                              cache_write_tokens, cache_read_tokens, cost_usd, avoided, created_at";
 
-impl Store for SqliteStore {
+impl FleetStore for SqliteStore {
     fn upsert_machine(&self, machine: &Machine) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(
@@ -586,6 +589,28 @@ impl Store for SqliteStore {
         .map_err(backend)
     }
 
+    fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT id, machine_id, path, name, budget_usd FROM repo
+             WHERE machine_id = ?1 AND path = ?2",
+            params![machine_id, path],
+            |row| {
+                Ok(Repo {
+                    id: row.get(0)?,
+                    machine_id: row.get(1)?,
+                    path: row.get(2)?,
+                    name: row.get(3)?,
+                    budget_usd: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(backend)
+    }
+}
+
+impl SessionStore for SqliteStore {
     fn upsert_session(&self, session: &Session) -> Result<()> {
         let conn = self.lock()?;
         // `spent_usd` is deliberately NOT overwritten on conflict: it is owned by
@@ -662,27 +687,9 @@ impl Store for SqliteStore {
             .map_err(backend)?;
         raw.map(Session::try_from).transpose()
     }
+}
 
-    fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>> {
-        let conn = self.lock()?;
-        conn.query_row(
-            "SELECT id, machine_id, path, name, budget_usd FROM repo
-             WHERE machine_id = ?1 AND path = ?2",
-            params![machine_id, path],
-            |row| {
-                Ok(Repo {
-                    id: row.get(0)?,
-                    machine_id: row.get(1)?,
-                    path: row.get(2)?,
-                    name: row.get(3)?,
-                    budget_usd: row.get(4)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(backend)
-    }
-
+impl LedgerStore for SqliteStore {
     fn record_usage(&self, event: &UsageEvent) -> Result<()> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(backend)?;
@@ -793,7 +800,9 @@ impl Store for SqliteStore {
             spent_usd: spent,
         })
     }
+}
 
+impl PlanStore for SqliteStore {
     fn upsert_plan(&self, plan: &Plan) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(
@@ -892,7 +901,9 @@ impl Store for SqliteStore {
         }
         Ok(())
     }
+}
 
+impl ApprovalStore for SqliteStore {
     fn create_approval(&self, approval: &Approval) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(
@@ -929,6 +940,64 @@ impl Store for SqliteStore {
         raw.map(Approval::try_from).transpose()
     }
 
+    fn list_pending_approvals(&self) -> Result<Vec<Approval>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {APPROVAL_COLUMNS} FROM approval
+                 WHERE decision IS NULL ORDER BY requested_at ASC"
+            ))
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map([], read_approval)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        rows.into_iter().map(Approval::try_from).collect()
+    }
+
+    fn decide_approval(
+        &self,
+        id: &str,
+        decision: Decision,
+        via: DecidedVia,
+        decided_at: i64,
+    ) -> Result<DecisionOutcome> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(backend)?;
+
+        // `decision IS NULL` is the whole race guard: the second device to tap
+        // updates zero rows rather than overwriting the first decision.
+        let updated = tx
+            .execute(
+                "UPDATE approval SET decision = ?1, decided_via = ?2, decided_at = ?3
+                 WHERE id = ?4 AND decision IS NULL",
+                params![decision.as_str(), via.as_str(), decided_at, id],
+            )
+            .map_err(backend)?;
+
+        let raw = tx
+            .query_row(
+                &format!("SELECT {APPROVAL_COLUMNS} FROM approval WHERE id = ?1"),
+                params![id],
+                read_approval,
+            )
+            .optional()
+            .map_err(backend)?
+            .ok_or_else(|| StoreError::NotFound(format!("approval {id}")))?;
+
+        tx.commit().map_err(backend)?;
+
+        let approval = Approval::try_from(raw)?;
+        Ok(if updated == 1 {
+            DecisionOutcome::Recorded(approval)
+        } else {
+            DecisionOutcome::AlreadyDecided(approval)
+        })
+    }
+}
+
+impl BatchStore for SqliteStore {
     /* ------------------------------------------------- batch queue (C6) */
 
     fn enqueue_batch_item(&self, item: &BatchItem) -> Result<()> {
@@ -1067,23 +1136,9 @@ impl Store for SqliteStore {
         .map_err(backend)?;
         Ok(())
     }
+}
 
-    fn list_pending_approvals(&self) -> Result<Vec<Approval>> {
-        let conn = self.lock()?;
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT {APPROVAL_COLUMNS} FROM approval
-                 WHERE decision IS NULL ORDER BY requested_at ASC"
-            ))
-            .map_err(backend)?;
-        let rows = stmt
-            .query_map([], read_approval)
-            .map_err(backend)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(backend)?;
-        rows.into_iter().map(Approval::try_from).collect()
-    }
-
+impl TaskStore for SqliteStore {
     fn upsert_task(&self, task: &AgentTask) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(
@@ -1226,47 +1281,9 @@ impl Store for SqliteStore {
             TaskOutcome::AlreadyDecided(task)
         })
     }
+}
 
-    fn decide_approval(
-        &self,
-        id: &str,
-        decision: Decision,
-        via: DecidedVia,
-        decided_at: i64,
-    ) -> Result<DecisionOutcome> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(backend)?;
-
-        // `decision IS NULL` is the whole race guard: the second device to tap
-        // updates zero rows rather than overwriting the first decision.
-        let updated = tx
-            .execute(
-                "UPDATE approval SET decision = ?1, decided_via = ?2, decided_at = ?3
-                 WHERE id = ?4 AND decision IS NULL",
-                params![decision.as_str(), via.as_str(), decided_at, id],
-            )
-            .map_err(backend)?;
-
-        let raw = tx
-            .query_row(
-                &format!("SELECT {APPROVAL_COLUMNS} FROM approval WHERE id = ?1"),
-                params![id],
-                read_approval,
-            )
-            .optional()
-            .map_err(backend)?
-            .ok_or_else(|| StoreError::NotFound(format!("approval {id}")))?;
-
-        tx.commit().map_err(backend)?;
-
-        let approval = Approval::try_from(raw)?;
-        Ok(if updated == 1 {
-            DecisionOutcome::Recorded(approval)
-        } else {
-            DecisionOutcome::AlreadyDecided(approval)
-        })
-    }
-
+impl ResponseCache for SqliteStore {
     fn cache_get(&self, key_hash: &str, now_ms: i64) -> Result<Option<String>> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(backend)?;
@@ -1317,7 +1334,9 @@ impl Store for SqliteStore {
         )
         .map_err(backend)
     }
+}
 
+impl DeviceStore for SqliteStore {
     fn upsert_device(&self, device: &Device) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use forge_core::store::{SqliteStore, Store};
+use forge_core::store::{SqliteStore, prelude::*};
 use forge_gateway::{AnthropicClient, Gateway};
 use tokio::sync::broadcast;
 

@@ -21,7 +21,7 @@
 
 use forge_agent::script::ScriptedClient;
 use forge_agent::{TaskSpec, run};
-use forge_core::store::{SqliteStore, Store, TimeRange};
+use forge_core::store::{SqliteStore, TimeRange, prelude::*};
 use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus, Tier};
 use forge_gateway::router::Models;
 use forge_gateway::{Gateway, GatewayConfig};

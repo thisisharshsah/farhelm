@@ -13,7 +13,7 @@
 //! frequent compaction is fidelity — each pass re-summarises text that already
 //! went through a summary — and that is a currency this ledger cannot see.
 
-use forge_core::store::{SqliteStore, Store, TimeRange};
+use forge_core::store::{SqliteStore, TimeRange, prelude::*};
 use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus, TaskType};
 use forge_gateway::compaction::CompactionPolicy;
 use forge_gateway::prompt::{StableContext, Turn};

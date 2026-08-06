@@ -25,7 +25,7 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
-use forge_core::store::{SqliteStore, Store};
+use forge_core::store::{SqliteStore, prelude::*};
 use forge_core::types::TaskStatus;
 use forge_gateway::{AnthropicClient, Gateway, GatewayConfig};
 use forge_runner::state::AppState;

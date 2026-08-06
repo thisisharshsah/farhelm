@@ -36,7 +36,8 @@ pub use dispatch::{
     AnthropicClient, Effort, ModelClient, ModelRequest, ModelResponse, StubClient, ToolCall,
 };
 pub use pipeline::{
-    CompleteRequest, CompleteResponse, Gateway, GatewayConfig, GatewayError, Served, StageTrace,
+    CompleteRequest, CompleteResponse, Gateway, GatewayConfig, GatewayError, GatewayStore, Served,
+    StageTrace,
 };
 pub use prompt::{StableContext, Turn};
 pub use router::{Models, Route};

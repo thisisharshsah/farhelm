@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use forge_core::id::new_id;
 use forge_core::ledger::{Call, Ledger};
-use forge_core::store::{SqliteStore, Store, TimeRange};
+use forge_core::store::{SqliteStore, TimeRange, prelude::*};
 use forge_core::time::now_ms;
 use forge_core::types::{
     Agent, Approval, Avoided, Machine, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,

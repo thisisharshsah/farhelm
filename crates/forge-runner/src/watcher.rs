@@ -37,7 +37,7 @@ use crate::session::ManagerError;
 use crate::state::{AppState, ServerEvent};
 use crate::terminal::Terminal;
 use forge_core::id::new_id;
-use forge_core::store::Store;
+use forge_core::store::prelude::*;
 use forge_core::time::now_ms;
 
 /// What the watcher remembers between polls, per session.
