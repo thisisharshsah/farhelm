@@ -606,10 +606,18 @@ async fn pair_offer(State(state): State<Arc<AppState>>) -> ApiResult<forge_crypt
         .relay
         .clone()
         .unwrap_or_else(|| crate::state::RelayInfo {
-            // Without a relay the offer still works for a device on the same
-            // network; it just has nowhere remote to connect.
+            // No relay configured. The offer is still minted — `forge-runner
+            // pair` renders it, and it is the only way to see this machine's
+            // public key and channel without reading the database — but a client
+            // will refuse to claim it, because there is nowhere for the device to
+            // connect. See `claimPairing` in packages/client-core/src/crypto.ts.
             url: String::new(),
-            channel: state.machine_id.clone(),
+            // The channel this runner *would* publish on, derived the one way it
+            // is ever derived. This used to be `machine_id`, which is a different
+            // string entirely: an offer minted before `--relay` was configured
+            // named a channel the runner would never publish on, so a device that
+            // somehow kept it would have listened to silence.
+            channel: forge_proto::channel_for(state.identity.public_key().as_str()),
         });
 
     let offer = state
