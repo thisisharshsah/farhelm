@@ -105,7 +105,57 @@ impl TimeRange {
     }
 }
 
-pub trait Store {
+/// Declares the [`Store`] port once, and derives every forwarding impl from it.
+///
+/// The trait has forty-odd methods and three implementations that are pure
+/// delegation: `Arc<S>`, `&S`, and — in tests — decorators that wrap a real
+/// store to observe it. Those were written out by hand, which made adding a
+/// method a four-place edit and made a *typo* in one of them a silent bug: a
+/// forwarding impl that called the wrong method still compiles, because every
+/// one of them has a plausible-looking sibling with the same shape.
+///
+/// Now there is one list, and the two delegating impls are generated from it.
+///
+/// Only `Arc<S>` and `&S` are generated: both are used here, where the `Result`
+/// alias and the type imports resolve. Exporting a general forwarding macro for
+/// decorators in other crates would mean spelling every type in every signature
+/// as an absolute path, which costs more legibility than the decorators are
+/// worth.
+macro_rules! store_port {
+    (
+        $(
+            $(#[$meta:meta])*
+            fn $name:ident(&self $(, $arg:ident : $ty:ty)* $(,)?) -> $ret:ty;
+        )*
+    ) => {
+        /// Everything above this line talks to `Store`, never to SQLite.
+        ///
+        /// Synchronous on purpose: SQLite is a single-writer embedded engine, so
+        /// there is nothing to await.
+        pub trait Store {
+            $(
+                $(#[$meta])*
+                fn $name(&self $(, $arg: $ty)*) -> $ret;
+            )*
+        }
+
+        /// Shared stores are stores, so a long-lived component can hold an `Arc`
+        /// of one without the trait needing to know.
+        impl<S: Store + ?Sized> Store for std::sync::Arc<S> {
+            $( fn $name(&self $(, $arg: $ty)*) -> $ret { (**self).$name($($arg),*) } )*
+        }
+
+        /// Borrowed stores are stores. Lets a caller hand a `&SqliteStore` to
+        /// anything generic over `S: Store` — notably [`crate::ledger::Ledger`],
+        /// which takes ownership — without giving up the original handle.
+        impl<S: Store + ?Sized> Store for &S {
+            $( fn $name(&self $(, $arg: $ty)*) -> $ret { (**self).$name($($arg),*) } )*
+        }
+
+    };
+}
+
+store_port! {
     fn upsert_machine(&self, machine: &Machine) -> Result<()>;
     fn get_machine(&self, id: &str) -> Result<Option<Machine>>;
 
@@ -259,307 +309,6 @@ pub trait Store {
     fn list_devices(&self) -> Result<Vec<Device>>;
 
     fn get_device(&self, id: &str) -> Result<Option<Device>>;
-}
-
-/// Shared stores are stores, so a long-lived component can hold an `Arc` of one
-/// without the trait needing to know.
-impl<S: Store + ?Sized> Store for std::sync::Arc<S> {
-    fn upsert_machine(&self, machine: &Machine) -> Result<()> {
-        (**self).upsert_machine(machine)
-    }
-    fn get_machine(&self, id: &str) -> Result<Option<Machine>> {
-        (**self).get_machine(id)
-    }
-    fn upsert_repo(&self, repo: &Repo) -> Result<()> {
-        (**self).upsert_repo(repo)
-    }
-    fn get_repo(&self, id: &str) -> Result<Option<Repo>> {
-        (**self).get_repo(id)
-    }
-    fn upsert_session(&self, session: &Session) -> Result<()> {
-        (**self).upsert_session(session)
-    }
-    fn get_session(&self, id: &str) -> Result<Option<Session>> {
-        (**self).get_session(id)
-    }
-    fn list_sessions(&self) -> Result<Vec<Session>> {
-        (**self).list_sessions()
-    }
-    fn find_session_by_agent_id(&self, agent_session_id: &str) -> Result<Option<Session>> {
-        (**self).find_session_by_agent_id(agent_session_id)
-    }
-    fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>> {
-        (**self).find_repo_by_path(machine_id, path)
-    }
-    fn record_usage(&self, event: &UsageEvent) -> Result<()> {
-        (**self).record_usage(event)
-    }
-    fn list_usage(&self, session_id: &str, range: TimeRange) -> Result<Vec<UsageEvent>> {
-        (**self).list_usage(session_id, range)
-    }
-    fn session_budget(&self, session_id: &str) -> Result<Budget> {
-        (**self).session_budget(session_id)
-    }
-    fn repo_budget(&self, repo_id: &str) -> Result<Budget> {
-        (**self).repo_budget(repo_id)
-    }
-    fn upsert_plan(&self, plan: &Plan) -> Result<()> {
-        (**self).upsert_plan(plan)
-    }
-    fn get_plan(&self, id: &str) -> Result<Option<Plan>> {
-        (**self).get_plan(id)
-    }
-    fn replace_plan_steps(&self, plan_id: &str, steps: &[PlanStep]) -> Result<()> {
-        (**self).replace_plan_steps(plan_id, steps)
-    }
-    fn list_plan_steps(&self, plan_id: &str) -> Result<Vec<PlanStep>> {
-        (**self).list_plan_steps(plan_id)
-    }
-    fn update_plan_step(&self, step: &PlanStep) -> Result<()> {
-        (**self).update_plan_step(step)
-    }
-    fn create_approval(&self, approval: &Approval) -> Result<()> {
-        (**self).create_approval(approval)
-    }
-    fn get_approval(&self, id: &str) -> Result<Option<Approval>> {
-        (**self).get_approval(id)
-    }
-    fn enqueue_batch_item(&self, item: &BatchItem) -> Result<()> {
-        (**self).enqueue_batch_item(item)
-    }
-    fn list_queued_batch_items(&self, limit: usize) -> Result<Vec<BatchItem>> {
-        (**self).list_queued_batch_items(limit)
-    }
-    fn list_submitted_batch_items(&self) -> Result<Vec<BatchItem>> {
-        (**self).list_submitted_batch_items()
-    }
-    fn get_batch_item(&self, id: &str) -> Result<Option<BatchItem>> {
-        (**self).get_batch_item(id)
-    }
-    fn list_batch_items_for_session(&self, session_id: &str) -> Result<Vec<BatchItem>> {
-        (**self).list_batch_items_for_session(session_id)
-    }
-    fn mark_batch_submitted(
-        &self,
-        item_ids: &[String],
-        batch_id: &str,
-        submitted_at: i64,
-    ) -> Result<()> {
-        (**self).mark_batch_submitted(item_ids, batch_id, submitted_at)
-    }
-    fn settle_batch_item(
-        &self,
-        custom_id: &str,
-        status: BatchStatus,
-        response_text: Option<&str>,
-        error: Option<&str>,
-        settled_at: i64,
-    ) -> Result<()> {
-        (**self).settle_batch_item(custom_id, status, response_text, error, settled_at)
-    }
-    fn list_pending_approvals(&self) -> Result<Vec<Approval>> {
-        (**self).list_pending_approvals()
-    }
-    fn upsert_task(&self, task: &AgentTask) -> Result<()> {
-        (**self).upsert_task(task)
-    }
-    fn get_task(&self, id: &str) -> Result<Option<AgentTask>> {
-        (**self).get_task(id)
-    }
-    fn list_tasks(&self, limit: usize) -> Result<Vec<AgentTask>> {
-        (**self).list_tasks(limit)
-    }
-    fn list_tasks_awaiting_review(&self) -> Result<Vec<AgentTask>> {
-        (**self).list_tasks_awaiting_review()
-    }
-    fn decide_task(
-        &self,
-        id: &str,
-        status: TaskStatus,
-        via: DecidedVia,
-        note: Option<&str>,
-        decided_at: i64,
-    ) -> Result<TaskOutcome> {
-        (**self).decide_task(id, status, via, note, decided_at)
-    }
-    fn decide_approval(
-        &self,
-        id: &str,
-        decision: Decision,
-        via: DecidedVia,
-        decided_at: i64,
-    ) -> Result<DecisionOutcome> {
-        (**self).decide_approval(id, decision, via, decided_at)
-    }
-    fn cache_get(&self, key_hash: &str, now_ms: i64) -> Result<Option<String>> {
-        (**self).cache_get(key_hash, now_ms)
-    }
-    fn cache_put(&self, key_hash: &str, response: &str, now_ms: i64, ttl_ms: i64) -> Result<()> {
-        (**self).cache_put(key_hash, response, now_ms, ttl_ms)
-    }
-    fn cache_purge_expired(&self, now_ms: i64) -> Result<usize> {
-        (**self).cache_purge_expired(now_ms)
-    }
-    fn upsert_device(&self, device: &Device) -> Result<()> {
-        (**self).upsert_device(device)
-    }
-    fn list_devices(&self) -> Result<Vec<Device>> {
-        (**self).list_devices()
-    }
-    fn get_device(&self, id: &str) -> Result<Option<Device>> {
-        (**self).get_device(id)
-    }
-}
-
-/// Borrowed stores are stores. Lets a caller hand a `&SqliteStore` to anything
-/// generic over `S: Store` — notably [`crate::ledger::Ledger`], which takes
-/// ownership — without giving up the original handle.
-impl<S: Store + ?Sized> Store for &S {
-    fn upsert_machine(&self, machine: &Machine) -> Result<()> {
-        (**self).upsert_machine(machine)
-    }
-    fn get_machine(&self, id: &str) -> Result<Option<Machine>> {
-        (**self).get_machine(id)
-    }
-    fn upsert_repo(&self, repo: &Repo) -> Result<()> {
-        (**self).upsert_repo(repo)
-    }
-    fn get_repo(&self, id: &str) -> Result<Option<Repo>> {
-        (**self).get_repo(id)
-    }
-    fn upsert_session(&self, session: &Session) -> Result<()> {
-        (**self).upsert_session(session)
-    }
-    fn get_session(&self, id: &str) -> Result<Option<Session>> {
-        (**self).get_session(id)
-    }
-    fn list_sessions(&self) -> Result<Vec<Session>> {
-        (**self).list_sessions()
-    }
-    fn find_session_by_agent_id(&self, agent_session_id: &str) -> Result<Option<Session>> {
-        (**self).find_session_by_agent_id(agent_session_id)
-    }
-    fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>> {
-        (**self).find_repo_by_path(machine_id, path)
-    }
-    fn record_usage(&self, event: &UsageEvent) -> Result<()> {
-        (**self).record_usage(event)
-    }
-    fn list_usage(&self, session_id: &str, range: TimeRange) -> Result<Vec<UsageEvent>> {
-        (**self).list_usage(session_id, range)
-    }
-    fn session_budget(&self, session_id: &str) -> Result<Budget> {
-        (**self).session_budget(session_id)
-    }
-    fn repo_budget(&self, repo_id: &str) -> Result<Budget> {
-        (**self).repo_budget(repo_id)
-    }
-    fn upsert_plan(&self, plan: &Plan) -> Result<()> {
-        (**self).upsert_plan(plan)
-    }
-    fn get_plan(&self, id: &str) -> Result<Option<Plan>> {
-        (**self).get_plan(id)
-    }
-    fn replace_plan_steps(&self, plan_id: &str, steps: &[PlanStep]) -> Result<()> {
-        (**self).replace_plan_steps(plan_id, steps)
-    }
-    fn list_plan_steps(&self, plan_id: &str) -> Result<Vec<PlanStep>> {
-        (**self).list_plan_steps(plan_id)
-    }
-    fn update_plan_step(&self, step: &PlanStep) -> Result<()> {
-        (**self).update_plan_step(step)
-    }
-    fn create_approval(&self, approval: &Approval) -> Result<()> {
-        (**self).create_approval(approval)
-    }
-    fn get_approval(&self, id: &str) -> Result<Option<Approval>> {
-        (**self).get_approval(id)
-    }
-    fn enqueue_batch_item(&self, item: &BatchItem) -> Result<()> {
-        (**self).enqueue_batch_item(item)
-    }
-    fn list_queued_batch_items(&self, limit: usize) -> Result<Vec<BatchItem>> {
-        (**self).list_queued_batch_items(limit)
-    }
-    fn list_submitted_batch_items(&self) -> Result<Vec<BatchItem>> {
-        (**self).list_submitted_batch_items()
-    }
-    fn get_batch_item(&self, id: &str) -> Result<Option<BatchItem>> {
-        (**self).get_batch_item(id)
-    }
-    fn list_batch_items_for_session(&self, session_id: &str) -> Result<Vec<BatchItem>> {
-        (**self).list_batch_items_for_session(session_id)
-    }
-    fn mark_batch_submitted(
-        &self,
-        item_ids: &[String],
-        batch_id: &str,
-        submitted_at: i64,
-    ) -> Result<()> {
-        (**self).mark_batch_submitted(item_ids, batch_id, submitted_at)
-    }
-    fn settle_batch_item(
-        &self,
-        custom_id: &str,
-        status: BatchStatus,
-        response_text: Option<&str>,
-        error: Option<&str>,
-        settled_at: i64,
-    ) -> Result<()> {
-        (**self).settle_batch_item(custom_id, status, response_text, error, settled_at)
-    }
-    fn list_pending_approvals(&self) -> Result<Vec<Approval>> {
-        (**self).list_pending_approvals()
-    }
-    fn upsert_task(&self, task: &AgentTask) -> Result<()> {
-        (**self).upsert_task(task)
-    }
-    fn get_task(&self, id: &str) -> Result<Option<AgentTask>> {
-        (**self).get_task(id)
-    }
-    fn list_tasks(&self, limit: usize) -> Result<Vec<AgentTask>> {
-        (**self).list_tasks(limit)
-    }
-    fn list_tasks_awaiting_review(&self) -> Result<Vec<AgentTask>> {
-        (**self).list_tasks_awaiting_review()
-    }
-    fn decide_task(
-        &self,
-        id: &str,
-        status: TaskStatus,
-        via: DecidedVia,
-        note: Option<&str>,
-        decided_at: i64,
-    ) -> Result<TaskOutcome> {
-        (**self).decide_task(id, status, via, note, decided_at)
-    }
-    fn decide_approval(
-        &self,
-        id: &str,
-        decision: Decision,
-        via: DecidedVia,
-        decided_at: i64,
-    ) -> Result<DecisionOutcome> {
-        (**self).decide_approval(id, decision, via, decided_at)
-    }
-    fn cache_get(&self, key_hash: &str, now_ms: i64) -> Result<Option<String>> {
-        (**self).cache_get(key_hash, now_ms)
-    }
-    fn cache_put(&self, key_hash: &str, response: &str, now_ms: i64, ttl_ms: i64) -> Result<()> {
-        (**self).cache_put(key_hash, response, now_ms, ttl_ms)
-    }
-    fn cache_purge_expired(&self, now_ms: i64) -> Result<usize> {
-        (**self).cache_purge_expired(now_ms)
-    }
-    fn upsert_device(&self, device: &Device) -> Result<()> {
-        (**self).upsert_device(device)
-    }
-    fn list_devices(&self) -> Result<Vec<Device>> {
-        (**self).list_devices()
-    }
-    fn get_device(&self, id: &str) -> Result<Option<Device>> {
-        (**self).get_device(id)
-    }
 }
 
 /// The result of racing a task review against another device.
