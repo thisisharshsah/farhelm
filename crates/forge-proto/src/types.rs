@@ -1,9 +1,14 @@
-//! Domain types shared by the runner, the gateway, and the relay.
+//! The types the runner, the gateway, the relay and every client agree on.
 //!
 //! Every enum that lands in a `TEXT` column has an explicit `as_str` /
 //! `FromStr` pair. The string form is the storage and wire format, so it is
 //! part of the schema contract — do not change a variant's string without a
 //! migration.
+//!
+//! Nothing here decides anything. The rules that read these shapes — what makes
+//! a command destructive, when a budget is exhausted, what a step transition is
+//! allowed to be — live in `forge-domain`, so that a client can depend on the
+//! contract without linking the policy.
 
 use std::fmt;
 use std::str::FromStr;

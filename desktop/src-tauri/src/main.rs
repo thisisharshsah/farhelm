@@ -280,12 +280,12 @@ async fn build_state(settings: &Settings) -> Arc<AppState> {
 
 /// The relay channel this machine publishes on.
 ///
-/// A prefix of its own public key: stable across restarts without being stored
-/// anywhere, and unguessable, which is what keeps a stranger from joining the
-/// channel and watching ciphertext go past.
+/// The rule itself is [`forge_proto::channel_for`]. It used to be written out
+/// here and again in `forge-runner`'s binary; both can be pointed at the same
+/// `forge.key`, so a drift between them would have published on a channel no
+/// paired device listens to, silently.
 fn channel_for(identity: &forge_crypto::Identity) -> String {
-    let key = identity.public_key().to_string();
-    format!("forge-{}", key.chars().take(16).collect::<String>())
+    forge_proto::channel_for(identity.public_key().as_str())
 }
 
 /// The tray icon.

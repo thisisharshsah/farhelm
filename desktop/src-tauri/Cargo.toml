@@ -11,6 +11,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 forge-core.workspace = true
+forge-proto.workspace = true
 forge-crypto.workspace = true
 forge-gateway.workspace = true
 forge-runner = { path = "../../crates/forge-runner" }

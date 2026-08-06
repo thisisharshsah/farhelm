@@ -12,7 +12,16 @@ pub mod price;
 pub mod risk;
 pub mod store;
 pub mod time;
-pub mod types;
+
+/// The wire contract, re-exported.
+///
+/// These types moved to `forge-proto` — they are what four separate client
+/// implementations agree on, and they had no business living behind a crate
+/// that also opens SQLite connections. This re-export keeps the old paths
+/// working while the callers are migrated; it goes away when they are.
+pub mod types {
+    pub use forge_proto::types::*;
+}
 
 pub use plan::{ParsedPlan, PlanProgress};
 pub use price::{CacheTtl, ModelPrice, Quote, QuoteContext, quote};

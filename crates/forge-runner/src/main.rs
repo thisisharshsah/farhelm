@@ -361,7 +361,7 @@ async fn serve_async(flags: Flags) -> Fallible {
         url: url.clone(),
         // The channel is derived from the machine identity so it is stable
         // across restarts and unique per runner.
-        channel: format!("forge-{}", machine_channel(&flags.key, &identity)),
+        channel: machine_channel(&identity),
     });
 
     // The gateway is only constructed when a provider is configured, so the
@@ -676,9 +676,8 @@ fn spawn_demo_activity(state: Arc<AppState>, session_id: String) {
 /// Derived from the public key rather than random, so it survives a restart
 /// without another file to keep, and derived rather than *being* the key so the
 /// channel id — which the relay sees — is not the thing devices encrypt to.
-fn machine_channel(_key_path: &str, identity: &forge_crypto::Identity) -> String {
-    let public = identity.public_key().to_string();
-    public.chars().take(16).collect()
+fn machine_channel(identity: &forge_crypto::Identity) -> String {
+    forge_proto::channel_for(identity.public_key().as_str())
 }
 
 /// Mint a pairing offer against a running daemon and render it as a QR code.
@@ -858,21 +857,18 @@ mod channel_tests {
 
     /// The exact channel this key produces.
     ///
-    /// The Tauri app derives the same string from the same key with its own copy
-    /// of this rule (`desktop/src-tauri/src/main.rs`), and asserts this same
-    /// constant. Both binaries can be pointed at one `forge.key`, so they must
-    /// agree — a drift publishes on a channel no paired device is listening to,
-    /// and nothing anywhere reports an error.
+    /// Both this binary and the Tauri app now call `forge_proto::channel_for`,
+    /// but each keeps its own copy of this assertion: they can be pointed at one
+    /// `forge.key`, and the failure mode if they ever diverge again is silence —
+    /// the runner publishes on a channel no paired device is listening to, and
+    /// nothing anywhere reports an error.
     #[test]
     fn the_channel_rule_is_the_one_the_desktop_app_uses() {
         let identity = forge_crypto::Identity::from_secret_base64(
             "tapeuo2KzNeIV8FIWkWZ4JtK39yyr83NmVW2pBYYkaU",
         )
         .unwrap();
-        assert_eq!(
-            format!("forge-{}", machine_channel("unused.key", &identity)),
-            "forge-kFLWAF8DqRIvUm8g"
-        );
+        assert_eq!(machine_channel(&identity), "forge-kFLWAF8DqRIvUm8g");
     }
 }
 

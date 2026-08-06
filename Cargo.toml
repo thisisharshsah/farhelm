@@ -5,9 +5,10 @@ members = [
   "crates/forge-core",
   "crates/forge-crypto",
   "crates/forge-gateway",
+  "crates/forge-proto",
   "crates/forge-runner",
   "crates/forge-relay",
-    "desktop/src-tauri",
+  "desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -21,6 +22,7 @@ forge-agent = { path = "crates/forge-agent" }
 forge-core = { path = "crates/forge-core" }
 forge-crypto = { path = "crates/forge-crypto" }
 forge-gateway = { path = "crates/forge-gateway" }
+forge-proto = { path = "crates/forge-proto" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
