@@ -17,7 +17,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use forge_core::types::Usage;
+use forge_proto::types::Usage;
 use serde::{Deserialize, Serialize};
 
 use crate::prompt::{PromptPlan, approx_tokens};
@@ -588,7 +588,7 @@ impl ModelClient for StubClient {
 mod tests {
     use super::*;
     use crate::prompt::{StableContext, assemble};
-    use forge_core::price::price_of;
+    use forge_domain::price::price_of;
 
     fn request(model: &str, tail: &str) -> ModelRequest {
         let stable = StableContext {

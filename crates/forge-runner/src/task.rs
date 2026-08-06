@@ -24,7 +24,7 @@
 //!    without any of them knowing tasks exist.
 //! 2. **A destructive command still cannot be cleared from a wrist.** The
 //!    `run` tool raises an ordinary [`Approval`], through
-//!    [`forge_core::risk::classify_with`] and the same policy file. Nothing
+//!    [`forge_domain::risk::classify_with`] and the same policy file. Nothing
 //!    about being the runner's own agent buys it a shortcut.
 
 use std::path::{Path, PathBuf};
@@ -32,10 +32,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use forge_agent::{Outcome, TaskSpec, Verdict, Workspace};
-use forge_core::id::new_id;
-use forge_core::store::{TaskOutcome, prelude::*};
-use forge_core::time::now_ms;
-use forge_core::types::{
+use forge_app::id::new_id;
+use forge_app::store::{TaskOutcome, prelude::*};
+use forge_app::time::now_ms;
+use forge_proto::types::{
     Agent, AgentTask, Approval, DecidedVia, Decision, Repo, Session, SessionStatus, TaskStatus,
 };
 use serde::Deserialize;
@@ -123,7 +123,7 @@ pub enum TaskError {
     NoProvider,
     /// The change set could not be written. The task stays reviewable.
     Apply(String),
-    Store(forge_core::store::StoreError),
+    Store(forge_app::store::StoreError),
 }
 
 impl std::fmt::Display for TaskError {
@@ -151,8 +151,8 @@ impl std::fmt::Display for TaskError {
 
 impl std::error::Error for TaskError {}
 
-impl From<forge_core::store::StoreError> for TaskError {
-    fn from(err: forge_core::store::StoreError) -> Self {
+impl From<forge_app::store::StoreError> for TaskError {
+    fn from(err: forge_app::store::StoreError) -> Self {
         TaskError::Store(err)
     }
 }
@@ -257,7 +257,7 @@ impl forge_agent::Supervisor for RunnerSupervisor {
     async fn request(&self, tool: &str, payload: &str) -> Verdict {
         // Server-side, with the local policy file layered on — the same call
         // the hook bridge makes. A native agent gets no dispensation.
-        let risk = forge_core::risk::classify_with(&self.state.policy, tool, payload);
+        let risk = forge_domain::risk::classify_with(&self.state.policy, tool, payload);
 
         let approval = Approval {
             id: new_id(),
@@ -601,7 +601,7 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
 /// Approve or reject a proposed change set.
 ///
 /// Approving writes the files. That is the only place in this crate that does,
-/// and it happens after [`forge_core::store::Store::decide_task`] has already
+/// and it happens after [`forge_app::store::Store::decide_task`] has already
 /// won the race against every other device looking at the same card — so two
 /// phones tapping at once apply the change set once.
 pub fn review(
@@ -755,7 +755,7 @@ fn publish(state: &AppState, task: &AgentTask) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::store::SqliteStore;
+    use forge_sqlite::SqliteStore;
 
     fn state() -> Arc<AppState> {
         AppState::with_gateway(SqliteStore::open_in_memory().unwrap(), |_| None)

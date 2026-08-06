@@ -14,8 +14,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use forge_core::store::{BatchStore, LedgerStore, ResponseCache, Result, SessionStore, TimeRange};
-use forge_core::types::{BatchItem, BatchStatus, Budget, Session, UsageEvent};
+use forge_app::store::{BatchStore, LedgerStore, ResponseCache, Result, SessionStore, TimeRange};
+use forge_proto::types::{BatchItem, BatchStatus, Budget, Session, UsageEvent};
 
 /// Everything the cost pipeline can reach, and nothing else.
 struct FakeStore {
@@ -145,9 +145,9 @@ fn the_gateway_needs_four_ports_not_the_whole_store() {
 /// The pipeline's budget guard, driven entirely through the fake.
 #[tokio::test]
 async fn an_exhausted_session_budget_stops_a_call_without_touching_sqlite() {
-    use forge_core::types::{Agent, SessionStatus, TaskType};
     use forge_gateway::dispatch::StubClient;
     use forge_gateway::{CompleteRequest, Gateway, GatewayConfig, GatewayError};
+    use forge_proto::types::{Agent, SessionStatus, TaskType};
 
     let fake = FakeStore {
         session: Some(Session {

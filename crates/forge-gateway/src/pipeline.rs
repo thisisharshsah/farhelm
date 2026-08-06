@@ -22,13 +22,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use forge_core::id::new_id;
-use forge_core::ledger::{Call, Ledger, LedgerError};
-use forge_core::price::{UnknownModel, price_of};
-use forge_core::store::{BatchStore, LedgerStore, ResponseCache, SessionStore, StoreError};
-use forge_core::time::now_ms;
-use forge_core::types::{Avoided, BatchItem, BatchStatus, Budget, TaskType, Tier, Usage};
+use forge_app::id::new_id;
+use forge_app::ledger::{Call, Ledger, LedgerError};
+use forge_app::store::{BatchStore, LedgerStore, ResponseCache, SessionStore, StoreError};
+use forge_app::time::now_ms;
 use forge_domain::BudgetRules as _;
+use forge_domain::price::{UnknownModel, price_of};
+use forge_proto::types::{Avoided, BatchItem, BatchStatus, Budget, TaskType, Tier, Usage};
 
 use crate::cache;
 use crate::compaction;
@@ -665,9 +665,10 @@ mod tests {
     use super::*;
     use crate::dispatch::StubClient;
     use crate::prompt::Turn;
-    use forge_core::store::{FleetStore, SessionStore};
-    use forge_core::store::{SqliteStore, TimeRange};
-    use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus};
+    use forge_app::store::TimeRange;
+    use forge_app::store::{FleetStore, SessionStore};
+    use forge_proto::types::{Agent, Machine, Repo, Session, SessionStatus};
+    use forge_sqlite::SqliteStore;
 
     const NOW: i64 = 1_785_369_600_000;
 
@@ -1041,10 +1042,11 @@ mod compaction_tests {
     use super::*;
     use crate::compaction::CompactionPolicy;
     use crate::dispatch::StubClient;
-    use forge_core::store::{SqliteStore, TimeRange};
+    use forge_app::store::TimeRange;
+    use forge_sqlite::SqliteStore;
 
     /// Every usage row for a session, whenever it happened.
-    fn usage(gw: &Gateway<SqliteStore, StubClient>) -> Vec<forge_core::types::UsageEvent> {
+    fn usage(gw: &Gateway<SqliteStore, StubClient>) -> Vec<forge_proto::types::UsageEvent> {
         gw.store.list_usage("s1", TimeRange::ALL).unwrap()
     }
 

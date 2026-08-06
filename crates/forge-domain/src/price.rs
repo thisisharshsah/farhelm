@@ -127,7 +127,7 @@ impl fmt::Display for UnknownModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "no price-table entry for model {:?} — add one to forge_core::price::PRICES \
+            "no price-table entry for model {:?} — add one to forge_domain::price::PRICES \
              or prefix the id with {LOCAL_MODEL_PREFIX:?} if it is self-hosted",
             self.0
         )

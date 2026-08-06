@@ -36,8 +36,8 @@
 
 use std::time::Duration;
 
-use forge_core::store::{BatchStore, LedgerStore};
-use forge_core::types::{BatchItem, BatchStatus, Tier, Usage};
+use forge_app::store::{BatchStore, LedgerStore};
+use forge_proto::types::{BatchItem, BatchStatus, Tier, Usage};
 use serde::{Deserialize, Serialize};
 
 use crate::dispatch::DispatchError;
@@ -188,9 +188,9 @@ pub fn parse_result_line(line: &str) -> Option<BatchResult> {
 
 #[derive(Debug)]
 pub enum BatchError {
-    Store(forge_core::store::StoreError),
+    Store(forge_app::store::StoreError),
     Dispatch(DispatchError),
-    Ledger(forge_core::ledger::LedgerError),
+    Ledger(forge_app::ledger::LedgerError),
 }
 
 impl std::fmt::Display for BatchError {
@@ -205,8 +205,8 @@ impl std::fmt::Display for BatchError {
 
 impl std::error::Error for BatchError {}
 
-impl From<forge_core::store::StoreError> for BatchError {
-    fn from(err: forge_core::store::StoreError) -> Self {
+impl From<forge_app::store::StoreError> for BatchError {
+    fn from(err: forge_app::store::StoreError) -> Self {
         BatchError::Store(err)
     }
 }
@@ -217,8 +217,8 @@ impl From<DispatchError> for BatchError {
     }
 }
 
-impl From<forge_core::ledger::LedgerError> for BatchError {
-    fn from(err: forge_core::ledger::LedgerError) -> Self {
+impl From<forge_app::ledger::LedgerError> for BatchError {
+    fn from(err: forge_app::ledger::LedgerError) -> Self {
         BatchError::Ledger(err)
     }
 }
@@ -364,14 +364,14 @@ impl<S: BatchStore + LedgerStore, C: BatchClient> BatchQueue<S, C> {
         // own pricing. This is the one place it is legitimate to claim it: the
         // tokens really did go through the Batch API. Everywhere else that flag
         // would be a discount the bill never got.
-        let call = forge_core::ledger::Call::new(
+        let call = forge_app::ledger::Call::new(
             &item.session_id,
             &item.model,
             Tier::Batch,
             item.task_type,
             usage,
         );
-        let recorded = forge_core::ledger::Ledger::new(&self.store).record_at(call, now_ms)?;
+        let recorded = forge_app::ledger::Ledger::new(&self.store).record_at(call, now_ms)?;
         Ok(recorded.cost_usd)
     }
 }
@@ -494,9 +494,9 @@ async fn decode(response: reqwest::Response) -> Result<BatchState, DispatchError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::store::SqliteStore;
-    use forge_core::store::{FleetStore, SessionStore};
-    use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus, TaskType};
+    use forge_app::store::{FleetStore, SessionStore};
+    use forge_proto::types::{Agent, Machine, Repo, Session, SessionStatus, TaskType};
+    use forge_sqlite::SqliteStore;
     use std::sync::Mutex;
 
     const NOW: i64 = 1_785_369_600_000;

@@ -10,11 +10,11 @@
 
 use std::sync::Arc;
 
-use forge_core::plan::{self};
-use forge_core::store::{DecisionOutcome, prelude::*};
-use forge_core::time::now_ms;
-use forge_core::types::{DecidedVia, Decision, PlanStepStatus};
+use forge_app::store::{DecisionOutcome, prelude::*};
+use forge_app::time::now_ms;
 use forge_domain::ApprovalRules as _;
+use forge_domain::plan::{self};
+use forge_proto::types::{DecidedVia, Decision, PlanStepStatus};
 use serde::Serialize;
 
 use crate::session::SessionManager;
@@ -32,7 +32,7 @@ pub enum CommandError {
     Forbidden(String),
     /// Valid request, wrong state.
     Conflict(String),
-    Store(forge_core::store::StoreError),
+    Store(forge_app::store::StoreError),
     Terminal(String),
     /// The runner failed to assemble a reply. Not the device's fault.
     Internal(String),
@@ -53,8 +53,8 @@ impl std::fmt::Display for CommandError {
 
 impl std::error::Error for CommandError {}
 
-impl From<forge_core::store::StoreError> for CommandError {
-    fn from(err: forge_core::store::StoreError) -> Self {
+impl From<forge_app::store::StoreError> for CommandError {
+    fn from(err: forge_app::store::StoreError) -> Self {
         CommandError::Store(err)
     }
 }
@@ -76,7 +76,7 @@ pub enum Outcome {
     },
     PlanChanged {
         session_id: String,
-        steps: Vec<forge_core::types::PlanStep>,
+        steps: Vec<forge_proto::types::PlanStep>,
     },
     /// The answer to [`Command::Snapshot`]. Goes back to the asking device only,
     /// not to every paired device — nobody else asked.
@@ -87,7 +87,7 @@ pub enum Outcome {
     DashboardSnapshot(Box<forge_proto::views::DashboardView>),
     TaskReviewed {
         task_id: String,
-        status: forge_core::types::TaskStatus,
+        status: forge_proto::types::TaskStatus,
         /// False when another device got there first.
         recorded: bool,
     },
@@ -351,8 +351,8 @@ async fn plan_control(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::store::SqliteStore;
-    use forge_core::types::{Agent, Approval, Repo, Risk, Session, SessionStatus};
+    use forge_proto::types::{Agent, Approval, Repo, Risk, Session, SessionStatus};
+    use forge_sqlite::SqliteStore;
 
     const NOW: i64 = 1_785_369_600_000;
 
@@ -406,8 +406,8 @@ mod tests {
 
     /// Bill one call to the fixture's session so the dashboard has numbers.
     fn spend(state: &Arc<AppState>, usd_model: &str, at_ms: i64) {
-        use forge_core::ledger::{Call, Ledger};
-        use forge_core::types::{TaskType, Tier, Usage};
+        use forge_app::ledger::{Call, Ledger};
+        use forge_proto::types::{TaskType, Tier, Usage};
 
         Ledger::new(&state.store)
             .record_at(

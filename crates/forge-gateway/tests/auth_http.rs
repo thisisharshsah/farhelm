@@ -16,7 +16,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
-use forge_core::price::price_of;
+use forge_domain::price::price_of;
 use forge_gateway::dispatch::{
     ANTHROPIC_VERSION, AnthropicClient, Credential, FALLBACK_BETA, ModelClient, ModelRequest,
     OAUTH_BETA,

@@ -5,19 +5,20 @@
 //! session manager and hook bridge (M1), the `/v1/complete` gateway pipeline
 //! (M2), and the relay link (M3).
 
+use forge_sqlite::SqliteStore;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use forge_core::id::new_id;
-use forge_core::ledger::{Call, Ledger};
-use forge_core::store::{SqliteStore, TimeRange, prelude::*};
-use forge_core::time::now_ms;
-use forge_core::types::{
-    Agent, Approval, Avoided, Machine, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,
-};
+use forge_app::id::new_id;
+use forge_app::ledger::{Call, Ledger};
+use forge_app::store::{TimeRange, prelude::*};
+use forge_app::time::now_ms;
 use forge_domain::BudgetRules as _;
 use forge_gateway::{AnthropicClient, Gateway, GatewayConfig};
+use forge_proto::types::{
+    Agent, Approval, Avoided, Machine, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,
+};
 
 use forge_runner::state::{self, AppState, ServerEvent};
 use forge_runner::{api, hook_cli, relay, seed, service, session, terminal};
@@ -254,7 +255,7 @@ fn install_service(flags: &Flags) -> Fallible {
 fn installed_agents() -> String {
     let mut available = Vec::new();
     let mut missing = Vec::new();
-    for spec in forge_core::agent::AGENTS {
+    for spec in forge_domain::agent::AGENTS {
         if spec.binary.is_empty() {
             continue;
         }
@@ -307,7 +308,7 @@ fn policy_command(flags: &Flags, rest: &[String]) -> Fallible {
     if !std::path::Path::new(path).exists() {
         println!("no policy file at {path} — the built-in rules apply on their own");
         println!("\nTo add your own, write this and edit it:\n");
-        println!("{}", forge_core::risk::EXAMPLE_POLICY);
+        println!("{}", forge_domain::risk::EXAMPLE_POLICY);
     } else {
         println!("{path}: {added} rule(s) added, {retired} built-in(s) retired");
         for pattern in &policy.destructive {
@@ -326,11 +327,11 @@ fn policy_command(flags: &Flags, rest: &[String]) -> Fallible {
     }
 
     let command = rest.join(" ");
-    let risk = forge_core::risk::classify_with(&policy, "Bash", &command);
+    let risk = forge_domain::risk::classify_with(&policy, "Bash", &command);
     println!("\n{command}");
     println!("  → {risk}");
     match risk {
-        forge_core::types::Risk::Destructive => {
+        forge_proto::types::Risk::Destructive => {
             println!("  phone only — this cannot be approved from a watch or a notification")
         }
         _ => println!("  can be approved from any paired device"),

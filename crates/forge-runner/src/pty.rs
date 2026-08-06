@@ -39,7 +39,7 @@ const SCROLLBACK_LINES: usize = 2_000;
 /// The size we tell the agent its terminal is.
 ///
 /// Agents lay out boxes and progress bars to fit. Too narrow and the prompt
-/// detection in [`forge_core::agent`] sees a wrapped, unrecognisable question;
+/// detection in [`forge_domain::agent`] sees a wrapped, unrecognisable question;
 /// too wide and nothing renders sensibly on a phone.
 const COLS: u16 = 120;
 const ROWS: u16 = 40;
@@ -287,7 +287,7 @@ pub fn binary_exists(binary: &str) -> bool {
 ///
 /// Agents colour their output and redraw with cursor moves. Left in, the escape
 /// bytes reach the phone as mojibake and — worse — break the prompt patterns in
-/// [`forge_core::agent`], because `\x1b[32mProceed?` does not contain `proceed?`
+/// [`forge_domain::agent`], because `\x1b[32mProceed?` does not contain `proceed?`
 /// at a position any human would recognise.
 pub fn strip_ansi(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -348,9 +348,9 @@ mod tests {
         let plain = strip_ansi(painted);
         assert_eq!(plain, "Proceed? (y/n)");
         assert!(
-            forge_core::agent::detect_prompt(
+            forge_domain::agent::detect_prompt(
                 &plain,
-                forge_core::agent::spec(forge_core::types::Agent::OpenCode)
+                forge_domain::agent::spec(forge_proto::types::Agent::OpenCode)
                     .dialect()
                     .unwrap()
             )

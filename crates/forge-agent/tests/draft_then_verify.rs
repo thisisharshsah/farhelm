@@ -21,10 +21,11 @@
 
 use forge_agent::script::ScriptedClient;
 use forge_agent::{TaskSpec, run};
-use forge_core::store::{SqliteStore, TimeRange, prelude::*};
-use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus, Tier};
+use forge_app::store::{TimeRange, prelude::*};
 use forge_gateway::router::Models;
 use forge_gateway::{Gateway, GatewayConfig};
+use forge_proto::types::{Agent, Machine, Repo, Session, SessionStatus, Tier};
+use forge_sqlite::SqliteStore;
 
 const NOW: i64 = 1_800_000_000_000;
 /// Turns of drafting. A real task is this order of magnitude; the ratio between
@@ -156,7 +157,7 @@ async fn replay(models: Models, verify: bool, label: &str) -> Replay {
     );
 
     let events = store.list_usage("s", TimeRange::ALL).unwrap();
-    let frontier = forge_core::price::price_of("claude-opus-5").unwrap();
+    let frontier = forge_domain::price::price_of("claude-opus-5").unwrap();
 
     Replay {
         usd: events.iter().map(|event| event.cost_usd).sum(),

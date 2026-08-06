@@ -101,7 +101,7 @@ async fn desktop_status(State(state): State<Arc<AppState>>) -> Json<DesktopStatu
         relay: state.relay.as_ref().map(|info| info.url.clone()),
         channel: state.relay.as_ref().map(|info| info.channel.clone()),
         data_directory: Settings::directory().display().to_string(),
-        agents: forge_core::agent::AGENTS
+        agents: forge_domain::agent::AGENTS
             .iter()
             .map(|spec| AgentStatus {
                 id: spec.agent.as_str().to_owned(),
@@ -227,7 +227,7 @@ async fn bind() -> std::io::Result<tokio::net::TcpListener> {
 }
 
 async fn build_state(settings: &Settings) -> Arc<AppState> {
-    let store = forge_core::store::SqliteStore::open(settings.database_path())
+    let store = forge_sqlite::SqliteStore::open(settings.database_path())
         .expect("could not open the RelayForge database");
 
     let identity = Arc::new(
@@ -396,7 +396,7 @@ mod tests {
         // protocol, where every same-origin `/v1/*` fetch missed the embedded
         // server entirely and every screen read "cannot reach the runner".
         let state = AppState::build(
-            forge_core::store::SqliteStore::open_in_memory().unwrap(),
+            forge_sqlite::SqliteStore::open_in_memory().unwrap(),
             |_| None,
             Arc::new(forge_crypto::Identity::generate()),
             None,

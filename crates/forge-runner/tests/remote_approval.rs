@@ -6,14 +6,15 @@
 //! own keypair. The phone never touches the runner's HTTP API — everything goes
 //! through the relay as ciphertext, which is the whole point.
 
+use forge_sqlite::SqliteStore;
 use std::sync::Arc;
 use std::time::Duration;
 
-use forge_core::store::{SqliteStore, prelude::*};
-use forge_core::types::{
+use forge_app::store::prelude::*;
+use forge_crypto::{Envelope, Identity};
+use forge_proto::types::{
     Agent, Approval, Decision, Device, DeviceKind, Machine, Repo, Risk, Session, SessionStatus,
 };
-use forge_crypto::{Envelope, Identity};
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -220,7 +221,7 @@ async fn a_phone_approves_through_the_relay_and_the_runner_records_it() {
     assert_eq!(approval.decision, Some(Decision::Approved));
     assert_eq!(
         approval.decided_via,
-        Some(forge_core::types::DecidedVia::Phone),
+        Some(forge_proto::types::DecidedVia::Phone),
         "the transport must attest which surface decided"
     );
 }

@@ -577,10 +577,11 @@ impl TaskStatus {
 
 /// One run of the native agent: a prompt, and the change set it proposed.
 ///
-/// The two JSON columns are opaque strings here, like `BatchItem::request_json`.
-/// `forge-core` is the domain crate and deliberately does not depend on
-/// `serde_json`; the shapes inside them belong to `forge-agent`, which is where
-/// they are parsed.
+/// `staged_json` is an opaque string here, like `BatchItem::request_json`: it is
+/// `forge-agent`'s staging overlay, which is that crate's business and nobody
+/// else's. `diff_json` is a serialised [`crate::diff::ChangeSet`] — a shape this
+/// crate does own — and is stored as text because it is written once and read
+/// whole, never queried into.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentTask {
     pub id: String,

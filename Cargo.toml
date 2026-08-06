@@ -2,12 +2,13 @@
 resolver = "3"
 members = [
   "crates/forge-agent",
-  "crates/forge-core",
+  "crates/forge-app",
   "crates/forge-crypto",
   "crates/forge-domain",
   "crates/forge-gateway",
   "crates/forge-proto",
   "crates/forge-runner",
+  "crates/forge-sqlite",
   "crates/forge-relay",
   "desktop/src-tauri",
 ]
@@ -20,11 +21,12 @@ rust-version = "1.90"
 
 [workspace.dependencies]
 forge-agent = { path = "crates/forge-agent" }
-forge-core = { path = "crates/forge-core" }
+forge-app = { path = "crates/forge-app" }
 forge-crypto = { path = "crates/forge-crypto" }
 forge-domain = { path = "crates/forge-domain" }
 forge-gateway = { path = "crates/forge-gateway" }
 forge-proto = { path = "crates/forge-proto" }
+forge-sqlite = { path = "crates/forge-sqlite" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

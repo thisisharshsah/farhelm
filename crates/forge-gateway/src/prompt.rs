@@ -23,7 +23,7 @@
 
 use std::fmt::Write as _;
 
-use forge_core::price::ModelPrice;
+use forge_domain::price::ModelPrice;
 use serde::{Deserialize, Serialize};
 
 /// The API's ceiling. Four is plenty for this layout, which uses three.
@@ -343,7 +343,7 @@ pub fn assemble(stable: &StableContext, dynamic: &str, price: &ModelPrice) -> Pr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::price::price_of;
+    use forge_domain::price::price_of;
 
     fn opus() -> ModelPrice {
         price_of("claude-opus-5").unwrap()

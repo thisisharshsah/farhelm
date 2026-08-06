@@ -4,14 +4,15 @@
 //! realistic shapes before the tmux session manager (M1) exists. Costs are real
 //! — they run through the actual price table and ledger, not hardcoded strings.
 
-use forge_core::id::new_id;
-use forge_core::ledger::{Call, Ledger};
-use forge_core::plan;
-use forge_core::store::{SqliteStore, prelude::*};
-use forge_core::types::{
+use forge_app::id::new_id;
+use forge_app::ledger::{Call, Ledger};
+use forge_app::store::prelude::*;
+use forge_domain::plan;
+use forge_proto::types::{
     Agent, Approval, Avoided, Machine, Plan, PlanStep, Repo, Risk, Session, SessionStatus,
     TaskType, Tier, Usage,
 };
+use forge_sqlite::SqliteStore;
 
 pub struct SeedIds {
     /// The session the wireframes centre on: mid-plan, awaiting approval.
@@ -293,7 +294,7 @@ pub const DEMO_OUTPUT: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::plan::PlanProgress;
+    use forge_domain::plan::PlanProgress;
     use forge_domain::{ApprovalRules as _, BudgetRules as _};
 
     const NOW_MS: i64 = 1_785_369_600_000;

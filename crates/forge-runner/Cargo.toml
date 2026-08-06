@@ -8,7 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 forge-agent.workspace = true
-forge-core.workspace = true
+forge-app.workspace = true
+forge-sqlite.workspace = true
 forge-domain.workspace = true
 forge-proto.workspace = true
 forge-crypto.workspace = true

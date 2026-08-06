@@ -11,13 +11,14 @@
 //! The number they pin is a *shape*, not a constant: reads must not scale with
 //! the number of sessions when every session points at the same repo.
 
+use forge_sqlite::SqliteStore;
 use std::sync::Arc;
 
-use forge_core::store::{SqliteStore, prelude::*};
-use forge_core::types::{
+use forge_app::store::prelude::*;
+use forge_crypto::Identity;
+use forge_proto::types::{
     Agent, Approval, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,
 };
-use forge_crypto::Identity;
 use forge_runner::state::AppState;
 use forge_runner::test_support;
 use forge_runner::views::{Lookups, build_fleet_view, view_of};
@@ -61,9 +62,9 @@ fn fixture(sessions: usize, approvals: usize) -> Arc<AppState> {
         // sum. Recorded at the real clock, not at NOW: the fleet's cost strip
         // is a rolling 24-hour window off `now_ms()`, and NOW is a fixed
         // timestamp that drifts into the past as the calendar moves.
-        forge_core::ledger::Ledger::new(&state.store)
+        forge_app::ledger::Ledger::new(&state.store)
             .record_at(
-                forge_core::ledger::Call::new(
+                forge_app::ledger::Call::new(
                     &format!("s{i}"),
                     "claude-sonnet-5",
                     Tier::Large,
@@ -75,7 +76,7 @@ fn fixture(sessions: usize, approvals: usize) -> Arc<AppState> {
                         cache_read_tokens: 9_000,
                     },
                 ),
-                forge_core::time::now_ms(),
+                forge_app::time::now_ms(),
             )
             .unwrap();
     }

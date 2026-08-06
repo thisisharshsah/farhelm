@@ -29,16 +29,16 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use forge_core::agent::{self, DetectedPrompt};
-use forge_core::risk;
-use forge_core::types::{Approval, Decision, Session, SessionStatus};
+use forge_domain::agent::{self, DetectedPrompt};
+use forge_domain::risk;
+use forge_proto::types::{Approval, Decision, Session, SessionStatus};
 
 use crate::session::ManagerError;
 use crate::state::{AppState, ServerEvent};
 use crate::terminal::Terminal;
-use forge_core::id::new_id;
-use forge_core::store::prelude::*;
-use forge_core::time::now_ms;
+use forge_app::id::new_id;
+use forge_app::store::prelude::*;
+use forge_app::time::now_ms;
 
 /// What the watcher remembers between polls, per session.
 ///
@@ -213,9 +213,9 @@ pub async fn answer<T: Terminal>(
 mod tests {
     use super::*;
     use crate::terminal::FakeTerminal;
-    use forge_core::store::SqliteStore;
-    use forge_core::types::{Agent, DecidedVia, Repo, Risk};
     use forge_domain::ApprovalRules as _;
+    use forge_proto::types::{Agent, DecidedVia, Repo, Risk};
+    use forge_sqlite::SqliteStore;
 
     const NOW: i64 = 1_785_369_600_000;
 
