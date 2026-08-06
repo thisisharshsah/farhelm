@@ -212,7 +212,7 @@ async fn start_task(
     Json(body): Json<crate::task::StartTask>,
 ) -> ApiResult<TaskView> {
     let task = crate::task::start(&state, body)?;
-    Ok(Json(task_view(&state, task)))
+    Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
 }
 
 /// `GET /v1/tasks/{id}` — the review screen's payload.
@@ -248,7 +248,7 @@ async fn review_task(
         body.note.as_deref().filter(|note| !note.trim().is_empty()),
         body.via.unwrap_or(DecidedVia::Web),
     )?;
-    Ok(Json(task_view(&state, task)))
+    Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -271,7 +271,7 @@ async fn revert_task(
         .and_then(|Json(body)| body.via)
         .unwrap_or(DecidedVia::Web);
     let task = crate::task::revert(&state, &id, via)?;
-    Ok(Json(task_view(&state, task)))
+    Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
 }
 
 /// `GET /v1/agents` — what this machine can start, and what it cannot.
@@ -325,7 +325,7 @@ pub use forge_proto::views::{
 // Assembly lives in `crate::views`, which knows nothing about HTTP. These
 // handlers are the thin part: a route, a body, a status code.
 use crate::views::{
-    ViewError, approval_view, build_dashboard, build_fleet_view, build_session_detail,
+    Lookups, ViewError, approval_view, build_dashboard, build_fleet_view, build_session_detail,
     build_task_detail, build_task_list, task_view, view_of,
 };
 
@@ -338,10 +338,11 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 async fn list_sessions(State(state): State<Arc<AppState>>) -> ApiResult<Vec<SessionView>> {
+    let lookups = Lookups::new(state.store.as_ref())?;
     let sessions = state.store.list_sessions()?;
     let views = sessions
         .iter()
-        .map(|session| view_of(&state, session))
+        .map(|session| view_of(&state, &lookups, session))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(views))
 }
@@ -440,11 +441,12 @@ async fn session_usage(
 }
 
 async fn list_approvals(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApprovalView>> {
+    let lookups = Lookups::new(state.store.as_ref())?;
     let approvals = state
         .store
         .list_pending_approvals()?
         .into_iter()
-        .map(|approval| approval_view(&state, approval))
+        .map(|approval| approval_view(&state, &lookups, approval))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(approvals))
 }
@@ -476,7 +478,11 @@ async fn decide(
         .store
         .get_approval(&id)?
         .ok_or_else(|| ApiError::not_found(format!("approval {id}")))?;
-    Ok(Json(approval_view(&state, approval)?))
+    Ok(Json(approval_view(
+        &state,
+        &Lookups::new(state.store.as_ref())?,
+        approval,
+    )?))
 }
 
 async fn session_dashboard(
@@ -559,7 +565,11 @@ async fn start_session(
         message: err.to_string(),
     })?;
 
-    Ok(Json(view_of(&state, &session)?))
+    Ok(Json(view_of(
+        &state,
+        &Lookups::new(state.store.as_ref())?,
+        &session,
+    )?))
 }
 
 /// `POST /v1/sessions/{id}/stop` — end a session and its pane.
@@ -577,7 +587,11 @@ async fn stop_session(
         .store
         .get_session(&id)?
         .ok_or_else(|| ApiError::not_found(format!("session {id}")))?;
-    Ok(Json(view_of(&state, &session)?))
+    Ok(Json(view_of(
+        &state,
+        &Lookups::new(state.store.as_ref())?,
+        &session,
+    )?))
 }
 
 /* ------------------------------------------------------------ device pairing */
