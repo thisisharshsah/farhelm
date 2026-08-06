@@ -47,7 +47,7 @@ pub mod hello;
 pub mod types;
 pub mod views;
 
-pub use commands::{Command, PlanAction, Review};
+pub use commands::{Command, DeviceFrame, PlanAction, Review};
 pub use diff::{ChangeKind, ChangeSet, DiffLine, FileDiff, Hunk, Tag};
 pub use events::{CommandRejected, ServerEvent};
 pub use hello::{Capability, Hello, PROTOCOL_VERSION, ProtocolVersion};

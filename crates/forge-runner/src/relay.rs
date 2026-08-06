@@ -25,12 +25,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use forge_crypto::{Envelope, Identity};
+use forge_proto::commands::DeviceFrame;
 use forge_proto::events::CommandRejected;
+use forge_proto::hello::Hello;
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::commands::{self, Command};
+use crate::commands;
 use crate::state::{AppState, ServerEvent};
 use forge_app::store::prelude::*;
 use forge_proto::types::DecidedVia;
@@ -143,6 +145,20 @@ async fn run_once(
     // Subscribe *before* announcing, so nothing published during setup is lost.
     let mut events = state.events.subscribe();
 
+    // What each device on this link said it can handle.
+    //
+    // Per-connection rather than per-device row, because that is what it
+    // describes: a device that reconnects from an older build must not be
+    // treated as still having the capabilities its previous connection
+    // announced. A device absent from this map is assumed
+    // `Capability::BASELINE` — which is every client shipped today, since none
+    // of them send a `Hello` yet.
+    //
+    // Nothing reads this yet. See `forge_proto::hello` for why that is the
+    // whole of step one.
+    let mut capabilities: std::collections::HashMap<String, Hello> =
+        std::collections::HashMap::new();
+
     loop {
         tokio::select! {
             outgoing = events.recv() => {
@@ -179,7 +195,8 @@ async fn run_once(
                         };
                         // A reply goes back to the asking device only — a
                         // snapshot nobody else requested is noise on their link.
-                        if let Some(reply) = handle_envelope(state, identity, config, envelope).await
+                        if let Some(reply) =
+                            handle_envelope(state, identity, config, &mut capabilities, envelope).await
                             && let Ok(text) = serde_json::to_string(&reply)
                             && sink.send(Message::Text(text.into())).await.is_err()
                         {
@@ -228,6 +245,7 @@ async fn handle_envelope(
     state: &Arc<AppState>,
     identity: &Arc<Identity>,
     config: &RelayConfig,
+    capabilities: &mut std::collections::HashMap<String, Hello>,
     envelope: Envelope,
 ) -> Option<Envelope> {
     // The envelope names its sender; that is a *hint*, not a credential. It
@@ -240,8 +258,8 @@ async fn handle_envelope(
         return None;
     };
 
-    let command: Command = match identity.open_json(&sender_key, &envelope) {
-        Ok(command) => command,
+    let frame: DeviceFrame = match identity.open_json(&sender_key, &envelope) {
+        Ok(frame) => frame,
         Err(_) => {
             // Either a forgery or a device whose key rotated. Either way there
             // is nothing to do and nothing worth telling the sender — a decrypt
@@ -252,6 +270,31 @@ async fn handle_envelope(
             );
             return None;
         }
+    };
+
+    let command = match frame {
+        // Announcing what you can handle is not a command and produces no reply:
+        // it changes what this runner will send *later*, once anything gates on
+        // it. Recorded and acknowledged by silence, which is also what an older
+        // runner does with a frame it cannot parse — so a client may start
+        // sending one before every runner understands it.
+        DeviceFrame::Hello(hello) => {
+            if !hello
+                .protocol
+                .is_compatible_with(forge_proto::PROTOCOL_VERSION)
+            {
+                eprintln!(
+                    "relay link: {} speaks protocol {} and this runner speaks {}; \
+                     talking anyway, on the shapes both versions share",
+                    device.id,
+                    hello.protocol,
+                    forge_proto::PROTOCOL_VERSION
+                );
+            }
+            capabilities.insert(device.id.clone(), hello);
+            return None;
+        }
+        DeviceFrame::Command(command) => command,
     };
 
     let via = match device.kind {
@@ -293,6 +336,9 @@ async fn handle_envelope(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    use crate::commands::Command;
     use forge_proto::types::{
         Agent, Approval, Device, DeviceKind, Repo, Risk, Session, SessionStatus, TaskStatus,
     };
@@ -446,7 +492,7 @@ mod tests {
             .unwrap();
 
         // No `phone` device exists, so there is no key to verify against.
-        handle_envelope(&state, &identity, &config, forged).await;
+        handle_envelope(&state, &identity, &config, &mut HashMap::new(), forged).await;
         // Nothing happened; the absent approval was never touched.
         assert_eq!(state.store.get_approval("a1").unwrap(), None);
     }
@@ -471,7 +517,7 @@ mod tests {
             )
             .unwrap();
 
-        handle_envelope(&state, &identity, &config, forged).await;
+        handle_envelope(&state, &identity, &config, &mut HashMap::new(), forged).await;
         assert!(state.output_tail("s1", 10).is_empty());
     }
 
@@ -489,7 +535,7 @@ mod tests {
             )
             .unwrap();
 
-        let reply = handle_envelope(&state, &identity, &config, request)
+        let reply = handle_envelope(&state, &identity, &config, &mut HashMap::new(), request)
             .await
             .expect("a snapshot must be answered");
 
@@ -519,7 +565,7 @@ mod tests {
         // It worked, so the client hears about it as the event the change
         // produced — not as a second, redundant answer on the same socket.
         assert!(
-            handle_envelope(&state, &identity, &config, request)
+            handle_envelope(&state, &identity, &config, &mut HashMap::new(), request)
                 .await
                 .is_none()
         );
@@ -551,7 +597,7 @@ mod tests {
             )
             .unwrap();
 
-        let reply = handle_envelope(&state, &identity, &config, request)
+        let reply = handle_envelope(&state, &identity, &config, &mut HashMap::new(), request)
             .await
             .expect("a refusal must be reported, not swallowed");
 
@@ -592,7 +638,7 @@ mod tests {
             )
             .unwrap();
 
-        let reply = handle_envelope(&state, &identity, &config, request)
+        let reply = handle_envelope(&state, &identity, &config, &mut HashMap::new(), request)
             .await
             .unwrap();
 
@@ -602,6 +648,121 @@ mod tests {
             phone
                 .open_json::<serde_json::Value>(identity.public_key(), &reply)
                 .is_err()
+        );
+    }
+
+    /* --------------------------------------------- capability handshake */
+
+    #[tokio::test]
+    async fn a_hello_is_recorded_rather_than_executed() {
+        let (state, identity, config) = fixture();
+        let phone = pair(&state, "phone", DeviceKind::Phone);
+        let mut capabilities = HashMap::new();
+
+        let sealed = phone
+            .seal_json(
+                &config.channel,
+                "phone",
+                identity.public_key(),
+                &Hello::current(&[forge_proto::Capability::TASK_REVIEW]),
+            )
+            .unwrap();
+
+        // No reply: announcing what you can handle is not a request.
+        assert!(
+            handle_envelope(&state, &identity, &config, &mut capabilities, sealed)
+                .await
+                .is_none()
+        );
+
+        let announced = capabilities.get("phone").expect("the hello was recorded");
+        assert!(announced.supports(forge_proto::Capability::TASK_REVIEW));
+        assert!(!announced.supports(forge_proto::Capability::DASHBOARD));
+    }
+
+    #[tokio::test]
+    async fn a_command_still_arrives_as_a_command() {
+        // The frame is untagged, so a Command must not be mistaken for a Hello
+        // with everything missing. This is the test that would fail if the
+        // variant order or the shapes ever made them ambiguous.
+        let (state, identity, config) = fixture();
+        let phone = pair(&state, "phone", DeviceKind::Phone);
+        approval(&state, "a1", Risk::Low);
+        let mut capabilities = HashMap::new();
+
+        let sealed = phone
+            .seal_json(
+                &config.channel,
+                "phone",
+                identity.public_key(),
+                &Command::Decide {
+                    approval_id: "a1".into(),
+                    decision: forge_proto::types::Decision::Approved,
+                },
+            )
+            .unwrap();
+
+        handle_envelope(&state, &identity, &config, &mut capabilities, sealed).await;
+
+        assert!(
+            state
+                .store
+                .get_approval("a1")
+                .unwrap()
+                .is_some_and(|a| a.decision.is_some()),
+            "the command ran"
+        );
+        assert!(
+            capabilities.is_empty(),
+            "a command must not be recorded as a capability announcement"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_device_that_sends_no_hello_is_left_at_the_baseline() {
+        // Every client shipped today. Nothing announces capabilities yet, so the
+        // absence of an entry has to mean "baseline", not "unknown".
+        let (state, identity, config) = fixture();
+        let phone = pair(&state, "phone", DeviceKind::Phone);
+        let mut capabilities = HashMap::new();
+
+        let sealed = phone
+            .seal_json(
+                &config.channel,
+                "phone",
+                identity.public_key(),
+                &Command::Snapshot,
+            )
+            .unwrap();
+        handle_envelope(&state, &identity, &config, &mut capabilities, sealed).await;
+
+        let assumed = capabilities.get("phone").cloned().unwrap_or_default();
+        for baseline in forge_proto::Capability::BASELINE {
+            assert!(assumed.supports(baseline));
+        }
+        assert!(!assumed.supports(forge_proto::Capability::TASK_REVIEW));
+    }
+
+    /// An unpaired sender's hello is dropped with everything else it sends.
+    #[tokio::test]
+    async fn a_hello_from_a_stranger_is_not_recorded() {
+        let (state, identity, config) = fixture();
+        let attacker = Identity::generate();
+        let mut capabilities = HashMap::new();
+
+        let forged = attacker
+            .seal_json(
+                &config.channel,
+                "phone",
+                identity.public_key(),
+                &Hello::current(&[forge_proto::Capability::TASK_REVIEW]),
+            )
+            .unwrap();
+
+        handle_envelope(&state, &identity, &config, &mut capabilities, forged).await;
+        assert!(
+            capabilities.is_empty(),
+            "capabilities must be attributable to a paired device"
         );
     }
 
