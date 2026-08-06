@@ -14,7 +14,7 @@
 //! It errs toward over-classifying. A false `Destructive` costs one extra tap on
 //! a phone; a false `Low` costs a force-pushed branch.
 
-use crate::types::Risk;
+use forge_proto::types::Risk;
 
 /// Local additions to the built-in rules.
 ///
@@ -88,14 +88,12 @@ allow = [
 
 #[derive(Debug)]
 pub enum PolicyError {
-    Io(std::io::Error),
     Parse(String),
 }
 
 impl std::fmt::Display for PolicyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PolicyError::Io(err) => write!(f, "policy file: {err}"),
             // The parse error carries the line and column, which is the only
             // thing that makes a hand-edited TOML file fixable.
             PolicyError::Parse(detail) => write!(f, "policy file: {detail}"),
@@ -106,20 +104,17 @@ impl std::fmt::Display for PolicyError {
 impl std::error::Error for PolicyError {}
 
 impl Policy {
-    /// Read a policy file. `Ok(None)` when there is none, which is the normal
-    /// case — the built-in rules stand on their own.
-    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Option<Self>, PolicyError> {
-        let path = path.as_ref();
-        if !path.exists() {
-            return Ok(None);
-        }
-        let text = std::fs::read_to_string(path).map_err(PolicyError::Io)?;
-        // A malformed policy is an error, never a silent fallback to the
-        // built-ins: somebody wrote `terraform destroy` in there expecting it to
-        // be gated, and quietly ignoring the file would be the worst outcome.
-        toml::from_str(&text)
-            .map(Some)
-            .map_err(|err| PolicyError::Parse(err.to_string()))
+    /// Parse a policy from the text of a policy file.
+    ///
+    /// Takes the text rather than a path: reading the file is I/O and belongs to
+    /// whoever has a filesystem — see `forge_runner`'s `load_policy`. This half
+    /// is the part with a decision in it, and it is testable without one.
+    ///
+    /// A malformed policy is an error, never a silent fallback to the built-ins:
+    /// somebody wrote `terraform destroy` in there expecting it to be gated, and
+    /// quietly ignoring the file would be the worst outcome.
+    pub fn parse(text: &str) -> Result<Self, PolicyError> {
+        toml::from_str(text).map_err(|err| PolicyError::Parse(err.to_string()))
     }
 
     fn allows(&self, pattern: &str) -> bool {
@@ -511,7 +506,8 @@ mod tests {
 
     #[test]
     fn a_destructive_verdict_forces_the_approval_off_the_watch() {
-        use crate::types::Approval;
+        use crate::budget::ApprovalRules as _;
+        use forge_proto::types::Approval;
 
         let approval = Approval {
             id: "a".into(),
@@ -653,9 +649,14 @@ mod policy_tests {
     }
 
     #[test]
-    fn a_missing_policy_file_is_not_an_error() {
-        // Running without one is the normal case; the built-ins stand alone.
-        assert!(matches!(Policy::load("/nonexistent/policy.toml"), Ok(None)));
+    fn a_typo_reports_where_it_is() {
+        // The parse error carries line and column, which is the only thing that
+        // makes a hand-edited TOML file fixable.
+        let err = Policy::parse("destructive = [\"unterminated").unwrap_err();
+        assert!(
+            err.to_string().contains("policy file"),
+            "the message should say what kind of file it is: {err}"
+        );
     }
 
     #[test]

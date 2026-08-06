@@ -11,7 +11,7 @@
 
 use std::fmt;
 
-use crate::types::{Tier, Usage};
+use forge_proto::types::{Tier, Usage};
 
 /// Cache writes bill above the base input rate; reads bill far below it.
 pub const CACHE_WRITE_5M_MULTIPLIER: f64 = 1.25;

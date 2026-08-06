@@ -280,26 +280,6 @@ pub struct Budget {
     pub spent_usd: f64,
 }
 
-impl Budget {
-    /// Fraction of the cap consumed. `None` when uncapped.
-    pub fn pct(&self) -> Option<f64> {
-        match self.cap_usd {
-            Some(cap) if cap > 0.0 => Some(self.spent_usd / cap),
-            _ => None,
-        }
-    }
-
-    /// Pipeline stage 1: hard stop at 100%.
-    pub fn is_exhausted(&self) -> bool {
-        self.pct().is_some_and(|pct| pct >= 1.0)
-    }
-
-    /// Pipeline stage 1: wrist alert at 80%.
-    pub fn is_warning(&self) -> bool {
-        self.pct().is_some_and(|pct| pct >= 0.8)
-    }
-}
-
 /// A file-backed plan. `content_hash` is what makes the file authoritative:
 /// when it stops matching the file on disk, the mirror is rebuilt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -361,12 +341,6 @@ impl Approval {
         self.decision.is_none()
     }
 
-    /// Destructive actions never get a one-tap wrist approval (D3) — the
-    /// friction is the point.
-    pub fn allows_watch_decision(&self) -> bool {
-        self.risk != Risk::Destructive
-    }
-
     /// Notification → decision latency, the Appendix A metric.
     pub fn latency_ms(&self) -> Option<i64> {
         Some(self.decided_at? - self.requested_at)
@@ -389,13 +363,6 @@ mod tests {
             requested_at: 1_000,
             decided_at: None,
         }
-    }
-
-    #[test]
-    fn destructive_approvals_are_phone_only() {
-        assert!(approval(Risk::Low).allows_watch_decision());
-        assert!(approval(Risk::Medium).allows_watch_decision());
-        assert!(!approval(Risk::Destructive).allows_watch_decision());
     }
 
     #[test]
@@ -476,29 +443,6 @@ mod tests {
         ] {
             assert!(!cannot.can_revert(), "{cannot} should not offer an undo");
         }
-    }
-
-    #[test]
-    fn budget_thresholds_fire_at_80_and_100_percent() {
-        let at = |spent| Budget {
-            cap_usd: Some(10.0),
-            spent_usd: spent,
-        };
-        assert!(!at(7.9).is_warning());
-        assert!(at(8.0).is_warning());
-        assert!(!at(8.0).is_exhausted());
-        assert!(at(10.0).is_exhausted());
-    }
-
-    #[test]
-    fn an_uncapped_budget_never_stops_a_session() {
-        let uncapped = Budget {
-            cap_usd: None,
-            spent_usd: 999.0,
-        };
-        assert_eq!(uncapped.pct(), None);
-        assert!(!uncapped.is_warning());
-        assert!(!uncapped.is_exhausted());
     }
 }
 

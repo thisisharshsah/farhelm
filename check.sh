@@ -14,6 +14,21 @@ cargo fmt --all --check
 step "Rust: lint"
 cargo clippy --workspace --all-targets -- -D warnings
 
+step "forge-domain stays pure"
+# The rules are the part of the system worth being certain about, and certainty
+# comes from being able to test them without arranging a world first. Nothing in
+# forge-domain may read a clock, open a file, await, or reach the network.
+#
+# This is a grep because there is no cargo flag for it. forge-core once claimed
+# the same property in its own doc header while depending directly on rusqlite,
+# which is how a claim nobody checks ends up false.
+if grep -rnE '(^|[^a-z_])(std::fs|std::io|std::net|std::process|tokio|reqwest|rusqlite|SystemTime|Instant::now)' \
+     crates/forge-domain/src --include='*.rs' | grep -v '^\S*:[0-9]*://'; then
+  echo "  forge-domain must stay free of I/O, async and the clock — see the hits above"
+  exit 1
+fi
+echo "  no I/O, async, clock or network"
+
 step "Rust: tests"
 cargo test --workspace
 

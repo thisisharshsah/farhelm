@@ -1175,6 +1175,7 @@ name = "forge-agent"
 version = "0.1.0"
 dependencies = [
  "forge-core",
+ "forge-domain",
  "forge-gateway",
  "forge-proto",
  "ignore",
@@ -1187,6 +1188,7 @@ dependencies = [
 name = "forge-core"
 version = "0.1.0"
 dependencies = [
+ "forge-domain",
  "forge-proto",
  "rusqlite",
  "serde",
@@ -1208,11 +1210,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-domain"
+version = "0.1.0"
+dependencies = [
+ "forge-proto",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "forge-gateway"
 version = "0.1.0"
 dependencies = [
  "axum",
  "forge-core",
+ "forge-domain",
  "ignore",
  "reqwest 0.12.28",
  "serde",
@@ -1257,6 +1271,7 @@ dependencies = [
  "forge-agent",
  "forge-core",
  "forge-crypto",
+ "forge-domain",
  "forge-gateway",
  "forge-proto",
  "forge-relay",
@@ -3249,6 +3264,7 @@ dependencies = [
  "axum",
  "forge-core",
  "forge-crypto",
+ "forge-domain",
  "forge-gateway",
  "forge-proto",
  "forge-runner",

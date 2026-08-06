@@ -29,16 +29,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::diff::ChangeSet;
-use crate::types::{
-    Approval, Budget, DecidedVia, PlanStep, PlanStepStatus, SessionStatus, TaskStatus,
-};
+use crate::types::{Approval, DecidedVia, PlanStep, PlanStepStatus, SessionStatus, TaskStatus};
 
 /// Budget as the UI needs it: the bar, the number, and the traffic light.
 ///
-/// `state` is computed here rather than on the client so that four
-/// implementations cannot disagree about where the line is. The thresholds
-/// themselves are policy and live in `forge-domain`; this type only names the
-/// three answers.
+/// `state` is computed server-side so that four client implementations cannot
+/// disagree about where the line is. This type only names the three answers —
+/// the thresholds, and the mapping that picks between them, are policy and live
+/// in `forge_domain::budget`.
 #[derive(Debug, Clone, Serialize)]
 pub struct BudgetView {
     pub cap_usd: Option<f64>,
@@ -46,23 +44,6 @@ pub struct BudgetView {
     pub pct: Option<f64>,
     /// `ok` | `warn` (≥80%) | `stop` (≥100%).
     pub state: &'static str,
-}
-
-impl From<Budget> for BudgetView {
-    fn from(budget: Budget) -> Self {
-        Self {
-            cap_usd: budget.cap_usd,
-            spent_usd: budget.spent_usd,
-            pct: budget.pct(),
-            state: if budget.is_exhausted() {
-                "stop"
-            } else if budget.is_warning() {
-                "warn"
-            } else {
-                "ok"
-            },
-        }
-    }
 }
 
 impl PlanProgress {

@@ -31,7 +31,7 @@
 //! Dialects marked [`Confidence::Verified`] have been checked against the real
 //! binary. The rest are [`Confidence::Unverified`] and say so in the UI.
 
-use crate::types::Agent;
+use forge_proto::types::Agent;
 
 /// How a human's decision reaches the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
