@@ -49,6 +49,14 @@ step "The wire contract, read by both languages"
 # Rust half alone cannot catch a rename, because it renames both sides at once.
 cargo test -q -p forge-proto --test wire_fixture
 
+step "No circular imports"
+# `App.tsx` and `screens/Pairing.tsx` were a cycle: a shared text field lived in
+# the entry point and the screen imported it back out. Bundlers resolve that, so
+# nothing broke — it just meant a screen could not be read, or tested, without
+# dragging the whole app in.
+npx --yes madge@8 --circular --extensions ts,tsx \
+  packages/client-core/src web/src mobile/src
+
 step "JavaScript: typecheck"
 pnpm -r typecheck
 

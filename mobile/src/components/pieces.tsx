@@ -8,7 +8,13 @@
  */
 
 import { useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import {
   pct,
   since,
@@ -270,5 +276,59 @@ export function SessionRow({
 
       <BudgetMeter budget={session.budget} palette={palette} />
     </Pressable>
+  );
+}
+
+/**
+ * The one text field the pairing and watch screens share.
+ *
+ * Lived in `App.tsx` and was imported back out of it by `screens/Pairing.tsx`,
+ * which made the app's entry point and one of its screens a cycle. Nothing broke
+ * — a bundler resolves it — but it meant the screen could not be understood, or
+ * tested, without dragging the whole app in.
+ */
+export function Field({
+  palette,
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  multiline = false,
+}: {
+  palette: Palette;
+  label: string;
+  value: string;
+  onChangeText: (next: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
+}) {
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={{ color: palette.textMuted, fontSize: 12 }}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={palette.textMuted}
+        multiline={multiline}
+        autoCapitalize="none"
+        autoCorrect={false}
+        spellCheck={false}
+        style={{
+          minHeight: multiline ? TAP * 2 : TAP,
+          color: palette.textPrimary,
+          backgroundColor: palette.surface1,
+          borderWidth: 1,
+          borderColor: palette.border,
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          // A key blob has no words in it: `l1I` and `O0` need to be
+          // distinguishable when a paste goes wrong.
+          fontFamily: "Menlo",
+          fontSize: 13,
+        }}
+      />
+    </View>
   );
 }

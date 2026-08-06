@@ -18,7 +18,6 @@ import {
   RefreshControl,
   ScrollView,
   Text,
-  TextInput,
   View,
   useColorScheme,
 } from "react-native";
@@ -632,49 +631,3 @@ export function Banner({
   );
 }
 
-/** Re-exported so the pairing and watch screens share one text field. */
-export function Field({
-  palette,
-  label,
-  value,
-  onChangeText,
-  placeholder,
-  multiline = false,
-}: {
-  palette: typeof light;
-  label: string;
-  value: string;
-  onChangeText: (next: string) => void;
-  placeholder?: string;
-  multiline?: boolean;
-}) {
-  return (
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: palette.textMuted, fontSize: 12 }}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={palette.textMuted}
-        multiline={multiline}
-        autoCapitalize="none"
-        autoCorrect={false}
-        spellCheck={false}
-        style={{
-          minHeight: multiline ? TAP * 2 : TAP,
-          color: palette.textPrimary,
-          backgroundColor: palette.surface1,
-          borderWidth: 1,
-          borderColor: palette.border,
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-          // A key blob has no words in it: `l1I` and `O0` need to be
-          // distinguishable when a paste goes wrong.
-          fontFamily: "Menlo",
-          fontSize: 13,
-        }}
-      />
-    </View>
-  );
-}
