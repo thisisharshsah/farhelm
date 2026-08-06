@@ -242,7 +242,11 @@ pub fn seed(store: &SqliteStore, now: i64) -> Result<SeedIds, Box<dyn std::error
             Call::new(
                 &done_session,
                 "claude-sonnet-5",
-                Tier::Batch,
+                // The large tier, dispatched through the batch queue. Recording
+                // both is the point of the demo row: the dashboard can now say
+                // the overnight work was Sonnet, which it could not when a
+                // deferred call was stored as tier `batch`.
+                Tier::Large,
                 TaskType::Refactor,
                 Usage {
                     input_tokens: 8_200,
@@ -250,7 +254,8 @@ pub fn seed(store: &SqliteStore, now: i64) -> Result<SeedIds, Box<dyn std::error
                     cache_write_tokens: 0,
                     cache_read_tokens: 61_000,
                 },
-            ),
+            )
+            .batched(),
             now - (47 + hour) * HOUR_MS,
         )?;
     }

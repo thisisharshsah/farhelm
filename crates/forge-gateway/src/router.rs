@@ -5,7 +5,7 @@
 //! model does triage) is expensive but invisible. A table is auditable: you can
 //! read what will happen before you pay for it.
 
-use forge_proto::types::{TaskType, Tier};
+use forge_proto::types::{Dispatch, TaskType, Tier};
 use serde::{Deserialize, Serialize};
 
 /// Which concrete model backs each tier. Any of these may be a self-hosted
@@ -69,7 +69,11 @@ pub const fn slot_for(task: TaskType) -> Slot {
 /// The routing decision for one call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Route {
+    /// Which model tier. Since `dispatch` exists, this is always the *capability*
+    /// tier — deferring a call no longer erases which model was going to run it.
     pub tier: Tier,
+    /// Live or batched.
+    pub dispatch: Dispatch,
     pub slot: Slot,
     pub model: String,
     /// True when a `PLAN.md` tier pin overrode the table.
@@ -97,15 +101,18 @@ pub fn route(task: TaskType, pin: Option<Tier>, deferrable: bool, models: &Model
         Slot::Frontier => &models.frontier,
     };
 
-    // Batch is what the ledger records, because that is what changes the price.
-    let tier = if deferrable || pin == Some(Tier::Batch) {
-        Tier::Batch
+    // Deferring changes the price, not the model. `slot` already knows which
+    // tier is going to run, and this used to throw that away by overwriting
+    // `tier` with `Batch`.
+    let dispatch = if deferrable || pin == Some(Tier::Batch) {
+        Dispatch::Batch
     } else {
-        slot.tier()
+        Dispatch::Live
     };
 
     Route {
-        tier,
+        tier: slot.tier(),
+        dispatch,
         slot,
         model: model.clone(),
         pinned: pin.is_some(),
@@ -173,18 +180,38 @@ mod tests {
     }
 
     #[test]
-    fn deferrable_work_bills_as_batch_without_changing_the_model() {
+    fn deferrable_work_changes_the_dispatch_not_the_model() {
         let live = route(TaskType::Summarize, None, false, &models());
         let deferred = route(TaskType::Summarize, None, true, &models());
+
         assert_eq!(live.model, deferred.model);
-        assert_eq!(deferred.tier, Tier::Batch);
+        assert_eq!(
+            live.tier, deferred.tier,
+            "deferring does not change the tier"
+        );
+        assert_eq!(live.dispatch, Dispatch::Live);
+        assert_eq!(deferred.dispatch, Dispatch::Batch);
+    }
+
+    #[test]
+    fn a_deferred_route_still_says_which_tier_will_run_it() {
+        // The regression this whole column exists for: `tier` used to be
+        // overwritten with `Batch`, so the ledger recorded a deferred call as
+        // having run on no particular model and the dashboard could not split
+        // deferred spend by tier.
+        let deferred = route(TaskType::Summarize, None, true, &models());
+        assert_eq!(deferred.tier, Tier::Small, "summarise is a small-tier task");
+        assert_ne!(deferred.tier, Tier::Batch);
     }
 
     #[test]
     fn pinning_batch_keeps_the_tasks_natural_model() {
+        // `{tier=batch}` in a plan file is a *pin* meaning "defer this one". It
+        // picks the task's natural slot and changes only the dispatch.
         let route = route(TaskType::Plan, Some(Tier::Batch), false, &models());
         assert_eq!(route.model, "claude-opus-5");
-        assert_eq!(route.tier, Tier::Batch);
+        assert_eq!(route.dispatch, Dispatch::Batch);
+        assert_ne!(route.tier, Tier::Batch, "the pin is not a stored tier");
     }
 
     #[test]

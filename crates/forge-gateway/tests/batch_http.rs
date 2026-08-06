@@ -20,7 +20,7 @@ use axum::{Json, Router};
 use forge_app::store::prelude::*;
 use forge_gateway::batch::{AnthropicBatchClient, BatchQueue};
 use forge_proto::types::{
-    Agent, BatchItem, BatchStatus, Machine, Repo, Session, SessionStatus, TaskType,
+    Agent, BatchItem, BatchStatus, Machine, Repo, Session, SessionStatus, TaskType, Tier,
 };
 
 const NOW: i64 = 1_785_369_600_000;
@@ -142,6 +142,7 @@ fn store() -> SqliteStore {
 fn enqueue(store: &SqliteStore, index: usize) {
     store
         .enqueue_batch_item(&BatchItem {
+            tier: Tier::Small,
             id: format!("b{index}"),
             session_id: "s1".into(),
             custom_id: format!("forge-b{index}"),

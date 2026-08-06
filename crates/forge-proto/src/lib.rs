@@ -53,8 +53,8 @@ pub use events::{CommandRejected, ServerEvent};
 pub use hello::{Capability, Hello, PROTOCOL_VERSION, ProtocolVersion};
 pub use types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
-    Device, DeviceKind, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo, Risk,
-    Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
+    Device, DeviceKind, Dispatch, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo,
+    Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
 };
 pub use views::{
     AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, OutputLine,

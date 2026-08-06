@@ -235,6 +235,7 @@ fn build() -> serde_json::Value {
             custom_id: "custom-1".into(),
             task_type: TaskType::Summarize,
             model: "claude-haiku-4-5".into(),
+            tier: Tier::Small,
             request_json: "{}".into(),
             batch_id: Some("msgbatch_1".into()),
             status: BatchStatus::Submitted,

@@ -28,7 +28,9 @@ use forge_app::store::{BatchStore, LedgerStore, ResponseCache, SessionStore, Sto
 use forge_app::time::now_ms;
 use forge_domain::BudgetRules as _;
 use forge_domain::price::{UnknownModel, price_of};
-use forge_proto::types::{Avoided, BatchItem, BatchStatus, Budget, TaskType, Tier, Usage};
+use forge_proto::types::{
+    Avoided, BatchItem, BatchStatus, Budget, Dispatch, TaskType, Tier, Usage,
+};
 
 use crate::cache;
 use crate::compaction;
@@ -152,7 +154,11 @@ pub struct CompleteResponse {
     /// The model that produced the answer — may differ from the routed one when
     /// a server-side fallback served the turn.
     pub model: String,
+    /// Which model tier ran it.
     pub tier: Tier,
+    /// Live, or queued for the Batch API. Separate from [`CompleteResponse::tier`]
+    /// because deferring changes the price of a model rather than the model.
+    pub dispatch: Dispatch,
     pub usage: Usage,
     pub cost_usd: f64,
     pub avoided: Option<Avoided>,
@@ -384,6 +390,8 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 text: "All deterministic checks passed.".into(),
                 model: event.model,
                 tier: event.tier,
+                // Never dispatched at all — the compiler answered.
+                dispatch: Dispatch::Live,
                 usage: Usage::default(),
                 cost_usd: 0.0,
                 avoided: Some(Avoided::PreGate),
@@ -491,6 +499,8 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 text: hit,
                 model: event.model,
                 tier: event.tier,
+                // Served from the cache, so nothing was dispatched anywhere.
+                dispatch: Dispatch::Live,
                 usage: Usage::default(),
                 cost_usd: 0.0,
                 avoided: Some(Avoided::ResponseCache),
@@ -537,6 +547,10 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 // live one it replaces. No `fallbacks`: a refused batch item is
                 // resubmittable, and that path is unverified against the real
                 // endpoint.
+                // The tier that will actually run it, recorded now: this comes
+                // back a day later, by which time the router config may name a
+                // different model for the same slot.
+                tier: route.tier,
                 request_json: messages_params(&ModelRequest {
                     model: route.model.clone(),
                     max_tokens: self.config.max_tokens,
@@ -559,7 +573,8 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 // this by setting `deferrable`.
                 text: String::new(),
                 model: route.model.clone(),
-                tier: Tier::Batch,
+                tier: route.tier,
+                dispatch: route.dispatch,
                 usage: Usage::default(),
                 // Nothing is billed until the batch settles and the real token
                 // counts come back — at half rates.
@@ -634,6 +649,9 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             text: response.text,
             model: response.model,
             tier: event.tier,
+            // This path dispatched live: a deferrable call returned above,
+            // queued, and a downgraded one really did run live.
+            dispatch: Dispatch::Live,
             usage: response.usage,
             // Includes the summary call when one was made. A turn that
             // compacted really did cost that much; reporting only the answer
@@ -965,9 +983,12 @@ mod tests {
         let response = gw.complete(request).await.unwrap();
 
         assert!(response.trace.batch_downgraded);
+        // A downgraded call ran live, so nothing about it may say otherwise.
+        // Before `dispatch` existed this could only be checked by asserting the
+        // tier was not `Batch`, which conflated the claim with the model.
         assert_ne!(
-            response.tier,
-            Tier::Batch,
+            response.dispatch,
+            Dispatch::Batch,
             "the ledger must not claim a discount that was not applied"
         );
     }

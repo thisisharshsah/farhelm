@@ -118,13 +118,35 @@ text_enum! {
 text_enum! {
     /// Model tier a call was routed to (pipeline stage 4).
     ///
-    /// NOTE: `Batch` sits in the same column as `Small`/`Large`, so a batched
-    /// call loses which model tier ran it — that costs us the tier split in the
-    /// dashboard for deferred work. Ships as designed for v1; the migration-safe
-    /// fix is a separate `dispatch` column, added when C6 lands.
+    /// # `Batch` is legacy here, and still current as a pin
+    ///
+    /// This column used to carry `batch`, which conflated *which model ran* with
+    /// *how the call was dispatched* — a batched call lost its model tier, and
+    /// with it the tier split in the dashboard for exactly the work most worth
+    /// splitting. [`UsageEvent::dispatch`] now carries the second thing, and this
+    /// carries only the first.
+    ///
+    /// The variant stays for two reasons. Rows written before that migration
+    /// still read `batch`, and their real tier is not recoverable — the model
+    /// name is in the row but the router's configuration has moved on since. And
+    /// `{tier=batch}` in a `PLAN.md` step is user-facing syntax meaning "defer
+    /// this one", which is a pin rather than a stored tier.
     Tier {
         Small => "small",
         Large => "large",
+        Batch => "batch",
+    }
+}
+
+text_enum! {
+    /// How a call reached the provider.
+    ///
+    /// Orthogonal to [`Tier`], which is *which model*. Batching halves the price
+    /// of any model, so this is what the ledger prices against — and keeping the
+    /// two apart is what lets the dashboard say "the deferred work was mostly
+    /// Haiku" instead of just "the deferred work was deferred".
+    Dispatch {
+        Live => "live",
         Batch => "batch",
     }
 }
@@ -193,6 +215,15 @@ text_enum! {
         Phone => "phone",
         Watch => "watch",
         Web => "web",
+    }
+}
+
+impl Default for Dispatch {
+    /// Live. A row that predates the column was a live call, or was a batched
+    /// one whose `tier` still says `batch` — the migration backfills those, so
+    /// this default only ever applies to a payload from an older peer.
+    fn default() -> Self {
+        Dispatch::Live
     }
 }
 
@@ -265,7 +296,13 @@ pub struct UsageEvent {
     pub id: String,
     pub session_id: String,
     pub model: String,
+    /// Which model ran it. Never `Tier::Batch` on a row written after the
+    /// `dispatch` migration; older rows may still carry it.
     pub tier: Tier,
+    /// Live or batched. `#[serde(default)]` so a client reading a row written
+    /// before this existed sees `live` rather than failing to parse.
+    #[serde(default)]
+    pub dispatch: Dispatch,
     pub task_type: TaskType,
     pub usage: Usage,
     pub cost_usd: f64,
@@ -638,6 +675,14 @@ impl AgentTask {
     }
 }
 
+/// What an in-flight batch item is assumed to have been routed to, when it was
+/// queued before the tier was recorded. Deferrable work is overwhelmingly the
+/// cheap tier — triage, titles, commit messages — so this is the guess that is
+/// least often wrong, and it stops being used a day after the upgrade.
+fn batch_item_default_tier() -> Tier {
+    Tier::Small
+}
+
 /// One deferred call, waiting for or returned from the Batch API.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BatchItem {
@@ -648,6 +693,16 @@ pub struct BatchItem {
     pub custom_id: String,
     pub task_type: TaskType,
     pub model: String,
+    /// The tier the router picked when this was queued.
+    ///
+    /// Stored rather than re-derived at settle time: the router's configuration
+    /// can change between queueing a call and its batch coming back a day later,
+    /// and the ledger should say which model actually ran.
+    ///
+    /// `#[serde(default)]` — `Tier::Small` — for rows queued before the column
+    /// existed. Those settle within a day of the upgrade at most.
+    #[serde(default = "batch_item_default_tier")]
+    pub tier: Tier,
     /// The assembled Messages params, verbatim.
     pub request_json: String,
     pub batch_id: Option<String>,

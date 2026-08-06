@@ -12,7 +12,8 @@
     "settled_at": 1785369600002,
     "status": "submitted",
     "submitted_at": 1785369600001,
-    "task_type": "summarize"
+    "task_type": "summarize",
+    "tier": "small"
   },
   "command_error": {
     "message": "destructive commands must be approved from the phone",
