@@ -11,7 +11,7 @@ use crate::id::new_id;
 use crate::store::{LedgerStore, StoreError, TimeRange};
 use crate::time::now_ms;
 use forge_domain::price::{CacheTtl, QuoteContext, UnknownModel, quote};
-use forge_proto::types::{Avoided, TaskType, Tier, Usage, UsageEvent};
+use forge_proto::types::{Avoided, Dispatch, TaskType, Tier, Usage, UsageEvent};
 
 #[derive(Debug)]
 pub enum LedgerError {
@@ -54,7 +54,12 @@ impl From<StoreError> for LedgerError {
 pub struct Call<'a> {
     pub session_id: &'a str,
     pub model: &'a str,
+    /// Which model ran it.
     pub tier: Tier,
+    /// Live or batched. This, not [`Call::tier`], is what applies the 50%
+    /// discount — deferring a call halves the price of whatever model runs it,
+    /// and the two used to be the same field.
+    pub dispatch: Dispatch,
     pub task_type: TaskType,
     pub usage: Usage,
     /// `Some` when the pipeline returned without calling the model at all
@@ -77,6 +82,7 @@ impl<'a> Call<'a> {
             session_id,
             model,
             tier,
+            dispatch: Dispatch::Live,
             task_type,
             usage,
             avoided: None,
@@ -95,6 +101,18 @@ impl<'a> Call<'a> {
         Self {
             avoided: Some(reason),
             ..Self::new(session_id, model, tier, task_type, Usage::default())
+        }
+    }
+
+    /// The same call, dispatched through the Batch API.
+    ///
+    /// Halves the price of whatever model ran it. Legitimate in exactly one
+    /// place — where a batch result settles and the tokens really did go through
+    /// the Batch API. Anywhere else it is a discount the bill never got.
+    pub fn batched(self) -> Self {
+        Self {
+            dispatch: Dispatch::Batch,
+            ..self
         }
     }
 }
@@ -123,7 +141,7 @@ impl<S: LedgerStore> Ledger<S> {
         let ctx = QuoteContext {
             at_ms,
             cache_ttl: call.cache_ttl,
-            batch: call.tier == Tier::Batch,
+            batch: call.dispatch == Dispatch::Batch,
         };
 
         // An avoided call never reached the provider, so it bills nothing —
@@ -141,6 +159,7 @@ impl<S: LedgerStore> Ledger<S> {
             session_id: call.session_id.to_owned(),
             model: call.model.to_owned(),
             tier: call.tier,
+            dispatch: call.dispatch,
             task_type: call.task_type,
             usage,
             cost_usd,
@@ -399,34 +418,55 @@ mod tests {
     }
 
     #[test]
-    fn a_batch_tier_call_gets_the_batch_discount() {
+    fn a_batched_call_gets_the_batch_discount() {
         let ledger = ledger();
-        let live = ledger
-            .record_at(
-                Call::new(
-                    "session-1",
-                    "claude-opus-5",
-                    Tier::Large,
-                    TaskType::Summarize,
-                    edit_usage(),
-                ),
-                NOW_MS,
+        let call = || {
+            Call::new(
+                "session-1",
+                "claude-opus-5",
+                Tier::Large,
+                TaskType::Summarize,
+                edit_usage(),
             )
-            .unwrap();
-        let batched = ledger
-            .record_at(
-                Call::new(
-                    "session-1",
-                    "claude-opus-5",
-                    Tier::Batch,
-                    TaskType::Summarize,
-                    edit_usage(),
-                ),
-                NOW_MS,
-            )
-            .unwrap();
+        };
+
+        let live = ledger.record_at(call(), NOW_MS).unwrap();
+        let batched = ledger.record_at(call().batched(), NOW_MS).unwrap();
 
         assert!((batched.cost_usd - live.cost_usd / 2.0).abs() < 1e-12);
+
+        // The discount comes from *how it was dispatched*, and the tier still
+        // says which model ran. Before `dispatch` existed these were one field,
+        // so a batched call was recorded as tier `batch` and the dashboard could
+        // not say the deferred work had been Opus.
+        assert_eq!(batched.tier, Tier::Large);
+        assert_eq!(batched.dispatch, Dispatch::Batch);
+        assert_eq!(live.dispatch, Dispatch::Live);
+    }
+
+    #[test]
+    fn the_tier_alone_no_longer_buys_a_discount() {
+        // `Tier::Batch` survives as a plan-file pin and as a legacy stored
+        // value. Neither may quietly halve a bill: only `.batched()`, which is
+        // reachable from exactly one place — a batch result settling.
+        let ledger = ledger();
+        let priced_as = |tier| {
+            ledger
+                .record_at(
+                    Call::new(
+                        "session-1",
+                        "claude-opus-5",
+                        tier,
+                        TaskType::Summarize,
+                        edit_usage(),
+                    ),
+                    NOW_MS,
+                )
+                .unwrap()
+                .cost_usd
+        };
+
+        assert!((priced_as(Tier::Batch) - priced_as(Tier::Large)).abs() < 1e-12);
     }
 
     #[test]

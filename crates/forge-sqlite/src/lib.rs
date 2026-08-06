@@ -17,8 +17,8 @@ use forge_app::store::{
 };
 use forge_proto::types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
-    Device, DeviceKind, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo, Risk,
-    Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
+    Device, DeviceKind, Dispatch, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo,
+    Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
 };
 
 /// Applied in order; the index+1 is the `PRAGMA user_version` they leave behind.
@@ -29,9 +29,10 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_agent_task.sql"),
     include_str!("../migrations/0005_task_verification.sql"),
     include_str!("../migrations/0006_usage_time_index.sql"),
+    include_str!("../migrations/0007_dispatch.sql"),
 ];
 
-const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, request_json, \
+const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
      batch_id, status, response_text, error, queued_at, submitted_at, settled_at";
 
 /// Ordered to match the `?1..?19` in `upsert_task` and the indices in
@@ -137,6 +138,7 @@ struct RawBatchItem {
     custom_id: String,
     task_type: String,
     model: String,
+    tier: String,
     request_json: String,
     batch_id: Option<String>,
     status: String,
@@ -154,14 +156,15 @@ fn read_batch_item(row: &Row<'_>) -> rusqlite::Result<RawBatchItem> {
         custom_id: row.get(2)?,
         task_type: row.get(3)?,
         model: row.get(4)?,
-        request_json: row.get(5)?,
-        batch_id: row.get(6)?,
-        status: row.get(7)?,
-        response_text: row.get(8)?,
-        error: row.get(9)?,
-        queued_at: row.get(10)?,
-        submitted_at: row.get(11)?,
-        settled_at: row.get(12)?,
+        tier: row.get(5)?,
+        request_json: row.get(6)?,
+        batch_id: row.get(7)?,
+        status: row.get(8)?,
+        response_text: row.get(9)?,
+        error: row.get(10)?,
+        queued_at: row.get(11)?,
+        submitted_at: row.get(12)?,
+        settled_at: row.get(13)?,
     })
 }
 
@@ -175,6 +178,7 @@ impl TryFrom<RawBatchItem> for BatchItem {
             custom_id: raw.custom_id,
             task_type: parse_enum::<TaskType>(&raw.task_type)?,
             model: raw.model,
+            tier: parse_enum::<Tier>(&raw.tier)?,
             request_json: raw.request_json,
             batch_id: raw.batch_id,
             status: parse_enum::<BatchStatus>(&raw.status)?,
@@ -325,6 +329,7 @@ struct RawUsageEvent {
     session_id: String,
     model: String,
     tier: String,
+    dispatch: String,
     task_type: String,
     input_tokens: i64,
     output_tokens: i64,
@@ -341,14 +346,15 @@ fn read_usage_event(row: &Row<'_>) -> rusqlite::Result<RawUsageEvent> {
         session_id: row.get(1)?,
         model: row.get(2)?,
         tier: row.get(3)?,
-        task_type: row.get(4)?,
-        input_tokens: row.get(5)?,
-        output_tokens: row.get(6)?,
-        cache_write_tokens: row.get(7)?,
-        cache_read_tokens: row.get(8)?,
-        cost_usd: row.get(9)?,
-        avoided: row.get(10)?,
-        created_at: row.get(11)?,
+        dispatch: row.get(4)?,
+        task_type: row.get(5)?,
+        input_tokens: row.get(6)?,
+        output_tokens: row.get(7)?,
+        cache_write_tokens: row.get(8)?,
+        cache_read_tokens: row.get(9)?,
+        cost_usd: row.get(10)?,
+        avoided: row.get(11)?,
+        created_at: row.get(12)?,
     })
 }
 
@@ -361,6 +367,7 @@ impl TryFrom<RawUsageEvent> for UsageEvent {
             session_id: raw.session_id,
             model: raw.model,
             tier: parse_enum::<Tier>(&raw.tier)?,
+            dispatch: parse_enum::<Dispatch>(&raw.dispatch)?,
             task_type: parse_enum::<TaskType>(&raw.task_type)?,
             usage: Usage {
                 input_tokens: token_count(raw.input_tokens, "input_tokens")?,
@@ -506,8 +513,9 @@ const APPROVAL_COLUMNS: &str = "id, session_id, tool, payload, risk, decision, d
 const SESSION_COLUMNS: &str = "id, repo_id, agent, tmux_target, status, plan_id, budget_usd, \
                                spent_usd, started_at, ended_at, agent_session_id";
 
-const USAGE_COLUMNS: &str = "id, session_id, model, tier, task_type, input_tokens, output_tokens, \
-                             cache_write_tokens, cache_read_tokens, cost_usd, avoided, created_at";
+const USAGE_COLUMNS: &str = "id, session_id, model, tier, dispatch, task_type, input_tokens, \
+                             output_tokens, cache_write_tokens, cache_read_tokens, cost_usd, \
+                             avoided, created_at";
 
 impl FleetStore for SqliteStore {
     fn upsert_machine(&self, machine: &Machine) -> Result<()> {
@@ -713,15 +721,16 @@ impl LedgerStore for SqliteStore {
         }
 
         tx.execute(
-            "INSERT INTO usage_event (id, session_id, model, tier, task_type, input_tokens,
-                                      output_tokens, cache_write_tokens, cache_read_tokens,
-                                      cost_usd, avoided, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO usage_event (id, session_id, model, tier, dispatch, task_type,
+                                      input_tokens, output_tokens, cache_write_tokens,
+                                      cache_read_tokens, cost_usd, avoided, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 event.id,
                 event.session_id,
                 event.model,
                 event.tier.as_str(),
+                event.dispatch.as_str(),
                 event.task_type.as_str(),
                 event.usage.input_tokens,
                 event.usage.output_tokens,
@@ -1031,15 +1040,16 @@ impl BatchStore for SqliteStore {
         let conn = self.lock()?;
         conn.execute(
             "INSERT INTO batch_item
-               (id, session_id, custom_id, task_type, model, request_json,
+               (id, session_id, custom_id, task_type, model, tier, request_json,
                 batch_id, status, response_text, error, queued_at, submitted_at, settled_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 item.id,
                 item.session_id,
                 item.custom_id,
                 item.task_type.as_str(),
                 item.model,
+                item.tier.as_str(),
                 item.request_json,
                 item.batch_id,
                 item.status.as_str(),
@@ -1461,6 +1471,80 @@ mod migration_tests {
         );
     }
 
+    /// Rows written before `dispatch` existed are backfilled, not guessed.
+    ///
+    /// A row that said `tier = 'batch'` *was* batched — that is the whole reason
+    /// the value was there — so `dispatch` becomes `batch` and the historical
+    /// cost stays explicable. Its real model tier is not recoverable and `tier`
+    /// keeps saying `batch` for those rows; the alternative was inventing one.
+    #[test]
+    fn the_dispatch_column_is_backfilled_from_the_old_tier() {
+        let conn = Connection::open_in_memory().unwrap();
+        for (index, sql) in MIGRATIONS.iter().take(6).enumerate() {
+            conn.execute_batch(&format!(
+                "BEGIN;\n{sql}\nPRAGMA user_version = {};\nCOMMIT;",
+                index + 1
+            ))
+            .unwrap();
+        }
+
+        // A v6 database with one batched call and one live one.
+        conn.execute_batch(
+            "INSERT INTO machine (id, name, pubkey, created_at)
+                 VALUES ('m1', 'host', '', 0);
+             INSERT INTO repo (id, machine_id, path, name) VALUES ('r1', 'm1', '/r', 'r');
+             INSERT INTO session (id, repo_id, agent, status, spent_usd, started_at)
+                 VALUES ('s1', 'r1', 'claude-code', 'running', 0.0, 0);
+             INSERT INTO usage_event
+                 (id, session_id, model, tier, task_type, input_tokens, output_tokens,
+                  cache_write_tokens, cache_read_tokens, cost_usd, created_at)
+                 VALUES ('u-batch', 's1', 'claude-sonnet-5', 'batch', 'summarize',
+                         100, 10, 0, 0, 0.5, 0),
+                        ('u-live', 's1', 'claude-sonnet-5', 'large', 'edit',
+                         100, 10, 0, 0, 1.0, 0);",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let dispatch_of = |id: &str| -> String {
+            conn.query_row(
+                "SELECT dispatch FROM usage_event WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            dispatch_of("u-batch"),
+            "batch",
+            "a batched row stays batched"
+        );
+        assert_eq!(dispatch_of("u-live"), "live");
+
+        // The rows still read back through the type, rather than only through
+        // raw SQL — a legacy `tier = batch` must not become a parse error.
+        let events: Vec<UsageEvent> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {USAGE_COLUMNS} FROM usage_event ORDER BY id"
+                ))
+                .unwrap();
+            let rows: Vec<RawUsageEvent> = stmt
+                .query_map([], read_usage_event)
+                .unwrap()
+                .map(std::result::Result::unwrap)
+                .collect();
+            rows.into_iter()
+                .map(|raw| UsageEvent::try_from(raw).unwrap())
+                .collect()
+        };
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].tier, Tier::Batch, "history keeps its legacy tier");
+        assert_eq!(events[0].dispatch, Dispatch::Batch);
+        assert_eq!(events[1].dispatch, Dispatch::Live);
+    }
+
     /// Migrating twice is a no-op, which is what makes a crashed upgrade
     /// recoverable by restarting.
     #[test]
@@ -1715,6 +1799,7 @@ mod tests {
 
     fn event(id: &str, session_id: &str, cost_usd: f64, created_at: i64) -> UsageEvent {
         UsageEvent {
+            dispatch: Dispatch::Live,
             id: id.into(),
             session_id: session_id.into(),
             model: "claude-opus-5".into(),
@@ -2256,6 +2341,7 @@ mod batch_queue_tests {
 
     fn item(id: &str, custom: &str) -> BatchItem {
         BatchItem {
+            tier: Tier::Small,
             id: id.into(),
             session_id: "s1".into(),
             custom_id: custom.into(),

@@ -37,7 +37,7 @@
 use std::time::Duration;
 
 use forge_app::store::{BatchStore, LedgerStore};
-use forge_proto::types::{BatchItem, BatchStatus, Tier, Usage};
+use forge_proto::types::{BatchItem, BatchStatus, Usage};
 use serde::{Deserialize, Serialize};
 
 use crate::dispatch::DispatchError;
@@ -360,17 +360,22 @@ impl<S: BatchStore + LedgerStore, C: BatchClient> BatchQueue<S, C> {
             return Ok(0.0);
         };
 
-        // `Tier::Batch` is what applies the 50% discount, inside the ledger's
-        // own pricing. This is the one place it is legitimate to claim it: the
+        // `.batched()` is what applies the 50% discount, inside the ledger's own
+        // pricing. This is the one place it is legitimate to claim it: the
         // tokens really did go through the Batch API. Everywhere else that flag
         // would be a discount the bill never got.
+        //
+        // The tier is the one recorded when the item was queued, so the ledger
+        // says which model actually ran rather than the one the router would
+        // pick today.
         let call = forge_app::ledger::Call::new(
             &item.session_id,
             &item.model,
-            Tier::Batch,
+            item.tier,
             item.task_type,
             usage,
-        );
+        )
+        .batched();
         let recorded = forge_app::ledger::Ledger::new(&self.store).record_at(call, now_ms)?;
         Ok(recorded.cost_usd)
     }
@@ -495,6 +500,7 @@ async fn decode(response: reqwest::Response) -> Result<BatchState, DispatchError
 mod tests {
     use super::*;
     use forge_app::store::{FleetStore, SessionStore};
+    use forge_proto::types::Tier;
     use forge_proto::types::{Agent, Machine, Repo, Session, SessionStatus, TaskType};
     use forge_sqlite::SqliteStore;
     use std::sync::Mutex;
@@ -662,6 +668,7 @@ mod tests {
     fn queued(store: &SqliteStore, id: &str, custom: &str) {
         store
             .enqueue_batch_item(&BatchItem {
+                tier: Tier::Small,
                 id: id.into(),
                 session_id: "s1".into(),
                 custom_id: custom.into(),
