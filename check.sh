@@ -43,6 +43,12 @@ cargo test -q -p forge-gateway --test savings -- --nocapture 2>&1 | grep -E "red
 cargo test -q -p forge-gateway --test compaction_savings -- --nocapture 2>&1 | grep -E "saved|given up" || true
 cargo test -q -p forge-agent --test draft_then_verify -- --nocapture 2>&1 | grep -E "reduction|bytes" || true
 
+step "The wire contract, read by both languages"
+# forge-proto writes a fixture from its own types; client-core's wire.test.ts
+# asserts every field its hand-written interfaces declare is actually in it. The
+# Rust half alone cannot catch a rename, because it renames both sides at once.
+cargo test -q -p forge-proto --test wire_fixture
+
 step "JavaScript: typecheck"
 pnpm -r typecheck
 

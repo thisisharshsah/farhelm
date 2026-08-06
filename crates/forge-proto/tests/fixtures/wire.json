@@ -1,0 +1,340 @@
+{
+  "batch_item": {
+    "batch_id": "msgbatch_1",
+    "custom_id": "custom-1",
+    "error": "none",
+    "id": "batch-item-1",
+    "model": "claude-haiku-4-5",
+    "queued_at": 1785369600000,
+    "request_json": "{}",
+    "response_text": "done",
+    "session_id": "session-1",
+    "settled_at": 1785369600002,
+    "status": "submitted",
+    "submitted_at": 1785369600001,
+    "task_type": "summarize"
+  },
+  "command_error": {
+    "message": "destructive commands must be approved from the phone",
+    "type": "command_error"
+  },
+  "commands": [
+    {
+      "approval_id": "approval-1",
+      "decision": "approved",
+      "type": "decide"
+    },
+    {
+      "session_id": "session-1",
+      "text": "focus on retries",
+      "type": "instruct"
+    },
+    {
+      "action": "skip",
+      "session_id": "session-1",
+      "type": "plan_control"
+    },
+    {
+      "session_id": "session-1",
+      "type": "session_snapshot"
+    },
+    {
+      "session_id": "session-1",
+      "since_ms": 1785369600000,
+      "type": "dashboard_snapshot"
+    },
+    {
+      "decision": "approve",
+      "note": "looks right",
+      "task_id": "task-1",
+      "type": "review_task"
+    },
+    {
+      "task_id": "task-1",
+      "type": "task_snapshot"
+    },
+    {
+      "type": "task_list"
+    },
+    {
+      "task_id": "task-1",
+      "type": "revert_task"
+    },
+    {
+      "type": "snapshot"
+    }
+  ],
+  "dashboard_view": {
+    "avoided_calls": 3,
+    "budget": {
+      "cap_usd": 10.0,
+      "pct": 0.85,
+      "spent_usd": 8.5,
+      "state": "warn"
+    },
+    "by_tier": [
+      {
+        "share": 0.81,
+        "tier": "large",
+        "usd": 1.0
+      }
+    ],
+    "cache_hit_ratio": 0.91,
+    "calls": 12,
+    "repo_name": "payments-api",
+    "session_id": "session-1",
+    "spend_series": [
+      {
+        "at_ms": 1785369600000,
+        "usd": 0.5
+      }
+    ],
+    "total_usd": 1.23
+  },
+  "events": [
+    {
+      "session_id": "session-1",
+      "type": "session_upsert"
+    },
+    {
+      "at_ms": 1785369600000,
+      "seq": 7,
+      "session_id": "session-1",
+      "text": "compiling…",
+      "type": "output_chunk"
+    },
+    {
+      "approval": {
+        "decided_at": 1785369603200,
+        "decided_via": "phone",
+        "decision": "denied",
+        "id": "approval-1",
+        "payload": "git push --force",
+        "requested_at": 1785369600000,
+        "risk": "destructive",
+        "session_id": "session-1",
+        "tool": "Bash"
+      },
+      "type": "approval_request"
+    },
+    {
+      "approval_id": "approval-1",
+      "decision": "approved",
+      "session_id": "session-1",
+      "type": "approval_decision"
+    },
+    {
+      "hard_stop": false,
+      "pct": 0.85,
+      "session_id": "session-1",
+      "type": "budget_alert"
+    },
+    {
+      "session_id": "session-1",
+      "status": "awaiting_review",
+      "summary": "3 files, +42 −17",
+      "task_id": "task-1",
+      "type": "task_upsert"
+    }
+  ],
+  "fleet_view": {
+    "cache_hit_ratio": 0.91,
+    "pending_approvals": [
+      {
+        "allows_watch_decision": false,
+        "budget": {
+          "cap_usd": 10.0,
+          "pct": 0.85,
+          "spent_usd": 8.5,
+          "state": "warn"
+        },
+        "decided_at": 1785369603200,
+        "decided_via": "phone",
+        "decision": "denied",
+        "id": "approval-1",
+        "payload": "git push --force",
+        "repo_name": "payments-api",
+        "requested_at": 1785369600000,
+        "risk": "destructive",
+        "session_id": "session-1",
+        "tool": "Bash"
+      }
+    ],
+    "sessions": [
+      {
+        "agent": "claude-code",
+        "awaiting_approval_id": "approval-1",
+        "budget": {
+          "cap_usd": 10.0,
+          "pct": 0.85,
+          "spent_usd": 8.5,
+          "state": "warn"
+        },
+        "ended_at": 1785369660000,
+        "id": "session-1",
+        "is_live": true,
+        "machine_name": "hetzner-1",
+        "plan": {
+          "current_ordinal": 3,
+          "current_title": "Wire the retry path",
+          "settled": 2,
+          "total": 5
+        },
+        "repo_name": "payments-api",
+        "started_at": 1785369600000,
+        "status": "awaiting_approval"
+      }
+    ],
+    "tasks_awaiting_review": [
+      {
+        "change_summary": "3 files, +42 −17",
+        "cost_usd": 0.42,
+        "created_at": 1785369600000,
+        "decided_at": 1785369602000,
+        "decided_via": "web",
+        "error": "a tool call failed once",
+        "files_changed": 3,
+        "id": "task-1",
+        "lines_added": 42,
+        "lines_removed": 17,
+        "prompt": "Make the retry path give up",
+        "repo_id": "repo-1",
+        "repo_name": "payments-api",
+        "repo_path": "/srv/payments-api",
+        "review_note": "too broad, try again",
+        "session_id": "session-1",
+        "status": "awaiting_review",
+        "steps": 9,
+        "summary": "Bounded the retry loop",
+        "updated_at": 1785369601000,
+        "verify_grade": "concerns",
+        "verify_model": "claude-opus-5",
+        "verify_notes": "the timeout is not covered"
+      }
+    ],
+    "today_usd": 12.34
+  },
+  "session_detail": {
+    "agent": "claude-code",
+    "awaiting_approval_id": "approval-1",
+    "budget": {
+      "cap_usd": 10.0,
+      "pct": 0.85,
+      "spent_usd": 8.5,
+      "state": "warn"
+    },
+    "ended_at": 1785369660000,
+    "id": "session-1",
+    "is_live": true,
+    "machine_name": "hetzner-1",
+    "output": [
+      {
+        "at_ms": 1785369600000,
+        "seq": 7,
+        "text": "compiling…"
+      }
+    ],
+    "pending_approval": {
+      "allows_watch_decision": false,
+      "budget": {
+        "cap_usd": 10.0,
+        "pct": 0.85,
+        "spent_usd": 8.5,
+        "state": "warn"
+      },
+      "decided_at": 1785369603200,
+      "decided_via": "phone",
+      "decision": "denied",
+      "id": "approval-1",
+      "payload": "git push --force",
+      "repo_name": "payments-api",
+      "requested_at": 1785369600000,
+      "risk": "destructive",
+      "session_id": "session-1",
+      "tool": "Bash"
+    },
+    "plan": {
+      "current_ordinal": 3,
+      "current_title": "Wire the retry path",
+      "settled": 2,
+      "total": 5
+    },
+    "repo_name": "payments-api",
+    "started_at": 1785369600000,
+    "status": "awaiting_approval",
+    "steps": [
+      {
+        "checkpoint_sha": "a1b2c3d",
+        "ordinal": 3,
+        "status": "active",
+        "title": "Wire the retry path"
+      }
+    ]
+  },
+  "task_detail": {
+    "change_summary": "3 files, +42 −17",
+    "changes": {
+      "files": [
+        {
+          "added": 2,
+          "binary": false,
+          "hunks": [
+            {
+              "lines": [
+                {
+                  "tag": "context",
+                  "text": "fn retry() {"
+                },
+                {
+                  "tag": "remove",
+                  "text": "    loop {}"
+                },
+                {
+                  "tag": "add",
+                  "text": "    for _ in 0..3 {}"
+                }
+              ],
+              "new_len": 4,
+              "new_start": 10,
+              "old_len": 3,
+              "old_start": 10
+            }
+          ],
+          "kind": "modified",
+          "path": "src/retry.rs",
+          "removed": 1
+        }
+      ]
+    },
+    "cost_usd": 0.42,
+    "created_at": 1785369600000,
+    "decided_at": 1785369602000,
+    "decided_via": "web",
+    "error": "a tool call failed once",
+    "files_changed": 3,
+    "id": "task-1",
+    "lines_added": 42,
+    "lines_removed": 17,
+    "output": [
+      {
+        "at_ms": 1785369600000,
+        "seq": 7,
+        "text": "compiling…"
+      }
+    ],
+    "patch": "--- a/src/retry.rs\n+++ b/src/retry.rs\n@@ -10,3 +10,4 @@\n fn retry() {\n-    loop {}\n+    for _ in 0..3 {}\n",
+    "prompt": "Make the retry path give up",
+    "repo_id": "repo-1",
+    "repo_name": "payments-api",
+    "repo_path": "/srv/payments-api",
+    "review_note": "too broad, try again",
+    "session_id": "session-1",
+    "status": "awaiting_review",
+    "steps": 9,
+    "summary": "Bounded the retry loop",
+    "updated_at": 1785369601000,
+    "verify_grade": "concerns",
+    "verify_model": "claude-opus-5",
+    "verify_notes": "the timeout is not covered"
+  }
+}
