@@ -307,3 +307,84 @@ async fn an_unknown_session_is_refused_on_both_transports() {
     .unwrap_err();
     assert!(matches!(relay, commands::CommandError::NotFound(_)));
 }
+
+/* --------------------------------------------------- the channel, everywhere */
+
+/// A pairing offer must name the channel the runner actually publishes on.
+///
+/// Three places derive it: `forge-runner`'s binary, the Tauri app, and this
+/// endpoint's no-relay fallback. The first two were unified earlier; this one
+/// was missed, and used `machine_id` — `machine-<hostname>`, not
+/// `forge-<key prefix>`. An offer minted before `--relay` was configured
+/// therefore named a channel the runner would never publish on.
+///
+/// It was not reachable: `claimPairing` refuses an offer with an empty
+/// `relay_url` before storing anything. But "the bug is unreachable because a
+/// client in another language happens to check first" is not a property worth
+/// resting on, and the endpoint is what `forge-runner pair` renders as a QR
+/// code.
+#[tokio::test]
+async fn a_pairing_offer_names_the_channel_the_runner_publishes_on() {
+    let state = fixture();
+    let addr = serve(Arc::clone(&state)).await;
+
+    let offer: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/pair/offer"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let expected = forge_proto::channel_for(state.identity.public_key().as_str());
+    assert_eq!(
+        offer["channel"], expected,
+        "the offer names a channel the runner will never publish on"
+    );
+    assert!(
+        expected.starts_with("forge-"),
+        "and it is the derived channel, not the machine id"
+    );
+    assert_ne!(
+        offer["channel"], state.machine_id,
+        "machine_id is not a relay channel"
+    );
+
+    // The runner's own public key travels with it, so a device knows what to
+    // encrypt to.
+    assert_eq!(
+        offer["runner_public_key"],
+        state.identity.public_key().as_str()
+    );
+    // No relay configured: the URL is empty and a client will refuse the claim
+    // rather than pair a device that has nowhere to connect.
+    assert_eq!(offer["relay_url"], "");
+}
+
+/// With a relay configured, the offer carries that relay's channel verbatim.
+#[tokio::test]
+async fn a_configured_relay_channel_is_used_as_is() {
+    let state = forge_runner::state::AppState::build(
+        SqliteStore::open_in_memory().unwrap(),
+        |_| None,
+        Arc::new(Identity::generate()),
+        Some(forge_runner::state::RelayInfo {
+            url: "wss://relay.example".into(),
+            channel: "forge-configured".into(),
+        }),
+    );
+    let addr = serve(Arc::clone(&state)).await;
+
+    let offer: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/pair/offer"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(offer["channel"], "forge-configured");
+    assert_eq!(offer["relay_url"], "wss://relay.example");
+}
