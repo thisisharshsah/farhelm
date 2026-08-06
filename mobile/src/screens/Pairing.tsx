@@ -22,7 +22,7 @@ import {
   type Pairing,
 } from "@relayforge/client-core";
 import { securePairingStore } from "../platform";
-import { Field } from "../App";
+import { Field } from "../components/pieces";
 import { TAP, type Palette } from "../theme";
 
 export function PairingScreen({
