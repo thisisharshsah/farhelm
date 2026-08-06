@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/harshsah/Project/farhelm/target/debug/forge-runner hook",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/harshsah/Project/farhelm/target/debug/forge-runner hook",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/harshsah/Project/farhelm/target/debug/forge-runner hook",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

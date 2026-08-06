@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "RelayForge",
+  "version": "0.1.0",
+  "identifier": "dev.relayforge.desktop",
+  "build": {
+    "frontendDist": "../../web/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Supervise AI coding agents from anywhere",
+    "longDescription": "RelayForge turns this machine into a supervised host for AI coding agents. Approvals reach your phone; nothing runs unwatched."
+  }
+}

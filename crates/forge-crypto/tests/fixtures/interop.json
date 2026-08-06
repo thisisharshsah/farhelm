@@ -1,0 +1,21 @@
+{
+  "runner_secret": "jgT83gIqYHu-Y6dq9duWfUih9ghzQk3eiggW4Kk8Tig",
+  "runner_public": "Clpr3kdxMYfb7IS_DN7zyzcI0iTO716tFnPphwGwzDo",
+  "device_secret": "4ni_MFK9af6iZzWSC74AeSK5ljLStbceYFCC53DBqXI",
+  "device_public": "3WbZ68yfbd_3vLdNTGjlbW-vPCMpup8gkrNwmQpNAws",
+  "channel": "forge-interop",
+  "runner_to_device": {
+    "channel": "forge-interop",
+    "sender_id": "runner",
+    "nonce": "CWPCxHkbSG3heCR3d-fej70WLh76vzp4",
+    "ciphertext": "id3AjZR8U4EFQgoiNNw6k4uVMjccEPkYQufMnS7ih9gUUhvCxpzMurM8eiHS3DgbjQIXyEGuhpCFN3wF6hba0kh7qLi5xtBoXFHk3rHOiQ"
+  },
+  "runner_to_device_plaintext": "{\"type\":\"approval_request\",\"tool\":\"Bash\",\"payload\":\"pytest -x\"}",
+  "device_to_runner": {
+    "channel": "forge-interop",
+    "sender_id": "device-phone",
+    "nonce": "GGvuhIdcI0KCqER0mm6fgad-dSiWx_mP",
+    "ciphertext": "a_2RKO--nnqy2_pdkSK2GkYA2wbduYVvxzemRl24_QODWdZEkAwNEjWpJneGuw8WR2wuqTqyzDDPrmL7lL0ONTGZSi3k9tKtW8Y"
+  },
+  "device_to_runner_plaintext": "{\"type\":\"decide\",\"approval_id\":\"a1\",\"decision\":\"approved\"}"
+}

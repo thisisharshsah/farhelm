@@ -1,0 +1,22 @@
+[package]
+name = "forge-agent"
+description = "RelayForge's own coding agent: a tool loop that proposes a diff instead of applying one"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-core.workspace = true
+forge-gateway.workspace = true
+
+ignore = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "time", "rt"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,1019 @@
+/*
+ * Design tokens and layout.
+ *
+ * Colours come from the validated reference palette. The tier ramp is an
+ * *ordinal* scale (small → large → batch reads cheap → expensive), not
+ * categorical hues — tiers are an ordered category. Both the ordinal ramp and
+ * the surfaces were checked with the palette validator in light and dark.
+ *
+ * Dark values are declared twice on purpose: the media query follows the OS,
+ * the [data-theme] scope follows the in-app toggle, and the toggle must win in
+ * both directions.
+ */
+
+:root {
+  color-scheme: light;
+
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --surface-2: #f0efec;
+
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+
+  --series-1: #2a78d6;
+
+  /* Ordinal ramp — light→dark, single hue, validated with --ordinal. */
+  --tier-small: #86b6ef;
+  --tier-large: #2a78d6;
+  --tier-batch: #104281;
+
+  /* Status palette is fixed and never themed. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --success-text: #006300;
+
+  --radius: 12px;
+  --tap: 44px;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --surface-2: #242422;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --series-1: #3987e5;
+    --tier-small: #9ec5f4;
+    --tier-large: #3987e5;
+    --tier-batch: #184f95;
+    --success-text: #0ca30c;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --surface-2: #242422;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --gridline: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --series-1: #3987e5;
+  --tier-small: #9ec5f4;
+  --tier-large: #3987e5;
+  --tier-batch: #184f95;
+  --success-text: #0ca30c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--page);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.shell {
+  max-width: 34rem;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* Room for the fixed cost strip plus the home indicator. */
+  padding-bottom: calc(3.5rem + env(safe-area-inset-bottom));
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  padding-top: calc(0.75rem + env(safe-area-inset-top));
+  background: color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 1rem;
+  font-weight: 650;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+.icon-button {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+  font-size: 0.9rem;
+}
+
+.icon-button:hover {
+  background: var(--surface-2);
+}
+
+.back {
+  border: none;
+  background: none;
+  padding: 0.25rem 0.5rem 0.25rem 0;
+  min-height: var(--tap);
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+main {
+  flex: 1;
+  padding: 0.75rem 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Anti-pattern guard: never blank the view on refetch — hold the last render
+   at reduced opacity so nothing jumps. */
+.stale {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.875rem 1rem;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.secondary {
+  color: var(--text-secondary);
+}
+
+.empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 2.5rem 1rem;
+  font-size: 0.9rem;
+}
+
+.error {
+  border-left: 3px solid var(--status-critical);
+}
+
+/* ------------------------------------------------------------- session row */
+
+.session {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.875rem 1rem;
+}
+
+.session:hover {
+  border-color: var(--baseline);
+}
+
+.session-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.session-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.session-machine {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.session-line {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Status dot is the first glyph in the row (§4 design rule). It is never the
+   only signal — the status word sits beside it. */
+.dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+}
+
+.dot[data-live="false"] {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--text-muted);
+}
+
+/* --------------------------------------------------------------- approval */
+
+.approval {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-warning);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  padding: 0.875rem 1rem;
+}
+
+.approval[data-risk="destructive"] {
+  border-left-color: var(--status-critical);
+}
+
+.approval code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.btn {
+  flex: 1;
+  min-height: var(--tap);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-approve {
+  border-color: color-mix(in srgb, var(--status-good) 45%, transparent);
+  color: var(--success-text);
+}
+
+.btn-deny {
+  border-color: color-mix(in srgb, var(--status-critical) 45%, transparent);
+  color: var(--status-critical);
+}
+
+.notice {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+/* ------------------------------------------------------------------- plan */
+
+.steps {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.step {
+  display: flex;
+  gap: 0.55rem;
+  align-items: baseline;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.step[data-status="active"] {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.step[data-status="done"] .step-title,
+.step[data-status="skipped"] .step-title {
+  color: var(--text-muted);
+}
+
+.step[data-status="skipped"] .step-title {
+  text-decoration: line-through;
+}
+
+.step-mark {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  flex: none;
+  width: 1.15rem;
+  color: var(--text-muted);
+}
+
+.step[data-status="active"] .step-mark {
+  color: var(--series-1);
+}
+
+.step[data-status="failed"] .step-mark {
+  color: var(--status-critical);
+}
+
+/* ----------------------------------------------------------------- output */
+
+.output {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+
+.output-line[data-kind="instruction"] {
+  color: var(--series-1);
+}
+
+.composer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.composer input {
+  flex: 1;
+  min-height: var(--tap);
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.composer input:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------- pairing */
+
+/* Inside the pairing card the labels stack above their fields, so `.tile-label`
+   needs to be a block here — everywhere else it sits inline in a stat tile. */
+.card .tile-label {
+  display: block;
+  margin: 0.75rem 0 0.3rem;
+}
+
+.pair-input {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  /* A key blob has no words in it — proportional type turns `l1I` and `O0`
+     into a guessing game when the paste goes wrong. */
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  resize: vertical;
+}
+
+textarea.pair-input {
+  min-height: calc(var(--tap) * 1.5);
+}
+
+input.pair-input {
+  min-height: var(--tap);
+}
+
+.pair-input:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 1px;
+}
+
+.error-text {
+  color: var(--status-critical);
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* ------------------------------------------------------------- cost strip */
+
+.cost-strip {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom));
+  font-size: 0.82rem;
+  background: color-mix(in srgb, var(--page) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.cost-strip b {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+/* ------------------------------------------------------------------ charts */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.tile {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.85rem;
+}
+
+.tile-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.tile-value {
+  margin-top: 0.2rem;
+  font-size: 1.55rem;
+  font-weight: 640;
+  letter-spacing: -0.02em;
+  /* Proportional figures on standalone numbers — tabular is for columns. */
+}
+
+.tile-note {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 0.1rem;
+}
+
+.chart-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chart-title .spacer {
+  flex: 1;
+}
+
+.linkish {
+  border: none;
+  background: none;
+  padding: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Meter: a track plus a fill. The status colour is paired with a text label
+   so meaning never rests on hue alone. */
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--status-good);
+  transition: width 200ms ease;
+}
+
+.meter-fill[data-state="warn"] {
+  background: var(--status-warning);
+}
+
+.meter-fill[data-state="stop"] {
+  background: var(--status-critical);
+}
+
+.meter-caption {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-top: 0.35rem;
+}
+
+.meter-caption .spacer {
+  flex: 1;
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  /* 2px surface gap between adjacent bars — not borders. */
+  gap: 2px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 4.2rem 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  /* Hit target comfortably above the mark height. */
+  min-height: 26px;
+  padding: 1px 0;
+}
+
+.bar-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.bar-track {
+  height: 10px;
+  position: relative;
+}
+
+.bar-fill {
+  height: 100%;
+  /* 4px rounded data-end, anchored square to the baseline. */
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+
+.bar-value {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sparkline {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 8;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  white-space: nowrap;
+}
+
+.chart-wrap {
+  position: relative;
+}
+
+table.values {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+table.values th,
+table.values td {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--gridline);
+}
+
+table.values th {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+table.values td:last-child,
+table.values th:last-child {
+  text-align: right;
+}
+
+/* --------------------------------------------------------- empty states */
+
+.empty-state {
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+.empty-title {
+  margin: 0 0 0.4rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.empty-state .btn {
+  margin-top: 0.75rem;
+}
+
+/* ----------------------------------------------------------- agent picker */
+
+.agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.agent-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* Selection is a border weight and a fill, never hue alone — the same rule the
+   status dot follows. */
+.agent-option[data-selected="true"] {
+  border-color: var(--series-1);
+  box-shadow: inset 0 0 0 1px var(--series-1);
+}
+
+.agent-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.agent-name {
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.agent-note {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------ tasks */
+
+/* Status word in a pill. `data-token` maps to the same four states the session
+   dot uses, and the word is always present — colour is never the only signal. */
+.status-chip {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.7rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.status-chip[data-token="good"] {
+  color: var(--success-text);
+  box-shadow: inset 0 0 0 1px var(--status-good);
+}
+
+.status-chip[data-token="warning"] {
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--status-warning);
+}
+
+.status-chip[data-token="critical"] {
+  color: var(--status-critical);
+  box-shadow: inset 0 0 0 1px var(--status-critical);
+}
+
+.task-row {
+  align-items: stretch;
+}
+
+.task-row-prompt,
+.task-prompt {
+  margin: 0.25rem 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  /* Two lines in a list: enough to tell two tasks apart, not enough to push
+     the next row off a phone screen. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-prompt {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+  color: var(--text-primary);
+}
+
+.task-summary {
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+textarea.task-input {
+  font-family: var(--font);
+  min-height: calc(var(--tap) * 2);
+}
+
+.verdict {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--gridline);
+}
+
+/* C10's read of the diff. A left edge and a glyph, matching the approval card's
+   grammar — the glyph is what survives greyscale and a colour-blind reader. */
+.second-opinion {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--text-muted);
+}
+
+.second-opinion[data-grade="pass"] {
+  border-left-color: var(--status-good);
+}
+
+.second-opinion[data-grade="concerns"] {
+  border-left-color: var(--status-warning);
+}
+
+.second-opinion[data-grade="fail"] {
+  border-left-color: var(--status-critical);
+}
+
+.second-opinion-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.second-opinion[data-grade="fail"] .second-opinion-head b {
+  color: var(--status-critical);
+}
+
+.second-opinion .tile-note {
+  margin-top: 0.25rem;
+}
+
+/* A waiting change set on the home screen. Borrows `.approval`'s amber edge —
+   both mean "somebody has to decide" — but reads as a row you open. */
+.review-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------- diff */
+
+.diff {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.diff-file {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.diff-file-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 0;
+  cursor: pointer;
+}
+
+.diff-kind {
+  width: 1rem;
+  text-align: center;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+.diff-kind[data-kind="added"] {
+  color: var(--success-text);
+}
+
+.diff-kind[data-kind="deleted"] {
+  color: var(--status-critical);
+}
+
+.diff-path {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  /* Truncate from the left: `…/billing/retry.rs` is the useful half. */
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-count {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-count-add {
+  color: var(--success-text);
+}
+
+.diff-count-remove {
+  color: var(--status-critical);
+}
+
+.diff-chevron {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+/* The one place in the app that may scroll sideways. Code does not wrap: a
+   soft-wrapped diff makes a long line look like two changed ones. */
+.diff-body {
+  overflow-x: auto;
+  background: var(--surface-1);
+  -webkit-overflow-scrolling: touch;
+}
+
+.diff-hunk-header {
+  padding: 0.2rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-top: 1px solid var(--gridline);
+  white-space: nowrap;
+}
+
+.diff-line {
+  display: flex;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.diff-no {
+  flex: none;
+  width: 2.6rem;
+  padding-right: 0.4rem;
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.diff-mark {
+  flex: none;
+  width: 1rem;
+  text-align: center;
+  user-select: none;
+}
+
+.diff-text {
+  padding-right: 0.75rem;
+}
+
+/* Added and removed lines carry a tint *and* a leading +/− glyph. The glyph is
+   what survives a colour-blind reader, a greyscale screenshot, and the tint
+   being nearly invisible on a sunlit phone. */
+.diff-line[data-tag="add"] {
+  background: color-mix(in srgb, var(--status-good) 12%, transparent);
+}
+
+.diff-line[data-tag="add"] .diff-mark {
+  color: var(--success-text);
+}
+
+.diff-line[data-tag="remove"] {
+  background: color-mix(in srgb, var(--status-critical) 12%, transparent);
+}
+
+.diff-line[data-tag="remove"] .diff-mark {
+  color: var(--status-critical);
+}
+
+.diff-binary {
+  padding: 0.6rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

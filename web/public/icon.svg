@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="RelayForge">
+  <rect width="192" height="192" rx="42" fill="#0b0b0b" />
+  <!-- A relay hop: two endpoints and the link between them. -->
+  <circle cx="56" cy="96" r="16" fill="#3987e5" />
+  <circle cx="136" cy="96" r="16" fill="#199e70" />
+  <path d="M72 96h48" stroke="#c3c2b7" stroke-width="6" stroke-linecap="round" />
+  <path d="M96 52v18M96 122v18" stroke="#c3c2b7" stroke-width="6" stroke-linecap="round" opacity="0.5" />
+</svg>

@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/forge-agent",
+  "crates/forge-core",
+  "crates/forge-crypto",
+  "crates/forge-gateway",
+  "crates/forge-runner",
+  "crates/forge-relay",
+    "desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.90"
+
+[workspace.dependencies]
+forge-agent = { path = "crates/forge-agent" }
+forge-core = { path = "crates/forge-core" }
+forge-crypto = { path = "crates/forge-crypto" }
+forge-gateway = { path = "crates/forge-gateway" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
