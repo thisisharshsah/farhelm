@@ -21,10 +21,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use forge_core::store::{TimeRange, prelude::*};
-use forge_core::time::now_ms;
-use forge_core::types::{Approval, Budget, Machine, Repo, Session, SessionStatus};
+use forge_app::store::{TimeRange, prelude::*};
+use forge_app::time::now_ms;
 use forge_domain::{ApprovalRules as _, budget_view};
+use forge_proto::types::{Approval, Budget, Machine, Repo, Session, SessionStatus};
 use forge_proto::views::{
     ApprovalView, DashboardView, FleetView, PlanProgress, PlanStepView, SessionDetail, SessionView,
     SpendBucket, TaskDetail, TaskView, TierSlice,
@@ -39,7 +39,7 @@ use crate::state::AppState;
 #[derive(Debug)]
 pub enum ViewError {
     NotFound(String),
-    Store(forge_core::store::StoreError),
+    Store(forge_app::store::StoreError),
 }
 
 impl ViewError {
@@ -59,8 +59,8 @@ impl std::fmt::Display for ViewError {
 
 impl std::error::Error for ViewError {}
 
-impl From<forge_core::store::StoreError> for ViewError {
-    fn from(err: forge_core::store::StoreError) -> Self {
+impl From<forge_app::store::StoreError> for ViewError {
+    fn from(err: forge_app::store::StoreError) -> Self {
         ViewError::Store(err)
     }
 }
@@ -225,7 +225,7 @@ pub fn approval_view<S: Store>(
 
 pub fn task_view<S: Store>(
     lookups: &Lookups<'_, S>,
-    task: forge_core::types::AgentTask,
+    task: forge_proto::types::AgentTask,
 ) -> TaskView {
     let repo = lookups.repo(&task.repo_id).ok().flatten();
     let repo_name = repo
@@ -373,7 +373,7 @@ pub fn build_dashboard(
         until_ms: None,
     };
     let events = state.store.list_usage(id, range)?;
-    let summary = forge_core::ledger::Summary::from_events(&events);
+    let summary = forge_app::ledger::Summary::from_events(&events);
 
     let by_tier = summary
         .usd_by_tier

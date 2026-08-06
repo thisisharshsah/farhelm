@@ -5,10 +5,11 @@
 //! at, not an audit record — §6 sends `output_chunk` over the wire and forgets
 //! it. Keeping it in memory means a chatty agent can't grow the database.
 
+use forge_sqlite::SqliteStore;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use forge_core::store::{SqliteStore, prelude::*};
+use forge_app::store::prelude::*;
 use forge_gateway::{AnthropicClient, Gateway};
 use tokio::sync::broadcast;
 
@@ -38,7 +39,7 @@ const OUTPUT_TAIL_CAPACITY: usize = 200;
 fn ensure_machine(store: &SqliteStore) -> String {
     let name = machine_name();
     let id = format!("machine-{name}");
-    let now = forge_core::time::now_ms();
+    let now = forge_app::time::now_ms();
 
     let created_at = store
         .get_machine(&id)
@@ -49,7 +50,7 @@ fn ensure_machine(store: &SqliteStore) -> String {
 
     // A failure here is not fatal: the read-only API still works, and the hook
     // bridge will report the real error when it tries to use the machine.
-    let _ = store.upsert_machine(&forge_core::types::Machine {
+    let _ = store.upsert_machine(&forge_proto::types::Machine {
         id: cloned(&id),
         name,
         // Filled in by device pairing (M3). Empty until then rather than fake.
@@ -124,7 +125,7 @@ pub struct AppState {
     pub seen_prompts: crate::watcher::SeenPrompts,
     /// Local additions to the destructive-command rules (D3). Empty by default;
     /// the built-ins stand on their own.
-    pub policy: forge_core::risk::Policy,
+    pub policy: forge_domain::risk::Policy,
     /// The terminal backend. One instance, because the PTY backend owns its
     /// panes — `TmuxTerminal` is stateless only because tmux holds the state.
     pub terminal: Arc<crate::terminal::AnyTerminal>,
@@ -173,7 +174,7 @@ impl AppState {
             identity,
             relay,
             None,
-            forge_core::risk::Policy::default(),
+            forge_domain::risk::Policy::default(),
         )
     }
 
@@ -194,7 +195,7 @@ impl AppState {
             identity,
             relay,
             terminal,
-            forge_core::risk::Policy::default(),
+            forge_domain::risk::Policy::default(),
         )
     }
 
@@ -205,7 +206,7 @@ impl AppState {
         identity: Arc<forge_crypto::Identity>,
         relay: Option<RelayInfo>,
         terminal: Option<Arc<crate::terminal::AnyTerminal>>,
-        policy: forge_core::risk::Policy,
+        policy: forge_domain::risk::Policy,
     ) -> Arc<Self> {
         Self::assemble(store, build, identity, relay, terminal, policy)
     }
@@ -226,7 +227,7 @@ impl AppState {
         identity: Arc<forge_crypto::Identity>,
         relay: Option<RelayInfo>,
         terminal: Option<Arc<crate::terminal::AnyTerminal>>,
-        policy: forge_core::risk::Policy,
+        policy: forge_domain::risk::Policy,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let machine_id = ensure_machine(&store);

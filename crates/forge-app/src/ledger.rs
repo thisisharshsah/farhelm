@@ -8,10 +8,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::id::new_id;
-use crate::price::{CacheTtl, QuoteContext, UnknownModel, quote};
 use crate::store::{LedgerStore, StoreError, TimeRange};
 use crate::time::now_ms;
-use crate::types::{Avoided, TaskType, Tier, Usage, UsageEvent};
+use forge_domain::price::{CacheTtl, QuoteContext, UnknownModel, quote};
+use forge_proto::types::{Avoided, TaskType, Tier, Usage, UsageEvent};
 
 #[derive(Debug)]
 pub enum LedgerError {
@@ -228,47 +228,78 @@ impl fmt::Display for Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{FleetStore, SessionStore, SqliteStore};
-    use crate::types::{Agent, Machine, Repo, Session, SessionStatus};
+    use std::cell::RefCell;
+
+    use forge_proto::types::Budget;
 
     const NOW_MS: i64 = 1_785_369_600_000;
 
-    fn ledger() -> Ledger<SqliteStore> {
-        let store = SqliteStore::open_in_memory().unwrap();
-        store
-            .upsert_machine(&Machine {
-                id: "machine-1".into(),
-                name: "hetzner-1".into(),
-                pubkey: "pk".into(),
-                last_seen_at: Some(NOW_MS),
-                created_at: NOW_MS,
+    /// The whole of what a ledger needs from storage.
+    ///
+    /// Four methods, because [`LedgerStore`] is four methods. These tests used
+    /// to open a real SQLite database and write a machine, a repo and a session
+    /// first — none of which the ledger reads — purely to satisfy foreign keys
+    /// on the one table it does write. That was the price of a forty-method
+    /// port: the only thing that implemented it was the real thing.
+    ///
+    /// It also cannot be a real store any more, and the reason is worth writing
+    /// down: `forge-sqlite` depends on this crate, so reaching back for it as a
+    /// dev-dependency gives Cargo two compilations of `forge-app` — the lib one
+    /// `forge-sqlite` implements against, and the `--cfg test` one these tests
+    /// run in — whose traits are *different types*. The fake is both the better
+    /// test and the only one that compiles.
+    #[derive(Default)]
+    struct FakeLedgerStore {
+        events: RefCell<Vec<UsageEvent>>,
+    }
+
+    impl LedgerStore for FakeLedgerStore {
+        fn record_usage(&self, event: &UsageEvent) -> crate::store::Result<()> {
+            self.events.borrow_mut().push(event.clone());
+            Ok(())
+        }
+
+        fn list_usage(
+            &self,
+            session_id: &str,
+            range: TimeRange,
+        ) -> crate::store::Result<Vec<UsageEvent>> {
+            Ok(self
+                .events
+                .borrow()
+                .iter()
+                .filter(|event| event.session_id == session_id)
+                .filter(|event| range.since_ms.is_none_or(|since| event.created_at >= since))
+                .filter(|event| range.until_ms.is_none_or(|until| event.created_at < until))
+                .cloned()
+                .collect())
+        }
+
+        /// Spend summed from what was recorded — the invariant the real store
+        /// keeps in a transaction: a call that was billed moves the budget.
+        fn session_budget(&self, session_id: &str) -> crate::store::Result<Budget> {
+            Ok(Budget {
+                cap_usd: Some(5.0),
+                spent_usd: self
+                    .events
+                    .borrow()
+                    .iter()
+                    .filter(|event| event.session_id == session_id)
+                    .map(|event| event.cost_usd)
+                    .sum(),
             })
-            .unwrap();
-        store
-            .upsert_repo(&Repo {
-                id: "repo-1".into(),
-                machine_id: "machine-1".into(),
-                path: "/srv/payments-api".into(),
-                name: "payments-api".into(),
-                budget_usd: Some(10.0),
-            })
-            .unwrap();
-        store
-            .upsert_session(&Session {
-                id: "session-1".into(),
-                repo_id: "repo-1".into(),
-                agent: Agent::ClaudeCode,
-                tmux_target: None,
-                status: SessionStatus::Running,
-                plan_id: None,
-                budget_usd: Some(5.0),
+        }
+
+        fn repo_budget(&self, _repo_id: &str) -> crate::store::Result<Budget> {
+            Ok(Budget {
+                cap_usd: Some(10.0),
                 spent_usd: 0.0,
-                started_at: NOW_MS,
-                ended_at: None,
-                agent_session_id: None,
             })
-            .unwrap();
-        Ledger::new(store)
+        }
+    }
+
+    fn ledger() -> Ledger<FakeLedgerStore> {
+        Ledger::new(FakeLedgerStore::default())
     }
 
     fn edit_usage() -> Usage {

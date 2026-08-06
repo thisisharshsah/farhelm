@@ -22,13 +22,14 @@
 //!    must keep producing the same string from the same key or paired devices
 //!    silently stop receiving.
 
+use forge_sqlite::SqliteStore;
 use std::sync::Arc;
 
-use forge_core::store::{SqliteStore, prelude::*};
-use forge_core::types::{
+use forge_app::store::prelude::*;
+use forge_crypto::Identity;
+use forge_proto::types::{
     Agent, Approval, Budget, DecidedVia, Decision, Repo, Risk, Session, SessionStatus, TaskStatus,
 };
-use forge_crypto::Identity;
 use forge_runner::commands::{self, Command, PlanAction};
 use forge_runner::state::{AppState, OutputLine, ServerEvent};
 use forge_runner::test_support;

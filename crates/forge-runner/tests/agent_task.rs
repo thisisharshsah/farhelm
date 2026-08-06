@@ -17,6 +17,7 @@
 //! And the two refusals that matter: a change set cannot be approved from a
 //! watch, and a second approval cannot apply it twice.
 
+use forge_sqlite::SqliteStore;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -25,9 +26,9 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
-use forge_core::store::{SqliteStore, prelude::*};
-use forge_core::types::TaskStatus;
+use forge_app::store::prelude::*;
 use forge_gateway::{AnthropicClient, Gateway, GatewayConfig};
+use forge_proto::types::TaskStatus;
 use forge_runner::state::AppState;
 
 /// The scripted replies, in order. Each is a Messages API response body.
@@ -969,7 +970,7 @@ async fn a_task_on_a_path_that_is_not_a_directory_is_a_bad_request() {
 /// Belt and braces: the decision path used by the relay is the same one.
 #[tokio::test]
 async fn reviewing_over_the_command_layer_enforces_the_same_rules() {
-    use forge_core::types::DecidedVia;
+    use forge_proto::types::DecidedVia;
     use forge_runner::commands::{Command, Outcome, execute};
 
     let repo = TempRepo::new("commands");

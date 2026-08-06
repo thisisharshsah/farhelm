@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use forge_core::store::SqliteStore;
 use forge_crypto::Identity;
+use forge_sqlite::SqliteStore;
 
 use crate::state::AppState;
 

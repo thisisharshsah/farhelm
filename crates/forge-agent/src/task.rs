@@ -33,10 +33,10 @@
 
 use std::path::{Path, PathBuf};
 
-use forge_core::store::prelude::*;
-use forge_core::types::TaskType;
+use forge_app::store::prelude::*;
 use forge_gateway::prompt::{StableContext, Turn};
 use forge_gateway::{CompleteRequest, Gateway, GatewayError, ModelClient, ToolCall};
+use forge_proto::types::TaskType;
 
 use crate::diff::ChangeSet;
 use crate::tools::{self, Supervisor};
@@ -395,9 +395,9 @@ mod tests {
     use super::*;
     use crate::script::ScriptedClient;
     use crate::tools::{RUN, Verdict};
-    use forge_core::store::SqliteStore;
-    use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus};
     use forge_gateway::GatewayConfig;
+    use forge_proto::types::{Agent, Machine, Repo, Session, SessionStatus};
+    use forge_sqlite::SqliteStore;
     use std::sync::Mutex;
 
     struct Yes {

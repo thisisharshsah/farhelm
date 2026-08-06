@@ -32,8 +32,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::commands::{self, Command};
 use crate::state::{AppState, ServerEvent};
-use forge_core::store::prelude::*;
-use forge_core::types::DecidedVia;
+use forge_app::store::prelude::*;
+use forge_proto::types::DecidedVia;
 
 /// First reconnect delay; doubles up to [`MAX_BACKOFF`].
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
@@ -63,7 +63,7 @@ fn deserves_a_wake_up(event: &ServerEvent) -> bool {
     match event {
         ServerEvent::ApprovalRequest { .. } | ServerEvent::BudgetAlert { .. } => true,
         ServerEvent::TaskUpsert { status, .. } => {
-            *status == forge_core::types::TaskStatus::AwaitingReview
+            *status == forge_proto::types::TaskStatus::AwaitingReview
         }
         _ => false,
     }
@@ -255,9 +255,9 @@ async fn handle_envelope(
     };
 
     let via = match device.kind {
-        forge_core::types::DeviceKind::Watch => DecidedVia::Watch,
-        forge_core::types::DeviceKind::Phone => DecidedVia::Phone,
-        forge_core::types::DeviceKind::Web => DecidedVia::Web,
+        forge_proto::types::DeviceKind::Watch => DecidedVia::Watch,
+        forge_proto::types::DeviceKind::Phone => DecidedVia::Phone,
+        forge_proto::types::DeviceKind::Web => DecidedVia::Web,
     };
 
     match commands::execute(state, command, via).await {
@@ -293,10 +293,10 @@ async fn handle_envelope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::store::SqliteStore;
-    use forge_core::types::{
+    use forge_proto::types::{
         Agent, Approval, Device, DeviceKind, Repo, Risk, Session, SessionStatus, TaskStatus,
     };
+    use forge_sqlite::SqliteStore;
 
     const NOW: i64 = 1_785_369_600_000;
 
@@ -440,7 +440,7 @@ mod tests {
                 identity.public_key(),
                 &Command::Decide {
                     approval_id: "a1".into(),
-                    decision: forge_core::types::Decision::Approved,
+                    decision: forge_proto::types::Decision::Approved,
                 },
             )
             .unwrap();
@@ -502,7 +502,7 @@ mod tests {
     async fn a_state_changing_command_produces_no_direct_reply() {
         let (state, identity, config) = fixture();
         let phone = pair(&state, "phone", DeviceKind::Phone);
-        approval(&state, "a1", forge_core::types::Risk::Low);
+        approval(&state, "a1", forge_proto::types::Risk::Low);
 
         let request = phone
             .seal_json(
@@ -511,7 +511,7 @@ mod tests {
                 identity.public_key(),
                 &Command::Decide {
                     approval_id: "a1".into(),
-                    decision: forge_core::types::Decision::Approved,
+                    decision: forge_proto::types::Decision::Approved,
                 },
             )
             .unwrap();
@@ -537,7 +537,7 @@ mod tests {
         let (state, identity, config) = fixture();
         let watch = pair(&state, "watch", DeviceKind::Watch);
         // Destructive, so D3 refuses it from a watch.
-        approval(&state, "a1", forge_core::types::Risk::Destructive);
+        approval(&state, "a1", forge_proto::types::Risk::Destructive);
 
         let request = watch
             .seal_json(
@@ -546,7 +546,7 @@ mod tests {
                 identity.public_key(),
                 &Command::Decide {
                     approval_id: "a1".into(),
-                    decision: forge_core::types::Decision::Approved,
+                    decision: forge_proto::types::Decision::Approved,
                 },
             )
             .unwrap();
@@ -578,7 +578,7 @@ mod tests {
         let (state, identity, config) = fixture();
         let watch = pair(&state, "watch", DeviceKind::Watch);
         let phone = pair(&state, "phone", DeviceKind::Phone);
-        approval(&state, "a1", forge_core::types::Risk::Destructive);
+        approval(&state, "a1", forge_proto::types::Risk::Destructive);
 
         let request = watch
             .seal_json(
@@ -587,7 +587,7 @@ mod tests {
                 identity.public_key(),
                 &Command::Decide {
                     approval_id: "a1".into(),
-                    decision: forge_core::types::Decision::Approved,
+                    decision: forge_proto::types::Decision::Approved,
                 },
             )
             .unwrap();
@@ -681,7 +681,7 @@ mod tests {
         assert!(!deserves_a_wake_up(&ServerEvent::ApprovalDecision {
             approval_id: "a1".into(),
             session_id: "s1".into(),
-            decision: forge_core::types::Decision::Approved,
+            decision: forge_proto::types::Decision::Approved,
         }));
     }
 

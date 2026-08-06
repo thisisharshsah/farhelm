@@ -17,13 +17,13 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use forge_core::id::new_id;
-use forge_core::store::{TimeRange, prelude::*};
-use forge_core::time::now_ms;
-use forge_core::types::{Approval, DecidedVia, Decision, Session, SessionStatus, TaskType};
+use forge_app::id::new_id;
+use forge_app::store::{TimeRange, prelude::*};
+use forge_app::time::now_ms;
 use forge_domain::BudgetRules as _;
 use forge_gateway::prompt::{StableContext, Turn};
 use forge_gateway::{CompleteRequest as GatewayRequest, GatewayError};
+use forge_proto::types::{Approval, DecidedVia, Decision, Session, SessionStatus, TaskType};
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
@@ -130,8 +130,8 @@ impl From<ViewError> for ApiError {
     }
 }
 
-impl From<forge_core::store::StoreError> for ApiError {
-    fn from(err: forge_core::store::StoreError) -> Self {
+impl From<forge_app::store::StoreError> for ApiError {
+    fn from(err: forge_app::store::StoreError) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: err.to_string(),
@@ -281,10 +281,10 @@ async fn revert_task(
 /// while the runner is up, and a stale "not installed" is a worse answer than a
 /// PATH lookup.
 async fn list_agents() -> Json<Vec<AgentView>> {
-    use forge_core::agent::{ApprovalChannel, Confidence};
+    use forge_domain::agent::{ApprovalChannel, Confidence};
 
     Json(
-        forge_core::agent::AGENTS
+        forge_domain::agent::AGENTS
             .iter()
             .map(|spec| AgentView {
                 id: spec.agent.as_str().to_owned(),
@@ -433,7 +433,7 @@ async fn session_usage(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<UsageQuery>,
-) -> ApiResult<Vec<forge_core::types::UsageEvent>> {
+) -> ApiResult<Vec<forge_proto::types::UsageEvent>> {
     let range = TimeRange {
         since_ms: query.since_ms,
         until_ms: None,
@@ -502,7 +502,7 @@ pub struct StartSessionBody {
     pub repo_path: String,
     /// `claude-code` (default) or `opencode`.
     #[serde(default)]
-    pub agent: Option<forge_core::types::Agent>,
+    pub agent: Option<forge_proto::types::Agent>,
 }
 
 /// `POST /v1/sessions` — start an agent in a repo.
@@ -528,7 +528,7 @@ async fn start_session(
     {
         Some(repo) => repo,
         None => {
-            let repo = forge_core::types::Repo {
+            let repo = forge_proto::types::Repo {
                 id: new_id(),
                 machine_id: state.machine_id.clone(),
                 path: body.repo_path.clone(),
@@ -543,12 +543,12 @@ async fn start_session(
         }
     };
 
-    let agent = body.agent.unwrap_or(forge_core::types::Agent::ClaudeCode);
+    let agent = body.agent.unwrap_or(forge_proto::types::Agent::ClaudeCode);
 
     // Checked before anything is written. Starting a session for an agent that
     // is not installed would leave a row pointing at a pane that died instantly,
     // and the user would see "dead" with no reason given.
-    let spec = forge_core::agent::spec(agent);
+    let spec = forge_domain::agent::spec(agent);
     if !spec.binary.is_empty() && !crate::pty::binary_exists(spec.binary) {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -629,7 +629,7 @@ async fn pair_offer(State(state): State<Arc<AppState>>) -> ApiResult<forge_crypt
 pub struct PairClaimBody {
     /// The one-time code from the QR.
     pub code: String,
-    pub kind: forge_core::types::DeviceKind,
+    pub kind: forge_proto::types::DeviceKind,
     /// The device's own public key.
     pub public_key: String,
 }
@@ -638,7 +638,7 @@ pub struct PairClaimBody {
 async fn pair_claim(
     State(state): State<Arc<AppState>>,
     Json(body): Json<PairClaimBody>,
-) -> ApiResult<forge_core::types::Device> {
+) -> ApiResult<forge_proto::types::Device> {
     // Redeemed first: a claim with a bad key must still burn the code, or a
     // photographed QR could be retried until something sticks.
     state
@@ -656,7 +656,7 @@ async fn pair_claim(
         message: err.to_string(),
     })?;
 
-    let device = forge_core::types::Device {
+    let device = forge_proto::types::Device {
         id: new_id(),
         kind: body.kind,
         pubkey: public_key.to_string(),
@@ -670,7 +670,7 @@ async fn pair_claim(
 /// `GET /v1/devices` — what is paired. Public keys only; no secrets exist here.
 async fn list_devices(
     State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<forge_core::types::Device>> {
+) -> ApiResult<Vec<forge_proto::types::Device>> {
     Ok(Json(state.store.list_devices()?))
 }
 
@@ -703,7 +703,7 @@ pub struct ToolRequestView {
     pub reason: String,
     pub approval_id: String,
     pub session_id: String,
-    pub risk: forge_core::types::Risk,
+    pub risk: forge_proto::types::Risk,
 }
 
 /// Resolve (or create) the RelayForge session behind an agent's hook callback.
@@ -724,7 +724,7 @@ fn resolve_session(
     let repo = match state.store.find_repo_by_path(&state.machine_id, cwd)? {
         Some(repo) => repo,
         None => {
-            let repo = forge_core::types::Repo {
+            let repo = forge_proto::types::Repo {
                 id: new_id(),
                 machine_id: state.machine_id.clone(),
                 path: cwd.to_owned(),
@@ -744,7 +744,7 @@ fn resolve_session(
     let session = Session {
         id: new_id(),
         repo_id: repo.id,
-        agent: forge_core::types::Agent::ClaudeCode,
+        agent: forge_proto::types::Agent::ClaudeCode,
         tmux_target: None,
         status: SessionStatus::Running,
         plan_id: None,
@@ -821,7 +821,7 @@ async fn hook_tool_request(
 
     // One classifier, server-side. A compromised or outdated hook binary cannot
     // talk the runner into treating `rm -rf` as low risk.
-    let risk = forge_core::risk::classify_with(&state.policy, &body.tool, &body.payload);
+    let risk = forge_domain::risk::classify_with(&state.policy, &body.tool, &body.payload);
 
     let approval = Approval {
         id: new_id(),
@@ -981,7 +981,7 @@ pub struct CompleteBody {
     #[serde(default)]
     pub repo_path: Option<String>,
     #[serde(default)]
-    pub tier_pin: Option<forge_core::types::Tier>,
+    pub tier_pin: Option<forge_proto::types::Tier>,
     #[serde(default)]
     pub verify_only: bool,
     #[serde(default)]
@@ -992,11 +992,11 @@ pub struct CompleteBody {
 pub struct CompleteView {
     pub text: String,
     pub model: String,
-    pub tier: forge_core::types::Tier,
-    pub usage: forge_core::types::Usage,
+    pub tier: forge_proto::types::Tier,
+    pub usage: forge_proto::types::Usage,
     pub cost_usd: f64,
     /// `pre_gate` or `response_cache` when the call cost nothing.
-    pub avoided: Option<forge_core::types::Avoided>,
+    pub avoided: Option<forge_proto::types::Avoided>,
     pub refusal: Option<forge_gateway::dispatch::Refusal>,
     pub budget: BudgetView,
     /// What each stage did — the answer to "why did that cost what it cost".

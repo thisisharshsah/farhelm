@@ -7,19 +7,15 @@
 //! The trait is synchronous. SQLite is a single-writer embedded engine, so
 //! there is nothing to await; async callers wrap these in `spawn_blocking`.
 
-pub mod sqlite;
-
-use crate::types::{
+use forge_proto::types::{
     AgentTask, Approval, BatchItem, BatchStatus, Budget, DecidedVia, Decision, Device, Machine,
     Plan, PlanStep, Repo, Session, TaskStatus, UsageEvent,
 };
 
-pub use sqlite::SqliteStore;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Risk;
+    use forge_proto::types::Risk;
 
     fn decided(decision: Decision) -> Approval {
         Approval {

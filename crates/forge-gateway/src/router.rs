@@ -5,7 +5,7 @@
 //! model does triage) is expensive but invisible. A table is auditable: you can
 //! read what will happen before you pay for it.
 
-use forge_core::types::{TaskType, Tier};
+use forge_proto::types::{TaskType, Tier};
 use serde::{Deserialize, Serialize};
 
 /// Which concrete model backs each tier. Any of these may be a self-hosted

@@ -8,10 +8,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use forge_core::id::new_id;
-use forge_core::store::prelude::*;
-use forge_core::time::now_ms;
-use forge_core::types::{Agent, Repo, Session, SessionStatus};
+use forge_app::id::new_id;
+use forge_app::store::prelude::*;
+use forge_app::time::now_ms;
+use forge_proto::types::{Agent, Repo, Session, SessionStatus};
 
 use crate::state::{AppState, ServerEvent};
 use crate::terminal::{SpawnSpec, Terminal, TerminalError};
@@ -26,7 +26,7 @@ const CAPTURE_LINES: usize = 60;
 #[derive(Debug)]
 pub enum ManagerError {
     Terminal(TerminalError),
-    Store(forge_core::store::StoreError),
+    Store(forge_app::store::StoreError),
     NoTarget,
 }
 
@@ -50,19 +50,19 @@ impl From<TerminalError> for ManagerError {
     }
 }
 
-impl From<forge_core::store::StoreError> for ManagerError {
-    fn from(err: forge_core::store::StoreError) -> Self {
+impl From<forge_app::store::StoreError> for ManagerError {
+    fn from(err: forge_app::store::StoreError) -> Self {
         ManagerError::Store(err)
     }
 }
 
 /// The command that starts an agent.
 ///
-/// Delegates to [`forge_core::agent`], which is the single place that knows what
+/// Delegates to [`forge_domain::agent`], which is the single place that knows what
 /// each agent is called and how it is supervised. A second copy here is how a
 /// newly added agent ends up startable but unsupervised.
 pub fn agent_command(agent: Agent) -> Vec<String> {
-    forge_core::agent::spec(agent).command(None)
+    forge_domain::agent::spec(agent).command(None)
 }
 
 pub struct SessionManager<T> {
@@ -232,7 +232,7 @@ pub fn spawn_poller<T: Terminal + 'static>(manager: SessionManager<T>) {
 mod tests {
     use super::*;
     use crate::terminal::FakeTerminal;
-    use forge_core::store::SqliteStore;
+    use forge_sqlite::SqliteStore;
 
     fn fixture() -> (Arc<AppState>, Repo) {
         let state = AppState::with_gateway(SqliteStore::open_in_memory().unwrap(), |_| None);

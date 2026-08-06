@@ -221,7 +221,7 @@ documentation and have not been checked against the real binaries.
 `/v1/agents` reports `verified: false` for all of them.
 
 If a prompt is missed, the fix is a one-line dialect in
-`crates/forge-core/src/agent.rs`.
+`crates/forge-domain/src/agent.rs`.
 
 ---
 

@@ -11,9 +11,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use forge_core::types::Usage;
 use forge_gateway::ToolCall;
 use forge_gateway::dispatch::{DispatchError, ModelClient, ModelRequest, ModelResponse, Refusal};
+use forge_proto::types::Usage;
 
 /// One scripted reply.
 #[derive(Debug, Clone, PartialEq)]
@@ -146,7 +146,7 @@ impl ModelClient for ScriptedClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::price::price_of;
+    use forge_domain::price::price_of;
     use forge_gateway::prompt::{StableContext, assemble};
 
     fn request() -> ModelRequest {

@@ -14,13 +14,14 @@
 //! The baseline is what an unwrapped agent does: every turn on the frontier
 //! model, whole context re-sent as fresh input, no cache, no routing, no reuse.
 
-use forge_core::price::{QuoteContext, quote};
-use forge_core::store::{SqliteStore, TimeRange, prelude::*};
-use forge_core::types::{
-    Agent, Avoided, Machine, Repo, Session, SessionStatus, TaskType, Tier, Usage,
-};
+use forge_app::store::{TimeRange, prelude::*};
+use forge_domain::price::{QuoteContext, quote};
 use forge_gateway::prompt::{StableContext, Turn, approx_tokens, assemble};
 use forge_gateway::{CompleteRequest, Gateway, GatewayConfig, StubClient};
+use forge_proto::types::{
+    Agent, Avoided, Machine, Repo, Session, SessionStatus, TaskType, Tier, Usage,
+};
+use forge_sqlite::SqliteStore;
 
 const NOW: i64 = 1_785_369_600_000;
 const TURNS: usize = 50;
@@ -153,7 +154,7 @@ async fn replay() -> Replay {
 
         // Baseline: the same prompt, unwrapped. Everything the gateway would have
         // cached is re-sent as fresh input, and it all goes to the frontier model.
-        let baseline_price = forge_core::price::price_of(BASELINE_MODEL).unwrap();
+        let baseline_price = forge_domain::price::price_of(BASELINE_MODEL).unwrap();
         let baseline_plan = assemble(&stable, &instruction, &baseline_price);
         let baseline_usage = Usage {
             input_tokens: (approx_tokens(&baseline_plan.stable_prefix())

@@ -8,7 +8,7 @@
 //! That is what makes it safe to cache retrieval and summarisation — if the
 //! inputs moved, the key moved.
 
-use forge_core::types::TaskType;
+use forge_proto::types::TaskType;
 use sha2::{Digest, Sha256};
 
 use crate::prompt::PromptPlan;
@@ -62,7 +62,7 @@ pub fn key(model: &str, plan: &PromptPlan) -> String {
 mod tests {
     use super::*;
     use crate::prompt::{StableContext, Turn, assemble};
-    use forge_core::price::price_of;
+    use forge_domain::price::price_of;
 
     fn plan(system: &str, tail: &str) -> PromptPlan {
         let stable = StableContext {

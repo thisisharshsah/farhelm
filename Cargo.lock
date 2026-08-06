@@ -1174,10 +1174,11 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 name = "forge-agent"
 version = "0.1.0"
 dependencies = [
- "forge-core",
+ "forge-app",
  "forge-domain",
  "forge-gateway",
  "forge-proto",
+ "forge-sqlite",
  "ignore",
  "serde",
  "serde_json",
@@ -1185,16 +1186,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "forge-core"
+name = "forge-app"
 version = "0.1.0"
 dependencies = [
  "forge-domain",
  "forge-proto",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "toml 0.9.12+spec-1.1.0",
  "uuid",
 ]
 
@@ -1225,8 +1221,10 @@ name = "forge-gateway"
 version = "0.1.0"
 dependencies = [
  "axum",
- "forge-core",
+ "forge-app",
  "forge-domain",
+ "forge-proto",
+ "forge-sqlite",
  "ignore",
  "reqwest 0.12.28",
  "serde",
@@ -1269,12 +1267,13 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "forge-agent",
- "forge-core",
+ "forge-app",
  "forge-crypto",
  "forge-domain",
  "forge-gateway",
  "forge-proto",
  "forge-relay",
+ "forge-sqlite",
  "futures-util",
  "portable-pty",
  "qrcode",
@@ -1285,6 +1284,16 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.28.0",
  "tower-http",
+]
+
+[[package]]
+name = "forge-sqlite"
+version = "0.1.0"
+dependencies = [
+ "forge-app",
+ "forge-domain",
+ "forge-proto",
+ "rusqlite",
 ]
 
 [[package]]
@@ -3262,12 +3271,13 @@ name = "relayforge-desktop"
 version = "0.1.0"
 dependencies = [
  "axum",
- "forge-core",
+ "forge-app",
  "forge-crypto",
  "forge-domain",
  "forge-gateway",
  "forge-proto",
  "forge-runner",
+ "forge-sqlite",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

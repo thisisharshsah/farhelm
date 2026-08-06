@@ -1,0 +1,17 @@
+[package]
+name = "forge-app"
+description = "RelayForge use cases and the ports they need from the outside world"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-domain.workspace = true
+forge-proto.workspace = true
+
+uuid = { version = "1", features = ["v7"] }
+
+[lints]
+workspace = true
+

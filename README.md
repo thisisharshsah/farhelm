@@ -13,7 +13,10 @@ this file is the reference for what exists today.
 
 | Path | What it is |
 |---|---|
-| `crates/forge-core` | Domain types, the price table, the `PLAN.md` executor, the storage boundary |
+| `crates/forge-proto` | The wire contract: types, events, commands, read models. Depends on serde and nothing else |
+| `crates/forge-domain` | The rules: pricing, risk classification, the `PLAN.md` state machine, agent capabilities. No I/O, no clock, no async |
+| `crates/forge-app` | Use cases and the storage ports they need |
+| `crates/forge-sqlite` | Those ports, backed by SQLite in WAL mode |
 | `crates/forge-crypto` | End-to-end encryption: identities, envelopes, pairing, the runner keystore |
 | `crates/forge-gateway` | The cost gateway: the eight-stage pipeline every model call passes through |
 | `crates/forge-agent` | **RelayForge's own coding agent**: a tool loop that proposes a diff instead of applying one |
@@ -52,7 +55,7 @@ prints it. Today:
 
 All channels end in the same approval queue: same destructive-command
 classifier, same phone-only rule for `rm -rf`, same budget meter, same
-notification. Adding an agent is a row in `crates/forge-core/src/agent.rs`.
+notification. Adding an agent is a row in `crates/forge-domain/src/agent.rs`.
 
 ## Tasks: the agent that hands you a diff
 
@@ -428,7 +431,7 @@ Destructive commands (`rm -rf`, `git push --force`, `DROP TABLE`, `mkfs`,
 `sudo`, `curl | sh`, `terraform destroy`, `kubectl delete`, publishing…) are
 classified server-side and **cannot be approved from a watch or a notification
 action** — the API returns 403. The classifier is a speed bump on the approval
-UX, not a sandbox; see `crates/forge-core/src/risk.rs`.
+UX, not a sandbox; see `crates/forge-domain/src/risk.rs`.
 
 The built-in list can't know about your stack. Add your own rules:
 

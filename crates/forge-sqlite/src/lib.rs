@@ -10,11 +10,11 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::{
+use forge_app::store::{
     ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, LedgerStore, PlanStore,
     ResponseCache, Result, SessionStore, StoreError, TaskOutcome, TaskStore, TimeRange,
 };
-use crate::types::{
+use forge_proto::types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
     Device, DeviceKind, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo, Risk,
     Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
@@ -22,11 +22,11 @@ use crate::types::{
 
 /// Applied in order; the index+1 is the `PRAGMA user_version` they leave behind.
 const MIGRATIONS: &[&str] = &[
-    include_str!("../../migrations/0001_init.sql"),
-    include_str!("../../migrations/0002_agent_session_id.sql"),
-    include_str!("../../migrations/0003_batch_queue.sql"),
-    include_str!("../../migrations/0004_agent_task.sql"),
-    include_str!("../../migrations/0005_task_verification.sql"),
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_agent_session_id.sql"),
+    include_str!("../migrations/0003_batch_queue.sql"),
+    include_str!("../migrations/0004_agent_task.sql"),
+    include_str!("../migrations/0005_task_verification.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, request_json, \
@@ -1391,9 +1391,9 @@ impl DeviceStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::price::{QuoteContext, quote};
-    use crate::types::Agent;
     use forge_domain::BudgetRules as _;
+    use forge_domain::price::{QuoteContext, quote};
+    use forge_proto::types::Agent;
 
     const NOW_MS: i64 = 1_785_369_600_000;
 
@@ -2107,14 +2107,16 @@ mod tests {
 #[cfg(test)]
 mod batch_queue_tests {
     use super::*;
-    use crate::types::{Agent, BatchItem, BatchStatus, Repo, Session, SessionStatus, TaskType};
+    use forge_proto::types::{
+        Agent, BatchItem, BatchStatus, Repo, Session, SessionStatus, TaskType,
+    };
 
     const NOW: i64 = 1_785_369_600_000;
 
     fn store() -> SqliteStore {
         let store = SqliteStore::open_in_memory().unwrap();
         store
-            .upsert_machine(&crate::types::Machine {
+            .upsert_machine(&forge_proto::types::Machine {
                 id: "m1".into(),
                 name: "laptop".into(),
                 pubkey: "k".into(),
