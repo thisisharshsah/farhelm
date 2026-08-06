@@ -1,6 +1,6 @@
 [package]
-name = "forge-core"
-description = "RelayForge domain types, price table, and storage boundary"
+name = "forge-domain"
+description = "RelayForge rules: pricing, risk classification, plan state machine, agent capabilities"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,13 +8,10 @@ rust-version.workspace = true
 
 [dependencies]
 forge-proto.workspace = true
-forge-domain.workspace = true
 
-rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
-uuid = { version = "1", features = ["v7"] }
 
 [lints]
 workspace = true

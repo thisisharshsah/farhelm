@@ -4,6 +4,7 @@ members = [
   "crates/forge-agent",
   "crates/forge-core",
   "crates/forge-crypto",
+  "crates/forge-domain",
   "crates/forge-gateway",
   "crates/forge-proto",
   "crates/forge-runner",
@@ -21,6 +22,7 @@ rust-version = "1.90"
 forge-agent = { path = "crates/forge-agent" }
 forge-core = { path = "crates/forge-core" }
 forge-crypto = { path = "crates/forge-crypto" }
+forge-domain = { path = "crates/forge-domain" }
 forge-gateway = { path = "crates/forge-gateway" }
 forge-proto = { path = "crates/forge-proto" }
 

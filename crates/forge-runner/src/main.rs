@@ -16,6 +16,7 @@ use forge_core::time::now_ms;
 use forge_core::types::{
     Agent, Approval, Avoided, Machine, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,
 };
+use forge_domain::BudgetRules as _;
 use forge_gateway::{AnthropicClient, Gateway, GatewayConfig};
 
 use forge_runner::state::{self, AppState, ServerEvent};
@@ -281,9 +282,16 @@ const DEFAULT_POLICY_PATH: &str = "forge.policy.toml";
 /// A missing file is fine — the built-ins stand on their own. A *malformed* one
 /// is fatal, because somebody wrote a rule in there expecting it to be enforced
 /// and starting up without it would be the worst possible outcome.
-fn load_policy(flags: &Flags) -> Result<forge_core::risk::Policy, Box<dyn std::error::Error>> {
-    let path = flags.policy.as_deref().unwrap_or(DEFAULT_POLICY_PATH);
-    Ok(forge_core::risk::Policy::load(path)?.unwrap_or_default())
+fn load_policy(flags: &Flags) -> Result<forge_domain::risk::Policy, Box<dyn std::error::Error>> {
+    let path = std::path::Path::new(flags.policy.as_deref().unwrap_or(DEFAULT_POLICY_PATH));
+    if !path.exists() {
+        return Ok(forge_domain::risk::Policy::default());
+    }
+    // Reading the file is this binary's job; deciding what the text means is
+    // `forge-domain`'s, which is why it takes the text rather than the path.
+    Ok(forge_domain::risk::Policy::parse(
+        &std::fs::read_to_string(path)?,
+    )?)
 }
 
 /// `forge-runner policy [<command>...]`

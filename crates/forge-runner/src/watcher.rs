@@ -215,6 +215,7 @@ mod tests {
     use crate::terminal::FakeTerminal;
     use forge_core::store::SqliteStore;
     use forge_core::types::{Agent, DecidedVia, Repo, Risk};
+    use forge_domain::ApprovalRules as _;
 
     const NOW: i64 = 1_785_369_600_000;
 

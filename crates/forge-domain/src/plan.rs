@@ -26,7 +26,7 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
-use crate::types::{PlanStep, PlanStepStatus, Tier};
+use forge_proto::types::{PlanStep, PlanStepStatus, Tier};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanParseError {

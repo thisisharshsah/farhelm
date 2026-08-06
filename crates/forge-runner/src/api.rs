@@ -21,6 +21,7 @@ use forge_core::id::new_id;
 use forge_core::store::{Store, TimeRange};
 use forge_core::time::now_ms;
 use forge_core::types::{Approval, DecidedVia, Decision, Session, SessionStatus, TaskType};
+use forge_domain::BudgetRules as _;
 use forge_gateway::prompt::{StableContext, Turn};
 use forge_gateway::{CompleteRequest as GatewayRequest, GatewayError};
 use futures_util::stream::Stream;
@@ -1065,7 +1066,7 @@ async fn complete(
         cost_usd: response.cost_usd,
         avoided: response.avoided,
         refusal: response.refusal,
-        budget: budget.into(),
+        budget: forge_domain::budget_view(budget),
         trace: response.trace,
     }))
 }

@@ -24,6 +24,7 @@ use std::sync::Arc;
 use forge_core::store::{Store, TimeRange};
 use forge_core::time::now_ms;
 use forge_core::types::{Approval, Budget, Machine, Repo, Session, SessionStatus};
+use forge_domain::{ApprovalRules as _, budget_view};
 use forge_proto::views::{
     ApprovalView, DashboardView, FleetView, PlanProgress, PlanStepView, SessionDetail, SessionView,
     SpendBucket, TaskDetail, TaskView, TierSlice,
@@ -196,7 +197,7 @@ pub fn view_of<S: Store>(
             SessionStatus::Running | SessionStatus::AwaitingApproval | SessionStatus::Paused
         ),
         plan,
-        budget: lookups.budget(&session.id)?.into(),
+        budget: budget_view(lookups.budget(&session.id)?),
         started_at: session.started_at,
         ended_at: session.ended_at,
         awaiting_approval_id: lookups.awaiting_approval_id(&session.id),
@@ -217,7 +218,7 @@ pub fn approval_view<S: Store>(
     Ok(ApprovalView {
         allows_watch_decision: approval.allows_watch_decision(),
         repo_name: repo.map(|r| r.name).unwrap_or_else(|| "unknown".into()),
-        budget: lookups.budget(&approval.session_id)?.into(),
+        budget: budget_view(lookups.budget(&approval.session_id)?),
         approval,
     })
 }
@@ -410,7 +411,7 @@ pub fn build_dashboard(
         by_tier,
         avoided_calls: summary.avoided_calls.values().sum(),
         spend_series,
-        budget: state.store.session_budget(id)?.into(),
+        budget: budget_view(state.store.session_budget(id)?),
     })
 }
 

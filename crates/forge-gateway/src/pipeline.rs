@@ -28,6 +28,7 @@ use forge_core::price::{UnknownModel, price_of};
 use forge_core::store::{Store, StoreError};
 use forge_core::time::now_ms;
 use forge_core::types::{Avoided, BatchItem, BatchStatus, Budget, TaskType, Tier, Usage};
+use forge_domain::BudgetRules as _;
 
 use crate::cache;
 use crate::compaction;

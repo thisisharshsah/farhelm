@@ -294,6 +294,7 @@ pub const DEMO_OUTPUT: &[&str] = &[
 mod tests {
     use super::*;
     use forge_core::plan::PlanProgress;
+    use forge_domain::{ApprovalRules as _, BudgetRules as _};
 
     const NOW_MS: i64 = 1_785_369_600_000;
 

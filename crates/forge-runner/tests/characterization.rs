@@ -29,7 +29,6 @@ use forge_core::types::{
     Agent, Approval, Budget, DecidedVia, Decision, Repo, Risk, Session, SessionStatus, TaskStatus,
 };
 use forge_crypto::Identity;
-use forge_runner::api;
 use forge_runner::commands::{self, Command, PlanAction};
 use forge_runner::state::{AppState, OutputLine, ServerEvent};
 use forge_runner::test_support;
@@ -419,7 +418,7 @@ fn budget_state_thresholds_are_stable() {
         (5.0, "stop", 1.0),
         (7.5, "stop", 1.5),
     ] {
-        let view = api::BudgetView::from(Budget {
+        let view = forge_domain::budget_view(Budget {
             cap_usd: Some(5.0),
             spent_usd: spent,
         });
@@ -440,7 +439,7 @@ fn budget_state_thresholds_are_stable() {
 /// however much it has spent.
 #[test]
 fn an_uncapped_budget_never_stops() {
-    let json = serde_json::to_value(api::BudgetView::from(Budget {
+    let json = serde_json::to_value(forge_domain::budget_view(Budget {
         cap_usd: None,
         spent_usd: 999.0,
     }))

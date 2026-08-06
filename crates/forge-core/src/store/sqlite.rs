@@ -1374,6 +1374,7 @@ mod tests {
     use super::*;
     use crate::price::{QuoteContext, quote};
     use crate::types::Agent;
+    use forge_domain::BudgetRules as _;
 
     const NOW_MS: i64 = 1_785_369_600_000;
 
