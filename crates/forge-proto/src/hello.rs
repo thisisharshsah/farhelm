@@ -1,20 +1,15 @@
 //! Protocol version and capability negotiation.
 //!
-//! # Status: defined, not yet spoken
+//! # Status: understood, not yet required, not yet acted on
 //!
-//! Nothing sends or expects a [`Hello`] today. The link in
-//! `forge-runner/src/relay.rs` opens a WebSocket and immediately begins
-//! exchanging sealed envelopes, with no handshake of any kind, and this commit
-//! deliberately does not change that — putting a new frame on the wire is a
-//! behaviour change, and one that would strand every already-paired device
-//! until it updated.
+//! The runner accepts a [`Hello`] if one arrives and records what the device
+//! said it can handle. **No client sends one, and nothing reads what is
+//! recorded** — that is step one of three, and it is deliberately inert.
 //!
-//! What this module does is give that change somewhere to land, and give the
-//! current *implicit* contract a name. Right now the protocol version is
-//! "whatever both sides happened to be compiled from". A device that is one
-//! release behind discovers this by receiving a `ServerEvent` variant it cannot
-//! parse, in the field, silently — `serde` rejects the frame and the phone
-//! simply stops updating.
+//! Before this, the protocol version was "whatever both sides happened to be
+//! compiled from". A device one release behind discovered that by receiving a
+//! `ServerEvent` variant it could not parse, in the field, silently — `serde`
+//! rejects the frame and the phone simply stops updating.
 //!
 //! # Why versioning is needed before it is used
 //!
@@ -29,18 +24,28 @@
 //! handle; the runner sends the richer form only to devices that said yes, and
 //! the older form to everyone else.
 //!
-//! # Wiring it up (deliberately left undone)
+//! # The migration
 //!
-//! The migration is three steps, and none of them are in this refactor because
-//! each changes behaviour:
+//! Three steps. Each is safe only because the one before it shipped, and doing
+//! them out of order is the mistake this module exists to make visible.
 //!
-//! 1. The runner accepts a `Hello` if one arrives and records the sender's
-//!    capabilities, defaulting to [`Capability::BASELINE`] when none does. No
-//!    client sends one yet, so nothing changes.
-//! 2. Clients start sending it. Old runners ignore an unknown frame.
-//! 3. Only once (2) has shipped may a capability actually gate anything.
+//! 1. **Done.** The runner accepts a `Hello` if one arrives and records the
+//!    sender's capabilities, defaulting to [`Capability::BASELINE`] when none
+//!    does. No client sends one, so nothing changes — which is the point: a
+//!    runner in the field must understand the frame *before* any client emits
+//!    it.
+//! 2. **Next, and a client change.** Clients start sending a `Hello` on
+//!    connect. A runner older than step one ignores a frame it cannot parse, so
+//!    this is safe against every deployed version.
+//! 3. **Only once (2) has been out long enough.** A capability may finally gate
+//!    something — a new event sent to devices that announced support and
+//!    withheld from those that did not. Doing this before (2) has propagated
+//!    silently degrades every device that has not upgraded, because they are
+//!    indistinguishable from devices that cannot cope.
 //!
-//! Doing (3) first is the mistake this module exists to make visible.
+//! The capabilities are held per *connection*, not per device row. A device that
+//! reconnects from an older build must not keep the capabilities its previous
+//! connection announced.
 
 use serde::{Deserialize, Serialize};
 
