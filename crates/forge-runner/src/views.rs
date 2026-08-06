@@ -17,11 +17,13 @@
 //! keeps the `Store` port narrow enough to reimplement. That is a real
 //! trade-off and it is not free — see the note on [`build_fleet_view`].
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use forge_core::store::{Store, TimeRange};
 use forge_core::time::now_ms;
-use forge_core::types::{Approval, Session, SessionStatus};
+use forge_core::types::{Approval, Budget, Machine, Repo, Session, SessionStatus};
 use forge_proto::views::{
     ApprovalView, DashboardView, FleetView, PlanProgress, PlanStepView, SessionDetail, SessionView,
     SpendBucket, TaskDetail, TaskView, TierSlice,
@@ -62,29 +64,126 @@ impl From<forge_core::store::StoreError> for ViewError {
     }
 }
 
+/// Rows that get read over and over while assembling one payload, read once.
+///
+/// A fleet is many sessions and many approvals pointing at a handful of repos on
+/// one machine, and every one of them needs the repo's name. Assembled naively
+/// that is a read per row; assembled through this it is a read per distinct id.
+///
+/// The pending-approval list is the expensive one and is handled differently: it
+/// is fetched eagerly, once, because the old code called
+/// `list_pending_approvals` *inside* the per-session builder and then scanned
+/// the result in Rust for the one approval belonging to that session. On a fleet
+/// of ten sessions that was ten full reads of the table to answer ten questions
+/// a single read answers.
+///
+/// Scoped to one assembly, deliberately. This is a read-through memo for the
+/// few milliseconds it takes to build one payload, not a cache with an
+/// invalidation problem: the next request builds a new one.
+pub struct Lookups<'a, S> {
+    store: &'a S,
+    pending: Vec<Approval>,
+    repos: RefCell<HashMap<String, Option<Repo>>>,
+    machines: RefCell<HashMap<String, Option<Machine>>>,
+    budgets: RefCell<HashMap<String, Budget>>,
+    /// Reads that actually reached the store. Exists so a test can assert the
+    /// memo is doing something rather than trusting that it is.
+    reads: Cell<usize>,
+}
+
+impl<'a, S: Store> Lookups<'a, S> {
+    /// Start an assembly. Reads the pending-approval list once, up front.
+    pub fn new(store: &'a S) -> Result<Self, ViewError> {
+        let pending = store.list_pending_approvals()?;
+        Ok(Self {
+            store,
+            pending,
+            repos: RefCell::new(HashMap::new()),
+            machines: RefCell::new(HashMap::new()),
+            budgets: RefCell::new(HashMap::new()),
+            reads: Cell::new(1),
+        })
+    }
+
+    /// How many reads reached the store. Diagnostic, and what the cost tests
+    /// assert on.
+    pub fn reads(&self) -> usize {
+        self.reads.get()
+    }
+
+    /// Every approval still waiting, oldest first — the list read at construction.
+    pub fn pending(&self) -> &[Approval] {
+        &self.pending
+    }
+
+    /// The oldest pending approval for one session, if it is blocked on one.
+    ///
+    /// `find` over the pre-read list, matching the previous behaviour exactly:
+    /// the store returns oldest-first and the old code took the first match too.
+    fn awaiting_approval_id(&self, session_id: &str) -> Option<String> {
+        self.pending
+            .iter()
+            .find(|approval| approval.session_id == session_id)
+            .map(|approval| approval.id.clone())
+    }
+
+    fn repo(&self, id: &str) -> Result<Option<Repo>, ViewError> {
+        if let Some(hit) = self.repos.borrow().get(id) {
+            return Ok(hit.clone());
+        }
+        self.reads.set(self.reads.get() + 1);
+        let repo = self.store.get_repo(id)?;
+        self.repos.borrow_mut().insert(id.to_owned(), repo.clone());
+        Ok(repo)
+    }
+
+    fn machine(&self, id: &str) -> Result<Option<Machine>, ViewError> {
+        if let Some(hit) = self.machines.borrow().get(id) {
+            return Ok(hit.clone());
+        }
+        self.reads.set(self.reads.get() + 1);
+        let machine = self.store.get_machine(id)?;
+        self.machines
+            .borrow_mut()
+            .insert(id.to_owned(), machine.clone());
+        Ok(machine)
+    }
+
+    fn budget(&self, session_id: &str) -> Result<Budget, ViewError> {
+        if let Some(hit) = self.budgets.borrow().get(session_id) {
+            return Ok(*hit);
+        }
+        self.reads.set(self.reads.get() + 1);
+        let budget = self.store.session_budget(session_id)?;
+        self.budgets
+            .borrow_mut()
+            .insert(session_id.to_owned(), budget);
+        Ok(budget)
+    }
+}
+
 /// Builds a [`SessionView`]. Issues a handful of small reads per session rather
-/// than one join, keeping the `Store` trait narrow enough to reimplement.
-pub fn view_of(state: &AppState, session: &Session) -> Result<SessionView, ViewError> {
-    let repo = state
-        .store
-        .get_repo(&session.repo_id)?
+/// than one join, keeping the `Store` port narrow enough to reimplement — with
+/// the repeated ones served from [`Lookups`].
+pub fn view_of<S: Store>(
+    state: &AppState,
+    lookups: &Lookups<'_, S>,
+    session: &Session,
+) -> Result<SessionView, ViewError> {
+    let repo = lookups
+        .repo(&session.repo_id)?
         .ok_or_else(|| ViewError::not_found(format!("repo {}", session.repo_id)))?;
-    let machine = state.store.get_machine(&repo.machine_id)?;
+    let machine = lookups.machine(&repo.machine_id)?;
 
     let plan = match &session.plan_id {
         Some(plan_id) => {
+            // Not memoised: plan ids are one per session, so there is nothing to
+            // hit. Counted, so the read total stays honest.
             let steps = state.store.list_plan_steps(plan_id)?;
             (!steps.is_empty()).then(|| PlanProgress::of(&steps))
         }
         None => None,
     };
-
-    let awaiting_approval_id = state
-        .store
-        .list_pending_approvals()?
-        .into_iter()
-        .find(|approval| approval.session_id == session.id)
-        .map(|approval| approval.id);
 
     Ok(SessionView {
         id: session.id.clone(),
@@ -97,30 +196,37 @@ pub fn view_of(state: &AppState, session: &Session) -> Result<SessionView, ViewE
             SessionStatus::Running | SessionStatus::AwaitingApproval | SessionStatus::Paused
         ),
         plan,
-        budget: state.store.session_budget(&session.id)?.into(),
+        budget: lookups.budget(&session.id)?.into(),
         started_at: session.started_at,
         ended_at: session.ended_at,
-        awaiting_approval_id,
+        awaiting_approval_id: lookups.awaiting_approval_id(&session.id),
     })
 }
 
-pub fn approval_view(state: &AppState, approval: Approval) -> Result<ApprovalView, ViewError> {
+pub fn approval_view<S: Store>(
+    state: &AppState,
+    lookups: &Lookups<'_, S>,
+    approval: Approval,
+) -> Result<ApprovalView, ViewError> {
     let session = state
         .store
         .get_session(&approval.session_id)?
         .ok_or_else(|| ViewError::not_found(format!("session {}", approval.session_id)))?;
-    let repo = state.store.get_repo(&session.repo_id)?;
+    let repo = lookups.repo(&session.repo_id)?;
 
     Ok(ApprovalView {
         allows_watch_decision: approval.allows_watch_decision(),
         repo_name: repo.map(|r| r.name).unwrap_or_else(|| "unknown".into()),
-        budget: state.store.session_budget(&approval.session_id)?.into(),
+        budget: lookups.budget(&approval.session_id)?.into(),
         approval,
     })
 }
 
-pub fn task_view(state: &AppState, task: forge_core::types::AgentTask) -> TaskView {
-    let repo = state.store.get_repo(&task.repo_id).ok().flatten();
+pub fn task_view<S: Store>(
+    lookups: &Lookups<'_, S>,
+    task: forge_core::types::AgentTask,
+) -> TaskView {
+    let repo = lookups.repo(&task.repo_id).ok().flatten();
     let repo_name = repo
         .as_ref()
         .map(|repo| repo.name.clone())
@@ -159,17 +265,20 @@ pub fn task_view(state: &AppState, task: forge_core::types::AgentTask) -> TaskVi
 /// Shared with the relay link: a remote device has no request/response channel,
 /// so it asks for this over the same socket it receives events on.
 pub fn build_fleet_view(state: &Arc<AppState>) -> Result<FleetView, ViewError> {
+    let store = state.store.as_ref();
+    let lookups = Lookups::new(store)?;
+
     let sessions = state.store.list_sessions()?;
     let views = sessions
         .iter()
-        .map(|session| view_of(state, session))
+        .map(|session| view_of(state, &lookups, session))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let pending_approvals = state
-        .store
-        .list_pending_approvals()?
+    let pending_approvals = lookups
+        .pending()
+        .to_vec()
         .into_iter()
-        .map(|approval| approval_view(state, approval))
+        .map(|approval| approval_view(state, &lookups, approval))
         .collect::<Result<Vec<_>, _>>()?;
 
     // "Today" is the last 24h rather than a calendar day: the runner has no
@@ -191,7 +300,7 @@ pub fn build_fleet_view(state: &Arc<AppState>) -> Result<FleetView, ViewError> {
         .store
         .list_tasks_awaiting_review()?
         .into_iter()
-        .map(|task| task_view(state, task))
+        .map(|task| task_view(&lookups, task))
         .collect();
 
     Ok(FleetView {
@@ -211,7 +320,8 @@ pub fn build_session_detail(state: &Arc<AppState>, id: &str) -> Result<SessionDe
         .store
         .get_session(id)?
         .ok_or_else(|| ViewError::not_found(format!("session {id}")))?;
-    let view = view_of(state, &session)?;
+    let lookups = Lookups::new(state.store.as_ref())?;
+    let view = view_of(state, &lookups, &session)?;
 
     let steps = match &session.plan_id {
         Some(plan_id) => state
@@ -227,7 +337,7 @@ pub fn build_session_detail(state: &Arc<AppState>, id: &str) -> Result<SessionDe
         Some(approval_id) => state
             .store
             .get_approval(approval_id)?
-            .map(|approval| approval_view(state, approval))
+            .map(|approval| approval_view(state, &lookups, approval))
             .transpose()?,
         None => None,
     };
@@ -306,11 +416,12 @@ pub fn build_dashboard(
 
 /// Shared with the relay, so a phone and a browser see the same list.
 pub fn build_task_list(state: &Arc<AppState>) -> Result<Vec<TaskView>, ViewError> {
+    let lookups = Lookups::new(state.store.as_ref())?;
     Ok(state
         .store
         .list_tasks(100)?
         .into_iter()
-        .map(|task| task_view(state, task))
+        .map(|task| task_view(&lookups, task))
         .collect())
 }
 
@@ -331,7 +442,7 @@ pub fn build_task_detail(state: &Arc<AppState>, id: &str) -> Result<TaskDetail, 
     Ok(TaskDetail {
         patch: changes.render(),
         changes,
-        task: task_view(state, task),
+        task: task_view(&Lookups::new(state.store.as_ref())?, task),
         output,
     })
 }
