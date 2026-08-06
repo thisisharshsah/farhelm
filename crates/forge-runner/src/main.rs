@@ -853,6 +853,30 @@ fn demo() -> Fallible {
 }
 
 #[cfg(test)]
+mod channel_tests {
+    use super::*;
+
+    /// The exact channel this key produces.
+    ///
+    /// The Tauri app derives the same string from the same key with its own copy
+    /// of this rule (`desktop/src-tauri/src/main.rs`), and asserts this same
+    /// constant. Both binaries can be pointed at one `forge.key`, so they must
+    /// agree — a drift publishes on a channel no paired device is listening to,
+    /// and nothing anywhere reports an error.
+    #[test]
+    fn the_channel_rule_is_the_one_the_desktop_app_uses() {
+        let identity = forge_crypto::Identity::from_secret_base64(
+            "tapeuo2KzNeIV8FIWkWZ4JtK39yyr83NmVW2pBYYkaU",
+        )
+        .unwrap();
+        assert_eq!(
+            format!("forge-{}", machine_channel("unused.key", &identity)),
+            "forge-kFLWAF8DqRIvUm8g"
+        );
+    }
+}
+
+#[cfg(test)]
 mod app_dir_tests {
     use super::*;
 

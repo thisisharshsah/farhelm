@@ -334,6 +334,25 @@ mod tests {
         assert!(channel_for(&identity).starts_with("forge-"));
     }
 
+    /// The exact channel this key produces.
+    ///
+    /// `forge-runner`'s binary derives the same string from the same key with
+    /// its own copy of this rule, and asserts the same constant. The two must
+    /// agree: a desktop app and a CLI runner sharing `forge.key` publish on one
+    /// channel, and if they disagree the paired phone hears nothing — no error,
+    /// anywhere, just silence.
+    ///
+    /// Asserting only `starts_with("forge-")`, as the test above does, would let
+    /// a change from 16 characters to 12 through.
+    #[test]
+    fn the_channel_rule_is_the_one_the_runner_uses() {
+        let identity = forge_crypto::Identity::from_secret_base64(
+            "tapeuo2KzNeIV8FIWkWZ4JtK39yyr83NmVW2pBYYkaU",
+        )
+        .unwrap();
+        assert_eq!(channel_for(&identity), "forge-kFLWAF8DqRIvUm8g");
+    }
+
     #[test]
     fn two_machines_do_not_share_a_channel() {
         // A shared channel would put two runners' ciphertext on one fan-out, and
