@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use forge_core::id::new_id;
-use forge_core::store::Store;
+use forge_core::store::prelude::*;
 use forge_core::time::now_ms;
 use forge_core::types::{Agent, Repo, Session, SessionStatus};
 

@@ -36,7 +36,7 @@
 
 use std::time::Duration;
 
-use forge_core::store::Store;
+use forge_core::store::{BatchStore, LedgerStore};
 use forge_core::types::{BatchItem, BatchStatus, Tier, Usage};
 use serde::{Deserialize, Serialize};
 
@@ -246,7 +246,7 @@ pub struct BatchQueue<S, C> {
     client: C,
 }
 
-impl<S: Store, C: BatchClient> BatchQueue<S, C> {
+impl<S: BatchStore + LedgerStore, C: BatchClient> BatchQueue<S, C> {
     pub fn new(store: S, client: C) -> Self {
         Self { store, client }
     }
@@ -495,6 +495,7 @@ async fn decode(response: reqwest::Response) -> Result<BatchState, DispatchError
 mod tests {
     use super::*;
     use forge_core::store::SqliteStore;
+    use forge_core::store::{FleetStore, SessionStore};
     use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus, TaskType};
     use std::sync::Mutex;
 

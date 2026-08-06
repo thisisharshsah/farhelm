@@ -21,7 +21,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use forge_core::store::{Store, TimeRange};
+use forge_core::store::{TimeRange, prelude::*};
 use forge_core::time::now_ms;
 use forge_core::types::{Approval, Budget, Machine, Repo, Session, SessionStatus};
 use forge_domain::{ApprovalRules as _, budget_view};

@@ -54,7 +54,7 @@ pub mod types {
 
 pub use plan::{ParsedPlan, PlanProgress};
 pub use price::{CacheTtl, ModelPrice, Quote, QuoteContext, quote};
-pub use store::{DecisionOutcome, SqliteStore, Store, StoreError, TimeRange};
+pub use store::{DecisionOutcome, SqliteStore, StoreError, TimeRange, prelude::*};
 pub use types::{
     Agent, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision, Machine, Plan,
     PlanStep, PlanStepStatus, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,

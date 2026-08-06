@@ -25,7 +25,7 @@ use std::time::Duration;
 use forge_core::id::new_id;
 use forge_core::ledger::{Call, Ledger, LedgerError};
 use forge_core::price::{UnknownModel, price_of};
-use forge_core::store::{Store, StoreError};
+use forge_core::store::{BatchStore, LedgerStore, ResponseCache, SessionStore, StoreError};
 use forge_core::time::now_ms;
 use forge_core::types::{Avoided, BatchItem, BatchStatus, Budget, TaskType, Tier, Usage};
 use forge_domain::BudgetRules as _;
@@ -242,13 +242,27 @@ const fn effort_for(slot: Slot) -> Effort {
     }
 }
 
+/// What the pipeline needs from storage, and nothing else.
+///
+/// Four of the nine role ports. The gateway consults budgets, reads and writes
+/// the response cache, queues deferrable calls, and looks up a session to find
+/// its repo for the outer budget ring — it never touches approvals, devices,
+/// plans or tasks.
+///
+/// Worth naming because the bound *is* the documentation: it used to be
+/// `S: Store`, which said the gateway might do anything to storage, and made a
+/// test double for it a forty-method exercise nobody was going to write.
+pub trait GatewayStore: LedgerStore + SessionStore + ResponseCache + BatchStore {}
+
+impl<T> GatewayStore for T where T: LedgerStore + SessionStore + ResponseCache + BatchStore {}
+
 pub struct Gateway<S, C> {
     store: S,
     client: C,
     config: GatewayConfig,
 }
 
-impl<S: Store, C: ModelClient> Gateway<S, C> {
+impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
     pub fn new(store: S, client: C, config: GatewayConfig) -> Self {
         Self {
             store,
@@ -651,6 +665,7 @@ mod tests {
     use super::*;
     use crate::dispatch::StubClient;
     use crate::prompt::Turn;
+    use forge_core::store::{FleetStore, SessionStore};
     use forge_core::store::{SqliteStore, TimeRange};
     use forge_core::types::{Agent, Machine, Repo, Session, SessionStatus};
 

@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 
-use forge_core::store::{SqliteStore, Store};
+use forge_core::store::{SqliteStore, prelude::*};
 use forge_core::types::{
     Agent, Approval, Budget, DecidedVia, Decision, Repo, Risk, Session, SessionStatus, TaskStatus,
 };

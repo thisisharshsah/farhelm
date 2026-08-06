@@ -7,7 +7,7 @@
 use forge_core::id::new_id;
 use forge_core::ledger::{Call, Ledger};
 use forge_core::plan;
-use forge_core::store::{SqliteStore, Store};
+use forge_core::store::{SqliteStore, prelude::*};
 use forge_core::types::{
     Agent, Approval, Avoided, Machine, Plan, PlanStep, Repo, Risk, Session, SessionStatus,
     TaskType, Tier, Usage,

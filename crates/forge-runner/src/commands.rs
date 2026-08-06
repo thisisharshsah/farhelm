@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use forge_core::plan::{self};
-use forge_core::store::{DecisionOutcome, Store};
+use forge_core::store::{DecisionOutcome, prelude::*};
 use forge_core::time::now_ms;
 use forge_core::types::{DecidedVia, Decision, PlanStepStatus};
 use forge_domain::ApprovalRules as _;

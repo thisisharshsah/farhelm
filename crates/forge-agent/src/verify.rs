@@ -26,7 +26,7 @@
 //! degraded to "looks fine" would be worse than no verification: it would put a
 //! reassuring line on a review card that nothing stood behind.
 
-use forge_core::store::Store;
+use forge_core::store::prelude::*;
 use forge_core::types::TaskType;
 use forge_gateway::prompt::StableContext;
 use forge_gateway::{CompleteRequest, Gateway, ModelClient};

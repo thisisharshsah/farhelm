@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use forge_core::store::{SqliteStore, Store};
+use forge_core::store::{SqliteStore, prelude::*};
 use forge_core::types::{
     Agent, BatchItem, BatchStatus, Machine, Repo, Session, SessionStatus, TaskType,
 };

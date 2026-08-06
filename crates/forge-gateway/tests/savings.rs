@@ -15,7 +15,7 @@
 //! model, whole context re-sent as fresh input, no cache, no routing, no reuse.
 
 use forge_core::price::{QuoteContext, quote};
-use forge_core::store::{SqliteStore, Store, TimeRange};
+use forge_core::store::{SqliteStore, TimeRange, prelude::*};
 use forge_core::types::{
     Agent, Avoided, Machine, Repo, Session, SessionStatus, TaskType, Tier, Usage,
 };
