@@ -101,6 +101,33 @@ impl TimeRange {
     }
 }
 
+/// Spend and cache behaviour over a window, summed by the store.
+///
+/// Exists so the fleet's cost strip does not have to load every ledger row to
+/// add up three numbers. `SUM` in SQL is the store's job; the previous shape —
+/// `list_usage` per session, folded in Rust — moved the whole 24-hour ledger
+/// across the boundary on every home-screen fetch, and every phone that woke up
+/// asked for it again.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct UsageTotals {
+    pub cost_usd: f64,
+    /// Tokens served from the provider's prefix cache.
+    pub cache_read_tokens: u64,
+    /// Tokens billed as fresh input. The cache-read ratio is
+    /// `cache_read / (cache_read + input)` — see [`UsageTotals::cache_read_ratio`].
+    pub input_tokens: u64,
+    pub calls: usize,
+}
+
+impl UsageTotals {
+    /// Appendix A's headline metric. `None` when nothing billable flowed, so an
+    /// idle fleet reads as "no data" rather than 0% and drags an average down.
+    pub fn cache_read_ratio(&self) -> Option<f64> {
+        let denominator = self.cache_read_tokens + self.input_tokens;
+        (denominator > 0).then(|| self.cache_read_tokens as f64 / denominator as f64)
+    }
+}
+
 /// Declares one role port, and derives its forwarding impls.
 ///
 /// Every port here has three implementations that are pure delegation: the real
@@ -194,6 +221,12 @@ store_port! {
     fn record_usage(&self, event: &UsageEvent) -> Result<()>;
 
     fn list_usage(&self, session_id: &str, range: TimeRange) -> Result<Vec<UsageEvent>>;
+
+    /// Spend and cache behaviour across *every* session in a window.
+    ///
+    /// The fleet-wide counterpart of [`LedgerStore::list_usage`], and the reason
+    /// it exists separately: the home screen needs three totals, not the rows.
+    fn usage_totals(&self, range: TimeRange) -> Result<UsageTotals>;
 
     /// Budget for one session: its own cap and its own spend.
     fn session_budget(&self, session_id: &str) -> Result<Budget>;

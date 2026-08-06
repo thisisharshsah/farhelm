@@ -13,6 +13,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use forge_app::store::{
     ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, LedgerStore, PlanStore,
     ResponseCache, Result, SessionStore, StoreError, TaskOutcome, TaskStore, TimeRange,
+    UsageTotals,
 };
 use forge_proto::types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
@@ -27,6 +28,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_batch_queue.sql"),
     include_str!("../migrations/0004_agent_task.sql"),
     include_str!("../migrations/0005_task_verification.sql"),
+    include_str!("../migrations/0006_usage_time_index.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, request_json, \
@@ -758,6 +760,31 @@ impl LedgerStore for SqliteStore {
         rows.into_iter().map(UsageEvent::try_from).collect()
     }
 
+    fn usage_totals(&self, range: TimeRange) -> Result<UsageTotals> {
+        let conn = self.lock()?;
+        // COALESCE because SUM over no rows is NULL, and an empty ledger is the
+        // normal state of a fresh install rather than an error.
+        conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0),
+                    COALESCE(SUM(cache_read_tokens), 0),
+                    COALESCE(SUM(input_tokens), 0),
+                    COUNT(*)
+             FROM usage_event
+             WHERE (?1 IS NULL OR created_at >= ?1)
+               AND (?2 IS NULL OR created_at < ?2)",
+            params![range.since_ms, range.until_ms],
+            |row| {
+                Ok(UsageTotals {
+                    cost_usd: row.get(0)?,
+                    cache_read_tokens: row.get::<_, i64>(1)? as u64,
+                    input_tokens: row.get::<_, i64>(2)? as u64,
+                    calls: row.get::<_, i64>(3)? as usize,
+                })
+            },
+        )
+        .map_err(backend)
+    }
+
     fn session_budget(&self, session_id: &str) -> Result<Budget> {
         let conn = self.lock()?;
         conn.query_row(
@@ -1385,6 +1412,82 @@ impl DeviceStore for SqliteStore {
             .optional()
             .map_err(backend)?;
         raw.map(Device::try_from).transpose()
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    /// A database created before migration 6 must reach 6 on open.
+    ///
+    /// The fresh-install path proves nothing here: it runs every migration
+    /// against an empty file, where almost any DDL succeeds. The case that
+    /// actually happens to a user is an existing database with rows in it,
+    /// arriving at a binary one migration newer.
+    #[test]
+    fn an_existing_database_upgrades_to_the_new_index() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Bring it up to exactly version 5, the way the previous release left it.
+        for (index, sql) in MIGRATIONS.iter().take(5).enumerate() {
+            conn.execute_batch(&format!(
+                "BEGIN;\n{sql}\nPRAGMA user_version = {};\nCOMMIT;",
+                index + 1
+            ))
+            .unwrap();
+        }
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            version, 5,
+            "the fixture must start where the last release did"
+        );
+
+        // The index this release adds is genuinely absent beforehand.
+        assert!(!has_index(&conn, "ix_usage_time"));
+
+        migrate(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, MIGRATIONS.len() as i64);
+        assert!(
+            has_index(&conn, "ix_usage_time"),
+            "the fleet cost strip filters on created_at alone and cannot use \
+             ix_usage_session_time"
+        );
+    }
+
+    /// Migrating twice is a no-op, which is what makes a crashed upgrade
+    /// recoverable by restarting.
+    #[test]
+    fn migrating_an_up_to_date_database_changes_nothing() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let first: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+
+        migrate(&conn).unwrap();
+        let second: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first, MIGRATIONS.len() as i64);
+    }
+
+    fn has_index(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            params![name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
     }
 }
 

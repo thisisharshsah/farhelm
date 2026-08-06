@@ -14,7 +14,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use forge_app::store::{BatchStore, LedgerStore, ResponseCache, Result, SessionStore, TimeRange};
+use forge_app::store::{
+    BatchStore, LedgerStore, ResponseCache, Result, SessionStore, TimeRange, UsageTotals,
+};
 use forge_proto::types::{BatchItem, BatchStatus, Budget, Session, UsageEvent};
 
 /// Everything the cost pipeline can reach, and nothing else.
@@ -72,6 +74,9 @@ impl LedgerStore for FakeStore {
     }
     fn list_usage(&self, _session_id: &str, _range: TimeRange) -> Result<Vec<UsageEvent>> {
         Ok(self.usage.borrow().clone())
+    }
+    fn usage_totals(&self, _range: TimeRange) -> Result<UsageTotals> {
+        Ok(UsageTotals::default())
     }
     fn session_budget(&self, _session_id: &str) -> Result<Budget> {
         Ok(self.budget)
