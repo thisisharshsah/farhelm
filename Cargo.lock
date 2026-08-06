@@ -1186,6 +1186,7 @@ dependencies = [
 name = "forge-core"
 version = "0.1.0"
 dependencies = [
+ "forge-proto",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1220,6 +1221,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "forge-relay"
 version = "0.1.0"
 dependencies = [
@@ -1248,6 +1257,7 @@ dependencies = [
  "forge-core",
  "forge-crypto",
  "forge-gateway",
+ "forge-proto",
  "forge-relay",
  "futures-util",
  "portable-pty",
@@ -3239,6 +3249,7 @@ dependencies = [
  "forge-core",
  "forge-crypto",
  "forge-gateway",
+ "forge-proto",
  "forge-runner",
  "reqwest 0.12.28",
  "serde",
