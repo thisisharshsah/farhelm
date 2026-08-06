@@ -14,7 +14,7 @@
 use forge_sqlite::SqliteStore;
 use std::sync::Arc;
 
-use forge_app::store::prelude::*;
+use forge_app::store::{TimeRange, prelude::*};
 use forge_crypto::Identity;
 use forge_proto::types::{
     Agent, Approval, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,
@@ -203,6 +203,97 @@ fn a_session_with_no_approval_reports_none() {
         .find(|session| session.id == "s1")
         .unwrap();
     assert_eq!(s1.awaiting_approval_id, None);
+}
+
+/// The store's aggregate must equal the per-session fold it replaced.
+///
+/// The cost strip used to be `list_usage` for every session, summed in Rust.
+/// That is now one `SUM` in SQL, and this is the equivalence check: the same
+/// numbers, computed both ways, over a fleet with several sessions and events
+/// on both sides of the window boundary.
+///
+/// Worth being careful about because the two are not obviously the same query.
+/// The fold iterated `list_sessions()` and summed each session's rows; the
+/// aggregate sums the whole table in the window and never mentions a session.
+/// They agree only because `list_sessions` is unbounded and the schema's foreign
+/// key means no usage row can belong to a session that is not in it.
+#[test]
+fn the_aggregate_matches_the_per_session_fold_it_replaced() {
+    let state = fixture(5, 0);
+    let now = forge_app::time::now_ms();
+
+    // Something inside the window, something outside it, on two sessions.
+    for (session, at) in [
+        ("s0", now - 60_000),
+        ("s1", now - 2 * 60 * 60 * 1_000),
+        ("s2", now - 48 * 60 * 60 * 1_000),
+    ] {
+        forge_app::ledger::Ledger::new(&state.store)
+            .record_at(
+                forge_app::ledger::Call::new(
+                    session,
+                    "claude-opus-5",
+                    Tier::Large,
+                    TaskType::Refactor,
+                    Usage {
+                        input_tokens: 3_000,
+                        output_tokens: 700,
+                        cache_write_tokens: 0,
+                        cache_read_tokens: 17_000,
+                    },
+                ),
+                at,
+            )
+            .unwrap();
+    }
+
+    let window = TimeRange::since(now - 24 * 60 * 60 * 1_000);
+
+    // The old shape, recomputed here.
+    let mut folded_usd = 0.0;
+    let mut folded_reads: u64 = 0;
+    let mut folded_input: u64 = 0;
+    for session in state.store.list_sessions().unwrap() {
+        for event in state.store.list_usage(&session.id, window).unwrap() {
+            folded_usd += event.cost_usd;
+            folded_reads += u64::from(event.usage.cache_read_tokens);
+            folded_input += u64::from(event.usage.input_tokens);
+        }
+    }
+
+    let totals = state.store.usage_totals(window).unwrap();
+
+    assert!(
+        (totals.cost_usd - folded_usd).abs() < 1e-12,
+        "aggregate {} vs fold {folded_usd}",
+        totals.cost_usd
+    );
+    assert_eq!(totals.cache_read_tokens, folded_reads);
+    assert_eq!(totals.input_tokens, folded_input);
+    assert!(folded_usd > 0.0, "the fixture must actually bill something");
+
+    // And the event outside the window is genuinely excluded by both.
+    assert_eq!(
+        totals.calls, 7,
+        "5 fixture calls + 2 inside the window; the 48h-old one is out"
+    );
+}
+
+/// An empty ledger is zero, not an error and not a NULL.
+#[test]
+fn totals_over_an_empty_window_are_zero() {
+    let state = fixture(2, 0);
+    let ancient = TimeRange {
+        since_ms: Some(0),
+        until_ms: Some(1),
+    };
+    let totals = state.store.usage_totals(ancient).unwrap();
+
+    assert_eq!(totals.calls, 0);
+    assert_eq!(totals.cost_usd, 0.0);
+    // `None`, not `Some(0.0)`: an idle fleet has no ratio, and rendering it as
+    // 0% would drag a dashboard average down with data that does not exist.
+    assert_eq!(totals.cache_read_ratio(), None);
 }
 
 /// The schema will not let a session point at a repo that does not exist.

@@ -285,17 +285,14 @@ pub fn build_fleet_view(state: &Arc<AppState>) -> Result<FleetView, ViewError> {
     // "Today" is the last 24h rather than a calendar day: the runner has no
     // notion of the phone's timezone, and a rolling window is what the strip
     // actually means to someone glancing at it.
-    let since = TimeRange::since(now_ms() - 24 * 60 * 60 * 1_000);
-    let mut today_usd = 0.0;
-    let mut cache_reads: u64 = 0;
-    let mut fresh_input: u64 = 0;
-    for session in &sessions {
-        for event in state.store.list_usage(&session.id, since)? {
-            today_usd += event.cost_usd;
-            cache_reads += u64::from(event.usage.cache_read_tokens);
-            fresh_input += u64::from(event.usage.input_tokens);
-        }
-    }
+    //
+    // Summed by the store. This used to be `list_usage` per session folded in
+    // Rust, which pulled the entire 24-hour ledger across the boundary to
+    // produce three numbers — on every home-screen fetch, and again for every
+    // phone that woke up.
+    let today = state
+        .store
+        .usage_totals(TimeRange::since(now_ms() - 24 * 60 * 60 * 1_000))?;
 
     let tasks_awaiting_review = state
         .store
@@ -308,9 +305,8 @@ pub fn build_fleet_view(state: &Arc<AppState>) -> Result<FleetView, ViewError> {
         sessions: views,
         pending_approvals,
         tasks_awaiting_review,
-        today_usd,
-        cache_hit_ratio: (cache_reads + fresh_input > 0)
-            .then(|| cache_reads as f64 / (cache_reads + fresh_input) as f64),
+        today_usd: today.cost_usd,
+        cache_hit_ratio: today.cache_read_ratio(),
     })
 }
 

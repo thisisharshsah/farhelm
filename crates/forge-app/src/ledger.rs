@@ -230,6 +230,7 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
+    use crate::store::UsageTotals;
     use forge_proto::types::Budget;
 
     const NOW_MS: i64 = 1_785_369_600_000;
@@ -273,6 +274,21 @@ mod tests {
                 .filter(|event| range.until_ms.is_none_or(|until| event.created_at < until))
                 .cloned()
                 .collect())
+        }
+
+        fn usage_totals(&self, range: TimeRange) -> crate::store::Result<UsageTotals> {
+            let events = self.events.borrow();
+            let in_window = events
+                .iter()
+                .filter(|event| range.since_ms.is_none_or(|since| event.created_at >= since))
+                .filter(|event| range.until_ms.is_none_or(|until| event.created_at < until));
+            Ok(in_window.fold(UsageTotals::default(), |mut totals, event| {
+                totals.cost_usd += event.cost_usd;
+                totals.cache_read_tokens += u64::from(event.usage.cache_read_tokens);
+                totals.input_tokens += u64::from(event.usage.input_tokens);
+                totals.calls += 1;
+                totals
+            }))
         }
 
         /// Spend summed from what was recorded — the invariant the real store
