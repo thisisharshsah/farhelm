@@ -22,23 +22,44 @@
 //!
 //! # Shape, not policy
 //!
-//! The line this crate holds is that a type here describes what a field *is*,
-//! never what it *means*. [`Budget`] carries a cap and a spend; that 80% of a
-//! cap is a warning and 100% is a hard stop is a rule, and rules live in
-//! `forge-domain`. Likewise [`Risk`] names three classes but does not decide
-//! which commands land in them.
+//! The line this crate aims to hold is that a type here describes what a field
+//! *is*, never what it *means*. [`Risk`] names three classes but does not decide
+//! which commands land in them; [`types::PlanStep`] carries a status but not
+//! which transitions are legal.
 //!
-//! The `as_str`/`FromStr` pairs are the exception that proves it: they are the
-//! storage and wire *encoding* of a variant, which is shape.
+//! Two things are deliberate exceptions:
+//!
+//! - The `as_str`/`FromStr` pairs. Those are the storage and wire *encoding* of
+//!   a variant, which is shape.
+//! - Projections between wire shapes, like [`views::PlanProgress::of`]. They
+//!   read one contract and produce another and reach for nothing else.
+//!
+//! And one is a known violation, not a design: [`Budget::is_warning`] and
+//! [`Budget::is_exhausted`] carry the 80%/100% thresholds, and
+//! `From<Budget> for BudgetView` turns them into the string clients switch on.
+//! Those are policy. They arrived here with the verbatim move of the type they
+//! hang off and are the next thing out — see `forge-domain`.
 
+pub mod commands;
+pub mod diff;
+pub mod events;
 pub mod hello;
 pub mod types;
+pub mod views;
 
+pub use commands::{Command, PlanAction, Review};
+pub use diff::{ChangeKind, ChangeSet, DiffLine, FileDiff, Hunk, Tag};
+pub use events::{CommandRejected, ServerEvent};
 pub use hello::{Capability, Hello, PROTOCOL_VERSION, ProtocolVersion};
 pub use types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
     Device, DeviceKind, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo, Risk,
     Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
+};
+pub use views::{
+    AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, OutputLine,
+    PlanProgress, PlanStepView, SessionDetail, SessionView, SpendBucket, TaskDetail, TaskView,
+    TierSlice,
 };
 
 /// The relay channel a runner publishes on, derived from its public key.

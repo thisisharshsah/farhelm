@@ -38,7 +38,7 @@ use forge_core::time::now_ms;
 use forge_core::types::{
     Agent, AgentTask, Approval, DecidedVia, Decision, Repo, Session, SessionStatus, TaskStatus,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::state::{AppState, ServerEvent};
 
@@ -232,13 +232,9 @@ pub fn retry_prompt(previous: &AgentTask) -> String {
     out
 }
 
-/// A reviewer's answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Review {
-    Approve,
-    Reject,
-}
+/// A reviewer's answer. Part of the wire contract — it arrives inside a
+/// `Command::ReviewTask` — so it lives in `forge-proto`.
+pub use forge_proto::commands::Review;
 
 /* ------------------------------------------------------------- supervisor */
 

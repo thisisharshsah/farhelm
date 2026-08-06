@@ -235,40 +235,10 @@ pub fn render(steps: &[PlanStep]) -> String {
     out
 }
 
-/// Where a plan stands, for the watch glance and the session list (B2).
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub struct PlanProgress {
-    /// Steps that reached a terminal state (done or skipped).
-    pub settled: usize,
-    pub total: usize,
-    /// 1-based ordinal of the step in flight, if any.
-    pub current_ordinal: Option<i64>,
-    pub current_title: Option<String>,
-}
-
-impl PlanProgress {
-    pub fn of(steps: &[PlanStep]) -> Self {
-        let current = steps
-            .iter()
-            .find(|step| step.status == PlanStepStatus::Active);
-        Self {
-            settled: steps
-                .iter()
-                .filter(|step| {
-                    matches!(step.status, PlanStepStatus::Done | PlanStepStatus::Skipped)
-                })
-                .count(),
-            total: steps.len(),
-            current_ordinal: current.map(|step| step.ordinal),
-            current_title: current.map(|step| step.title.clone()),
-        }
-    }
-
-    /// True when no step remains that could still run.
-    pub fn is_complete(&self) -> bool {
-        self.total > 0 && self.settled == self.total
-    }
-}
+/// The glance shape lives in `forge-proto` — the clients render it — along with
+/// the fold that produces it. What stays here is the state machine below: which
+/// transitions are legal, and what pausing a plan actually does.
+pub use forge_proto::views::PlanProgress;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {

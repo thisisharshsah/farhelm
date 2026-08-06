@@ -1176,6 +1176,7 @@ version = "0.1.0"
 dependencies = [
  "forge-core",
  "forge-gateway",
+ "forge-proto",
  "ignore",
  "serde",
  "serde_json",

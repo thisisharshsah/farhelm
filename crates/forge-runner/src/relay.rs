@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use forge_crypto::{Envelope, Identity};
+use forge_proto::events::CommandRejected;
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Message;
@@ -282,22 +283,11 @@ async fn handle_envelope(
                     &config.channel,
                     RUNNER_SENDER_ID,
                     &sender_key,
-                    &CommandRejected {
-                        message: err.to_string(),
-                    },
+                    &CommandRejected::new(err.to_string()),
                 )
                 .ok()
         }
     }
-}
-
-/// Why a command did not happen. Shaped like a [`ServerEvent`] so it arrives on
-/// the client's existing event path, but never broadcast — only ever sealed to
-/// the device that sent the failing command.
-#[derive(serde::Serialize)]
-#[serde(tag = "type", rename = "command_error")]
-struct CommandRejected {
-    message: String,
 }
 
 #[cfg(test)]
