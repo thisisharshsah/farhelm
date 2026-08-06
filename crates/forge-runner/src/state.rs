@@ -141,11 +141,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Build state, letting the caller construct a gateway over the same store
-    /// handle. The closure keeps the `Arc` in one place rather than making the
-    /// caller re-wrap it.
     /// Build state with a throwaway identity and no relay. Tests only — the
     /// daemon loads a persistent key so paired devices survive a restart.
+    ///
+    /// The closure lets the caller construct a gateway over the same store
+    /// handle, keeping the `Arc` in one place rather than making the caller
+    /// re-wrap it.
     #[cfg(test)]
     pub fn with_gateway(
         store: SqliteStore,
@@ -159,19 +160,44 @@ impl AppState {
         )
     }
 
+    /// The common case: tmux panes, built-in destructive-command rules.
     pub fn build(
         store: SqliteStore,
         build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
         identity: Arc<forge_crypto::Identity>,
         relay: Option<RelayInfo>,
     ) -> Arc<Self> {
-        Self::build_with_terminal(store, build, identity, relay, None)
+        Self::assemble(
+            store,
+            build,
+            identity,
+            relay,
+            None,
+            forge_core::risk::Policy::default(),
+        )
     }
 
     /// [`AppState::build`] with the terminal backend chosen explicitly.
     ///
     /// `None` means tmux, which is what every existing caller wants and what a
     /// server should use — panes that survive a runner restart.
+    pub fn build_with_terminal(
+        store: SqliteStore,
+        build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
+        identity: Arc<forge_crypto::Identity>,
+        relay: Option<RelayInfo>,
+        terminal: Option<Arc<crate::terminal::AnyTerminal>>,
+    ) -> Arc<Self> {
+        Self::assemble(
+            store,
+            build,
+            identity,
+            relay,
+            terminal,
+            forge_core::risk::Policy::default(),
+        )
+    }
+
     /// [`AppState::build_with_terminal`] plus local destructive-command rules.
     pub fn build_with_policy(
         store: SqliteStore,
@@ -181,20 +207,26 @@ impl AppState {
         terminal: Option<Arc<crate::terminal::AnyTerminal>>,
         policy: forge_core::risk::Policy,
     ) -> Arc<Self> {
-        let state = Self::build_with_terminal(store, build, identity, relay, terminal);
-        // Set after construction so the many existing callers keep their
-        // signature; nothing has classified anything yet at this point.
-        let mut owned = Arc::try_unwrap(state).unwrap_or_else(|_| unreachable!("sole owner"));
-        owned.policy = policy;
-        Arc::new(owned)
+        Self::assemble(store, build, identity, relay, terminal, policy)
     }
 
-    pub fn build_with_terminal(
+    /// The one place an `AppState` is actually constructed.
+    ///
+    /// The three `build_*` functions above are argument defaults over this. They
+    /// used to be a chain, and the longest link in it built an `Arc`, tore it
+    /// back apart with `Arc::try_unwrap(...).unwrap_or_else(|_| unreachable!())`
+    /// to assign a single field, and re-wrapped it. That worked only because no
+    /// clone existed yet — a fact nothing enforced. Anyone adding a
+    /// `let handle = Arc::clone(&state)` to the constructor it delegated to
+    /// would have turned a runner start-up into a panic, and the compiler would
+    /// have had nothing to say about it.
+    fn assemble(
         store: SqliteStore,
         build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
         identity: Arc<forge_crypto::Identity>,
         relay: Option<RelayInfo>,
         terminal: Option<Arc<crate::terminal::AnyTerminal>>,
+        policy: forge_core::risk::Policy,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let machine_id = ensure_machine(&store);
@@ -208,7 +240,7 @@ impl AppState {
             machine_id,
             events,
             seen_prompts: crate::watcher::SeenPrompts::default(),
-            policy: forge_core::risk::Policy::default(),
+            policy,
             terminal: terminal.unwrap_or_else(|| {
                 Arc::new(crate::terminal::AnyTerminal::Tmux(
                     crate::terminal::TmuxTerminal::default(),
