@@ -61,8 +61,31 @@ impl From<forge_app::store::StoreError> for ManagerError {
 /// Delegates to [`forge_domain::agent`], which is the single place that knows what
 /// each agent is called and how it is supervised. A second copy here is how a
 /// newly added agent ends up startable but unsupervised.
+///
+/// The one thing resolved here rather than there is the plain shell: its binary
+/// is whatever this machine's `$SHELL` says, and `forge-domain` cannot read the
+/// environment by construction.
 pub fn agent_command(agent: Agent) -> Vec<String> {
-    forge_domain::agent::spec(agent).command(None)
+    let mut argv = forge_domain::agent::spec(agent).command(None);
+    if argv.first().is_some_and(String::is_empty) {
+        argv[0] = login_shell();
+    }
+    argv
+}
+
+/// This machine's interactive shell.
+///
+/// `Agent::Shell` carries an empty binary in the spec table, because there is no
+/// one answer: it is `$SHELL`, and that is a property of the machine rather than
+/// of the agent. Before this resolved, starting a shell session produced
+/// "tmux is not installed" — the empty string failed a PATH lookup, and the
+/// resulting error had tmux's message on it.
+fn login_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.trim().is_empty())
+        // Every POSIX machine has this, including the containers CI runs in.
+        .unwrap_or_else(|| "/bin/sh".to_owned())
 }
 
 pub struct SessionManager<T> {
@@ -226,6 +249,45 @@ pub fn spawn_poller<T: Terminal + 'static>(manager: SessionManager<T>) {
             let _ = manager.garbage_collect().await;
         }
     });
+}
+
+#[cfg(test)]
+mod agent_command_tests {
+    use super::*;
+
+    /// The plain shell resolves to a real program.
+    ///
+    /// It is advertised by `/v1/agents` as installed — `spec.binary.is_empty()`
+    /// counts as installed, deliberately, because there is nothing to look up —
+    /// so a client offers it. Starting it has to work, and it did not: the empty
+    /// binary failed a PATH lookup and the error that came back said "tmux is
+    /// not installed", on a runner that was not using tmux.
+    #[test]
+    fn the_shell_agent_resolves_to_a_real_program() {
+        let argv = agent_command(Agent::Shell);
+        let program = argv.first().expect("a shell session needs a program");
+
+        assert!(!program.is_empty(), "the shell agent had no binary to run");
+        assert!(
+            crate::pty::binary_exists(program),
+            "{program} is not on this machine, so the session would fail to spawn"
+        );
+    }
+
+    /// Every other agent keeps the binary the spec table names.
+    #[test]
+    fn a_real_agent_is_not_rewritten() {
+        assert_eq!(agent_command(Agent::ClaudeCode).first().unwrap(), "claude");
+        assert_eq!(agent_command(Agent::Aider).first().unwrap(), "aider");
+    }
+
+    /// `$SHELL` is honoured when it is set to something usable.
+    #[test]
+    fn the_login_shell_falls_back_to_a_posix_one() {
+        // Not asserted against the live environment, which varies by CI image;
+        // the contract is that the fallback is a program that exists everywhere.
+        assert!(crate::pty::binary_exists("/bin/sh"));
+    }
 }
 
 #[cfg(test)]

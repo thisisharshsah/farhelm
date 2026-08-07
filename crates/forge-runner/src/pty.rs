@@ -115,7 +115,7 @@ impl Terminal for PtyTerminal {
         // Without this, "Aider is not installed" looks like "the session died
         // for no reason three seconds in".
         if !binary_exists(program) {
-            return Err(TerminalError::NotInstalled);
+            return Err(TerminalError::BinaryMissing(program.to_owned()));
         }
 
         let mut command = CommandBuilder::new(program);
@@ -128,7 +128,7 @@ impl Terminal for PtyTerminal {
         let child = pair.slave.spawn_command(command).map_err(|err| {
             match err.downcast_ref::<std::io::Error>() {
                 Some(io) if io.kind() == std::io::ErrorKind::NotFound => {
-                    TerminalError::NotInstalled
+                    TerminalError::BinaryMissing(program.to_owned())
                 }
                 _ => TerminalError::Failed {
                     command: spec.command.join(" "),
@@ -454,7 +454,7 @@ mod tests {
                 command: vec!["definitely-not-a-real-binary-xyzzy".into()],
             })
             .await;
-        assert!(matches!(result, Err(TerminalError::NotInstalled)));
+        assert!(matches!(result, Err(TerminalError::BinaryMissing(_))));
     }
 
     #[test]
