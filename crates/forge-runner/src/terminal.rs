@@ -40,7 +40,15 @@ const TARGET_FORMAT: &str = "#{session_name}:#{window_index}.#{pane_index}";
 pub enum TerminalError {
     /// tmux is not installed. Distinct from a failure, because it is a setup
     /// problem with a one-line fix.
-    NotInstalled,
+    TmuxMissing,
+    /// The *agent's* binary is not on this machine.
+    ///
+    /// Separate from [`TerminalError::TmuxMissing`] because both used to be one
+    /// variant whose message named tmux — so a runner on the PTY backend, which
+    /// does not use tmux at all, answered a missing agent binary with "tmux is
+    /// not installed". That sends someone to install the one thing that would
+    /// not have helped.
+    BinaryMissing(String),
     /// tmux ran and refused.
     Failed {
         command: String,
@@ -52,8 +60,11 @@ pub enum TerminalError {
 impl std::fmt::Display for TerminalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TerminalError::NotInstalled => {
+            TerminalError::TmuxMissing => {
                 f.write_str("tmux is not installed — the runner needs it to host agent sessions")
+            }
+            TerminalError::BinaryMissing(binary) => {
+                write!(f, "{binary} is not installed on this machine")
             }
             TerminalError::Failed { command, output } => {
                 write!(f, "tmux {command} failed: {}", output.trim())
@@ -227,7 +238,7 @@ impl TmuxTerminal {
             .output()
             .await
             .map_err(|err| match err.kind() {
-                std::io::ErrorKind::NotFound => TerminalError::NotInstalled,
+                std::io::ErrorKind::NotFound => TerminalError::TmuxMissing,
                 _ => TerminalError::Io(err),
             })?;
 
@@ -338,7 +349,7 @@ impl FakeTerminal {
 impl Terminal for FakeTerminal {
     async fn spawn(&self, _spec: &SpawnSpec) -> Result<String, TerminalError> {
         if self.fail_spawn {
-            return Err(TerminalError::NotInstalled);
+            return Err(TerminalError::TmuxMissing);
         }
         let mut next = self.next_window.lock().expect("fake terminal poisoned");
         *next += 1;
@@ -615,7 +626,7 @@ mod tests {
             .spawn(&spec())
             .await
             .unwrap_err();
-        assert!(matches!(err, TerminalError::NotInstalled));
+        assert!(matches!(err, TerminalError::TmuxMissing));
         assert!(err.to_string().contains("not installed"));
     }
 }
