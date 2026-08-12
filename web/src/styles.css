@@ -150,6 +150,25 @@ button {
 
 /* ------------------------------------------------------------------ shell */
 
+/*
+ * One layout that is a phone app narrow and a desktop app wide.
+ *
+ * Narrow, this is what it always was: a single column with a sticky top bar and
+ * a back button. That was never the problem — it is a good phone app, and it is
+ * installed on phones.
+ *
+ * Wide, a navigation rail takes over and the top bar keeps only what is about
+ * *this page*. The reading column stays bounded at `--measure` rather than
+ * growing with the window: a 1600px-wide line of prose is unreadable, and the
+ * apps this is measured against all bound it too. The rest of the width becomes
+ * margin, which is what makes a dense tool feel calm instead of cramped.
+ */
+:root {
+  --rail: 15.5rem;
+  /* Comfortable for prose and wide enough for a two-column diff. */
+  --measure: 62rem;
+}
+
 .shell {
   max-width: 34rem;
   margin: 0 auto;
@@ -158,6 +177,419 @@ button {
   flex-direction: column;
   /* Room for the fixed cost strip plus the home indicator. */
   padding-bottom: calc(3.5rem + env(safe-area-inset-bottom));
+}
+
+.rail,
+.rail-toggle {
+  display: none;
+}
+
+@media (min-width: 52rem) {
+  .shell {
+    max-width: none;
+    display: grid;
+    /* The rail is a fixed column; the content takes the rest and centres its
+       own measure inside it, so the column does not drift as the rail changes
+       width on a future breakpoint. */
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    padding-bottom: 0;
+  }
+
+  .rail {
+    /* Spans both rows. Left to auto-placement it would land in row one beside
+       the header and, being 100dvh tall, would stretch that row to the full
+       viewport — pushing the content a screen down. */
+    grid-row: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    padding: 0.9rem 0.7rem;
+    border-right: 1px solid var(--border);
+    background: var(--surface-2);
+    overflow-y: auto;
+  }
+
+  .topbar {
+    grid-column: 2;
+    padding: 0.9rem 1.5rem;
+  }
+
+  /* The rail replaces it: every destination is already visible, so a back
+     button would only undo a click nobody needed to make. */
+  .topbar .back {
+    display: none;
+  }
+
+  /* Controls the rail already carries. Scoped with `:has` so they survive in
+     loopback and legacy mode, where no rail is rendered and the top bar is
+     still the only way to reach them. */
+  .shell:has(.rail) .topbar .rail-duplicate {
+    display: none;
+  }
+
+  main {
+    grid-column: 2;
+    width: 100%;
+    max-width: var(--measure);
+    margin: 0 auto;
+    padding: 1.25rem 1.5rem 4rem;
+  }
+
+  /* Sized for a pointer rather than a thumb. A 44px minimum is right on a
+     phone and looks inflated next to a mouse cursor. */
+  .icon-button {
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+  }
+
+  /* A page title carries more weight once it is not competing with a back
+     button and four glyphs for a 34rem bar. At 1rem it read as a label. */
+  .topbar h1 {
+    font-size: 1.35rem;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* --------------------------------------------------------------- skeleton */
+
+/*
+ * A shape while the fleet loads, rather than the word "Opening…".
+ *
+ * The connect is around a second and a half — a seat fetch and a handshake —
+ * which is long enough that a bare word reads as a stall. Blocks in the layout
+ * the content will occupy make the same wait read as loading, and the page does
+ * not jump when the data lands because the space was already reserved.
+ */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.skeleton-card {
+  height: 5.25rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--text-primary) 4%, transparent) 50%,
+      transparent 100%
+    )
+    var(--surface-1);
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s var(--ease) infinite;
+}
+
+.skeleton-card:nth-child(2) {
+  height: 4rem;
+  /* Offset so the row does not pulse in unison, which reads as one wide block
+     rather than several cards. */
+  animation-delay: 0.12s;
+}
+
+.skeleton-card:nth-child(3) {
+  height: 4rem;
+  animation-delay: 0.24s;
+  opacity: 0.6;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-card {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------- rail */
+
+.rail-org {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem 0.75rem;
+  min-width: 0;
+}
+
+.rail-org-name {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-chip {
+  flex: none;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 5px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.rail-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  text-align: left;
+  transition: background var(--quick) var(--ease);
+}
+
+.rail-search span {
+  flex: 1;
+}
+
+.rail-search:hover {
+  background: var(--page);
+  color: var(--text-secondary);
+}
+
+kbd {
+  font: 500 0.7rem/1 var(--font);
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--page);
+  color: var(--text-muted);
+}
+
+.rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding-bottom: 0.6rem;
+}
+
+.rail-heading {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0.5rem 0 0.25rem;
+  padding: 0 0.6rem;
+}
+
+.rail-link,
+.rail-machine {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  text-align: left;
+  transition:
+    background var(--quick) var(--ease),
+    color var(--quick) var(--ease);
+}
+
+.rail-link:hover,
+.rail-machine:hover {
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+
+/* The current destination is marked by weight and a solid surface as well as
+   colour, so it survives being read without colour vision. */
+.rail-link.is-current,
+.rail-machine.is-current {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: var(--lift-1);
+}
+
+.rail-machine-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.dot.is-online {
+  background: var(--status-good);
+}
+
+.dot.is-pending {
+  background: var(--status-warning);
+}
+
+.dot.is-offline {
+  background: var(--baseline);
+}
+
+.rail-foot {
+  margin-top: auto;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.rail-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.rail-foot-actions {
+  display: flex;
+  gap: 0.3rem;
+  padding-top: 0.2rem;
+}
+
+/* ---------------------------------------------------------------- palette */
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  /* Above centre. A centred dialog puts the input where the eye is not, and
+     the results grow downwards into space that has to already exist. */
+  padding: max(8vh, 3rem) 1rem 1rem;
+  background: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  backdrop-filter: blur(3px);
+  animation: palette-in var(--quick) var(--ease);
+}
+
+.palette {
+  width: min(38rem, 100%);
+  max-height: min(28rem, 76vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-1);
+  box-shadow: var(--lift-2);
+  animation: palette-rise var(--quick) var(--ease);
+}
+
+.palette-field {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.8rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.palette-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.palette-results {
+  overflow-y: auto;
+  padding: 0.35rem;
+}
+
+.palette-group {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0.5rem 0 0.2rem;
+  padding: 0 0.55rem;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+/* One selection state for both the mouse and the keyboard. Two — a hover tint
+   and a separate cursor — means two rows look chosen at once. */
+.palette-row.is-selected {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.palette-label {
+  flex: none;
+  font-size: 0.9rem;
+}
+
+.palette-hint {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes palette-rise {
+  from {
+    transform: translateY(-6px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette-backdrop,
+  .palette {
+    animation: none;
+  }
 }
 
 .topbar {

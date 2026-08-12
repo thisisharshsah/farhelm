@@ -15,6 +15,9 @@ import {
   SessionScreen,
   useScrollReset,
 } from "./components/views";
+import { Sidebar } from "./components/Sidebar";
+import { Palette, type Action } from "./components/Palette";
+import { Icon } from "./components/Icon";
 
 type Theme = "system" | "light" | "dark";
 
@@ -41,15 +44,32 @@ function useTheme(): [Theme, () => void] {
   return [theme, cycle];
 }
 
-const THEME_GLYPH: Record<Theme, string> = {
-  system: "◐",
-  light: "☀",
-  dark: "☾",
-};
-
 export default function App() {
   const [route, navigate] = useRoute();
   const [theme, cycleTheme] = useTheme();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // ⌘K on a Mac, Ctrl-K elsewhere, and `/` when the caret is not already in a
+  // field — the three bindings people try without being told.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable === true;
+
+      if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      } else if (event.key === "/" && !typing && !paletteOpen) {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [paletteOpen]);
 
   /**
    * One counter drives every refetch. The SSE stream tells us *that* something
@@ -177,6 +197,77 @@ export default function App() {
 
   useScrollReset(`${route.view}:${sessionId ?? taskId ?? ""}`);
 
+  /**
+   * What ⌘K can reach.
+   *
+   * Built from the fleet snapshot rather than a separate fetch: everything the
+   * palette offers is already on screen somewhere, and a palette that shows
+   * staler data than the page behind it is worse than no palette.
+   */
+  const actions = useMemo<Action[]>(() => {
+    const list: Action[] = [
+      { id: "go-fleet", group: "Go to", icon: "fleet", label: "Fleet",
+        hint: "Running sessions and approvals", run: () => navigate("/") },
+      { id: "go-tasks", group: "Go to", icon: "tasks", label: "Tasks",
+        hint: "Proposed change sets", run: () => navigate("/t") },
+      { id: "go-account", group: "Go to", icon: "account", label: "Workspace",
+        hint: "Machines, devices, people", run: () => navigate("/account") },
+      { id: "go-billing", group: "Go to", icon: "billing", label: "Plan and billing",
+        run: () => navigate("/billing") },
+    ];
+
+    for (const item of fleet.data?.sessions ?? []) {
+      list.push({
+        id: `session-${item.id}`,
+        group: "Sessions",
+        icon: "fleet",
+        label: item.repo_name,
+        hint: item.machine_name,
+        run: () => navigate(`/s/${item.id}`),
+      });
+    }
+
+    for (const item of fleet.data?.tasks_awaiting_review ?? []) {
+      list.push({
+        id: `task-${item.id}`,
+        group: "Awaiting review",
+        icon: "tasks",
+        label: item.repo_name,
+        hint: "Change set to review",
+        run: () => navigate(`/t/${item.id}`),
+      });
+    }
+
+    if (transport?.supportsTaskControl) {
+      list.push({ id: "new-task", group: "Start", icon: "plus", label: "Start a task",
+        hint: "Point an agent at a repository", run: () => navigate("/t/new") });
+    }
+    if (transport?.supportsSessionControl) {
+      list.push({ id: "new-session", group: "Start", icon: "plus", label: "Start a session",
+        run: () => navigate("/new") });
+    }
+
+    for (const runner of connection.workspace?.runners ?? []) {
+      if (runner.id === connection.activeRunnerId) continue;
+      list.push({
+        id: `runner-${runner.id}`,
+        group: "Switch machine",
+        icon: "machine",
+        label: runner.name,
+        hint: runner.online ? "Online" : "Offline",
+        run: () => connection.pickRunner(runner.id),
+      });
+    }
+
+    list.push({ id: "theme", group: "Settings", icon: "auto", label: "Change theme",
+      hint: theme, run: cycleTheme });
+    if (connection.mode === "cloud") {
+      list.push({ id: "signout", group: "Settings", icon: "signout", label: "Sign out",
+        run: () => void connection.signOut() });
+    }
+    return list;
+  }, [fleet.data, transport, connection, navigate, theme, cycleTheme]);
+
   // Merge the streamed tail onto the snapshot the API returned, de-duplicated
   // by sequence number so a reconnect cannot double-print.
   const mergedSession = useMemo(() => {
@@ -234,7 +325,11 @@ export default function App() {
     return (
       <div className="shell">
         <main>
-          <p className="empty">Opening…</p>
+          <div className="skeleton" aria-busy="true" aria-label="Loading">
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
+          </div>
         </main>
       </div>
     );
@@ -271,6 +366,25 @@ export default function App() {
 
   return (
     <div className="shell">
+      {paletteOpen ? (
+        <Palette actions={actions} onClose={() => setPaletteOpen(false)} />
+      ) : null}
+
+      {connection.mode === "cloud" ? (
+        <Sidebar
+          workspace={connection.workspace}
+          route={route}
+          activeRunnerId={connection.activeRunnerId}
+          connectionState={connection.state}
+          theme={theme}
+          onNavigate={navigate}
+          onPickRunner={connection.pickRunner}
+          onCycleTheme={cycleTheme}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onSignOut={() => void connection.signOut()}
+        />
+      ) : null}
+
       <header className="topbar">
         {route.view !== "fleet" ? (
           <button className="back" onClick={() => navigate(backTo)}>
@@ -284,25 +398,25 @@ export default function App() {
         <span className="spacer" />
         {route.view === "fleet" ? (
           <button
-            className="icon-button"
+            className="icon-button rail-duplicate"
             onClick={() => navigate("/t")}
             aria-label="Tasks"
             title="Tasks — the agent's proposed changes"
           >
-            ⌥
+            <Icon name="tasks" />
           </button>
         ) : null}
         {connection.state !== "open" && !needsMachine ? (
-          <span className="reconnecting">reconnecting…</span>
+          <span className="reconnecting rail-duplicate">reconnecting…</span>
         ) : null}
         {connection.mode === "cloud" ? (
           <button
-            className="icon-button"
+            className="icon-button rail-duplicate"
             onClick={() => navigate("/account")}
             aria-label="Workspace, machines and plan"
             title={connection.workspace?.org.name ?? "Workspace"}
           >
-            ◈
+            <Icon name="account" />
           </button>
         ) : (
           <button
@@ -311,16 +425,16 @@ export default function App() {
             aria-label="Sign in to reach this machine from anywhere"
             title="Sign in"
           >
-            ⛓
+            <Icon name="link" />
           </button>
         )}
         <button
-          className="icon-button"
+          className="icon-button rail-duplicate"
           onClick={cycleTheme}
           aria-label={`Theme: ${theme}. Tap to change.`}
           title={`Theme: ${theme}`}
         >
-          {THEME_GLYPH[theme]}
+          <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"} />
         </button>
       </header>
 
@@ -445,7 +559,11 @@ export default function App() {
               </button>
             </div>
           ) : fleet.loading ? (
-            <p className="empty">Loading fleet…</p>
+            <div className="skeleton" aria-busy="true" aria-label="Loading the fleet">
+              <div className="skeleton-card" />
+              <div className="skeleton-card" />
+              <div className="skeleton-card" />
+            </div>
           ) : fleet.data ? (
             <div className={staleClass(fleet.stale)}>
               <FleetScreen
