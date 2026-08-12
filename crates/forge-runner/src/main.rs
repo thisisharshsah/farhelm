@@ -29,6 +29,8 @@ forge-runner — RelayForge runner daemon
 USAGE:
     forge-runner serve [--demo] [--db <path>] [--port <port>] [--app-dir <path>]
                        [--relay <ws-url>] [--key <path>] [--terminal tmux|pty]
+                       [--cloud <url> --cloud-key <frg_…>] [--cloud-name <name>]
+                       [--mcp-url <https-url>]
     forge-runner seed [--db <path>]
     forge-runner status [--db <path>]
     forge-runner demo
@@ -58,6 +60,10 @@ ENVIRONMENT:
     ANTHROPIC_BASE_URL   redirect to a compatible endpoint
     FORGE_RUNNER_URL     where `hook` reaches the daemon (default loopback:7842)
     FORGE_MACHINE_NAME   overrides the hostname used for this machine
+    FORGE_CLOUD_URL      same as --cloud
+    FORGE_CLOUD_KEY      same as --cloud-key, and the better place for it —
+                         a credential on a command line is in every `ps`
+    FORGE_MCP_URL        same as --mcp-url
 
 DEFAULTS:
     --db forge.db    --port 7842    --app-dir web/dist    --key forge.key
@@ -73,6 +79,16 @@ TERMINAL BACKENDS:
 
 With --relay, the runner dials out to a relay and becomes reachable from a
 paired phone anywhere. Without it, it serves on loopback only.
+
+With --cloud and --cloud-key it enrols with a control plane instead, and there
+is nothing to pair: the machine appears in your fleet, and any device signed
+into that workspace can reach it. The control plane says which relay to dial, so
+--relay is not needed alongside it. Create an enrolment key in the web app under
+Settings → Machines.
+
+Enrolling does not weaken the encryption. Devices still generate their own keys
+and everything still travels sealed between a device and this machine; what the
+control plane provides is a directory and a permission, not a way in.
 ";
 
 const DEFAULT_DB: &str = "forge.db";
@@ -152,6 +168,17 @@ struct Flags {
     /// Explicit `--app-dir`. `None` means search the usual places.
     app_dir: Option<String>,
     relay: Option<String>,
+    /// The control plane to enrol with. With it, `--relay` is not needed: the
+    /// control plane says which relay to dial.
+    cloud: Option<String>,
+    /// `frg_…`. Also read from `FORGE_CLOUD_KEY`, because a credential on a
+    /// command line is a credential in every `ps` and every shell history.
+    cloud_key: Option<String>,
+    /// What this machine is called in the fleet. Defaults to its hostname.
+    cloud_name: Option<String>,
+    /// This machine's public URL, when it is exposed as an MCP connector.
+    /// Absent means the connector is not served at all.
+    mcp_url: Option<String>,
     key: String,
     /// Local destructive-command rules. Absent means the built-ins alone.
     policy: Option<String>,
@@ -175,6 +202,10 @@ impl Flags {
             demo: args.iter().any(|arg| arg == "--demo"),
             app_dir: value_of("--app-dir"),
             relay: value_of("--relay"),
+            cloud: value_of("--cloud").or_else(|| std::env::var("FORGE_CLOUD_URL").ok()),
+            cloud_key: value_of("--cloud-key").or_else(|| std::env::var("FORGE_CLOUD_KEY").ok()),
+            cloud_name: value_of("--cloud-name"),
+            mcp_url: value_of("--mcp-url").or_else(|| std::env::var("FORGE_MCP_URL").ok()),
             terminal: value_of("--terminal"),
             policy: value_of("--policy"),
             key: value_of("--key").unwrap_or_else(|| DEFAULT_KEY.to_owned()),
@@ -366,12 +397,60 @@ async fn serve_async(flags: Flags) -> Fallible {
     // after — a new key would silently break every paired device.
     let identity = Arc::new(forge_crypto::keystore::load_or_create(&flags.key)?);
 
-    let relay_info = flags.relay.as_ref().map(|url| state::RelayInfo {
-        url: url.clone(),
-        // The channel is derived from the machine identity so it is stable
-        // across restarts and unique per runner.
-        channel: machine_channel(&identity),
-    });
+    // Enrol before anything else that depends on where this machine belongs.
+    // Awaited rather than spawned: which relay to dial and which channel to
+    // publish on are the control plane's answers, and starting the link on a
+    // guess would mean publishing into silence until the first heartbeat landed.
+    let cloud_session = match cloud_config(&flags) {
+        Some(config) => {
+            match forge_runner::cloud::enroll_with_retry(&config, identity.public_key().as_str())
+                .await
+            {
+                Ok(session) => {
+                    println!(
+                        "  cloud      enrolled as {} in {}",
+                        session.runner_id, session.org_id
+                    );
+                    if session.key_change_pending {
+                        eprintln!(
+                            "  cloud      this machine's identity does not match the one on \
+                             file — an admin has to confirm it before devices can connect"
+                        );
+                    }
+                    let shared = Arc::new(std::sync::RwLock::new(session));
+                    Some((config, shared))
+                }
+                Err(err) => {
+                    // Not fatal. A runner that refuses to start because a
+                    // website is down is worse than one that serves loopback and
+                    // says why.
+                    eprintln!("  cloud      {err}");
+                    eprintln!("  cloud      continuing on loopback only");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
+    let relay_info = match &cloud_session {
+        // The control plane is authoritative: it knows which relay this
+        // deployment runs and which channel this machine's *pinned* key maps to,
+        // which is not always the key this process just loaded.
+        Some((_, session)) => {
+            let held = session.read().expect("cloud session poisoned");
+            Some(state::RelayInfo {
+                url: held.relay_url.clone(),
+                channel: held.channel.clone(),
+            })
+        }
+        None => flags.relay.as_ref().map(|url| state::RelayInfo {
+            url: url.clone(),
+            // The channel is derived from the machine identity so it is stable
+            // across restarts and unique per runner.
+            channel: machine_channel(&identity),
+        }),
+    };
 
     // The gateway is only constructed when a provider is configured, so the
     // read-only API and the app work on a fresh clone with no credentials.
@@ -421,6 +500,16 @@ async fn serve_async(flags: Flags) -> Fallible {
         );
     }
 
+    // Started after the state exists, because reconciling the device list on
+    // every beat needs the store.
+    if let Some((config, session)) = &cloud_session {
+        forge_runner::cloud::spawn_heartbeat(
+            Arc::clone(&state.store),
+            config.clone(),
+            Arc::clone(session),
+        );
+    }
+
     if let Some(info) = &relay_info {
         relay::spawn(
             Arc::clone(&state),
@@ -428,6 +517,9 @@ async fn serve_async(flags: Flags) -> Fallible {
             relay::RelayConfig {
                 url: info.url.clone(),
                 channel: info.channel.clone(),
+                session: cloud_session
+                    .as_ref()
+                    .map(|(_, session)| Arc::clone(session)),
             },
         );
     }
@@ -498,9 +590,35 @@ async fn serve_async(flags: Flags) -> Fallible {
         println!("  demo mode  simulated agent output every 3s");
     }
 
+    // The connector, when this machine is exposed as one. Mounted on the same
+    // loopback listener the tunnel already reaches, so there is one process and
+    // one port rather than a second server to keep patched.
+    let mut app_router = api::router_with_app(Arc::clone(&state), app_dir);
+    if let Some((mcp_url, cloud_url, org_id)) = mcp_settings(&flags, &cloud_session) {
+        match forge_runner::cloud::fetch_verifier(&cloud_url).await {
+            Ok(verifier) => {
+                println!("  connector  {mcp_url}/mcp  (org {org_id})");
+                app_router = app_router.merge(forge_runner::mcp::router(Arc::new(
+                    forge_runner::mcp::McpState {
+                        app: Arc::clone(&state),
+                        gate: forge_runner::mcp::Gate {
+                            verifier,
+                            org_id,
+                            public_url: mcp_url,
+                            issuer: cloud_url,
+                        },
+                    },
+                )));
+            }
+            // Not fatal, and deliberately loud: serving the connector without a
+            // verifier would mean serving it unauthenticated.
+            Err(err) => eprintln!("  connector  not served — {err}"),
+        }
+    }
+
     // Outbound-only is the security posture (§6); binding to loopback keeps the
     // runner off the network even before the relay exists.
-    axum::serve(listener, api::router_with_app(state, app_dir))
+    axum::serve(listener, app_router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
@@ -687,6 +805,78 @@ fn spawn_demo_activity(state: Arc<AppState>, session_id: String) {
 /// channel id — which the relay sees — is not the thing devices encrypt to.
 fn machine_channel(identity: &forge_crypto::Identity) -> String {
     forge_proto::channel_for(identity.public_key().as_str())
+}
+
+/// Where the connector should be served, if it should be at all.
+///
+/// Three things are required and none can be guessed: the public URL a client
+/// will reach (only the operator knows what the tunnel maps), the control plane
+/// that mints tokens, and this machine's organisation. Enrolment supplies the
+/// last two, so a runner that never enrolled cannot serve a connector — there
+/// would be no authorization server to trust and no tenant to check against.
+fn mcp_settings(
+    flags: &Flags,
+    session: &Option<(
+        forge_runner::cloud::CloudConfig,
+        forge_runner::cloud::SharedSession,
+    )>,
+) -> Option<(String, String, String)> {
+    let mcp_url = flags.mcp_url.clone()?;
+    let Some((config, shared)) = session else {
+        eprintln!(
+            "  connector  --mcp-url was given but this machine is not enrolled; \
+             there is no authorization server to trust"
+        );
+        return None;
+    };
+    let org_id = shared.read().ok()?.org_id.clone();
+    Some((
+        mcp_url.trim_end_matches('/').to_owned(),
+        config.base_url.trim_end_matches('/').to_owned(),
+        org_id,
+    ))
+}
+
+/// The control-plane configuration, if this runner has one.
+///
+/// Both a URL and a key are required. A URL without a key used to be a plausible
+/// half-configuration; it is not, because enrolment is the only thing this link
+/// does first, and it cannot happen anonymously.
+fn cloud_config(flags: &Flags) -> Option<forge_runner::cloud::CloudConfig> {
+    let base_url = flags.cloud.clone()?;
+    let Some(enrollment_key) = flags.cloud_key.clone() else {
+        eprintln!(
+            "  cloud      --cloud was given without --cloud-key (or FORGE_CLOUD_KEY); \
+             not enrolling"
+        );
+        return None;
+    };
+
+    Some(forge_runner::cloud::CloudConfig {
+        base_url,
+        enrollment_key,
+        name: flags.cloud_name.clone().unwrap_or_else(machine_name),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    })
+}
+
+/// What to call this machine in the fleet.
+///
+/// The hostname, because that is the name its owner already uses for it. Falls
+/// back to something obviously placeholder rather than something plausible — "a
+/// machine" is clearly unset, `localhost` looks deliberate and would collide.
+fn machine_name() -> String {
+    std::env::var("FORGE_MACHINE_NAME")
+        .ok()
+        .or_else(|| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok())
+        })
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "a machine".to_owned())
 }
 
 /// Mint a pairing offer against a running daemon and render it as a QR code.

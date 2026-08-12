@@ -9,9 +9,13 @@ rust-version.workspace = true
 [dependencies]
 base64 = "0.22"
 crypto_box = { version = "0.9", features = ["std"] }
+# ES256 for the capability tokens in `token.rs`. The same curve the relay
+# already carries for VAPID, so this adds no new cryptographic surface.
+p256 = { version = "0.13", features = ["ecdsa"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 
 [lints]
 workspace = true

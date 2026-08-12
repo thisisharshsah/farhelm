@@ -19,6 +19,7 @@ use serde::Serialize;
 
 use crate::session::SessionManager;
 use crate::state::{AppState, ServerEvent};
+use crate::views::Lookups;
 
 /// The command contract moved to `forge-proto`: it is what a device sends, and
 /// both transports plus three client implementations agree on it. Re-exported so
@@ -101,6 +102,17 @@ pub enum Outcome {
     TaskList {
         tasks: Vec<forge_proto::views::TaskView>,
     },
+    /// A session that was just started or stopped.
+    SessionChanged(Box<forge_proto::views::SessionView>),
+    /// A task that was just started. Its loop is already running detached.
+    TaskStarted(Box<forge_proto::views::TaskView>),
+    /// The answer to [`Command::AgentList`].
+    ///
+    /// Wrapped for the same reason [`Outcome::TaskList`] is: the relay matches
+    /// replies by shape, and two bare arrays are indistinguishable.
+    AgentList {
+        agents: Vec<forge_proto::views::AgentView>,
+    },
 }
 
 /// Run a device command. `via` records which surface it arrived from.
@@ -154,7 +166,136 @@ pub async fn execute(
             crate::views::build_fleet_view(state)
                 .map_err(|err| CommandError::Internal(err.to_string()))?,
         ))),
+        Command::StartSession { repo_path, agent } => {
+            let session = start_session(state, &repo_path, agent).await?;
+            Ok(Outcome::SessionChanged(Box::new(session)))
+        }
+        Command::StopSession { session_id } => {
+            let session = stop_session(state, &session_id).await?;
+            Ok(Outcome::SessionChanged(Box::new(session)))
+        }
+        Command::StartTask {
+            repo_path,
+            prompt,
+            budget_usd,
+            retry_of,
+        } => {
+            let task = crate::task::start(
+                state,
+                crate::task::StartTask {
+                    repo_path,
+                    prompt,
+                    budget_usd,
+                    // Not exposed over the wire: a step cap is a debugging
+                    // knob, and the budget is the limit that actually protects
+                    // somebody. Left at the runner's default.
+                    max_steps: None,
+                    retry_of,
+                },
+            )
+            .map_err(task_error)?;
+            let lookups = Lookups::new(state.store.as_ref())
+                .map_err(|err| CommandError::Internal(err.to_string()))?;
+            Ok(Outcome::TaskStarted(Box::new(crate::views::task_view(
+                &lookups, task,
+            ))))
+        }
+        Command::AgentList => Ok(Outcome::AgentList {
+            agents: crate::views::build_agent_list(),
+        }),
     }
+}
+
+/// Start an agent in a repository, registering the repository if it is new.
+///
+/// Lives here rather than in the HTTP handler so the relay path cannot diverge
+/// from it — the same reason [`execute`] exists at all. Every check below is a
+/// failure somebody would otherwise see as an unexplained dead session.
+pub async fn start_session(
+    state: &Arc<AppState>,
+    repo_path: &str,
+    agent: Option<forge_proto::types::Agent>,
+) -> Result<forge_proto::views::SessionView, CommandError> {
+    let path = std::path::Path::new(repo_path);
+    if !path.is_dir() {
+        // Worth being explicit about *whose* machine: a device on the relay is
+        // naming a path it cannot see, and "no such directory" is confusing
+        // when you are looking at that directory on your own laptop.
+        return Err(CommandError::NotFound(format!(
+            "{repo_path} is not a directory on the runner's machine"
+        )));
+    }
+
+    let repo = match state
+        .store
+        .find_repo_by_path(&state.machine_id, repo_path)
+        .map_err(CommandError::Store)?
+    {
+        Some(repo) => repo,
+        None => {
+            let repo = forge_proto::types::Repo {
+                id: forge_app::id::new_id(),
+                machine_id: state.machine_id.clone(),
+                path: repo_path.to_owned(),
+                name: path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| repo_path.to_owned()),
+                budget_usd: None,
+            };
+            state
+                .store
+                .upsert_repo(&repo)
+                .map_err(CommandError::Store)?;
+            repo
+        }
+    };
+
+    let agent = agent.unwrap_or(forge_proto::types::Agent::ClaudeCode);
+
+    // Checked before anything is written. Starting a session for an agent that
+    // is not installed would leave a row pointing at a pane that died instantly,
+    // and the user would see "dead" with no reason given.
+    let spec = forge_domain::agent::spec(agent);
+    if !spec.binary.is_empty() && !crate::pty::binary_exists(spec.binary) {
+        return Err(CommandError::Forbidden(format!(
+            "{} is not installed on the runner — `{}` is not on its PATH",
+            spec.display_name, spec.binary
+        )));
+    }
+
+    let manager = SessionManager::new(Arc::clone(state), Arc::clone(&state.terminal));
+    let session = manager
+        .start(&repo, agent)
+        .await
+        .map_err(|err| CommandError::Terminal(err.to_string()))?;
+
+    let lookups = Lookups::new(state.store.as_ref())
+        .map_err(|err| CommandError::Internal(err.to_string()))?;
+    crate::views::view_of(state, &lookups, &session)
+        .map_err(|err| CommandError::Internal(err.to_string()))
+}
+
+pub async fn stop_session(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Result<forge_proto::views::SessionView, CommandError> {
+    let manager = SessionManager::new(Arc::clone(state), Arc::clone(&state.terminal));
+    manager
+        .stop(session_id)
+        .await
+        .map_err(|err| CommandError::Terminal(err.to_string()))?;
+
+    let session = state
+        .store
+        .get_session(session_id)
+        .map_err(CommandError::Store)?
+        .ok_or_else(|| CommandError::NotFound(format!("session {session_id}")))?;
+
+    let lookups = Lookups::new(state.store.as_ref())
+        .map_err(|err| CommandError::Internal(err.to_string()))?;
+    crate::views::view_of(state, &lookups, &session)
+        .map_err(|err| CommandError::Internal(err.to_string()))
 }
 
 /// Map a task failure onto this layer's vocabulary.
@@ -215,10 +356,13 @@ async fn decide(
     // D3: convenience must never become catastrophe. Checked server-side, on
     // every transport, because a client that skipped it would otherwise be the
     // whole defence.
-    if via == DecidedVia::Watch && !existing.allows_watch_decision() {
-        return Err(CommandError::Forbidden(
-            "destructive commands must be approved from the phone".into(),
-        ));
+    if !existing.allows_decision_from(via) {
+        return Err(CommandError::Forbidden(match via {
+            DecidedVia::Connector => "a destructive command has to be cleared by a person, \
+                 not by a connector — approve it from the phone or the web app"
+                .to_owned(),
+            _ => "destructive commands must be approved from the phone".to_owned(),
+        }));
     }
 
     let outcome = state

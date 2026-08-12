@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.relayforge.relay</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/harshsah/.relayforge/bin/forge-relay</string>
+		<string>--bind</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>7843</string>
+		<string>--vapid-key</string>
+		<string>/Users/harshsah/.relayforge/vapid.key</string>
+		<string>--push-subject</string>
+		<string>mailto:thisisharshsah@gmail.com</string>
+		<string>--auth-from</string>
+		<string>http://127.0.0.1:7844</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/harshsah/.relayforge/logs/relay.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/harshsah/.relayforge/logs/relay.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/harshsah/.relayforge</string>
+</dict>
+</plist>

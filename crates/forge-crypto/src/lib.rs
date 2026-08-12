@@ -35,6 +35,7 @@
 //! the documented, accepted residual.
 
 pub mod keystore;
+pub mod token;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;

@@ -34,7 +34,7 @@ impl std::error::Error for ParseEnumError {}
 macro_rules! text_enum {
     (
         $(#[$meta:meta])*
-        $name:ident { $($variant:ident => $text:literal),+ $(,)? }
+        $name:ident { $($(#[$vmeta:meta])* $variant:ident => $text:literal),+ $(,)? }
     ) => {
         $(#[$meta])*
         #[derive(
@@ -46,7 +46,7 @@ macro_rules! text_enum {
             // `as_str` will agree right up until they do not: `ClaudeCode` is
             // `claude-code` in the database and was `claude_code` over JSON, so
             // an API that echoed a stored value could not parse it back.
-            $(#[serde(rename = $text)] $variant),+
+            $($(#[$vmeta])* #[serde(rename = $text)] $variant),+
         }
 
         impl $name {
@@ -196,6 +196,14 @@ text_enum! {
         Watch => "watch",
         Phone => "phone",
         Web => "web",
+        /// An MCP connector — Claude, acting for the account that authorised it.
+        ///
+        /// Its own variant rather than reusing `Web` because the audit trail
+        /// answers "who cleared this", and "a language model did" is a
+        /// materially different answer from "a person at a keyboard did".
+        /// Recording it as `web` would erase exactly the distinction the
+        /// `decided_via` column exists for.
+        Connector => "connector",
         AutoPolicy => "auto_policy",
     }
 }

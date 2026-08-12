@@ -41,6 +41,11 @@ use forge_proto::types::DecidedVia;
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
+/// How long to wait for the control plane's first channel token before dialling
+/// anyway. Generously more than a heartbeat round trip, far less than a person
+/// would notice.
+const FIRST_TOKEN_WAIT: Duration = Duration::from_secs(10);
+
 /// How this runner identifies itself as a sender inside an envelope.
 const RUNNER_SENDER_ID: &str = "runner";
 
@@ -85,7 +90,10 @@ async fn request_wake_up(config: &RelayConfig) {
         .replacen("wss://", "https://", 1)
         .replacen("ws://", "http://", 1);
 
-    let url = format!("{base}/v1/push/{}", config.channel);
+    // The same token the socket used: a gated relay will not buzz a channel for
+    // a caller who cannot prove they belong on it, or knowing a channel id
+    // would be enough to ring somebody's phone every ten seconds forever.
+    let url = format!("{base}/v1/push/{}{}", config.channel, config.token_query());
     if let Err(err) = reqwest::Client::new()
         .post(&url)
         .timeout(Duration::from_secs(5))
@@ -101,6 +109,61 @@ pub struct RelayConfig {
     pub url: String,
     /// The fan-out group. Public — knowing it grants a seat, not a key.
     pub channel: String,
+    /// The control-plane session, when this runner is enrolled.
+    ///
+    /// Read at *connect* time rather than captured once: the token lives fifteen
+    /// minutes and the heartbeat replaces it every thirty seconds, so a link
+    /// that reconnects after an hour must pick up the current one. `None` is an
+    /// ungated relay, which is still a supported deployment.
+    pub session: Option<crate::cloud::SharedSession>,
+}
+
+impl RelayConfig {
+    /// The query string to append when dialling.
+    ///
+    /// A query parameter rather than a header because the browser `WebSocket`
+    /// constructor takes a URL and nothing else, and the runner has to speak the
+    /// same protocol the clients do.
+    fn token_query(&self) -> String {
+        match self.current_token() {
+            Some(token) => format!("?token={token}"),
+            None => String::new(),
+        }
+    }
+
+    /// The channel token right now, or `None` on an ungated deployment or
+    /// before the first heartbeat has landed.
+    fn current_token(&self) -> Option<String> {
+        let session = self.session.as_ref()?;
+        let token = session
+            .read()
+            .map(|held| held.channel_token.clone())
+            .unwrap_or_default();
+        (!token.is_empty()).then_some(token)
+    }
+
+    /// Wait for the first channel token, up to a bound.
+    ///
+    /// Enrolment does not mint one — the first heartbeat does, a moment later.
+    /// Without this the link dialled immediately, was refused 401, and recovered
+    /// on its own a second later. Harmless, and still wrong to ship: an
+    /// `Unauthorized` in the log on every single start is exactly the kind of
+    /// noise that makes a real authorisation failure invisible.
+    async fn await_first_token(&self) {
+        if self.session.is_none() || self.current_token().is_some() {
+            return;
+        }
+        let deadline = tokio::time::Instant::now() + FIRST_TOKEN_WAIT;
+        while tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if self.current_token().is_some() {
+                return;
+            }
+        }
+        // Fall through and dial anyway. A relay that turns out to be ungated
+        // will accept it, and being refused is more useful than a runner that
+        // silently never connects because one heartbeat failed.
+    }
 }
 
 /// Dial the relay and keep the link up for the life of the process.
@@ -129,16 +192,21 @@ async fn run_once(
     identity: &Arc<Identity>,
     config: &RelayConfig,
 ) -> Result<(), String> {
-    let url = format!(
+    config.await_first_token().await;
+
+    let base = format!(
         "{}/v1/channel/{}",
         config.url.trim_end_matches('/'),
         config.channel
     );
+    let url = format!("{base}{}", config.token_query());
 
     let (socket, _) = tokio_tungstenite::connect_async(&url)
         .await
-        .map_err(|err| format!("could not connect to {url}: {err}"))?;
-    println!("relay link: connected to {url}");
+        // `base`, not `url`: the token is a credential and this string goes to
+        // stderr, and from there to a journal somebody else can read.
+        .map_err(|err| format!("could not connect to {base}: {err}"))?;
+    println!("relay link: connected to {base}");
 
     let (mut sink, mut stream) = socket.split();
 
@@ -251,8 +319,54 @@ async fn handle_envelope(
     // The envelope names its sender; that is a *hint*, not a credential. It
     // selects which public key to verify against, and verification is what
     // actually decides whether this is a paired device.
-    let Ok(Some(device)) = state.store.get_device(&envelope.sender_id) else {
-        return None;
+    // A sender this runner has never heard of is usually not an intruder — it is
+    // a device that signed in seconds ago, and the heartbeat that would tell us
+    // about it is up to thirty seconds away. Ask the control plane now rather
+    // than dropping the request and letting the user watch a spinner fail.
+    let mut known = state.store.get_device(&envelope.sender_id);
+    if matches!(known, Ok(None))
+        && let Some(session) = &config.session
+        && crate::cloud::refresh_devices(session, state.store.as_ref()).await
+    {
+        known = state.store.get_device(&envelope.sender_id);
+    }
+
+    let device = match known {
+        Ok(Some(device)) => device,
+        Ok(None) => {
+            // Silence used to be the whole of this branch, and it made an
+            // entire class of failure undiagnosable: the device sends, the
+            // runner drops, nothing is written down anywhere, and the only
+            // symptom is a client saying "the runner did not answer" ten
+            // seconds later while the runner looks perfectly healthy.
+            //
+            // Naming the sender is safe — it is an id the sender just told us,
+            // not a secret — and it is the difference between "which device is
+            // this" and reading two databases by hand.
+            eprintln!(
+                "relay link: ignoring a command from {}, which is not a device this runner \
+                 knows about. It has: [{}]. If that device was registered recently, the next \
+                 heartbeat picks it up.",
+                envelope.sender_id,
+                state
+                    .store
+                    .list_devices()
+                    .map(|devices| devices
+                        .iter()
+                        .map(|device| device.id.clone())
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                    .unwrap_or_default()
+            );
+            return None;
+        }
+        Err(err) => {
+            eprintln!(
+                "relay link: could not look up {}: {err}",
+                envelope.sender_id
+            );
+            return None;
+        }
     };
     let Ok(sender_key) = forge_crypto::PublicKey::parse(&device.pubkey) else {
         return None;
@@ -303,17 +417,60 @@ async fn handle_envelope(
         forge_proto::types::DeviceKind::Web => DecidedVia::Web,
     };
 
+    // A query's answer is *addressed* to the device that asked, rather than
+    // broadcast — nobody else asked for it.
+    //
+    // Every outcome the caller `await`s has to appear here. It used to be two
+    // of them, with `Ok(_) => None` swallowing the rest, so the cost dashboard,
+    // the task list and a task's diff each sent a request over the relay and
+    // waited ten seconds for a reply that was never sent. The symptom is a
+    // screen that says the runner cannot be reached while the runner is
+    // connected and perfectly healthy — which is exactly what it looked like.
+    //
+    // The `Ok(_)` arm is gone deliberately: with it, adding a command and
+    // forgetting its reply compiles and fails at runtime. Now it does not
+    // compile.
     match commands::execute(state, command, via).await {
-        // A snapshot is a query, so its answer is addressed rather than
-        // broadcast. Everything else changes state and reaches devices as the
-        // events that change produces.
         Ok(commands::Outcome::Snapshot(fleet)) => identity
             .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &fleet)
             .ok(),
         Ok(commands::Outcome::SessionSnapshot(detail)) => identity
             .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &detail)
             .ok(),
-        Ok(_) => None,
+        Ok(commands::Outcome::DashboardSnapshot(dashboard)) => identity
+            .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &dashboard)
+            .ok(),
+        Ok(commands::Outcome::TaskSnapshot(task)) => identity
+            .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &task)
+            .ok(),
+        Ok(commands::Outcome::TaskList { tasks }) => identity
+            .seal_json(
+                &config.channel,
+                RUNNER_SENDER_ID,
+                &sender_key,
+                &serde_json::json!({ "tasks": tasks }),
+            )
+            .ok(),
+        Ok(commands::Outcome::SessionChanged(session)) => identity
+            .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &session)
+            .ok(),
+        Ok(commands::Outcome::TaskStarted(task)) => identity
+            .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &task)
+            .ok(),
+        Ok(commands::Outcome::AgentList { agents }) => identity
+            .seal_json(
+                &config.channel,
+                RUNNER_SENDER_ID,
+                &sender_key,
+                &serde_json::json!({ "agents": agents }),
+            )
+            .ok(),
+        // These three change state, and the change reaches every device as the
+        // event it produced. The sender is not waiting on a reply.
+        Ok(commands::Outcome::Decided { .. })
+        | Ok(commands::Outcome::Instructed { .. })
+        | Ok(commands::Outcome::PlanChanged { .. })
+        | Ok(commands::Outcome::TaskReviewed { .. }) => None,
         // A refusal has to travel back. Over loopback the client sees an HTTP
         // status; here a rejected instruction would otherwise just evaporate,
         // and "I tapped it and nothing happened" is the worst failure a remote
@@ -379,6 +536,7 @@ mod tests {
         let config = RelayConfig {
             url: "ws://localhost:1".into(),
             channel: "chan".into(),
+            session: None,
         };
         (state, identity, config)
     }
@@ -542,6 +700,57 @@ mod tests {
         // Sealed to the asking device, readable by it, and carrying a fleet.
         let fleet: serde_json::Value = phone.open_json(identity.public_key(), &reply).unwrap();
         assert!(fleet.get("sessions").is_some());
+    }
+
+    /// Every command a client *waits* on must produce an addressed reply.
+    ///
+    /// This is the regression that made a healthy runner look unreachable: the
+    /// reply arm handled `Snapshot` and `SessionSnapshot` and swallowed the rest
+    /// under `Ok(_) => None`, so the dashboard, the task list and a task's diff
+    /// each waited ten seconds for an answer nobody sent. Enumerated here rather
+    /// than asserted one-by-one, so a new query command fails this test until it
+    /// is answered.
+    #[tokio::test]
+    async fn every_query_command_is_answered() {
+        let (state, identity, config) = fixture();
+        let phone = pair(&state, "phone", DeviceKind::Phone);
+
+        let queries = vec![
+            ("snapshot", Command::Snapshot, "sessions"),
+            (
+                "session_snapshot",
+                Command::SessionSnapshot {
+                    session_id: "s1".into(),
+                },
+                "steps",
+            ),
+            (
+                "dashboard_snapshot",
+                Command::DashboardSnapshot {
+                    session_id: "s1".into(),
+                    since_ms: None,
+                },
+                "by_tier",
+            ),
+            ("task_list", Command::TaskList, "tasks"),
+            ("agent_list", Command::AgentList, "agents"),
+        ];
+
+        for (name, command, expected_field) in queries {
+            let request = phone
+                .seal_json(&config.channel, "phone", identity.public_key(), &command)
+                .unwrap();
+
+            let reply = handle_envelope(&state, &identity, &config, &mut HashMap::new(), request)
+                .await
+                .unwrap_or_else(|| panic!("{name} was never answered"));
+
+            let body: serde_json::Value = phone.open_json(identity.public_key(), &reply).unwrap();
+            assert!(
+                body.get(expected_field).is_some(),
+                "{name} answered without {expected_field}: {body}"
+            );
+        }
     }
 
     #[tokio::test]

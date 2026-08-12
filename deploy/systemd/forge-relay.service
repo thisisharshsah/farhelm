@@ -1,0 +1,48 @@
+[Unit]
+Description=RelayForge relay (ciphertext fan-out and push wake-ups)
+Documentation=https://github.com/relayforge/relayforge
+After=network-online.target forge-cloud.service
+Wants=network-online.target
+# Not Requires=: the relay should keep forwarding for connections that already
+# have a token even if the control plane is being restarted. It only needs it at
+# startup, to fetch the verifying key.
+After=forge-cloud.service
+
+[Service]
+Type=simple
+User=relayforge
+Group=relayforge
+WorkingDirectory=/var/lib/relayforge
+
+# --auth-from is what makes this relay refuse a connection that cannot prove it
+# belongs on the channel. Without it, knowing a channel id is a permanent seat —
+# fine for one person on their own network, wrong for anything shared.
+#
+# The key is fetched once at startup, not per request: a relay that asked the
+# control plane on every connection would fail closed the moment that service
+# blinked, which is the opposite of what a relay is for.
+ExecStart=/usr/local/bin/forge-relay \
+  --bind 127.0.0.1 \
+  --port 7843 \
+  --vapid-key /var/lib/relayforge/vapid.key \
+  --push-subject mailto:thisisharshsah@gmail.com \
+  --auth-from http://127.0.0.1:7844
+
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/relayforge
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

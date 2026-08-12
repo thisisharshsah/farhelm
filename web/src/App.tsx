@@ -1,15 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  RelayTransport,
-  type ConnectionState,
-  type OutputLine,
-  type Pairing,
-  type ServerEvent,
-  type Transport,
-} from "@relayforge/client-core";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { OutputLine, ServerEvent } from "@relayforge/client-core";
 import { sessionIdOf, useResource, useRoute } from "./hooks";
-import { loopbackTransport, migratePairing, webPairingStore } from "./platform";
-import { PairingScreen } from "./components/Pairing";
+import { migratePairing, webPairingStore } from "./platform";
+import { loopbackAvailable, useConnection } from "./connection";
+import { AuthScreen, MachinePicker, WelcomeScreen, readableError } from "./components/Auth";
+import { AccountScreen, BillingScreen } from "./components/Account";
 import { PushSettings } from "./components/PushSettings";
 import { NewSession } from "./components/NewSession";
 import { NewTask, TaskListScreen, TaskReviewScreen } from "./components/Tasks";
@@ -64,75 +59,11 @@ export default function App() {
   const [revision, setRevision] = useState(0);
   const bump = useCallback(() => setRevision((value) => value + 1), []);
 
-  /**
-   * Which transport is live. A stored pairing means this device has been taken
-   * off the runner's network at least once, so the relay is the right default —
-   * it works from anywhere, including at home.
-   *
-   * `undefined` means "not read yet". The store is async because React Native's
-   * is; on the web it settles in a microtask, but starting a loopback transport
-   * and immediately replacing it with a relay one would flash an error on a
-   * paired phone that is off the network.
-   */
-  const [pairing, setPairing] = useState<Pairing | null | undefined>(undefined);
-  const [pairingOpen, setPairingOpen] = useState(false);
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
-
-  useEffect(() => {
-    // The migration runs first and only matters once: a pairing written by a
-    // `localStorage` build would otherwise look like no pairing at all, and the
-    // app would quietly ask you to pair again from a network you are not on.
-    // The `.catch` is load-bearing: `pairing` stays `undefined` until this
-    // settles, and every screen renders a spinner in that state. Without it a
-    // failed IndexedDB open — private browsing, a quota error, a corrupt store —
-    // leaves the app loading forever with nothing on screen explaining why.
-    // Unreadable means "not paired", which is a working app on loopback.
-    void migratePairing()
-      .then(() => webPairingStore.load())
-      .then(setPairing)
-      .catch(() => setPairing(null));
-  }, []);
-
-  // The service worker pings the page when a wake-up lands while it is open.
-  // The WebSocket usually got there first; this covers the case where it was
-  // asleep and is still reconnecting.
-  useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
-    const onMessage = (event: MessageEvent) => {
-      if ((event.data as { type?: string })?.type === "push-wake") bump();
-    };
-    navigator.serviceWorker.addEventListener("message", onMessage);
-    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-  }, [bump]);
-
-  const transportRef = useRef<Transport | null>(null);
-  const [transportRevision, setTransportRevision] = useState(0);
-
-  useEffect(() => {
-    if (pairing === undefined) return;
-    const transport: Transport = pairing
-      ? new RelayTransport(pairing)
-      : loopbackTransport();
-    transportRef.current = transport;
-    setTransportRevision((value) => value + 1);
-
-    const offState = transport.onConnectionChange(setConnection);
-    const offEvent = transport.onEvent((event) => onEventRef.current(event));
-
-    return () => {
-      offState();
-      offEvent();
-      transport.close();
-      transportRef.current = null;
-    };
-  }, [pairing]);
-
   /** Output arrives line by line, so it is appended rather than refetched. */
   const [liveOutput, setLiveOutput] = useState<Record<string, OutputLine[]>>({});
   /** A refusal the runner sent back over the relay. */
   const [refusal, setRefusal] = useState<string | null>(null);
 
-  const onEventRef = useRef<(event: ServerEvent) => void>(() => {});
   const onEvent = useCallback((event: ServerEvent) => {
     switch (event.type) {
       case "output_chunk":
@@ -156,49 +87,92 @@ export default function App() {
     }
   }, []);
 
-  onEventRef.current = onEvent;
+  const connection = useConnection(onEvent);
+  const transport = connection.transport;
 
-  const transport = transportRef.current;
-  const deps = [revision, transportRevision] as const;
+  useEffect(() => {
+    // Runs once and only matters once: a pairing written by a `localStorage`
+    // build would otherwise look like no pairing at all, and the app would ask
+    // for a sign-in that the user does not need yet.
+    void migratePairing().catch(() => {});
+  }, []);
+
+  // The service worker pings the page when a wake-up lands while it is open.
+  // The WebSocket usually got there first; this covers the case where it was
+  // asleep and is still reconnecting.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      if ((event.data as { type?: string })?.type === "push-wake") bump();
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [bump]);
+
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+
+  const submitAuth = useCallback(
+    (input: Parameters<typeof connection.signIn>[0]) => {
+      setAuthBusy(true);
+      setAuthError(null);
+      connection
+        .signIn(input)
+        .then(() => {
+          setAuthOpen(false);
+          navigate("/");
+        })
+        .catch((cause: unknown) => setAuthError(readableError(cause)))
+        .finally(() => setAuthBusy(false));
+    },
+    [connection, navigate],
+  );
+
+  /**
+   * Nothing to fetch until there is a transport.
+   *
+   * A never-resolving promise renders as "loading", which is what is actually
+   * happening — an empty fleet would render as "no sessions", which is a lie.
+   */
+  const idle = <T,>() => new Promise<T>(() => {});
+  const deps = [revision, connection.mode, connection.activeRunnerId] as const;
 
   const fleet = useResource(
-    () =>
-      transportRef.current?.fleet() ??
-      // Before the stored pairing has been read there is nothing to ask. An
-      // empty fleet renders as "loading", which is what is actually happening.
-      new Promise<never>(() => {}),
-    deps,
+    () => transport?.fleet() ?? idle<never>(),
+    [transport, ...deps],
   );
   const sessionId = sessionIdOf(route);
   const session = useResource(
-    () =>
-      sessionId && transportRef.current
-        ? transportRef.current.session(sessionId)
-        : Promise.resolve(null),
-    [sessionId, ...deps],
+    () => (sessionId && transport ? transport.session(sessionId) : Promise.resolve(null)),
+    [sessionId, transport, ...deps],
   );
   const dashboard = useResource(
     () =>
-      route.view === "cost" && transportRef.current
-        ? transportRef.current.dashboard(route.id)
+      route.view === "cost" && transport
+        ? transport.dashboard(route.id)
         : Promise.resolve(null),
-    [route.view === "cost" ? route.id : null, ...deps],
+    [route.view === "cost" ? route.id : null, transport, ...deps],
   );
 
   const taskId = route.view === "task" ? route.id : null;
   const tasks = useResource(
     () =>
-      route.view === "tasks" && transportRef.current
-        ? transportRef.current.tasks()
-        : Promise.resolve(null),
-    [route.view === "tasks", ...deps],
+      route.view === "tasks" && transport ? transport.tasks() : Promise.resolve(null),
+    [route.view === "tasks", transport, ...deps],
   );
   const task = useResource(
+    () => (taskId && transport ? transport.task(taskId) : Promise.resolve(null)),
+    [taskId, transport, ...deps],
+  );
+
+  const billing = useResource(
     () =>
-      taskId && transportRef.current
-        ? transportRef.current.task(taskId)
+      route.view === "billing" && connection.cloud
+        ? connection.cloud.billing()
         : Promise.resolve(null),
-    [taskId, ...deps],
+    [route.view === "billing", connection.cloud, revision],
   );
 
   useScrollReset(`${route.view}:${sessionId ?? taskId ?? ""}`);
@@ -220,18 +194,27 @@ export default function App() {
     };
   }, [session.data, liveOutput]);
 
+  const activeRunner =
+    connection.workspace?.runners.find(
+      (runner) => runner.id === connection.activeRunnerId,
+    ) ?? null;
+
   const title =
     route.view === "fleet"
-      ? "RelayForge"
+      ? (activeRunner?.name ?? "RelayForge")
       : route.view === "tasks"
         ? "Tasks"
         : route.view === "new-task"
           ? "New task"
           : route.view === "new-session"
             ? "New session"
-            : route.view === "task"
-              ? (task.data?.repo_name ?? "Task")
-              : (mergedSession?.repo_name ?? "Session");
+            : route.view === "account"
+              ? "Workspace"
+              : route.view === "billing"
+                ? "Plan"
+                : route.view === "task"
+                  ? (task.data?.repo_name ?? "Task")
+                  : (mergedSession?.repo_name ?? "Session");
 
   /** Where "← Back" goes from here. */
   const backTo =
@@ -239,9 +222,52 @@ export default function App() {
       ? `/s/${route.id}`
       : route.view === "task" || route.view === "new-task"
         ? "/t"
-        : "/";
+        : route.view === "billing"
+          ? "/account"
+          : "/";
 
   const staleClass = (stale: boolean) => (stale ? "stale" : undefined);
+
+  /* ------------------------------------------------------------ front door */
+
+  if (connection.mode === "loading") {
+    return (
+      <div className="shell">
+        <main>
+          <p className="empty">Opening…</p>
+        </main>
+      </div>
+    );
+  }
+
+  if (connection.mode === "welcome") {
+    return (
+      <div className="shell">
+        <main className="front-door">
+          {authOpen ? (
+            <AuthScreen
+              onSubmit={submitAuth}
+              onCancel={() => setAuthOpen(false)}
+              busy={authBusy}
+              error={authError}
+            />
+          ) : (
+            <WelcomeScreen
+              loopbackAvailable={loopbackAvailable()}
+              onChoose={(choice) => {
+                if (choice === "cloud") setAuthOpen(true);
+                else connection.chooseLoopback();
+              }}
+            />
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------------------- the app */
+
+  const needsMachine = connection.mode === "cloud" && !activeRunner;
 
   return (
     <div className="shell">
@@ -266,21 +292,28 @@ export default function App() {
             ⌥
           </button>
         ) : null}
-        {connection !== "open" ? (
-          <span className="muted" style={{ fontSize: "0.75rem" }}>
-            reconnecting…
-          </span>
+        {connection.state !== "open" && !needsMachine ? (
+          <span className="reconnecting">reconnecting…</span>
         ) : null}
-        <button
-          className="icon-button"
-          onClick={() => setPairingOpen((open) => !open)}
-          aria-label={
-            pairing ? "Paired over the relay. Tap to manage." : "Pair this device"
-          }
-          title={pairing ? "Paired (relay)" : "Not paired (loopback)"}
-        >
-          {pairing ? "🔗" : "⛓"}
-        </button>
+        {connection.mode === "cloud" ? (
+          <button
+            className="icon-button"
+            onClick={() => navigate("/account")}
+            aria-label="Workspace, machines and plan"
+            title={connection.workspace?.org.name ?? "Workspace"}
+          >
+            ◈
+          </button>
+        ) : (
+          <button
+            className="icon-button"
+            onClick={connection.chooseCloud}
+            aria-label="Sign in to reach this machine from anywhere"
+            title="Sign in"
+          >
+            ⛓
+          </button>
+        )}
         <button
           className="icon-button"
           onClick={cycleTheme}
@@ -296,59 +329,113 @@ export default function App() {
           <div className="card error" role="alert">
             <b>The runner refused that.</b>
             <p className="tile-note">{refusal}</p>
-            <button
-              className="btn"
-              onClick={() => setRefusal(null)}
-              style={{ marginTop: 8 }}
-            >
+            <button className="btn" onClick={() => setRefusal(null)} style={{ marginTop: 8 }}>
               Dismiss
             </button>
           </div>
         ) : null}
 
-        {pairingOpen ? (
-          pairing ? (
-            <section className="card">
-              <div className="chart-title">Paired</div>
-              <p className="tile-note">
-                This device talks to the runner through{" "}
-                <code>{pairing.relayUrl}</code>, end-to-end encrypted — the relay
-                carries ciphertext it cannot read. Starting a session or a task
-                still happens on the runner's own machine; everything else,
-                including the cost dashboard, works from here.
-              </p>
+        {/* Signed in, but this surface holds no device seat. Actionable rather
+            than fatal: the workspace screen is exactly where a seat is freed. */}
+        {connection.deviceProblem ? (
+          <div className="card notice-card" role="status">
+            <b>This browser has no device slot.</b>
+            <p className="tile-note">
+              {connection.deviceProblem} You are signed in and can manage the
+              workspace — but until a slot frees up, this browser cannot open an
+              encrypted link to a machine.
+            </p>
+            <div className="approval-actions">
+              <button className="btn btn-primary" onClick={() => navigate("/account")}>
+                Remove a device
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  void connection.claimDeviceSlot();
+                }}
+              >
+                Try again
+              </button>
+              <button className="btn" onClick={() => navigate("/billing")}>
+                See plans
+              </button>
+            </div>
+          </div>
+        ) : null}
 
-              <PushSettings pairing={pairing} />
+        {connection.error ? (
+          <div className="card error" role="alert">
+            <b>Cannot reach the workspace.</b>
+            <p className="tile-note">{connection.error}</p>
+            <button className="btn" onClick={connection.refresh} style={{ marginTop: 8 }}>
+              Retry
+            </button>
+          </div>
+        ) : null}
 
-              <div className="approval-actions">
-                <button className="btn" onClick={() => setPairingOpen(false)}>
-                  Close
-                </button>
-                <button
-                  className="btn btn-deny"
-                  onClick={() => {
-                    void webPairingStore.forget().then(() => {
-                      setPairing(null);
-                      setPairingOpen(false);
-                    });
-                  }}
-                >
-                  Unpair
-                </button>
-              </div>
-            </section>
-          ) : (
-            <PairingScreen
-              onPaired={(next) => {
-                setPairing(next);
-                setPairingOpen(false);
-              }}
-              onCancel={() => setPairingOpen(false)}
+        {accountError ? (
+          <div className="card error" role="alert">
+            <p className="tile-note">{accountError}</p>
+          </div>
+        ) : null}
+
+        {/* A machine has to be chosen before there is anything to render. */}
+        {needsMachine && route.view === "fleet" ? (
+          <MachinePicker
+            runners={connection.workspace?.runners ?? []}
+            onPick={connection.pickRunner}
+            onAddMachine={() => navigate("/account")}
+            busy={false}
+          />
+        ) : null}
+
+        {route.view === "account" ? (
+          connection.mode === "cloud" && connection.workspace && connection.cloud ? (
+            <AccountScreen
+              workspace={connection.workspace}
+              cloud={connection.cloud}
+              onChanged={connection.refresh}
+              onBilling={() => navigate("/billing")}
+              onSignOut={() => void connection.signOut()}
+              activeRunnerId={connection.activeRunnerId}
+              onPickRunner={connection.pickRunner}
             />
+          ) : (
+            <section className="card">
+              <div className="chart-title">Not signed in</div>
+              <p className="tile-note">
+                This browser is talking to a runner on this machine directly.
+                Sign in to reach it from your phone as well.
+              </p>
+              <button className="btn btn-primary" onClick={connection.chooseCloud}>
+                Sign in
+              </button>
+            </section>
           )
         ) : null}
 
-        {route.view === "fleet" ? (
+        {route.view === "billing" ? (
+          billing.data && connection.cloud && connection.workspace ? (
+            <div className={staleClass(billing.stale)}>
+              <BillingScreen
+                billing={billing.data}
+                cloud={connection.cloud}
+                role={connection.workspace.role}
+                onError={setAccountError}
+              />
+            </div>
+          ) : billing.error ? (
+            <div className="card error">
+              <b>Plans unavailable.</b>
+              <p className="tile-note">{billing.error}</p>
+            </div>
+          ) : (
+            <p className="empty">Loading plans…</p>
+          )
+        ) : null}
+
+        {route.view === "fleet" && !needsMachine ? (
           fleet.error ? (
             <div className="card error">
               <b>Cannot reach the runner.</b>
@@ -465,9 +552,39 @@ export default function App() {
             <p className="empty">Loading cost…</p>
           )
         ) : null}
+
+        {/* Push needs a channel to subscribe to, which only the relay modes have. */}
+        {route.view === "account" && connection.mode === "legacy" ? (
+          <LegacyPairing onUnpair={() => void webPairingStore.forget().then(() => location.reload())} />
+        ) : null}
       </main>
 
       {fleet.data ? <CostStrip fleet={fleet.data} /> : null}
     </div>
   );
 }
+
+/**
+ * The old pairing, still working, with a way out.
+ *
+ * Kept because a phone that was paired before accounts existed should not stop
+ * working the day this ships. Unpairing here sends it to the front door.
+ */
+function LegacyPairing({ onUnpair }: { onUnpair: () => void }) {
+  return (
+    <section className="card">
+      <div className="chart-title">Paired device</div>
+      <p className="tile-note">
+        This device was paired before workspaces existed. It still works. Signing
+        in instead lets it reach every machine you own rather than the one it was
+        paired with.
+      </p>
+      <button className="btn btn-deny" onClick={onUnpair}>
+        Unpair
+      </button>
+    </section>
+  );
+}
+
+/** Re-exported so the push settings panel keeps its home. */
+export { PushSettings };

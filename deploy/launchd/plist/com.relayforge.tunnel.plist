@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.relayforge.tunnel</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/harshsah/.cargo/bin/cloudflared</string>
+		<string>tunnel</string>
+		<string>--config</string>
+		<string>/Users/harshsah/.cloudflared/farhelm.yml</string>
+		<string>--no-autoupdate</string>
+		<string>run</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/harshsah/.relayforge/logs/tunnel.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/harshsah/.relayforge/logs/tunnel.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/harshsah/.relayforge</string>
+</dict>
+</plist>

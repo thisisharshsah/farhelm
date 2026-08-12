@@ -100,6 +100,48 @@ pub enum Command {
     /// right now" has to be a message like any other. The HTTP client uses
     /// `GET /v1/fleet` instead and never sends this.
     Snapshot,
+
+    /* ------------------------------------------------- starting work (A6) */
+    //
+    // These four were loopback-only until accounts existed, and the reason
+    // given was real: starting an agent picks a directory on someone's machine
+    // and runs a process in it, which is a bigger capability than clearing an
+    // approval that already exists.
+    //
+    // What changed is *who is asking*. A device on the relay used to be
+    // whoever held a keypair from a QR code. It is now a device registered to a
+    // named account, in an organisation, with a role — and revocable from the
+    // web app in fifteen minutes. That is a strong enough answer to "who is
+    // starting this process" to let the fleet be driven from a phone.
+    //
+    // The destructive-command rule is untouched: `rm -rf` still raises an
+    // approval, and that approval is still phone-only.
+    /// Start an agent in a repository on the runner's machine.
+    StartSession {
+        /// Absolute path **on the runner**. Not on the device asking.
+        repo_path: String,
+        #[serde(default)]
+        agent: Option<crate::types::Agent>,
+    },
+    /// End a session and its pane.
+    StopSession { session_id: String },
+    /// Point the native agent at a task. Returns immediately; the loop runs
+    /// detached, because a task takes minutes and the phone that started it may
+    /// be in a tunnel by the time it lands.
+    StartTask {
+        repo_path: String,
+        prompt: String,
+        #[serde(default)]
+        budget_usd: Option<f64>,
+        /// A rejected task to try again, with its reason handed to the agent.
+        #[serde(default)]
+        retry_of: Option<String>,
+    },
+    /// Which agents this machine can actually drive.
+    ///
+    /// Answered by the runner rather than assumed by the client, because
+    /// "installed" is a property of the machine and differs across a fleet.
+    AgentList,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

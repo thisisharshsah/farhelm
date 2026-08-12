@@ -391,9 +391,77 @@ describe("reviewing a change set", () => {
     expect(events).toHaveLength(1);
   });
 
-  it("refuses to start a task over the relay, and says why", async () => {
-    expect(transport.supportsTaskControl).toBe(false);
-    await expect(transport.startTask()).rejects.toThrow(/own machine/);
+  it("starts a task over the relay and waits for the row", async () => {
+    // This used to be refused. Once a device belongs to a named account rather
+    // than to whoever photographed a QR code, "who started this process" has an
+    // answer, and the fleet can be driven from a phone.
+    expect(transport.supportsTaskControl).toBe(true);
+
+    const pending = transport.startTask("/srv/api", "bound the retry backoff", 1);
+    expect(readSent(socket(), socket().sent.length - 1)).toMatchObject({
+      type: "start_task",
+      repo_path: "/srv/api",
+      prompt: "bound the retry backoff",
+      budget_usd: 1,
+      retry_of: null,
+    });
+
+    socket().deliver(
+      fromRunner({ id: "t9", change_summary: "one file", status: "running" }),
+    );
+    await expect(pending).resolves.toMatchObject({ id: "t9" });
+  });
+
+  it("starts and stops a session over the relay", async () => {
+    expect(transport.supportsSessionControl).toBe(true);
+
+    const started = transport.startSession("/srv/api", "claude-code");
+    expect(readSent(socket(), socket().sent.length - 1)).toMatchObject({
+      type: "start_session",
+      repo_path: "/srv/api",
+      agent: "claude-code",
+    });
+    socket().deliver(
+      fromRunner({ id: "s9", repo_name: "api", status: "running" }),
+    );
+    await expect(started).resolves.toMatchObject({ id: "s9" });
+
+    const stopped = transport.stopSession("s9");
+    expect(readSent(socket(), socket().sent.length - 1)).toMatchObject({
+      type: "stop_session",
+      session_id: "s9",
+    });
+    socket().deliver(fromRunner({ id: "s9", repo_name: "api", status: "done" }));
+    await expect(stopped).resolves.toBeUndefined();
+  });
+
+  it("does not hand a session reply to a waiting session-detail request", async () => {
+    // Both carry `repo_name` and `status`; only the detail has `steps`. Getting
+    // this wrong resolves one promise with the other's payload, which is the
+    // failure mode this whole shape-matching scheme has to avoid.
+    const detail = transport.session("s1");
+    socket().deliver(
+      fromRunner({ id: "s1", repo_name: "api", status: "running" }),
+    );
+
+    let settled = false;
+    void detail.then(() => (settled = true)).catch(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    socket().deliver(
+      fromRunner({ id: "s1", repo_name: "api", status: "running", steps: [] }),
+    );
+    await expect(detail).resolves.toMatchObject({ id: "s1" });
+  });
+
+  it("asks the runner which agents it can drive", async () => {
+    const pending = transport.agents();
+    expect(readSent(socket(), socket().sent.length - 1)).toMatchObject({
+      type: "agent_list",
+    });
+    socket().deliver(fromRunner({ agents: [{ id: "claude-code" }] }));
+    await expect(pending).resolves.toHaveLength(1);
   });
 
   it("fetches the task list over the relay", async () => {

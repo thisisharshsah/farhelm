@@ -17,6 +17,7 @@ import * as SecureStore from "expo-secure-store";
 import {
   HttpTransport,
   createRunnerApi,
+  deviceIdentity,
   pairingStore,
   type EventStream,
   type ServerEvent,
@@ -29,11 +30,22 @@ import {
  * shared `PAIRING_STORAGE_KEY` satisfies. It also caps values at 2 KB on iOS;
  * a pairing is a few hundred bytes, well inside that.
  */
-export const securePairingStore = pairingStore({
-  get: (key) => SecureStore.getItemAsync(key),
-  set: (key, value) => SecureStore.setItemAsync(key, value),
-  remove: (key) => SecureStore.deleteItemAsync(key),
-});
+const secureBackend = {
+  get: (key: string) => SecureStore.getItemAsync(key),
+  set: (key: string, value: string) => SecureStore.setItemAsync(key, value),
+  remove: (key: string) => SecureStore.deleteItemAsync(key),
+};
+
+export const securePairingStore = pairingStore(secureBackend);
+
+/**
+ * This phone's long-term device key, in the Keychain.
+ *
+ * Deliberately outside the session: a device seat belongs to the phone, not to
+ * the sign-in. Minting a new key on each sign-in spent a seat every time, and a
+ * plan's seats ran out after a couple of sign-outs.
+ */
+export const phoneIdentity = () => deviceIdentity(secureBackend);
 
 /** How often to re-read the fleet when there is no push stream to listen to. */
 const POLL_INTERVAL_MS = 3_000;

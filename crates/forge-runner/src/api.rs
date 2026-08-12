@@ -32,7 +32,6 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::commands;
-use crate::session::SessionManager;
 use crate::state::{AppState, ServerEvent};
 
 /// Build the API router, optionally serving a built PWA from `app_dir`.
@@ -40,7 +39,15 @@ use crate::state::{AppState, ServerEvent};
 /// Unknown paths fall back to `index.html` so the hash-routed client survives a
 /// hard refresh. `/v1/*` is matched first and never reaches the fallback.
 pub fn router_with_app(state: Arc<AppState>, app_dir: Option<PathBuf>) -> Router {
-    let api = router(state);
+    router_with_app_and_auth(state, app_dir, LocalAuth::open())
+}
+
+pub fn router_with_app_and_auth(
+    state: Arc<AppState>,
+    app_dir: Option<PathBuf>,
+    auth: LocalAuth,
+) -> Router {
+    let api = router_with_auth(state, auth);
     match app_dir {
         Some(dir) => {
             let index = dir.join("index.html");
@@ -50,7 +57,94 @@ pub fn router_with_app(state: Arc<AppState>, app_dir: Option<PathBuf>) -> Router
     }
 }
 
+/// Who may talk to the runner's own HTTP API.
+///
+/// # The hole this closes
+///
+/// The runner binds loopback, so nothing on the network can reach it. That was
+/// taken as sufficient, and it is not: `CorsLayer::permissive()` told every
+/// browser that **any** website may make cross-origin requests here *and read
+/// the response*. A page in a tab the user already had open could enumerate
+/// their repositories, start a session, and approve a destructive command — from
+/// the outside, over a port that is "only local".
+///
+/// So the origin list is now explicit, and there is a token for the case where
+/// somebody deliberately binds this to a real interface.
+#[derive(Debug, Clone, Default)]
+pub struct LocalAuth {
+    /// Required on every `/v1/*` request when set. Minted automatically when the
+    /// runner is bound to anything other than loopback, because at that point
+    /// the network *is* the threat model.
+    pub token: Option<String>,
+}
+
+impl LocalAuth {
+    pub fn open() -> Self {
+        Self::default()
+    }
+
+    pub fn with_token(token: impl Into<String>) -> Self {
+        Self {
+            token: Some(token.into()),
+        }
+    }
+}
+
+/// Paths reachable without the local token.
+///
+/// `/v1/health` only: a supervisor, a container probe, or a person with `curl`
+/// needs to be able to ask "are you up" without holding a credential, and the
+/// answer contains nothing.
+fn is_public_path(path: &str) -> bool {
+    path == "/v1/health"
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
+    router_with_auth(state, LocalAuth::open())
+}
+
+pub fn router_with_auth(state: Arc<AppState>, auth: LocalAuth) -> Router {
+    let router = base_router(state);
+    match auth.token {
+        Some(token) => router.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let token = token.clone();
+                async move {
+                    if is_public_path(request.uri().path()) {
+                        return next.run(request).await;
+                    }
+                    let presented = request
+                        .headers()
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.strip_prefix("Bearer "))
+                        .map(str::trim)
+                        .unwrap_or_default();
+
+                    if presented.len() == token.len()
+                        && presented
+                            .bytes()
+                            .zip(token.bytes())
+                            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                            == 0
+                    {
+                        return next.run(request).await;
+                    }
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({
+                            "error": "this runner requires its local API token"
+                        })),
+                    )
+                        .into_response()
+                }
+            },
+        )),
+        None => router,
+    }
+}
+
+fn base_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/v1/fleet", get(fleet))
         .route("/v1/sessions", get(list_sessions).post(start_session))
@@ -77,11 +171,39 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/agents", get(list_agents))
         .route("/v1/batch", get(batch_queue))
         .route("/v1/health", get(health))
-        // The PWA is served from Vite in dev and from a different origin on the
-        // phone, so the localhost API has to allow it. The runner binds to
-        // loopback; this is not an internet-facing surface.
-        .layer(CorsLayer::permissive())
+        .layer(local_cors())
         .with_state(state)
+}
+
+/// Cross-origin access, restricted to the things that actually need it.
+///
+/// The production app is served *by this process*, so it is same-origin and
+/// needs no CORS at all. React Native sends no `Origin` header, so it is not
+/// subject to CORS either. That leaves exactly one legitimate cross-origin
+/// caller — the Vite dev server — and the previous `permissive()` was handing
+/// the same access to every website on the internet.
+fn local_cors() -> CorsLayer {
+    use axum::http::{HeaderName, Method};
+
+    const DEV_ORIGINS: &[&str] = &[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ];
+
+    CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([
+            HeaderName::from_static("authorization"),
+            HeaderName::from_static("content-type"),
+        ])
+        .allow_origin(
+            DEV_ORIGINS
+                .iter()
+                .filter_map(|origin| origin.parse().ok())
+                .collect::<Vec<axum::http::HeaderValue>>(),
+        )
 }
 
 // ---------------------------------------------------------------- errors
@@ -281,34 +403,7 @@ async fn revert_task(
 /// while the runner is up, and a stale "not installed" is a worse answer than a
 /// PATH lookup.
 async fn list_agents() -> Json<Vec<AgentView>> {
-    use forge_domain::agent::{ApprovalChannel, Confidence};
-
-    Json(
-        forge_domain::agent::AGENTS
-            .iter()
-            .map(|spec| AgentView {
-                id: spec.agent.as_str().to_owned(),
-                name: spec.display_name.to_owned(),
-                binary: spec.binary.to_owned(),
-                installed: spec.binary.is_empty() || crate::pty::binary_exists(spec.binary),
-                approvals: match spec.approvals {
-                    ApprovalChannel::Hook => "hook",
-                    ApprovalChannel::Prompt(_) => "prompt",
-                    ApprovalChannel::Native => "native",
-                    ApprovalChannel::None => "none",
-                },
-                supervised: spec.is_supervised(),
-                verified: match spec.approvals {
-                    // Native has no bridge and no pane to parse, so there is no
-                    // gap between the agent and the queue that could drift.
-                    ApprovalChannel::Hook | ApprovalChannel::Native => true,
-                    ApprovalChannel::Prompt(dialect) => dialect.confidence == Confidence::Verified,
-                    ApprovalChannel::None => false,
-                },
-                note: spec.note.to_owned(),
-            })
-            .collect(),
-    )
+    Json(crate::views::build_agent_list())
 }
 
 // ---------------------------------------------------------------- read models
@@ -514,63 +609,10 @@ async fn start_session(
     State(state): State<Arc<AppState>>,
     Json(body): Json<StartSessionBody>,
 ) -> ApiResult<SessionView> {
-    let path = std::path::Path::new(&body.repo_path);
-    if !path.is_dir() {
-        return Err(ApiError {
-            status: StatusCode::BAD_REQUEST,
-            message: format!("{} is not a directory on this machine", body.repo_path),
-        });
-    }
-
-    let repo = match state
-        .store
-        .find_repo_by_path(&state.machine_id, &body.repo_path)?
-    {
-        Some(repo) => repo,
-        None => {
-            let repo = forge_proto::types::Repo {
-                id: new_id(),
-                machine_id: state.machine_id.clone(),
-                path: body.repo_path.clone(),
-                name: path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| body.repo_path.clone()),
-                budget_usd: None,
-            };
-            state.store.upsert_repo(&repo)?;
-            repo
-        }
-    };
-
-    let agent = body.agent.unwrap_or(forge_proto::types::Agent::ClaudeCode);
-
-    // Checked before anything is written. Starting a session for an agent that
-    // is not installed would leave a row pointing at a pane that died instantly,
-    // and the user would see "dead" with no reason given.
-    let spec = forge_domain::agent::spec(agent);
-    if !spec.binary.is_empty() && !crate::pty::binary_exists(spec.binary) {
-        return Err(ApiError {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            message: format!(
-                "{} is not installed on this machine — `{}` is not on PATH",
-                spec.display_name, spec.binary
-            ),
-        });
-    }
-
-    let manager = SessionManager::new(Arc::clone(&state), Arc::clone(&state.terminal));
-    let session = manager.start(&repo, agent).await.map_err(|err| ApiError {
-        // A missing tmux is a setup problem on the runner box, not a bad request.
-        status: StatusCode::SERVICE_UNAVAILABLE,
-        message: err.to_string(),
-    })?;
-
-    Ok(Json(view_of(
-        &state,
-        &Lookups::new(state.store.as_ref())?,
-        &session,
-    )?))
+    // The shared implementation, so this path and the relay's cannot diverge.
+    Ok(Json(
+        commands::start_session(&state, &body.repo_path, body.agent).await?,
+    ))
 }
 
 /// `POST /v1/sessions/{id}/stop` — end a session and its pane.
@@ -578,21 +620,7 @@ async fn stop_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<SessionView> {
-    let manager = SessionManager::new(Arc::clone(&state), Arc::clone(&state.terminal));
-    manager.stop(&id).await.map_err(|err| ApiError {
-        status: StatusCode::BAD_GATEWAY,
-        message: err.to_string(),
-    })?;
-
-    let session = state
-        .store
-        .get_session(&id)?
-        .ok_or_else(|| ApiError::not_found(format!("session {id}")))?;
-    Ok(Json(view_of(
-        &state,
-        &Lookups::new(state.store.as_ref())?,
-        &session,
-    )?))
+    Ok(Json(commands::stop_session(&state, &id).await?))
 }
 
 /* ------------------------------------------------------------ device pairing */

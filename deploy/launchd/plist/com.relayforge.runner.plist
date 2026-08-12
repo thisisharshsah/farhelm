@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.relayforge.runner</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>set -a; . /Users/harshsah/.relayforge/runner.env; set +a; exec /Users/harshsah/.relayforge/bin/forge-runner serve --port 7852 --db /Users/harshsah/.relayforge/runner.db --key /Users/harshsah/.relayforge/runner.key --terminal pty</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/harshsah/.relayforge/logs/runner.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/harshsah/.relayforge/logs/runner.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/harshsah/.relayforge</string>
+</dict>
+</plist>

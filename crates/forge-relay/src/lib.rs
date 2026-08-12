@@ -13,6 +13,7 @@
 //! binary serves, in-process — no subprocess to leak, and no second
 //! implementation to drift.
 
+pub mod auth;
 pub mod hub;
 pub mod push;
 pub mod webpush;
@@ -21,12 +22,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
-use axum::response::IntoResponse;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use forge_crypto::Envelope;
+use forge_crypto::token::TokenVerifier;
 
+use crate::auth::{Pass, RateLimiter};
 use crate::hub::Hub;
 use crate::push::{Delivery, PushRegistry};
 use crate::webpush::VapidKey;
@@ -41,9 +45,22 @@ const MAX_ENVELOPE_BYTES: usize = 256 * 1024;
 /// keep an idle-but-alive connection open.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// How often the relay pings an otherwise silent connection.
+///
+/// Comfortably under Cloudflare's ~100-second idle cut, and under
+/// [`IDLE_TIMEOUT`] — the pong counts as inbound traffic, so a peer that is
+/// alive but quiet is no longer indistinguishable from one that has gone away.
+const KEEPALIVE: Duration = Duration::from_secs(30);
+
 pub struct RelayState {
     pub hub: Hub,
     pub push: PushRegistry,
+    /// The control plane's public key, when this relay is gated. `None` keeps
+    /// the original behaviour: anyone who knows a channel id may join it.
+    ///
+    /// Verifying only — this process cannot mint a token, which is why a
+    /// compromised relay cannot grant itself access to anything.
+    pub auth: Option<TokenVerifier>,
     /// Absent when the relay was started without one. Everything still works;
     /// devices simply are not woken, which is the pre-push behaviour.
     pub vapid: Option<VapidKey>,
@@ -64,9 +81,24 @@ impl RelayState {
     }
 
     pub fn with_push(vapid: Option<VapidKey>, push_subject: String) -> Arc<Self> {
+        Self::build(vapid, push_subject, None)
+    }
+
+    /// A relay that only admits tokens signed by the control plane whose public
+    /// key this is.
+    pub fn gated(vapid: Option<VapidKey>, push_subject: String, auth: TokenVerifier) -> Arc<Self> {
+        Self::build(vapid, push_subject, Some(auth))
+    }
+
+    fn build(
+        vapid: Option<VapidKey>,
+        push_subject: String,
+        auth: Option<TokenVerifier>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             hub: Hub::new(),
             push: PushRegistry::new(),
+            auth,
             vapid,
             push_subject,
             // One client, so connections to a push service are pooled rather
@@ -103,7 +135,49 @@ async fn health(State(state): State<Arc<RelayState>>) -> Json<serde_json::Value>
     Json(serde_json::json!({
         "ok": true,
         "channels": state.hub.channel_count(),
+        // Which key this relay trusts, so an operator can tell "the control
+        // plane rotated" from "the client is broken" without a debugger. The
+        // key id is a hash of a public key; publishing it reveals nothing.
+        "auth": state.auth.as_ref().map(|verifier| verifier.key_id()),
     }))
+}
+
+/// Clients that cannot set headers put the token here.
+///
+/// The browser `WebSocket` constructor takes a URL and nothing else — no
+/// headers, no body. A query parameter is the only place a token can go, which
+/// is why these tokens live fifteen minutes: a URL ends up in more logs than a
+/// header does, and the mitigation for that is that a captured one expires
+/// before it is useful.
+#[derive(Debug, serde::Deserialize)]
+pub struct ChannelQuery {
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+/// The gate, in the shape the JSON handlers want it.
+///
+/// Shared with [`push`] so a channel's socket and its wake-up button cannot
+/// drift apart on who may use them.
+pub(crate) fn admit_to(
+    state: &RelayState,
+    token: Option<&str>,
+    channel: &str,
+) -> Result<Pass, (StatusCode, Json<serde_json::Value>)> {
+    auth::admit(state.auth.as_ref(), token, channel, now_ms()).map_err(|denied| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": denied.message() })),
+        )
+    })
+}
+
+/// Unix milliseconds. The relay's only use of the clock.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
 }
 
 /// `GET /v1/channel/{channel}/stats` — connection counts for one channel.
@@ -125,23 +199,64 @@ async fn channel_stats(
 }
 
 /// `GET /v1/channel/{channel}` — the WebSocket every party connects to.
+///
+/// The token is checked **before** the upgrade, so a refusal is an HTTP status a
+/// client can read. Refusing after the upgrade would close the socket with no
+/// explanation, and every client would render it as "reconnecting…" forever.
 async fn channel(
     ws: WebSocketUpgrade,
     Path(channel): Path<String>,
+    Query(query): Query<ChannelQuery>,
     State(state): State<Arc<RelayState>>,
-) -> impl IntoResponse {
-    // The relay does not authenticate the connection, and does not need to: the
-    // channel id gets you a seat, not a key. Everything said on it is sealed to
-    // a specific recipient, so an uninvited listener hears ciphertext.
-    ws.on_upgrade(move |socket| pump(socket, channel, state))
+) -> Response {
+    let pass = match auth::admit(
+        state.auth.as_ref(),
+        query.token.as_deref(),
+        &channel,
+        now_ms(),
+    ) {
+        Ok(pass) => pass,
+        Err(denied) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": denied.message() })),
+            )
+                .into_response();
+        }
+    };
+
+    ws.on_upgrade(move |socket| pump(socket, channel, pass, state))
+        .into_response()
 }
 
-async fn pump(mut socket: WebSocket, channel: String, state: Arc<RelayState>) {
+async fn pump(mut socket: WebSocket, channel: String, pass: Pass, state: Arc<RelayState>) {
     let mut membership = state.hub.join(&channel);
     let connection_id = membership.connection_id;
+    let mut limiter = RateLimiter::new(pass.messages_per_minute);
+
+    // Keepalive. Every proxy between here and a phone has an idle timeout, and
+    // Cloudflare's is about a hundred seconds — well under the two minutes a
+    // quiet fleet routinely goes without saying anything. Without this the
+    // connection is cut roughly every two minutes, the runner reconnects, and
+    // any request in flight during the gap dies as "the runner did not answer".
+    //
+    // A WebSocket Ping rather than an application message, because the peer
+    // answers it in the protocol layer: browsers pong automatically, so this
+    // costs no client code and works for clients that cannot send pings at all.
+    let mut keepalive = tokio::time::interval(KEEPALIVE);
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // `interval` fires immediately; the first tick would ping a socket that has
+    // only just opened.
+    keepalive.tick().await;
 
     loop {
         tokio::select! {
+            _ = keepalive.tick() => {
+                if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+            }
+
             // Outbound: something else on this channel published.
             outgoing = membership.next() => {
                 let Some(envelope) = outgoing else { break };
@@ -170,6 +285,13 @@ async fn pump(mut socket: WebSocket, channel: String, state: Arc<RelayState>) {
                         // A connection may only publish to the channel it joined,
                         // so a rewritten `channel` field cannot cross-post.
                         if envelope.channel != channel {
+                            continue;
+                        }
+                        // Over the ceiling: dropped, not disconnected. A burst
+                        // is usually an agent looping, and tearing the socket
+                        // down would take the *approval* offline too — the one
+                        // message the human is waiting for.
+                        if !limiter.allow(std::time::Instant::now()) {
                             continue;
                         }
                         state.hub.publish(connection_id, envelope);

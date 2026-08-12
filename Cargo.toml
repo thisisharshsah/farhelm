@@ -3,9 +3,11 @@ resolver = "3"
 members = [
   "crates/forge-agent",
   "crates/forge-app",
+  "crates/forge-cloud",
   "crates/forge-crypto",
   "crates/forge-domain",
   "crates/forge-gateway",
+  "crates/forge-mcp",
   "crates/forge-proto",
   "crates/forge-runner",
   "crates/forge-sqlite",
@@ -22,9 +24,12 @@ rust-version = "1.90"
 [workspace.dependencies]
 forge-agent = { path = "crates/forge-agent" }
 forge-app = { path = "crates/forge-app" }
+forge-cloud = { path = "crates/forge-cloud" }
 forge-crypto = { path = "crates/forge-crypto" }
+forge-relay = { path = "crates/forge-relay" }
 forge-domain = { path = "crates/forge-domain" }
 forge-gateway = { path = "crates/forge-gateway" }
+forge-mcp = { path = "crates/forge-mcp" }
 forge-proto = { path = "crates/forge-proto" }
 forge-sqlite = { path = "crates/forge-sqlite" }
 

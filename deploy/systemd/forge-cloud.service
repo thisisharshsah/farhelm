@@ -1,0 +1,49 @@
+[Unit]
+Description=RelayForge control plane (accounts, plans, runner registry)
+Documentation=https://github.com/relayforge/relayforge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=relayforge
+Group=relayforge
+WorkingDirectory=/var/lib/relayforge
+
+# Optional. `-` means a missing file is not a failure, which is what makes a
+# deployment with no Stripe account start cleanly rather than refusing to.
+EnvironmentFile=-/etc/relayforge.env
+
+# --bind 127.0.0.1 is the point of the whole arrangement: this process is
+# reached *through* the tunnel, so there is nothing on a routable address for a
+# misconfigured firewall to expose.
+ExecStart=/usr/local/bin/forge-cloud \
+  --bind 127.0.0.1 \
+  --port 7844 \
+  --db /var/lib/relayforge/forge-cloud.db \
+  --key /var/lib/relayforge/forge-cloud.key \
+  --app-dir /usr/local/share/relayforge/web \
+  --public-url https://farhelm.aurovie.com \
+  --relay-url wss://farhelm-relay.aurovie.com
+
+Restart=on-failure
+RestartSec=5
+
+# This process holds every account in the deployment. It reads two files, writes
+# two files, and talks to Stripe. Nothing below is theoretical hardening — each
+# line removes something it demonstrably does not use.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/relayforge
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

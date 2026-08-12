@@ -5,7 +5,7 @@
 //! anything on the wire changing, which is exactly the kind of thing that
 //! belongs behind an import a reader can see.
 
-use forge_proto::types::{Approval, Budget, Risk};
+use forge_proto::types::{Approval, Budget, DecidedVia, Risk};
 use forge_proto::views::BudgetView;
 
 /// Fraction of a cap at which the wrist starts warning (C5).
@@ -66,11 +66,35 @@ pub trait ApprovalRules {
     /// Enforced server-side on every transport, because a client that skipped it
     /// would otherwise be the whole defence.
     fn allows_watch_decision(&self) -> bool;
+
+    /// Whether `via` may decide this approval at all.
+    ///
+    /// The watch rule generalised, because a second surface now has the same
+    /// problem for a different reason. A watch is barred from destructive
+    /// commands because a wrist tap is too easy; a **connector** is barred
+    /// because the decider is a language model, and the entire premise of this
+    /// system is that a human clears the dangerous ones. An agent that could
+    /// approve its own `rm -rf` is an agent supervising itself.
+    ///
+    /// Enforced server-side on every transport, because a client that skipped
+    /// it would otherwise be the whole defence.
+    fn allows_decision_from(&self, via: DecidedVia) -> bool;
 }
 
 impl ApprovalRules for Approval {
     fn allows_watch_decision(&self) -> bool {
         self.risk != Risk::Destructive
+    }
+
+    fn allows_decision_from(&self, via: DecidedVia) -> bool {
+        match via {
+            // Both are "convenient enough to be dangerous", for different
+            // reasons; both stop at the same line.
+            DecidedVia::Watch | DecidedVia::Connector => self.risk != Risk::Destructive,
+            // A person at a full screen, or the policy engine that was
+            // configured by one.
+            DecidedVia::Phone | DecidedVia::Web | DecidedVia::AutoPolicy => true,
+        }
     }
 }
 
@@ -191,5 +215,61 @@ mod tests {
             "ok",
             "an uncapped session is never shown as stopped"
         );
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+    use forge_proto::types::Risk;
+
+    fn approval(risk: Risk) -> Approval {
+        Approval {
+            id: "a1".into(),
+            session_id: "s1".into(),
+            tool: "Bash".into(),
+            payload: "rm -rf build".into(),
+            risk,
+            decision: None,
+            decided_via: None,
+            requested_at: 0,
+            decided_at: None,
+        }
+    }
+
+    #[test]
+    fn a_connector_may_clear_an_ordinary_command() {
+        // Read-and-approve is most of what a connector is for; barring it
+        // entirely would make the connector useless rather than safe.
+        assert!(approval(Risk::Low).allows_decision_from(DecidedVia::Connector));
+        assert!(approval(Risk::Medium).allows_decision_from(DecidedVia::Connector));
+    }
+
+    #[test]
+    fn a_connector_may_never_clear_a_destructive_one() {
+        // The premise of the whole system: a human clears the dangerous ones.
+        // An agent that could approve its own `rm -rf` supervises itself.
+        assert!(!approval(Risk::Destructive).allows_decision_from(DecidedVia::Connector));
+    }
+
+    #[test]
+    fn a_watch_still_stops_at_the_same_line() {
+        assert!(approval(Risk::Low).allows_decision_from(DecidedVia::Watch));
+        assert!(!approval(Risk::Destructive).allows_decision_from(DecidedVia::Watch));
+        // The older, narrower rule agrees with the general one.
+        assert_eq!(
+            approval(Risk::Destructive).allows_watch_decision(),
+            approval(Risk::Destructive).allows_decision_from(DecidedVia::Watch)
+        );
+    }
+
+    #[test]
+    fn a_person_at_a_full_screen_may_clear_anything() {
+        for via in [DecidedVia::Phone, DecidedVia::Web] {
+            assert!(
+                approval(Risk::Destructive).allows_decision_from(via),
+                "{via}"
+            );
+        }
     }
 }
