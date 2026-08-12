@@ -1,0 +1,38 @@
+# The `farhelm` tunnel.
+#
+# Copy to ~/.cloudflared/farhelm.yml and replace TUNNEL-UUID with what
+# `cloudflared tunnel create farhelm` printed.
+#
+# Deliberately a *separate* file and a separate tunnel from ~/.cloudflared/
+# config.yml. That one is live, serving quantnepal.com and aurovie.com; sharing
+# a tunnel would mean a config error here takes those down too, and they have
+# nothing to do with each other.
+
+tunnel: TUNNEL-UUID
+credentials-file: /Users/harshsah/.cloudflared/TUNNEL-UUID.json
+
+# Rules are matched top to bottom; the first match wins.
+ingress:
+  # The relay's WebSocket. Its own hostname rather than a path on the main one,
+  # because a WebSocket and an HTTP API want different timeouts and it is worth
+  # being able to restart one without touching the other.
+  - hostname: farhelm-relay.aurovie.com
+    service: http://127.0.0.1:7843
+    originRequest:
+      # A relay connection is idle by design — a phone holds one open for hours
+      # and says nothing. Cloudflare's default would cut it; the relay's own
+      # 120-second idle timeout and WebSocket pings are what actually decide
+      # when a dead connection goes.
+      connectTimeout: 10s
+      noTLSVerify: false
+
+  # The control plane, which also serves the PWA. One origin for the app and its
+  # API means no CORS in production and no second hostname to configure in a
+  # client.
+  - hostname: farhelm.aurovie.com
+    service: http://127.0.0.1:7844
+    originRequest:
+      connectTimeout: 10s
+
+  # Anything else is a typo or a scan.
+  - service: http_status:404

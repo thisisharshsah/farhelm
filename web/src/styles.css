@@ -44,6 +44,52 @@
   --tap: 44px;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* Elevation.
+     Two levels, not five. A card either sits on the page or floats above it;
+     a scale with more steps than that gets used inconsistently and reads as
+     noise rather than hierarchy. Both are tinted with the ink colour rather
+     than pure black, so they stay soft on the warm page. */
+  --lift-1: 0 1px 2px rgba(11, 11, 11, 0.04), 0 1px 1px rgba(11, 11, 11, 0.03);
+  --lift-2: 0 4px 16px rgba(11, 11, 11, 0.08), 0 1px 3px rgba(11, 11, 11, 0.05);
+
+  /* Motion. One duration and one curve, used everywhere: variety in easing is
+     the fastest way to make an interface feel assembled from parts. */
+  --ease: cubic-bezier(0.2, 0.6, 0.3, 1);
+  --quick: 140ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    /* Shadow is nearly invisible on a dark page — depth there comes from the
+       surface being lighter than the page, so the shadow only has to stop the
+       edge looking painted on. */
+    --lift-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --lift-2: 0 6px 20px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --lift-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --lift-2: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* One focus ring for the whole app, and only for keyboard users.
+   `:focus-visible` rather than `:focus` so a tap on a phone does not leave a
+   ring behind on every button the user has ever pressed. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1016,4 +1062,494 @@ textarea.task-input {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* =================================================================== account
+ *
+ * Everything the workspace added: the front door, the machine list, the plan
+ * cards. Built from the same tokens as the rest — the goal is that a screen
+ * added today is indistinguishable from one that shipped with M5, not that it
+ * announces itself.
+ */
+
+/* ------------------------------------------------------------- front door */
+
+.front-door {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 70dvh;
+}
+
+.hero {
+  text-align: center;
+  padding: 1rem 0.25rem;
+}
+
+.hero-mark {
+  font-size: 2.5rem;
+  line-height: 1;
+  color: var(--series-1);
+  margin-bottom: 1rem;
+  /* Rises once on load. A front door is the one place a moment of motion buys
+     something: it tells you the app is alive before any data has arrived. */
+  animation: rise 420ms var(--ease) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hero-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.4rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.hero-sub {
+  margin: 0 auto 1.5rem;
+  max-width: 26rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.hero-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 20rem;
+  margin: 0 auto;
+}
+
+.hero-note {
+  margin: 1.5rem auto 0;
+  max-width: 24rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------- buttons */
+
+.btn {
+  transition:
+    background var(--quick) var(--ease),
+    border-color var(--quick) var(--ease),
+    transform var(--quick) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* A press that moves is a press that registered, on a touchscreen where there
+   is no cursor to confirm it. One pixel; more reads as a bug. */
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: var(--series-1);
+  border-color: var(--series-1);
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--series-1) 88%, #000000);
+  border-color: color-mix(in srgb, var(--series-1) 88%, #000000);
+}
+
+.btn-lg {
+  min-height: 48px;
+  font-size: 1rem;
+}
+
+.btn-small {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 550;
+}
+
+/* ------------------------------------------------------------------ auth */
+
+.auth {
+  max-width: 24rem;
+  margin: 0 auto;
+  box-shadow: var(--lift-2);
+}
+
+/* Email and names are words, not key material — the monospace face that makes
+   a pasted key legible makes an address look like a config value. */
+.auth .pair-input {
+  font-family: var(--font);
+  font-size: 0.95rem;
+}
+
+.auth-switch {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: var(--surface-2);
+  border-radius: 10px;
+  margin-bottom: 0.5rem;
+}
+
+.auth-tab {
+  flex: 1;
+  min-height: 36px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 550;
+  color: var(--text-secondary);
+  transition: background var(--quick) var(--ease);
+}
+
+.auth-tab.is-active {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  box-shadow: var(--lift-1);
+}
+
+/* -------------------------------------------------------------- machines */
+
+.machine-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.machine-item {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+
+.machine-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color var(--quick) var(--ease);
+}
+
+.machine-row:hover:not(:disabled) {
+  border-color: var(--baseline);
+}
+
+.machine-row:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.machine-headline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.machine-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.machine-meta {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Online/offline is a status, so it uses the fixed status palette rather than
+   the themed series colour — and it is paired with a word everywhere it is
+   used, because a coloured dot alone is not readable to everyone.
+   Named `machine-dot`, not `dot`: `.dot` already belongs to the session row's
+   liveness indicator further up this file, and redefining it here would have
+   silently resized every one of those. */
+.machine-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+
+.machine-dot.is-online {
+  background: var(--status-good);
+}
+
+.machine-dot.is-offline {
+  background: var(--baseline);
+}
+
+.key-fragment {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* ----------------------------------------------------------------- lists */
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.key-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.key-list > li {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--gridline);
+}
+
+.key-list > li:first-child {
+  border-top: none;
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.inline-form .pair-input {
+  flex: 1 1 12rem;
+  width: auto;
+  margin: 0;
+  font-family: var(--font);
+}
+
+.inline-form .btn {
+  flex: 0 0 auto;
+  padding: 0 1rem;
+}
+
+.inline-input {
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  font-family: var(--font);
+  font-weight: 600;
+}
+
+.disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+/* ----------------------------------------------------------------- usage */
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.usage-tile {
+  padding: 0.6rem;
+  background: var(--surface-2);
+  border-radius: 10px;
+}
+
+/* At the limit is information, not an error — you are using what you paid for.
+   Amber says "worth knowing"; red would say "something broke". */
+.usage-tile.is-full {
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--status-warning) 55%, transparent);
+}
+
+.usage-value {
+  font-size: 1.25rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.usage-limit {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.plan-chip {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.badge {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-active {
+  background: color-mix(in srgb, var(--series-1) 15%, transparent);
+  color: var(--series-1);
+}
+
+/* ----------------------------------------------------------------- plans */
+
+.plan-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 44rem) {
+  .plan-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.plan-card.is-current {
+  border-color: color-mix(in srgb, var(--series-1) 45%, transparent);
+  box-shadow: var(--lift-1);
+}
+
+.plan-price {
+  font-size: 1.75rem;
+  font-weight: 680;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-period {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+.plan-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.plan-features > li::before {
+  content: "· ";
+  color: var(--text-muted);
+}
+
+/* What a plan does *not* include still earns a line: an absent feature is a
+   reason to upgrade, and hiding it makes the tiers look identical. */
+.plan-features > .feature-off {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--baseline);
+}
+
+.plan-features > .feature-off::before {
+  content: "· ";
+  text-decoration: none;
+}
+
+/* --------------------------------------------------------------- notices */
+
+.notice-card {
+  border-left: 3px solid var(--status-warning);
+}
+
+.success-panel {
+  display: block;
+  padding: 0.75rem;
+  border-radius: 10px;
+  background: var(--surface-2);
+  margin-top: 0.75rem;
+}
+
+.warn-text {
+  display: block;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  margin-top: 0.5rem;
+}
+
+.error-text {
+  color: var(--status-critical);
+}
+
+.secret-block {
+  display: block;
+  margin: 0.5rem 0;
+  padding: 0.6rem;
+  background: var(--page);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  /* A key has no spaces to break at, so it must be told it may wrap — otherwise
+     it overflows and the copy button is the only way to get at it. */
+  word-break: break-all;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+}
+
+.reconnecting {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }

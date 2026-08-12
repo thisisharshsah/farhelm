@@ -130,6 +130,51 @@ where the money went.
 The runner never listens on a public port. It dials **out** to a relay, and the
 relay forwards ciphertext it cannot read.
 
+Pick one of the two routes below. **Sign in** is the shorter one and the one to
+use unless you have a reason not to; the relay-only route is what to read if you
+want a single machine and no account anywhere.
+
+### Route A — sign in (recommended)
+
+Run the control plane and a relay that trusts it:
+
+```sh
+forge-cloud --app-dir web/dist                  # accounts, plans, the app
+forge-relay --vapid-key vapid.key --auth-from http://127.0.0.1:7844
+```
+
+Open `http://127.0.0.1:7844`, create an account, then
+**Workspace → Add a machine → Create key**. On the machine you want supervised:
+
+```sh
+FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=http://127.0.0.1:7844 forge-runner serve
+```
+
+It appears in your fleet within thirty seconds. On the phone, open the app and
+sign in with the same account — **no pairing code, no QR, and no need to be on
+the runner's network.** Pick the machine if you have more than one.
+
+Then turn on notifications, and read the iOS note at the end of Route B: it is
+the single most common reason push appears broken.
+
+To reach it from outside your house, put both processes behind a Cloudflare
+tunnel — [`deploy/README.md`](deploy/README.md) does exactly that for
+`farhelm.aurovie.com`, including the DNS records and the systemd units.
+
+Two things worth knowing before you rely on it:
+
+- Check the relay printed `auth on · control-plane key …` and not `auth OPEN`.
+  `OPEN` means it could not reach the control plane and started ungated, and a
+  relay that is ungated will let anyone who learns a channel id join it.
+- The machine's key is pinned the first time it enrols. Reinstall it and the
+  fleet will say **"this machine's identity changed"** and refuse to connect
+  devices until you confirm. That is not a bug — it is the thing that stops a
+  stolen enrolment key from quietly becoming one of your machines.
+
+---
+
+### Route B — a relay, and a paired device
+
 ### Put a relay somewhere reachable
 
 Any VPS. It holds no keys and keeps nothing across a restart, so it is the

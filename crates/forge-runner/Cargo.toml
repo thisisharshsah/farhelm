@@ -14,6 +14,7 @@ forge-domain.workspace = true
 forge-proto.workspace = true
 forge-crypto.workspace = true
 forge-gateway.workspace = true
+forge-mcp.workspace = true
 
 axum = "0.8"
 futures-util = { version = "0.3", default-features = false }
@@ -24,7 +25,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tokio-tungstenite = "0.28"
+# `rustls-tls-webpki-roots` is load-bearing, not tidiness: without a TLS feature
+# `connect_async` refuses every `wss://` URL with "TLS support not compiled in",
+# which is every relay reached over the internet. The quickstart has always told
+# people to put the relay behind TLS, and the runner could not do it.
+#
+# webpki-roots rather than the platform store, to match `reqwest`'s `rustls-tls`
+# here and keep one trust anchor set across the process.
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 
 [dev-dependencies]

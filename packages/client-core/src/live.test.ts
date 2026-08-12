@@ -41,9 +41,32 @@ import {
 
 const RUNNER = "http://127.0.0.1:7842";
 
+/**
+ * Both halves have to be there, not just the runner.
+ *
+ * Checking only `/v1/health` was not enough: a runner started *without*
+ * `--relay` answers it happily, so this suite ran and then threw at the first
+ * `pair()` — turning "there is nothing to test against" into a red build. That
+ * is the exact failure mode the header above says to avoid, in the other
+ * direction.
+ */
 const running = await fetch(`${RUNNER}/v1/health`)
-  .then((r) => r.ok)
+  .then((response) => response.ok)
   .catch(() => false);
+
+const hasRelay =
+  running &&
+  (await fetch(`${RUNNER}/v1/pair/offer`, { method: "POST" })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((offer) => Boolean((offer as { relay_url?: string } | null)?.relay_url))
+    .catch(() => false));
+
+if (running && !hasRelay) {
+  console.warn(
+    "live: a runner is up on 7842 but has no relay — skipping. " +
+      "Start it with --relay ws://127.0.0.1:7843 to run these.",
+  );
+}
 
 /** Mint an offer and redeem it — exactly what the pairing screen does. */
 async function pair(kind: "phone" | "watch"): Promise<Pairing> {
@@ -90,7 +113,7 @@ async function connect(kind: "phone" | "watch") {
 
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-describe.skipIf(!running)("live: a phone against a real relay", () => {
+describe.skipIf(!hasRelay)("live: a phone against a real relay", () => {
   let phone: RelayTransport;
 
   beforeAll(async () => {
@@ -138,7 +161,7 @@ describe.skipIf(!running)("live: a phone against a real relay", () => {
  * D3 over the relay. Separated so it can skip on its own when the seed has
  * nothing destructive in it — see the header for how to create one.
  */
-describe.skipIf(!running)("live: the destructive-command rule", () => {
+describe.skipIf(!hasRelay)("live: the destructive-command rule", () => {
   let phone: RelayTransport;
   let destructiveId: string | null = null;
 

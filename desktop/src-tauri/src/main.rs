@@ -266,6 +266,11 @@ async fn build_state(settings: &Settings) -> Arc<AppState> {
             relay::RelayConfig {
                 url: info.url,
                 channel: info.channel,
+                // The desktop app talks to a relay it was pointed at directly.
+                // Enrolling it with a control plane is the same three calls the
+                // daemon makes and is worth doing; it is simply not done yet,
+                // and `None` is the honest encoding of that.
+                session: None,
             },
         );
     }

@@ -17,7 +17,9 @@ this file is the reference for what exists today.
 | `crates/forge-domain` | The rules: pricing, risk classification, the `PLAN.md` state machine, agent capabilities. No I/O, no clock, no async |
 | `crates/forge-app` | Use cases and the storage ports they need |
 | `crates/forge-sqlite` | Those ports, backed by SQLite in WAL mode |
-| `crates/forge-crypto` | End-to-end encryption: identities, envelopes, pairing, the runner keystore |
+| `crates/forge-cloud` | The control plane: accounts, organisations, roles, plans, and the machine/device registry. Holds no content — see below |
+| `crates/forge-mcp` | RelayForge as a remote MCP server: the protocol, and the OAuth 2.1 server that guards it |
+| `crates/forge-crypto` | End-to-end encryption: identities, envelopes, pairing, capability tokens, the runner keystore |
 | `crates/forge-gateway` | The cost gateway: the eight-stage pipeline every model call passes through |
 | `crates/forge-agent` | **RelayForge's own coding agent**: a tool loop that proposes a diff instead of applying one |
 | `crates/forge-runner` | The daemon: SQLite store, cost ledger, budget guard, localhost HTTP API |
@@ -27,6 +29,7 @@ this file is the reference for what exists today.
 | `mobile/` | The React Native phone app (iOS + Android) |
 | `mobile/watch/` | The Apple Watch app — native SwiftUI, with its own NaCl implementation |
 | `desktop/` | The desktop app (Tauri): the same runner, in a window, on any OS |
+| `deploy/` | Cloudflare tunnel, systemd and launchd for `farhelm.aurovie.com` |
 
 ### Three clients, one wire format
 
@@ -461,7 +464,48 @@ response says `delivered: false` rather than pretending.
 
 ## Going remote
 
-Start a relay somewhere reachable, then point the runner at it:
+Two ways, and the second replaced the first as the default.
+
+### Sign in (accounts, several machines, plans)
+
+```sh
+cargo run -p forge-cloud                                   # the control plane
+cargo run -p forge-relay -- --auth-from http://127.0.0.1:7844
+```
+
+Create an account in the web app, then **Workspace → Add a machine → Create
+key** and start the runner with it:
+
+```sh
+FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=https://farhelm.aurovie.com \
+  cargo run -p forge-runner -- serve
+```
+
+The machine appears in your fleet within thirty seconds. **There is no code to
+type on either side, and no network you have to be on.** A device signed into
+that workspace asks the control plane for a fifteen-minute seat on the machine's
+channel and learns its public key from that call rather than from a photograph.
+
+What the control plane is *not* is a middlebox. Devices still generate their own
+keys, everything still travels sealed between a device and a machine, and it has
+never held a key that opens any of it — see
+[`crates/forge-cloud/src/lib.rs`](crates/forge-cloud/src/lib.rs). Compromising it
+is an access problem, not a content one.
+
+Three things pairing could not do, which fall out of having an identity that is
+not a keypair:
+
+| | |
+|---|---|
+| **Revocation that reaches the runner** | Removing a device stops it decrypting anything new within fifteen minutes. The runner reconciles its device list on every heartbeat, so nothing has to tell it. |
+| **More than one machine** | A workspace owns a fleet. Pairing tied one device to one runner's keypair. |
+| **More than one person** | Roles, and a plan that says how many. |
+
+Deployment behind a Cloudflare tunnel is in [`deploy/`](deploy/README.md).
+
+### Point at a relay directly (one machine, no account)
+
+Still supported, and still the simplest thing that works:
 
 ```sh
 cargo run -p forge-relay                                   # on a VPS, or locally

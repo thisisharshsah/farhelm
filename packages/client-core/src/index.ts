@@ -22,6 +22,37 @@ export {
   type PairingStore,
 } from "./crypto.ts";
 export * from "./api.ts";
+export {
+  CLOUD_SESSION_STORAGE_KEY,
+  CloudClient,
+  DEVICE_KEY_STORAGE_KEY,
+  deviceIdentity,
+  CloudError,
+  UNLIMITED,
+  cloudSessionStore,
+  describeLimit,
+  formatPrice,
+  isAtLimit,
+  subscriptionNotice,
+  type Account,
+  type BillingState,
+  type ChannelSeat,
+  type CloudDevice,
+  type CloudSession,
+  type CloudSessionStore,
+  type EnrollmentKey,
+  type Limits,
+  type MemberView,
+  type Org,
+  type Plan,
+  type PlanCard,
+  type Role,
+  type RunnerView,
+  type Subscription,
+  type SubscriptionStatus,
+  type Usage,
+  type Workspace,
+} from "./cloud.ts";
 export * from "./diff.ts";
 export * from "./format.ts";
 export { fetchFleetOnce, sendCommandOnce } from "./oneshot.ts";

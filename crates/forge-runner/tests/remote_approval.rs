@@ -190,6 +190,7 @@ async fn a_phone_approves_through_the_relay_and_the_runner_records_it() {
         forge_runner::relay::RelayConfig {
             url: relay_url.clone(),
             channel: CHANNEL.into(),
+            session: None,
         },
     );
 
@@ -241,6 +242,7 @@ async fn a_watch_cannot_clear_a_destructive_command_over_the_relay_either() {
         forge_runner::relay::RelayConfig {
             url: relay_url.clone(),
             channel: CHANNEL.into(),
+            session: None,
         },
     );
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -281,6 +283,7 @@ async fn a_runner_event_reaches_the_phone_encrypted() {
         forge_runner::relay::RelayConfig {
             url: relay_url.clone(),
             channel: CHANNEL.into(),
+            session: None,
         },
     );
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -313,6 +316,7 @@ async fn an_unpaired_device_on_the_channel_is_ignored() {
         forge_runner::relay::RelayConfig {
             url: relay_url.clone(),
             channel: CHANNEL.into(),
+            session: None,
         },
     );
     tokio::time::sleep(Duration::from_millis(300)).await;

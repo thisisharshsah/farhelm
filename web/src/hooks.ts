@@ -10,7 +10,10 @@ export type Route =
   | { view: "new-session" }
   | { view: "tasks" }
   | { view: "task"; id: string }
-  | { view: "new-task" };
+  | { view: "new-task" }
+  /** The workspace: machines, devices, people, enrolment keys. */
+  | { view: "account" }
+  | { view: "billing" };
 
 function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -25,6 +28,9 @@ function parseHash(hash: string): Route {
     return { view: "tasks" };
   }
   if (parts[0] === "new") return { view: "new-session" };
+  if (parts[0] === "account") return { view: "account" };
+  // Stripe returns here with `?checkout=done`, which lands in the hash.
+  if (parts[0]?.startsWith("billing")) return { view: "billing" };
   return { view: "fleet" };
 }
 

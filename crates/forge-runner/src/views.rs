@@ -443,3 +443,37 @@ pub fn build_task_detail(state: &Arc<AppState>, id: &str) -> Result<TaskDetail, 
         output,
     })
 }
+
+/// Which agents this machine can actually drive.
+///
+/// Lives here rather than in the HTTP handler because the relay answers the
+/// same question, and "installed" is a property of *this* machine — a client
+/// cannot infer it, and two runners in one fleet legitimately differ.
+pub fn build_agent_list() -> Vec<forge_proto::views::AgentView> {
+    use forge_domain::agent::{ApprovalChannel, Confidence};
+
+    forge_domain::agent::AGENTS
+        .iter()
+        .map(|spec| forge_proto::views::AgentView {
+            id: spec.agent.as_str().to_owned(),
+            name: spec.display_name.to_owned(),
+            binary: spec.binary.to_owned(),
+            installed: spec.binary.is_empty() || crate::pty::binary_exists(spec.binary),
+            approvals: match spec.approvals {
+                ApprovalChannel::Hook => "hook",
+                ApprovalChannel::Prompt(_) => "prompt",
+                ApprovalChannel::Native => "native",
+                ApprovalChannel::None => "none",
+            },
+            supervised: spec.is_supervised(),
+            verified: match spec.approvals {
+                // Native has no bridge and no pane to parse, so there is no gap
+                // between the agent and the queue that could drift.
+                ApprovalChannel::Hook | ApprovalChannel::Native => true,
+                ApprovalChannel::Prompt(dialect) => dialect.confidence == Confidence::Verified,
+                ApprovalChannel::None => false,
+            },
+            note: spec.note.to_owned(),
+        })
+        .collect()
+}

@@ -1411,6 +1411,14 @@ impl DeviceStore for SqliteStore {
         rows.into_iter().map(Device::try_from).collect()
     }
 
+    fn remove_device(&self, id: &str) -> Result<bool> {
+        let conn = self.lock()?;
+        let removed = conn
+            .execute("DELETE FROM device WHERE id = ?1", params![id])
+            .map_err(backend)?;
+        Ok(removed > 0)
+    }
+
     fn get_device(&self, id: &str) -> Result<Option<Device>> {
         let conn = self.lock()?;
         let raw = conn

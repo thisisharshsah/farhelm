@@ -231,17 +231,35 @@ export type Command =
       task_id: string;
       decision: TaskReview;
       note: string | null;
-    };
+    }
+  | { type: "start_session"; repo_path: string; agent: string | null }
+  | { type: "stop_session"; session_id: string }
+  | {
+      type: "start_task";
+      repo_path: string;
+      prompt: string;
+      budget_usd: number | null;
+      retry_of: string | null;
+    }
+  | { type: "agent_list" };
 
 /**
- * Why session control is loopback-only, in the words the user sees.
+ * Does this reply look like a session?
  *
- * Not a limitation waiting to be lifted: starting an agent picks a directory on
- * someone's machine and runs a process in it, which is a different kind of
- * permission from clearing an approval that already exists.
+ * The relay has no request/response pairing, so a waiting promise claims a
+ * reply by *shape*. `repo_name` plus `status` is the narrowest pair that a
+ * session has and no other reply on this socket does — a session detail adds
+ * `steps`, which is why this deliberately does not check for it.
  */
-const NOT_OVER_THE_RELAY =
-  "starting and stopping sessions only works on the runner's own machine — a paired device supervises work that already exists";
+function isSessionView(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "repo_name" in value &&
+    "status" in value &&
+    !("steps" in value)
+  );
+}
 
 /** How long to wait for a snapshot before giving up on it. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -251,10 +269,21 @@ const MAX_BACKOFF_MS = 30_000;
 export class RelayTransport implements Transport {
   readonly kind = "relay" as const;
   readonly supportsDashboard = true;
-  /** See the note on `Transport.supportsSessionControl`. */
-  readonly supportsSessionControl = false;
-  /** Starting a task is loopback-only; *reviewing* one works from anywhere. */
-  readonly supportsTaskControl = false;
+  /**
+   * Starting work from a signed-in device is supported (A6).
+   *
+   * This was `false`, and the reason was sound at the time: a device on the
+   * relay was whoever held a keypair photographed from a QR code, and starting
+   * an agent picks a directory on someone's machine and runs a process in it.
+   *
+   * With accounts, the asker is a registered device belonging to a named person
+   * in an organisation, revocable from the web app within fifteen minutes. That
+   * is a strong enough answer to "who started this" to drive a fleet from a
+   * phone. The destructive-command rule is untouched — `rm -rf` still raises an
+   * approval and that approval is still phone-only.
+   */
+  readonly supportsSessionControl = true;
+  readonly supportsTaskControl = true;
 
   private socket: WebSocket | null = null;
   private identity: Identity;
@@ -270,16 +299,42 @@ export class RelayTransport implements Transport {
     reject: (reason: Error) => void;
   }> = [];
 
-  constructor(private readonly pairing: Pairing) {
+  constructor(
+    private readonly pairing: Pairing,
+    /**
+     * Fetches a fresh relay seat, when this deployment has a control plane.
+     *
+     * Called on **every** connect, not once at construction: a seat lives
+     * fifteen minutes and a phone in a pocket reconnects for days. Absent on an
+     * ungated relay, which is still how a single-user self-hosted deployment
+     * works.
+     */
+    private readonly seat?: () => Promise<string>,
+  ) {
     this.identity = Identity.fromSecret(pairing.secret);
-    this.connect();
+    void this.connect();
   }
 
-  private connect() {
+  private async connect() {
     if (this.closed) return;
-    const url = `${this.pairing.relayUrl.replace(/\/$/, "")}/v1/channel/${this.pairing.channel}`;
     this.emitState("connecting");
 
+    let query = "";
+    if (this.seat) {
+      try {
+        const token = await this.seat();
+        query = token ? `?token=${encodeURIComponent(token)}` : "";
+      } catch {
+        // No seat, no point dialling: the relay would refuse and the retry
+        // would look like a network problem rather than an expired session.
+        this.emitState("closed");
+        this.scheduleReconnect();
+        return;
+      }
+      if (this.closed) return;
+    }
+
+    const url = `${this.pairing.relayUrl.replace(/\/$/, "")}/v1/channel/${this.pairing.channel}${query}`;
     const socket = new WebSocket(url);
     this.socket = socket;
 
@@ -299,7 +354,7 @@ export class RelayTransport implements Transport {
     if (this.closed) return;
     const delay = this.backoff;
     this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
-    setTimeout(() => this.connect(), delay);
+    setTimeout(() => void this.connect(), delay);
   }
 
   private emitState(state: ConnectionState) {
@@ -427,16 +482,38 @@ export class RelayTransport implements Transport {
     );
   }
 
-  async agents(): Promise<AgentView[]> {
-    throw new ApiError(NOT_OVER_THE_RELAY, 501);
+  /**
+   * Which agents the *runner* can drive.
+   *
+   * Answered by the runner, not assumed here: "installed" is a property of that
+   * machine, and two runners in one fleet legitimately differ.
+   */
+  agents(): Promise<AgentView[]> {
+    return this.request<{ agents: AgentView[] }>(
+      { type: "agent_list" },
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        "agents" in value &&
+        Array.isArray((value as { agents: unknown }).agents),
+    ).then((reply) => reply.agents);
   }
 
-  async startSession(_repoPath: string, _agent: string): Promise<SessionView> {
-    throw new ApiError(NOT_OVER_THE_RELAY, 501);
+  startSession(repoPath: string, agent: string): Promise<SessionView> {
+    return this.request<SessionView>(
+      { type: "start_session", repo_path: repoPath, agent: agent || null },
+      isSessionView,
+    );
   }
 
-  async stopSession(_id: string): Promise<void> {
-    throw new ApiError(NOT_OVER_THE_RELAY, 501);
+  async stopSession(id: string): Promise<void> {
+    // Awaited rather than fire-and-forget: stopping is the one control action
+    // whose *failure* the user needs to see immediately — a session that is
+    // still running after you pressed Stop is worth knowing about now.
+    await this.request<SessionView>(
+      { type: "stop_session", session_id: id },
+      (value) => isSessionView(value) && (value as SessionView).id === id,
+    );
   }
 
   /**
@@ -478,8 +555,26 @@ export class RelayTransport implements Transport {
     );
   }
 
-  async startTask(): Promise<TaskView> {
-    throw new ApiError(NOT_OVER_THE_RELAY, 501);
+  startTask(
+    repoPath: string,
+    prompt: string,
+    budgetUsd?: number,
+    retryOf?: string,
+  ): Promise<TaskView> {
+    return this.request<TaskView>(
+      {
+        type: "start_task",
+        repo_path: repoPath,
+        prompt,
+        budget_usd: budgetUsd ?? null,
+        retry_of: retryOf ?? null,
+      },
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        "change_summary" in value &&
+        "status" in value,
+    );
   }
 
   /**

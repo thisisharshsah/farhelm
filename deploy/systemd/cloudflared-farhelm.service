@@ -1,0 +1,35 @@
+[Unit]
+Description=Cloudflare tunnel for farhelm.aurovie.com
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=cloudflared
+Group=cloudflared
+
+# --config names the file explicitly. Without it cloudflared reads
+# ~/.cloudflared/config.yml, which on this machine belongs to a different,
+# already-running tunnel serving other domains — and running two tunnels from
+# one config is how one deploy takes down three sites.
+ExecStart=/usr/local/bin/cloudflared tunnel \
+  --config /etc/cloudflared/farhelm.yml \
+  --no-autoupdate \
+  run
+
+Restart=always
+RestartSec=5
+
+# Cloudflare's own recommendation: the tunnel is a long-lived outbound
+# connection, and a restart storm against their edge gets rate limited.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

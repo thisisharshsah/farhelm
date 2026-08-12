@@ -16,7 +16,10 @@ base64 = "0.22"
 hkdf = "0.12"
 p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# `json` is for `--auth-from`, which reads the control plane's public key at
+# startup. Feature unification made it build without this; naming it here keeps
+# `cargo build -p forge-relay` alone working.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 serde_json = "1"

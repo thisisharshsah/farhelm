@@ -206,9 +206,13 @@ fn host_of(endpoint: &str) -> &str {
 /// `POST /v1/push/{channel}/subscribe`
 pub async fn subscribe(
     Path(channel): Path<String>,
+    extract::Query(query): extract::Query<crate::ChannelQuery>,
     State(state): State<Arc<RelayState>>,
     Json(subscription): Json<Subscription>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    if let Err(denied) = crate::admit_to(&state, query.token.as_deref(), &channel) {
+        return denied;
+    }
     if subscription.endpoint.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -230,11 +234,17 @@ pub async fn subscribe(
 /// Used by the runner when something happens that nobody is connected to see.
 pub async fn trigger(
     Path(channel): Path<String>,
+    extract::Query(query): extract::Query<crate::ChannelQuery>,
     State(state): State<Arc<RelayState>>,
     _body: Option<extract::Json<serde_json::Value>>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    // Gated for the same reason the socket is: without it, knowing a channel id
+    // is enough to buzz somebody's phone every ten seconds indefinitely.
+    if let Err(denied) = crate::admit_to(&state, query.token.as_deref(), &channel) {
+        return denied;
+    }
     let woken = state.push.notify(&channel, state.delivery().as_ref()).await;
-    Json(serde_json::json!({ "woken": woken }))
+    (StatusCode::OK, Json(serde_json::json!({ "woken": woken })))
 }
 
 /// `GET /v1/push/vapid` — the `applicationServerKey` browsers subscribe with.

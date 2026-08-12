@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.relayforge.cloud</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/harshsah/.relayforge/bin/forge-cloud</string>
+		<string>--bind</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>7844</string>
+		<string>--db</string>
+		<string>/Users/harshsah/.relayforge/forge-cloud.db</string>
+		<string>--key</string>
+		<string>/Users/harshsah/.relayforge/forge-cloud.key</string>
+		<string>--app-dir</string>
+		<string>/Users/harshsah/.relayforge/web</string>
+		<string>--public-url</string>
+		<string>https://farhelm.aurovie.com</string>
+		<string>--relay-url</string>
+		<string>wss://farhelm-relay.aurovie.com</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/harshsah/.relayforge/logs/cloud.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/harshsah/.relayforge/logs/cloud.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/harshsah/.relayforge</string>
+</dict>
+</plist>

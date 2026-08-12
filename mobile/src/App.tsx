@@ -24,9 +24,11 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
+  CloudClient,
   RelayTransport,
   pct,
   usd,
+  type CloudSession,
   type ConnectionState,
   type FleetView,
   type Pairing,
@@ -34,9 +36,21 @@ import {
   type TaskDetail,
   type TaskStatus,
   type Transport,
+  type Workspace,
 } from "@relayforge/client-core";
-import { loopbackTransport, securePairingStore } from "./platform";
+import { loopbackTransport, phoneIdentity, securePairingStore } from "./platform";
+import {
+  DEFAULT_CLOUD_URL,
+  cloudClient,
+  deviceName,
+  secureCloudSessionStore,
+} from "./cloud";
 import { ApprovalCard, SessionRow } from "./components/pieces";
+import {
+  MachinePickerScreen,
+  SignInScreen,
+  WorkspaceScreen,
+} from "./screens/Account";
 import { PairingScreen } from "./screens/Pairing";
 import { SessionScreen } from "./screens/Session";
 import { TaskScreen } from "./screens/Task";
@@ -48,6 +62,7 @@ type Route =
   | { view: "session"; id: string }
   | { view: "task"; id: string }
   | { view: "pairing" }
+  | { view: "workspace" }
   | { view: "watch" };
 
 /**
@@ -95,19 +110,82 @@ export default function App() {
   /** Set when the keystore could not be read. Shown, not swallowed. */
   const [storeError, setStoreError] = useState<string | null>(null);
 
+  /**
+   * The signed-in workspace, when there is one.
+   *
+   * `undefined` here means the same thing as it does for `pairing`: the
+   * keystore has not answered yet. Three states rather than two, because
+   * "signed out" and "not read yet" want completely different screens.
+   */
+  const [cloudSession, setCloudSession] = useState<CloudSession | null | undefined>(
+    undefined,
+  );
+  const [cloudUrl, setCloudUrl] = useState(DEFAULT_CLOUD_URL);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [activeRunnerId, setActiveRunnerId] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  /** Set once the user has chosen the local runner instead of an account. */
+  const [localOnly, setLocalOnly] = useState(false);
+  /** Bumped to re-read the workspace after a change made on the workspace tab. */
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const cloudRef = useRef<CloudClient | null>(null);
+
   useEffect(() => {
     // A rejection here used to leave `pairing` at `undefined` forever, and the
     // body renders a spinner in that state — so one keystore hiccup became an
     // app that loads for eternity with nothing on screen to say why. An
     // unreadable pairing means "not paired", which is a working app.
-    void securePairingStore
-      .load()
-      .then(setPairing)
-      .catch((cause: unknown) => {
+    void Promise.all([
+      secureCloudSessionStore.load().catch(() => null),
+      securePairingStore.load().catch((cause: unknown) => {
         setStoreError(cause instanceof Error ? cause.message : String(cause));
-        setPairing(null);
-      });
+        return null;
+      }),
+    ]).then(([session, stored]) => {
+      setCloudSession(session);
+      setPairing(stored);
+      if (session) cloudRef.current = cloudClient(session);
+    });
   }, []);
+
+  /** Read the workspace whenever there is a session to read it with. */
+  useEffect(() => {
+    if (!cloudSession || !cloudRef.current) return;
+    let live = true;
+
+    cloudRef.current
+      .workspace()
+      .then((next) => {
+        if (!live) return;
+        setWorkspace(next);
+        // One machine is not a choice worth making anyone make.
+        setActiveRunnerId((current) => {
+          if (current && next.runners.some((runner) => runner.id === current)) {
+            return current;
+          }
+          return next.runners.length === 1 ? next.runners[0]!.id : null;
+        });
+      })
+      .catch((cause: unknown) => {
+        if (!live) return;
+        const message = cause instanceof Error ? cause.message : String(cause);
+        // A dead session is a sign-in problem, not an error over an empty
+        // fleet. Drop it and show the front door.
+        if (/sign in|expired/i.test(message)) {
+          void secureCloudSessionStore.clear();
+          cloudRef.current = null;
+          setCloudSession(null);
+          setWorkspace(null);
+        } else {
+          setAuthError(message);
+        }
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [cloudSession, workspaceRevision]);
 
   const [revision, setRevision] = useState(0);
   const bump = useCallback(() => setRevision((value) => value + 1), []);
@@ -115,11 +193,46 @@ export default function App() {
   const transportRef = useRef<Transport | null>(null);
   const [transportRevision, setTransportRevision] = useState(0);
 
+  const activeRunner =
+    workspace?.runners.find((runner) => runner.id === activeRunnerId) ?? null;
+
   useEffect(() => {
-    if (pairing === undefined) return;
-    const transport: Transport = pairing
-      ? new RelayTransport(pairing)
-      : loopbackTransport(runnerUrl);
+    if (pairing === undefined || cloudSession === undefined) return;
+
+    let transport: Transport;
+    // `deviceId` empty means this phone holds no seat — there is no key a
+    // runner would seal to, so it falls through to the signed-in-idle branch
+    // instead of dialling a link that can only fail.
+    if (cloudSession?.deviceId && activeRunner && workspace && cloudRef.current) {
+      const cloud = cloudRef.current;
+      const session = cloudSession;
+      const runner = activeRunner;
+      // A relay seat lives fifteen minutes and this phone reconnects for days,
+      // so the transport is handed a function rather than a token and asks for
+      // a fresh one every time it dials.
+      transport = new RelayTransport(
+        {
+          relayUrl: workspace.relay_url,
+          channel: runner.channel,
+          runnerPublicKey: runner.public_key,
+          deviceId: session.deviceId,
+          secret: session.deviceSecret,
+        },
+        async () => {
+          const seat = await cloud.channelToken(runner.id, session.deviceId);
+          return seat.token;
+        },
+      );
+    } else if (cloudSession) {
+      // Signed in with no machine chosen: nothing to dial, and the body shows
+      // the picker instead of a fleet that cannot load.
+      return;
+    } else if (pairing) {
+      transport = new RelayTransport(pairing);
+    } else {
+      transport = loopbackTransport(runnerUrl);
+    }
+
     transportRef.current = transport;
     setTransportRevision((value) => value + 1);
 
@@ -155,7 +268,102 @@ export default function App() {
       transport.close();
       transportRef.current = null;
     };
-  }, [pairing, runnerUrl]);
+    // `workspace` is a dependency because the machine's channel and pinned key
+    // come from it — a key rotation confirmed elsewhere must rebuild the link.
+  }, [pairing, runnerUrl, cloudSession, activeRunner, workspace]);
+
+  /* ------------------------------------------------------------ sign in */
+
+  const signIn = useCallback(
+    (input: {
+      mode: "sign-in" | "sign-up";
+      email: string;
+      password: string;
+      name: string;
+    }) => {
+      setAuthBusy(true);
+      setAuthError(null);
+
+      // A fresh client with no stored token: signing in as somebody else must
+      // not inherit the previous session's refresh token.
+      let latestRefresh = "";
+      const cloud = new CloudClient(cloudUrl, null, (token) => {
+        latestRefresh = token;
+      });
+
+      void (async () => {
+        const next =
+          input.mode === "sign-up"
+            ? await cloud.signUp({
+                email: input.email,
+                password: input.password,
+                name: input.name,
+                deviceLabel: deviceName(),
+              })
+            : await cloud.signIn({
+                email: input.email,
+                password: input.password,
+                deviceLabel: deviceName(),
+              });
+
+        // This phone's key, created once and reused. Only its public half is
+        // ever sent, so the control plane still cannot read anything.
+        const identity = await phoneIdentity();
+
+        // A refused registration must not fail the sign-in. Being over the
+        // device limit is exactly when someone needs to get in and free a seat,
+        // and failing here locks every surface at once.
+        let deviceId = "";
+        try {
+          deviceId = (
+            await cloud.registerDevice({
+              kind: "phone",
+              name: deviceName(),
+              publicKey: identity.publicKey,
+            })
+          ).id;
+        } catch {
+          // Surfaced by the fleet screen, which shows the link as unavailable
+          // rather than retrying against a key no runner would seal to.
+        }
+
+        const session: CloudSession = {
+          baseUrl: cloudUrl,
+          refreshToken: latestRefresh,
+          accountId: next.account.id,
+          orgId: next.org.id,
+          deviceId,
+          deviceSecret: identity.toSecret(),
+        };
+        await secureCloudSessionStore.save(session);
+
+        // Re-created so its rotation callback writes to the session that now
+        // exists; the one above only had a local variable to write to.
+        cloudRef.current = cloudClient(session);
+        setCloudSession(session);
+        setWorkspace(next);
+        setActiveRunnerId(next.runners.length === 1 ? next.runners[0]!.id : null);
+        setRoute({ view: "fleet" });
+      })()
+        .catch((cause: unknown) =>
+          setAuthError(cause instanceof Error ? cause.message : String(cause)),
+        )
+        .finally(() => setAuthBusy(false));
+    },
+    [cloudUrl],
+  );
+
+  const signOut = useCallback(() => {
+    void cloudRef.current?.signOut().finally(async () => {
+      await secureCloudSessionStore.clear();
+      cloudRef.current = null;
+      setCloudSession(null);
+      setWorkspace(null);
+      setActiveRunnerId(null);
+      setLocalOnly(false);
+      setRoute({ view: "fleet" });
+    });
+  }, []);
 
   const [fleet, setFleet] = useState<FleetView | null>(null);
   const [fleetError, setFleetError] = useState<string | null>(null);
@@ -249,12 +457,60 @@ export default function App() {
         return task?.repo_name ?? "Review";
       case "pairing":
         return "Pair";
+      case "workspace":
+        return workspace?.org.name ?? "Workspace";
       case "watch":
         return "Watch";
     }
-  }, [route, session, task]);
+  }, [route, session, task, workspace]);
 
   const transport = transportRef.current;
+
+  /* --------------------------------------------------------- front door */
+
+  // Nothing decided yet: signed out, never paired, and not told to stay local.
+  const atFrontDoor =
+    cloudSession === null && pairing === null && !localOnly;
+
+  if (cloudSession === undefined || pairing === undefined) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <SafeAreaView
+          style={{
+            flex: 1,
+            backgroundColor: palette.bg,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <ActivityIndicator color={palette.series1} />
+          <Text style={{ color: palette.textMuted, fontSize: 13, marginTop: 12 }}>
+            Reading the keystore…
+          </Text>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
+
+  if (atFrontDoor) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <SafeAreaView style={{ flex: 1, backgroundColor: palette.bg }}>
+          <SignInScreen
+            palette={palette}
+            cloudUrl={cloudUrl}
+            onCloudUrl={setCloudUrl}
+            onSubmit={signIn}
+            busy={authBusy}
+            error={authError}
+            onUseLocal={() => setLocalOnly(true)}
+          />
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
 
   return (
     <SafeAreaProvider>
@@ -303,11 +559,19 @@ export default function App() {
 
           {route.view === "fleet" ? (
             <>
-              <TopbarButton
-                label={pairing ? "Paired" : "Pair this device"}
-                glyph={pairing ? "🔗" : "⛓"}
-                onPress={() => setRoute({ view: "pairing" })}
-              />
+              {cloudSession ? (
+                <TopbarButton
+                  label={workspace?.org.name ?? "Workspace"}
+                  glyph="◈"
+                  onPress={() => setRoute({ view: "workspace" })}
+                />
+              ) : (
+                <TopbarButton
+                  label={pairing ? "Paired" : "Pair this device"}
+                  glyph={pairing ? "🔗" : "⛓"}
+                  onPress={() => setRoute({ view: "pairing" })}
+                />
+              )}
               <TopbarButton
                 label="Watch"
                 glyph="⌚"
@@ -318,7 +582,29 @@ export default function App() {
         </View>
 
         {/* -------------------------------------------------------- body */}
-        {route.view === "pairing" ? (
+        {route.view === "workspace" && workspace && cloudRef.current ? (
+          <WorkspaceScreen
+            palette={palette}
+            workspace={workspace}
+            cloud={cloudRef.current}
+            activeRunnerId={activeRunnerId}
+            onPickRunner={(id) => {
+              setActiveRunnerId(id);
+              setRoute({ view: "fleet" });
+            }}
+            onChanged={() => setWorkspaceRevision((value) => value + 1)}
+            onSignOut={signOut}
+          />
+        ) : /* Signed in with no machine chosen: the picker replaces the fleet,
+              because there is genuinely nothing to show until one is. */
+        cloudSession && !activeRunner && route.view === "fleet" ? (
+          <MachinePickerScreen
+            palette={palette}
+            runners={workspace?.runners ?? []}
+            onPick={setActiveRunnerId}
+            onAddMachine={() => setRoute({ view: "workspace" })}
+          />
+        ) : route.view === "pairing" ? (
           <PairingScreen
             palette={palette}
             pairing={pairing ?? null}

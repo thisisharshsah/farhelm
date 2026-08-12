@@ -384,6 +384,15 @@ store_port! {
     fn list_devices(&self) -> Result<Vec<Device>>;
 
     fn get_device(&self, id: &str) -> Result<Option<Device>>;
+
+    /// Forget a device. Returns whether there was one to forget.
+    ///
+    /// Revocation, and the reason it exists as a port rather than as a delete
+    /// somebody writes inline: once a runner is enrolled with a control plane,
+    /// the authoritative device list lives there, and the runner reconciles to
+    /// it on every heartbeat. Without this, removing a phone in the web app
+    /// would leave the runner still sealing events to its key.
+    fn remove_device(&self, id: &str) -> Result<bool>;
     }
 }
 
