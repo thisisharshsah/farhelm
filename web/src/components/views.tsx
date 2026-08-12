@@ -227,12 +227,12 @@ export function FleetScreen({
                 onOpen={() => onOpen(session.id)}
               />
             ))}
+            {transport?.supportsSessionControl ? (
+              <button className="session-add" onClick={onNewSession}>
+                <span aria-hidden="true">+</span> Start another session
+              </button>
+            ) : null}
           </div>
-          {transport?.supportsSessionControl ? (
-            <button className="btn btn-quiet full" onClick={onNewSession}>
-              + Start another session
-            </button>
-          ) : null}
         </>
       )}
     </>

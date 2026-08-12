@@ -197,20 +197,38 @@ button {
 }
 
 @media (min-width: 52rem) {
-  .shell {
+  /*
+   * Scoped to shells that actually have a rail.
+   *
+   * Unscoped, the sign-in screen and loopback mode — neither of which renders
+   * one — still got a 15.5rem first column, and every one of them sat with a
+   * band of dead space down the left.
+   *
+   * A browser without `:has` keeps the 34rem column, which is the layout that
+   * shipped for a year. That is the right way for this to fail.
+   */
+  .shell:has(.rail) {
     max-width: none;
     display: grid;
     /* The rail is a fixed column; the content takes the rest and centres its
        own measure inside it, so the column does not drift as the rail changes
        width on a future breakpoint. */
     grid-template-columns: var(--rail) minmax(0, 1fr);
+    /*
+     * Both rows named explicitly, and this is load-bearing.
+     *
+     * The rail spans the full height with `grid-row: 1 / -1`, and -1 counts
+     * back from the end of the *explicit* grid. With no rows declared here the
+     * explicit grid has one line, so -1 resolved to line 1, `1 / 1` collapsed
+     * to a single-row span, and the rail's 100dvh stretched row one to the
+     * whole viewport — putting every page a full screen below the fold with
+     * only the rail visible.
+     */
+    grid-template-rows: auto 1fr;
     padding-bottom: 0;
   }
 
   .rail {
-    /* Spans both rows. Left to auto-placement it would land in row one beside
-       the header and, being 100dvh tall, would stretch that row to the full
-       viewport — pushing the content a screen down. */
     grid-row: 1 / -1;
     display: flex;
     flex-direction: column;
@@ -628,6 +646,13 @@ kbd {
   font-weight: 650;
   margin: 0;
   letter-spacing: -0.01em;
+  /* One line, always. A long machine name wrapped to two and grew the bar,
+     which also put it out of step with `--topbar-h` — the offset every sticky
+     thing below is positioned against. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar .spacer {
@@ -2069,6 +2094,50 @@ textarea.task-input {
 
 /* ------------------------------------------------- fleet cards, second pass */
 
+/*
+ * `full` was referenced by three buttons and defined nowhere.
+ *
+ * They have been rendering at their content width the whole time, which is why
+ * "Start another session" sat orphaned under a card rather than reading as the
+ * end of the list.
+ */
+.btn.full {
+  width: 100%;
+}
+
+/*
+ * Starting a session is a tile in the grid, not a bar under it.
+ *
+ * Full width across a wide column made it louder than the sessions themselves,
+ * and a button that shouts more than the thing it is subordinate to is the
+ * usual way a layout starts to feel unbalanced. As a tile it lines up with the
+ * cards, and the dashed edge says "this space is empty and can be filled"
+ * without needing a second colour.
+ */
+.session-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 5.5rem;
+  width: 100%;
+  border: 1px dashed var(--baseline);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  transition:
+    border-color var(--quick) var(--ease),
+    background var(--quick) var(--ease),
+    color var(--quick) var(--ease);
+}
+
+.session-add:hover {
+  border-color: var(--text-muted);
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+
 @media (min-width: 52rem) {
   /*
    * Sessions sit two-up once there is room.
@@ -2087,6 +2156,17 @@ textarea.task-input {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
     gap: 0.75rem;
+  }
+
+  /*
+   * The cost strip starts where the content does.
+   *
+   * Fixed to `left: 0`, it ran the full width of the window and sat on top of
+   * the rail's own footer — the theme and sign-out buttons were half-covered by
+   * a bar reporting today's spend, which is not what either is for.
+   */
+  .shell:has(.rail) .cost-strip {
+    left: var(--rail);
   }
 }
 
