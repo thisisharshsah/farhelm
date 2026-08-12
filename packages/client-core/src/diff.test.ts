@@ -7,7 +7,16 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { changeMark, changeSummary, hunkHeader, numberedLines } from "./diff.ts";
+import {
+  changeMark,
+  changeSummary,
+  hunkHeader,
+  intraline,
+  numberedLines,
+  pairedLines,
+  type NumberedLine,
+  type Segment,
+} from "./diff.ts";
 import type { ChangeSet, Hunk } from "./api.ts";
 
 const hunk = (
@@ -166,5 +175,100 @@ describe("summarising a change set", () => {
     expect(changeMark("added")).toBe("+");
     expect(changeMark("deleted")).toBe("−");
     expect(changeMark("modified")).toBe("~");
+  });
+});
+
+/**
+ * Intra-line highlighting.
+ *
+ * The risk here is not missing a change — it is inventing one. Two lines that
+ * merely sit in the same position get highlighted as though one became the
+ * other, telling a confident and wrong story about an edit. These pin the
+ * boundary between "related enough to compare" and "leave it alone".
+ */
+describe("what changed inside a line", () => {
+  const changed = (segments: Segment[]) =>
+    segments.filter((s) => s.changed).map((s) => s.text);
+
+  it("marks a renamed identifier and nothing else", () => {
+    const out = intraline("const total = price * qty;", "const sum = price * qty;")!;
+    expect(changed(out.before)).toEqual(["total"]);
+    expect(changed(out.after)).toEqual(["sum"]);
+  });
+
+  it("keeps an identifier whole rather than marking the letters that differ", () => {
+    const out = intraline("callFoo(x)", "callBar(x)")!;
+    // Not "Foo"→"Bar" with "call" split off the front by character.
+    expect(out.before.map((s) => s.text).join("")).toBe("callFoo(x)");
+    expect(changed(out.before)).toEqual(["callFoo"]);
+  });
+
+  it("marks an inserted argument without touching the rest", () => {
+    const out = intraline("open(path)", "open(path, mode)")!;
+    expect(changed(out.before)).toEqual([]);
+    expect(changed(out.after)).toEqual([", mode"]);
+  });
+
+  it("reports nothing for two unrelated lines", () => {
+    expect(intraline("return cachedValue;", "logger.warn('nope');")).toBeNull();
+  });
+
+  it("reports nothing when the lines are identical", () => {
+    expect(intraline("same()", "same()")).toBeNull();
+  });
+
+  it("never loses a character", () => {
+    const before = "  if (a && b) { run(); }";
+    const after = "  if (a || b) { run(x); }";
+    const out = intraline(before, after)!;
+    expect(out.before.map((s) => s.text).join("")).toBe(before);
+    expect(out.after.map((s) => s.text).join("")).toBe(after);
+  });
+
+  it("treats indentation as its own token", () => {
+    const out = intraline("    return x;", "        return x;")!;
+    expect(changed(out.before)).toEqual(["    "]);
+    expect(changed(out.after)).toEqual(["        "]);
+  });
+});
+
+describe("pairing removals with their replacements", () => {
+  const line = (tag: "add" | "remove" | "context", text: string) =>
+    ({ tag, text, oldNo: null, newNo: null }) as NumberedLine;
+
+  it("pairs a run of removals with the run that follows it", () => {
+    const pairs = pairedLines([
+      line("context", "a"),
+      line("remove", "b"),
+      line("remove", "c"),
+      line("add", "B"),
+      line("add", "C"),
+    ]);
+    expect([...pairs]).toEqual([
+      [1, 3],
+      [2, 4],
+    ]);
+  });
+
+  it("leaves the extra line unpaired when two lines became three", () => {
+    const pairs = pairedLines([
+      line("remove", "b"),
+      line("add", "B"),
+      line("add", "extra"),
+    ]);
+    expect([...pairs]).toEqual([[0, 1]]);
+  });
+
+  it("pairs nothing across an intervening context line", () => {
+    const pairs = pairedLines([
+      line("remove", "b"),
+      line("context", "keep"),
+      line("add", "B"),
+    ]);
+    expect(pairs.size).toBe(0);
+  });
+
+  it("pairs nothing for a pure addition", () => {
+    expect(pairedLines([line("add", "new"), line("add", "also")]).size).toBe(0);
   });
 });

@@ -219,13 +219,15 @@ export function FleetScreen({
         </div>
       ) : (
         <>
-          {fleet.sessions.map((session) => (
-            <SessionRow
-              key={session.id}
-              session={session}
-              onOpen={() => onOpen(session.id)}
-            />
-          ))}
+          <div className="session-grid">
+            {fleet.sessions.map((session) => (
+              <SessionRow
+                key={session.id}
+                session={session}
+                onOpen={() => onOpen(session.id)}
+              />
+            ))}
+          </div>
           {transport?.supportsSessionControl ? (
             <button className="btn btn-quiet full" onClick={onNewSession}>
               + Start another session

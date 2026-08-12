@@ -64,3 +64,129 @@ export function changeMark(kind: FileDiff["kind"]): string {
       return "~";
   }
 }
+
+/* --------------------------------------------------- intra-line differences */
+
+/**
+ * The part of a changed line that actually changed.
+ *
+ * A line diff tells you *that* a line was replaced. It does not tell you a
+ * variable was renamed rather than the logic rewritten, and on a long line
+ * those look identical — the reviewer re-reads both sides and compares by eye,
+ * which is exactly the work a reviewer is worst at and most likely to skip.
+ *
+ * # Prefix and suffix, not a full LCS
+ *
+ * Trimming the common head and tail off a token sequence catches the
+ * overwhelming majority of real edits — a renamed identifier, a changed
+ * argument, an added condition — in linear time and with no configuration.
+ *
+ * A full longest-common-subsequence would mark less, but it also finds matches
+ * that are real to the algorithm and meaningless to a person: single brackets
+ * and commas scattered across a rewritten line, each one splitting a highlight
+ * into confetti. Marking a slightly wider span is the better failure: it
+ * over-reports the change region rather than under-reporting it, and no
+ * reviewer is misled about *where* to look.
+ */
+export interface Segment {
+  text: string;
+  /** True when this run differs between the two sides. */
+  changed: boolean;
+}
+
+/**
+ * Split on word boundaries, keeping every character.
+ *
+ * Identifiers stay whole so a rename highlights as one span rather than the
+ * three letters that happen to differ. Whitespace is its own token so that
+ * re-indentation does not smear into the code beside it.
+ */
+function tokenize(text: string): string[] {
+  return text.match(/[A-Za-z0-9_$]+|\s+|[^A-Za-z0-9_$\s]/g) ?? [];
+}
+
+/**
+ * Below this share of tokens in common, the two lines are treated as unrelated
+ * and no highlighting is offered.
+ *
+ * Two lines that merely occupy the same position in a hunk are not necessarily
+ * versions of each other. Highlighting them as though they were produces a
+ * confident, wrong story about an edit that never happened — worse than the
+ * plain line diff, which at least claims nothing.
+ */
+const RELATED_ENOUGH = 0.25;
+
+export function intraline(
+  before: string,
+  after: string,
+): { before: Segment[]; after: Segment[] } | null {
+  if (before === after) return null;
+
+  const a = tokenize(before);
+  const b = tokenize(after);
+
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++;
+  }
+
+  // Weighed by characters rather than token count: ten shared brackets are not
+  // the same evidence of kinship as one shared long identifier.
+  const size = (tokens: string[]) => tokens.join("").length;
+  const shared =
+    size(a.slice(0, head)) + size(a.slice(a.length - tail)) || 0;
+  const longest = Math.max(before.length, after.length);
+  if (longest === 0 || shared / longest < RELATED_ENOUGH) return null;
+
+  const build = (tokens: string[]): Segment[] => {
+    const middle = tokens.slice(head, tokens.length - tail).join("");
+    const segments: Segment[] = [];
+    const prefix = tokens.slice(0, head).join("");
+    const suffix = tokens.slice(tokens.length - tail).join("");
+    if (prefix) segments.push({ text: prefix, changed: false });
+    if (middle) segments.push({ text: middle, changed: true });
+    if (suffix) segments.push({ text: suffix, changed: false });
+    return segments;
+  };
+
+  return { before: build(a), after: build(b) };
+}
+
+/**
+ * Pair each removed line with the added line that replaced it.
+ *
+ * A hunk is a flat list, so a replacement arrives as a run of removals followed
+ * by a run of additions. Pairing them by position within those runs is what
+ * makes intra-line highlighting possible at all; an unequal run length simply
+ * leaves the extra lines unpaired, which is the honest reading of "two lines
+ * became three".
+ */
+export function pairedLines(lines: NumberedLine[]): Map<number, number> {
+  const pairs = new Map<number, number>();
+  let index = 0;
+
+  while (index < lines.length) {
+    if (lines[index]?.tag !== "remove") {
+      index++;
+      continue;
+    }
+    const removeStart = index;
+    while (lines[index]?.tag === "remove") index++;
+    const addStart = index;
+    while (lines[index]?.tag === "add") index++;
+
+    const removes = addStart - removeStart;
+    const adds = index - addStart;
+    for (let offset = 0; offset < Math.min(removes, adds); offset++) {
+      pairs.set(removeStart + offset, addStart + offset);
+    }
+  }
+  return pairs;
+}
