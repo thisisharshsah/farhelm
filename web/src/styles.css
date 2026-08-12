@@ -167,6 +167,18 @@ button {
   --rail: 15.5rem;
   /* Comfortable for prose and wide enough for a two-column diff. */
   --measure: 62rem;
+  /*
+   * The top bar's height, so other sticky things can sit below it.
+   *
+   * Stated rather than measured because CSS cannot read one element's height
+   * into another's offset, and a sticky file header that sticks to viewport
+   * zero parks itself *behind* the bar — the path scrolls out of sight while
+   * appearing to be pinned, which is worse than not pinning it at all.
+   *
+   * Padding, plus the tallest thing in the bar: a 44px tap target on a phone,
+   * a 36px one under a pointer.
+   */
+  --topbar-h: 4.25rem;
 }
 
 .shell {
@@ -215,6 +227,11 @@ button {
   .topbar {
     grid-column: 2;
     padding: 0.9rem 1.5rem;
+  }
+
+  :root,
+  .shell {
+    --topbar-h: 4.05rem;
   }
 
   /* The rail replaces it: every destination is already visible, so a back
@@ -1984,4 +2001,142 @@ textarea.task-input {
 .reconnecting {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+/* ------------------------------------------------------- diff, second pass */
+
+/*
+ * The size of the change, stated before any of it.
+ */
+.diff-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.diff-summary-count {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/*
+ * The file header stays put while its body scrolls.
+ *
+ * Reading hunk 4 of a long file with the path off-screen is how a reviewer
+ * approves a change to the wrong file. The header is the answer to "what am I
+ * looking at", so it should never be the thing that scrolls away.
+ */
+.diff-file-head {
+  position: sticky;
+  /* Below the top bar, never behind it. */
+  top: calc(var(--topbar-h) + env(safe-area-inset-top));
+  /* Under the top bar's 5, above the diff body it is pinned over. */
+  z-index: 2;
+}
+
+/*
+ * The words that actually changed.
+ *
+ * Deliberately not a background fill on the whole run: the row already carries
+ * a red or green tint for add/remove, and stacking a second block of colour on
+ * top makes both harder to read. An underline plus a slightly stronger tint
+ * marks the span while leaving the line's own state legible — and it still
+ * reads when the row is selected or the page is printed.
+ */
+.diff-word {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.diff-line[data-tag="add"] .diff-word {
+  background: color-mix(in srgb, var(--status-good) 26%, transparent);
+}
+
+.diff-line[data-tag="remove"] .diff-word {
+  background: color-mix(in srgb, var(--status-critical) 24%, transparent);
+}
+
+/* ------------------------------------------------- fleet cards, second pass */
+
+@media (min-width: 52rem) {
+  /*
+   * Sessions sit two-up once there is room.
+   *
+   * A single column of cards down the middle of a wide window is the phone
+   * layout wearing a desktop's clothes: it makes four sessions a scroll when
+   * they would fit on one screen, and supervising several at once is the
+   * entire point of a fleet view.
+   *
+   * Approvals and change sets deliberately stay full width above them. They are
+   * the things holding a process still or waiting on a decision, and putting
+   * them in a column beside something else would demote them to peers of a
+   * session that needs nothing.
+   */
+  .session-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+    gap: 0.75rem;
+  }
+}
+
+/*
+ * A card that responds to the pointer.
+ *
+ * The old hover changed the border colour alone, which on a warm page is nearly
+ * invisible. Lifting it says "this is a control" — the affordance the card was
+ * missing, given that the whole thing is a button.
+ */
+.session {
+  transition:
+    border-color var(--quick) var(--ease),
+    box-shadow var(--quick) var(--ease),
+    transform var(--quick) var(--ease);
+}
+
+.session:hover {
+  border-color: var(--baseline);
+  box-shadow: var(--lift-2);
+  transform: translateY(-1px);
+}
+
+/* Pressed state, so a tap that has not yet navigated still feels answered. */
+.session:active {
+  transform: translateY(0);
+  box-shadow: var(--lift-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session,
+  .session:hover,
+  .session:active {
+    transition: none;
+    transform: none;
+  }
+}
+
+/*
+ * An approval is the loudest thing on the page, and says so.
+ *
+ * It was a card with a coloured left edge, the same visual weight as a session
+ * that needs nothing from anybody. A live process is stopped waiting for this.
+ */
+.approval {
+  box-shadow: var(--lift-1);
+}
+
+.approval[data-risk="destructive"] {
+  box-shadow:
+    var(--lift-1),
+    0 0 0 1px color-mix(in srgb, var(--status-critical) 35%, transparent);
 }

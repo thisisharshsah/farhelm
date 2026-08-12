@@ -23,13 +23,17 @@ import { useState } from "react";
 import {
   canRevert,
   changeMark,
+  changeSummary,
   hunkHeader,
+  intraline,
   numberedLines,
+  pairedLines,
   since,
   usd,
   type ChangeSet,
   type FileDiff,
   type Hunk,
+  type Segment,
   type TaskDetail,
   type TaskStatus,
   type TaskView,
@@ -60,34 +64,87 @@ const STATUS_TOKEN: Record<TaskStatus, string> = {
 /* --------------------------------------------------------------- diff view */
 
 function HunkView({ hunk }: { hunk: Hunk }) {
-  // Numbering lives in `client-core`: both clients render diffs, and neither
-  // should own the arithmetic that decides which line you are looking at.
+  // Numbering and pairing live in `client-core`: both clients render diffs, and
+  // neither should own the arithmetic that decides which line you are looking
+  // at, or which two lines are versions of each other.
+  const lines = numberedLines(hunk);
+  const pairs = pairedLines(lines);
+
+  /**
+   * Word-level highlighting for a replaced line.
+   *
+   * Computed per line and memo-free: a hunk is tens of lines, the work is a
+   * single pass over tokens, and caching it would cost more in complexity than
+   * it saves. `null` — unpaired, or too dissimilar to compare — falls back to
+   * the plain text, which is the honest rendering rather than a guess.
+   */
+  const segmentsFor = (index: number): Segment[] | null => {
+    const partner =
+      pairs.get(index) ??
+      [...pairs].find(([, added]) => added === index)?.[0] ??
+      null;
+    if (partner === null) return null;
+
+    const isRemoval = lines[index]?.tag === "remove";
+    const before = (isRemoval ? lines[index] : lines[partner])?.text ?? "";
+    const after = (isRemoval ? lines[partner] : lines[index])?.text ?? "";
+    const split = intraline(before, after);
+    return split ? (isRemoval ? split.before : split.after) : null;
+  };
+
   return (
     <>
       <div className="diff-hunk-header">{hunkHeader(hunk)}</div>
-      {numberedLines(hunk).map((line, index) => (
-        <div className="diff-line" data-tag={line.tag} key={index}>
-          <span className="diff-no" aria-hidden="true">
-            {line.oldNo ?? ""}
-          </span>
-          <span className="diff-no" aria-hidden="true">
-            {line.newNo ?? ""}
-          </span>
-          <span className="diff-mark" aria-hidden="true">
-            {line.tag === "add" ? "+" : line.tag === "remove" ? "−" : " "}
-          </span>
-          {/* A blank line still needs height, hence the zero-width space. */}
-          <span className="diff-text">{line.text || "​"}</span>
-        </div>
-      ))}
+      {lines.map((line, index) => {
+        const segments =
+          line.tag === "context" ? null : segmentsFor(index);
+        return (
+          <div className="diff-line" data-tag={line.tag} key={index}>
+            <span className="diff-no" aria-hidden="true">
+              {line.oldNo ?? ""}
+            </span>
+            <span className="diff-no" aria-hidden="true">
+              {line.newNo ?? ""}
+            </span>
+            <span className="diff-mark" aria-hidden="true">
+              {line.tag === "add" ? "+" : line.tag === "remove" ? "−" : " "}
+            </span>
+            <span className="diff-text">
+              {segments ? (
+                segments.map((segment, at) =>
+                  segment.changed ? (
+                    <mark className="diff-word" key={at}>
+                      {segment.text}
+                    </mark>
+                  ) : (
+                    <span key={at}>{segment.text}</span>
+                  ),
+                )
+              ) : (
+                // A blank line still needs height, hence the zero-width space.
+                line.text || "\u200b"
+              )}
+            </span>
+          </div>
+        );
+      })}
     </>
   );
 }
 
-function FileDiffView({ file }: { file: FileDiff }) {
-  // Long change sets open collapsed past the first couple of files: a reviewer
-  // decides on the shape first and reads the detail second.
-  const [open, setOpen] = useState(true);
+/**
+ * How many files open expanded before the rest arrive collapsed.
+ *
+ * A comment here used to promise this and the code opened everything: a
+ * forty-file change set dumped thousands of lines into the page, and the
+ * reviewer's first act was scrolling to find out how big it was. Collapsed
+ * files still state their path and their counts, so the shape of the change is
+ * readable in one screen and the detail is one click away.
+ */
+const EXPANDED_BY_DEFAULT = 3;
+
+function FileDiffView({ file, index }: { file: FileDiff; index: number }) {
+  const [open, setOpen] = useState(index < EXPANDED_BY_DEFAULT);
 
   return (
     <div className="diff-file">
@@ -131,10 +188,24 @@ export function DiffView({ changes }: { changes: ChangeSet }) {
   if (changes.files.length === 0) {
     return <p className="empty">No files changed.</p>;
   }
+
+  const added = changes.files.reduce((sum, file) => sum + file.added, 0);
+  const removed = changes.files.reduce((sum, file) => sum + file.removed, 0);
+
   return (
     <div className="diff">
-      {changes.files.map((file) => (
-        <FileDiffView file={file} key={file.path} />
+      {/* The size of the change, before any of it. A reviewer decides how much
+          care this needs from the totals, and previously had to infer them by
+          scrolling to the bottom. */}
+      <div className="diff-summary">
+        <span className="diff-summary-count">{changeSummary(changes)}</span>
+        <span className="spacer" />
+        <span className="diff-count diff-count-add">+{added}</span>
+        <span className="diff-count diff-count-remove">−{removed}</span>
+      </div>
+
+      {changes.files.map((file, index) => (
+        <FileDiffView file={file} index={index} key={file.path} />
       ))}
     </div>
   );
