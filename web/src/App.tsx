@@ -454,10 +454,13 @@ export default function App() {
         {connection.deviceProblem ? (
           <div className="card notice-card" role="status">
             <b>This browser has no device slot.</b>
+            {/* Punctuated here rather than trusting the server's wording to
+                end in a full stop — it does not, and the two sentences ran
+                together into "…Pro allows more You are signed in and…". */}
             <p className="tile-note">
-              {connection.deviceProblem} You are signed in and can manage the
-              workspace — but until a slot frees up, this browser cannot open an
-              encrypted link to a machine.
+              {connection.deviceProblem.replace(/[.\s]*$/, "")}. You are signed in
+              and can manage the workspace — but until a slot frees up, this
+              browser cannot open an encrypted link to a machine.
             </p>
             <div className="approval-actions">
               <button className="btn btn-primary" onClick={() => navigate("/account")}>
@@ -558,6 +561,11 @@ export default function App() {
                 Retry
               </button>
             </div>
+          ) : connection.deviceProblem && !transport ? (
+            // Nothing is being fetched, so a loading skeleton would pulse for
+            // ever under a banner that has already explained why. The banner is
+            // the whole answer here.
+            null
           ) : fleet.loading ? (
             <div className="skeleton" aria-busy="true" aria-label="Loading the fleet">
               <div className="skeleton-card" />
