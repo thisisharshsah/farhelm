@@ -14,7 +14,7 @@
  * what makes hover, active and disabled states work without a variant per icon.
  *
  * They are deliberately hand-written rather than pulled from a library. There
- * are fourteen, the whole set is under 100 lines, and a dependency here would
+ * are seventeen, the whole set is under 100 lines, and a dependency here would
  * ship a few thousand paths to render the dozen we use — while also being the
  * one runtime dependency that the strict CSP could not fetch anyway.
  */
@@ -34,6 +34,9 @@ export type IconName =
   | "chevron"
   | "close"
   | "signout"
+  | "mic"
+  | "send"
+  | "stop"
   | "link";
 
 /** Path data only — the wrapper below supplies every shared attribute. */
@@ -55,6 +58,9 @@ const PATHS: Record<IconName, string> = {
   chevron: "M9 6l6 6-6 6",
   close: "M6 6l12 12M18 6L6 18",
   signout: "M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 12h9M13 8l-4 4 4 4",
+  mic: "M12 3.5a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-5 0v-5a2.5 2.5 0 0 1 2.5-2.5M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V21",
+  send: "M12 20V5M6 11l6-6 6 6",
+  stop: "M8.5 8.5h7v7h-7z",
   link: "M10 14a4 4 0 0 0 6 .5l2-2a4 4 0 0 0-6-6l-1 1M14 10a4 4 0 0 0-6-.5l-2 2a4 4 0 0 0 6 6l1-1",
 };
 

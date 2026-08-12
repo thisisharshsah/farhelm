@@ -16,6 +16,7 @@ import {
   type Transport,
 } from "@relayforge/client-core";
 import { BudgetMeter, Sparkline, StatTile, TierBars, ValuesTable } from "./charts";
+import { Icon } from "./Icon";
 
 /* ------------------------------------------------------------ approval card */
 
@@ -404,7 +405,18 @@ export function SessionScreen({
   const paused = session.steps.every((step) => step.status !== "active");
 
   return (
-    <>
+    /*
+     * A column that fills the window, with the transcript taking whatever is
+     * left over.
+     *
+     * The output box was a fixed 15rem in a 900px window, so the screen where
+     * the work actually happens used a fifth of the space and put the composer
+     * adrift in the middle of an empty page. Everything else here — an
+     * approval, the plan, the budget — is a fixed-size fact about the session;
+     * the transcript is the only part that benefits from more room, so it is
+     * the only part that takes it.
+     */
+    <div className="session-view">
       {session.pending_approval ? (
         <ApprovalCard
           approval={session.pending_approval}
@@ -436,7 +448,7 @@ export function SessionScreen({
         </section>
       ) : null}
 
-      <section className="card">
+      <section className="card transcript-card">
         <div className="chart-title">
           <span>Live output</span>
           <span className="spacer" />
@@ -445,7 +457,7 @@ export function SessionScreen({
               the relay — a button that always refuses teaches nothing. */}
           {transport?.supportsSessionControl && session.is_live ? (
             <button
-              className="linkish"
+              className="btn btn-quiet btn-small"
               onClick={() => {
                 void transport
                   .stopSession(session.id)
@@ -457,15 +469,15 @@ export function SessionScreen({
                   );
               }}
             >
-              Stop
+              <Icon name="stop" size={14} /> Stop
             </button>
           ) : null}
           {/* Available over the relay too, now that the dashboard has its own
               snapshot type. Hidden only when there is no transport at all —
               which is the loading state, not a capability the user lacks. */}
           {transport?.supportsDashboard ? (
-            <button className="linkish" onClick={onCost}>
-              Cost →
+            <button className="btn btn-quiet btn-small" onClick={onCost}>
+              Cost
             </button>
           ) : null}
         </div>
@@ -488,7 +500,7 @@ export function SessionScreen({
               aria-label="Dictate an instruction"
               aria-pressed={dictation.listening}
             >
-              {dictation.listening ? "…" : "🎤"}
+              <Icon name="mic" />
             </button>
           ) : null}
           <button
@@ -497,17 +509,17 @@ export function SessionScreen({
             disabled={sending || !text.trim()}
             aria-label="Send instruction"
           >
-            ↑
+            <Icon name="send" />
           </button>
         </div>
         {notice ? <p className="notice">{notice}</p> : null}
       </section>
 
-      <section className="card">
+      <section className="card session-budget">
         <div className="chart-title">Budget</div>
         <BudgetMeter budget={session.budget} />
       </section>
-    </>
+    </div>
   );
 }
 

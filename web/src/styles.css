@@ -265,7 +265,16 @@ button {
     display: none;
   }
 
-  main {
+  /*
+   * Scoped through `.shell` for specificity, not for scoping.
+   *
+   * The base `main` rule is declared several hundred lines further down. Two
+   * bare element selectors of equal specificity are resolved by order, so the
+   * later one won and this block's padding never applied — leaving the
+   * bottom-most card tucked under the fixed cost strip. A media query adds no
+   * specificity of its own, so the class here is what settles it.
+   */
+  .shell main {
     grid-column: 2;
     width: 100%;
     max-width: var(--measure);
@@ -649,6 +658,21 @@ kbd {
   /* One line, always. A long machine name wrapped to two and grew the bar,
      which also put it out of step with `--topbar-h` — the offset every sticky
      thing below is positioned against. */
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Does not shrink. Sharing the squeeze evenly cut "live" down to "li…" while
+     the machine name beside it kept its full width — the wrong one gave way.
+     Which session you are in matters more than which machine it is on, and the
+     machine is repeated in the rail anyway. */
+  flex: 0 0 auto;
+}
+
+/* Yields first, and truncates rather than wrapping. */
+.topbar .session-machine {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2219,4 +2243,94 @@ textarea.task-input {
   box-shadow:
     var(--lift-1),
     0 0 0 1px color-mix(in srgb, var(--status-critical) 35%, transparent);
+}
+
+/* --------------------------------------------------- session, second pass */
+
+/*
+ * The transcript takes the room, because it is the only part that can use it.
+ *
+ * `main` already has a definite height — it sits in the shell grid's `1fr` row
+ * — so a flex column inside it can hand the leftover space to one child. The
+ * output box was pinned at 15rem regardless of the window, which on a laptop
+ * meant a fifth of the screen for the live log and the composer stranded in the
+ * middle of an empty page.
+ */
+/*
+ * The wrapper that holds the last render during a refetch.
+ *
+ * It has to pass the height through rather than absorb it. `display: contents`
+ * would be the tidier answer and is wrong here — the wrapper's whole job is to
+ * carry an opacity, and an element with no box cannot.
+ */
+.session-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.session-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex: 1;
+  /* Without this a flex child refuses to shrink below its content, the column
+     overflows instead of scrolling, and the composer leaves the screen. */
+  min-height: 0;
+}
+
+.transcript-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.session-view .output {
+  flex: 1;
+  min-height: 8rem;
+  max-height: none;
+}
+
+/*
+ * An empty transcript holds the same space a full one would.
+ *
+ * `OutputTail` renders a paragraph rather than the log box when there is
+ * nothing to show, so without this the card collapsed to the height of one
+ * line of text — and the composer jumped down the page the moment the first
+ * line of output arrived. Reserving the space keeps it still.
+ */
+.transcript-card > .empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 8rem;
+  margin: 0;
+}
+
+/* Fixed-size facts about the session: they state themselves and stop. */
+.session-view .approval,
+.session-view .session-budget {
+  flex: none;
+}
+
+/*
+ * Stop is a button, not a link.
+ *
+ * It ends a process on somebody's machine, and it sat as underlined 12px text
+ * beside "Cost" — the same weight as navigating to a chart. The two are not
+ * the same kind of act and should not look like it.
+ */
+.btn-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.9rem;
+  padding: 0 0.6rem;
+  font-size: 0.8rem;
+}
+
+.transcript-card .chart-title .btn-small:hover {
+  border-color: var(--baseline);
 }

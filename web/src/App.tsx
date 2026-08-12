@@ -650,7 +650,10 @@ export default function App() {
               <p className="tile-note">{session.error}</p>
             </div>
           ) : mergedSession ? (
-            <div className={staleClass(session.stale)}>
+            // `session-pane` is not decoration: the refetch wrapper sits
+            // between `main` and the screen, and a plain block there stops the
+            // full-height column reaching the flex parent that sizes it.
+            <div className={`session-pane ${staleClass(session.stale) ?? ""}`}>
               <SessionScreen
                 session={mergedSession}
                 onChanged={bump}
