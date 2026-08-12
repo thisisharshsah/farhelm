@@ -135,6 +135,13 @@ export function useConnection(
       if (session) {
         sessionRef.current = session;
         cloudRef.current = cloudClient(session);
+        // Checked on load and not only after signing in: a session saved by a
+        // build that could not register a device is still on disk, and its
+        // owner has no reason to sign out — so the screen has to say what is
+        // wrong the next time the app opens, not the next time they log in.
+        if (!session.deviceId) {
+          setDeviceProblem("this browser holds no device slot.");
+        }
         setMode("cloud");
         return;
       }

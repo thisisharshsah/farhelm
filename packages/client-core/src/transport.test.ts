@@ -171,11 +171,23 @@ describe("commands", () => {
     expect(envelope.channel).toBe("forge-test");
   });
 
-  it("refuses to send while the socket is down", async () => {
+  it("rides out a dropped link rather than refusing", async () => {
     socket().close();
-    await expect(transport.instruct("s1", "hello")).rejects.toThrow(
-      /not connected/,
-    );
+
+    // The transport is already reconnecting with backoff, so a command issued
+    // in this window is early rather than wrong. It used to reject here, which
+    // is what turned a one-second blip into "Cannot reach the runner".
+    const pending = transport.instruct("s1", "hello");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    socket().accept();
+    await pending;
+
+    expect(readSent(socket())).toEqual({
+      type: "instruct",
+      session_id: "s1",
+      text: "hello",
+    });
   });
 });
 
@@ -479,5 +491,60 @@ describe("reviewing a change set", () => {
     socket().deliver(fromRunner(taskPayload("t1")));
     socket().deliver(fromRunner({ tasks: [{ id: "t9" }] }));
     await expect(pending).resolves.toMatchObject([{ id: "t9" }]);
+  });
+});
+
+/**
+ * The startup race.
+ *
+ * A relay transport is not usable the moment it is constructed: it fetches a
+ * seat and completes a handshake first. A screen that mounts and immediately
+ * asks for the fleet used to lose that race and report "not connected to the
+ * relay" within a millisecond — which on screen read as "Cannot reach the
+ * runner" for a machine that was online the whole time.
+ */
+describe("a command issued before the link is up", () => {
+  it("waits for the socket instead of failing", async () => {
+    // Not accepted yet — exactly the state React mounts into.
+    expect(socket().readyState).not.toBe(FakeSocket.OPEN);
+
+    const pending = transport.fleet();
+    // Nothing on the wire, and crucially no rejection.
+    expect(socket().sent).toHaveLength(0);
+
+    socket().accept();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(readSent(socket())).toEqual({ type: "snapshot" });
+
+    socket().deliver(fromRunner(fleetPayload));
+    await expect(pending).resolves.toMatchObject({ today_usd: 1.5 });
+  });
+
+  it("gives the runner its full answering budget after a slow connect", async () => {
+    const pending = transport.fleet();
+
+    // A connect slow enough to have eaten most of a shared budget.
+    await vi.advanceTimersByTimeAsync(9_000);
+    socket().accept();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The reply timer starts at send, not at construction.
+    await vi.advanceTimersByTimeAsync(9_000);
+    socket().deliver(fromRunner(fleetPayload));
+    await expect(pending).resolves.toMatchObject({ today_usd: 1.5 });
+  });
+
+  it("still gives up if the link never comes", async () => {
+    const pending = transport.fleet();
+    const settled = expect(pending).rejects.toThrow(/not connected/);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await settled;
+  });
+
+  it("fails a waiting command when the transport is closed", async () => {
+    const pending = transport.fleet();
+    const settled = expect(pending).rejects.toThrow(/closed/);
+    transport.close();
+    await settled;
   });
 });

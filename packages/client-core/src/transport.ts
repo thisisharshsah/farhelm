@@ -263,6 +263,22 @@ function isSessionView(value: unknown): boolean {
 
 /** How long to wait for a snapshot before giving up on it. */
 const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * How long a command waits for the socket before giving up.
+ *
+ * A relay transport is not usable the instant it is constructed: it fetches a
+ * seat over HTTPS and then completes a WebSocket handshake, which across a
+ * tunnel is a few hundred milliseconds. A screen that mounts and immediately
+ * asks for the fleet used to lose that race and report "not connected to the
+ * relay" within a millisecond — indistinguishable, on screen, from a machine
+ * that is genuinely unreachable.
+ *
+ * Separate from `REQUEST_TIMEOUT_MS` because the two answer different
+ * questions: this one is "did we get a link", that one is "did the runner
+ * reply". Counting them against one budget would let a slow connect eat the
+ * time the runner needs to answer.
+ */
+const CONNECT_TIMEOUT_MS = 15_000;
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 
@@ -292,6 +308,11 @@ export class RelayTransport implements Transport {
 
   private readonly eventListeners = new Set<(event: ServerEvent) => void>();
   private readonly stateListeners = new Set<(state: ConnectionState) => void>();
+  /** Callers blocked in `whenOpen`: released on open, failed on close. */
+  private readonly openWaiters = new Set<{
+    open: () => void;
+    fail: (reason: Error) => void;
+  }>();
   /** Snapshot requests waiting for their answer. */
   private pending: Array<{
     match: (value: unknown) => boolean;
@@ -340,6 +361,10 @@ export class RelayTransport implements Transport {
 
     socket.onopen = () => {
       this.backoff = MIN_BACKOFF_MS;
+      // Released before the state change so a caller that was waiting sends on
+      // this connection rather than on whatever a listener does next.
+      for (const waiter of [...this.openWaiters]) waiter.open();
+      this.openWaiters.clear();
       this.emitState("open");
     };
     socket.onclose = () => {
@@ -393,6 +418,9 @@ export class RelayTransport implements Transport {
 
   private send(command: Command) {
     if (this.socket?.readyState !== 1 /* OPEN */) {
+      // Callers go through `whenOpen` first, so reaching this means the link
+      // dropped between the wait and the write. Still an error, but a rare and
+      // genuine one rather than the startup race it used to report.
       throw new ApiError("not connected to the relay", 0);
     }
     const envelope = this.identity.sealJson(
@@ -404,8 +432,55 @@ export class RelayTransport implements Transport {
     this.socket.send(JSON.stringify(envelope));
   }
 
+  /**
+   * Wait for a usable socket.
+   *
+   * Reconnection is already handled with backoff, so a command issued while the
+   * link is down is not an error — it is a command issued slightly early, and
+   * the honest response is to wait for the link the transport is already
+   * building rather than to fail and make the user press Retry.
+   */
+  private whenOpen(): Promise<void> {
+    if (this.socket?.readyState === 1 /* OPEN */) return Promise.resolve();
+    if (this.closed) {
+      return Promise.reject(new ApiError("the connection was closed", 0));
+    }
+    return new Promise<void>((resolve, reject) => {
+      const waiter = {
+        open: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        fail: (reason: Error) => {
+          clearTimeout(timer);
+          reject(reason);
+        },
+      };
+      const timer = setTimeout(() => {
+        this.openWaiters.delete(waiter);
+        reject(new ApiError("not connected to the relay", 0));
+      }, CONNECT_TIMEOUT_MS);
+      this.openWaiters.add(waiter);
+    });
+  }
+
   /** Send a command and wait for the reply that matches `match`. */
   private request<T>(
+    command: Command,
+    match: (value: unknown) => boolean,
+  ): Promise<T> {
+    // The common case stays synchronous: an open socket registers the pending
+    // entry and writes in this same tick, so a reply cannot arrive before the
+    // transport is ready to match it. Only the racing caller waits, and waiting
+    // before `dispatch` rather than inside it means a slow connect does not
+    // consume the budget the runner has to answer in.
+    if (this.socket?.readyState === 1 /* OPEN */) {
+      return this.dispatch<T>(command, match);
+    }
+    return this.whenOpen().then(() => this.dispatch<T>(command, match));
+  }
+
+  private dispatch<T>(
     command: Command,
     match: (value: unknown) => boolean,
   ): Promise<T> {
@@ -522,14 +597,17 @@ export class RelayTransport implements Transport {
    * as a `command_error` event — see `onEvent`.
    */
   async decide(approvalId: string, decision: Decision) {
+    if (this.socket?.readyState !== 1 /* OPEN */) await this.whenOpen();
     this.send({ type: "decide", approval_id: approvalId, decision });
   }
 
   async instruct(sessionId: string, text: string) {
+    if (this.socket?.readyState !== 1 /* OPEN */) await this.whenOpen();
     this.send({ type: "instruct", session_id: sessionId, text });
   }
 
   async planControl(sessionId: string, action: "pause" | "resume" | "skip") {
+    if (this.socket?.readyState !== 1 /* OPEN */) await this.whenOpen();
     this.send({ type: "plan_control", session_id: sessionId, action });
   }
 
@@ -615,6 +693,12 @@ export class RelayTransport implements Transport {
   }
 
   close() {
+    // Closing while somebody waits must fail them now rather than leave them
+    // holding a promise no open event will ever settle.
+    for (const waiter of [...this.openWaiters]) {
+      waiter.fail(new ApiError("the connection was closed", 0));
+    }
+    this.openWaiters.clear();
     this.closed = true;
     this.socket?.close();
     this.socket = null;
