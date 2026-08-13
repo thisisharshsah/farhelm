@@ -561,7 +561,10 @@ export function DashboardScreen({ dashboard }: { dashboard: DashboardView }) {
         <div className="chart-title">
           <span>Spend per hour</span>
           <span className="spacer" />
-          <button className="linkish" onClick={() => setShowTable((on) => !on)}>
+          <button
+            className="btn btn-quiet btn-small"
+            onClick={() => setShowTable((on) => !on)}
+          >
             {showTable ? "Show charts" : "Show values"}
           </button>
         </div>

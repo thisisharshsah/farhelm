@@ -43,6 +43,7 @@ export function AccountScreen({
   onChanged,
   onBilling,
   onSignOut,
+  thisDeviceId,
   activeRunnerId,
   onPickRunner,
 }: {
@@ -51,6 +52,8 @@ export function AccountScreen({
   onChanged: () => void;
   onBilling: () => void;
   onSignOut: () => void;
+  /** This browser's device, so the list can say which row is you. */
+  thisDeviceId: string | null;
   activeRunnerId: string | null;
   onPickRunner: (runnerId: string) => void;
 }) {
@@ -142,6 +145,7 @@ export function AccountScreen({
       <Devices
         devices={workspace.devices}
         accountId={workspace.account.id}
+        thisDeviceId={thisDeviceId}
         onForget={(id) => run(() => cloud.forgetDevice(id))}
       />
 
@@ -439,13 +443,24 @@ function EnrolmentKeys({
 
 /* --------------------------------------------------------------------- devices */
 
+/**
+ * The devices holding a key, and which one you are reading this on.
+ *
+ * Naming the current browser is not decoration. Two browsers of the same make
+ * on the same OS produce two identical rows — "Chrome on macOS" twice — and the
+ * only difference that matters is that removing one of them signs *you* out
+ * while the other does nothing you would notice. A list that cannot answer
+ * "which one am I?" makes the destructive choice a coin flip.
+ */
 function Devices({
   devices,
   accountId,
+  thisDeviceId,
   onForget,
 }: {
   devices: CloudDevice[];
   accountId: string;
+  thisDeviceId: string | null;
   onForget: (id: string) => void;
 }) {
   return (
@@ -456,24 +471,38 @@ function Devices({
         within fifteen minutes, and needs no action on any machine.
       </p>
       <ul className="key-list">
-        {devices.map((device) => (
-          <li key={device.id} className="row-between">
-            <div>
-              <div className="machine-name">{device.name}</div>
-              <p className="tile-note">
-                {device.kind}
-                {device.account_id === accountId ? " · yours" : ""} · added{" "}
-                {new Date(device.created_at).toLocaleDateString()}
-              </p>
-            </div>
-            <button
-              className="btn btn-small btn-deny"
-              onClick={() => onForget(device.id)}
-            >
-              Remove
-            </button>
-          </li>
-        ))}
+        {devices.map((device) => {
+          const isThisOne = device.id === thisDeviceId;
+          return (
+            <li key={device.id} className="row-between">
+              <div>
+                <div className="machine-name">
+                  {device.name}
+                  {isThisOne ? (
+                    <span className="status-chip" data-token="good">
+                      this browser
+                    </span>
+                  ) : null}
+                </div>
+                <p className="tile-note">
+                  {device.kind}
+                  {device.account_id === accountId ? " · yours" : ""} · added{" "}
+                  {new Date(device.created_at).toLocaleDateString()}
+                  {/* Said on the row rather than behind a confirmation: the
+                      consequence is recoverable — sign in again — and a dialog
+                      on every removal would train people to dismiss it. */}
+                  {isThisOne ? " · removing it signs this browser out" : ""}
+                </p>
+              </div>
+              <button
+                className="btn btn-small btn-deny"
+                onClick={() => onForget(device.id)}
+              >
+                Remove
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

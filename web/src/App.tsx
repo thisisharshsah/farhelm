@@ -515,6 +515,7 @@ export default function App() {
               onChanged={connection.refresh}
               onBilling={() => navigate("/billing")}
               onSignOut={() => void connection.signOut()}
+              thisDeviceId={connection.deviceId}
               activeRunnerId={connection.activeRunnerId}
               onPickRunner={connection.pickRunner}
             />
