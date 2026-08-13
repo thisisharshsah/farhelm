@@ -67,6 +67,8 @@ export interface Connection {
    * seat frees up.
    */
   deviceProblem: string | null;
+  /** This browser's own device id, so a screen can tell it apart from the rest. */
+  deviceId: string | null;
 
   signIn: (input: {
     mode: "sign-in" | "sign-up";
@@ -394,6 +396,7 @@ export function useConnection(
     activeRunnerId,
     error,
     deviceProblem,
+    deviceId: sessionRef.current?.deviceId || null,
     claimDeviceSlot,
     signIn,
     signOut,

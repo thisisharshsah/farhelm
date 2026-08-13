@@ -89,7 +89,42 @@ pub fn router(state: Arc<CloudState>) -> Router {
         // Cloudflare tunnel, one hostname), but a dev server and the React
         // Native app are both cross-origin.
         .layer(cors())
+        .layer(axum::middleware::from_fn(record_change))
         .with_state(state)
+}
+
+/// One line per request that changes something.
+///
+/// Written after a device disappeared from a workspace and there was no way to
+/// answer "what removed it" — not from the logs, not from the database, which
+/// stores current state and no history. The absence was the problem: with three
+/// clients, a CLI and two MCP connectors all able to call `DELETE`, "it must
+/// have been one of those" is not an answer anybody can act on.
+///
+/// Reads are not logged. They are the overwhelming majority of traffic, they
+/// change nothing, and burying the mutations among them is how a log stops
+/// being read. `GET` is skipped for that reason rather than for volume.
+///
+/// Deliberately not an audit *table*. That is a different feature with its own
+/// retention and access questions, and this answers the operational question —
+/// what happened to my workspace, and roughly when — at a hundredth of the
+/// cost.
+async fn record_change(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = request.method().clone();
+    if method == axum::http::Method::GET || method == axum::http::Method::HEAD {
+        return next.run(request).await;
+    }
+    let path = request.uri().path().to_owned();
+    let response = next.run(request).await;
+
+    // Never the body, and never the `authorization` header: this file's whole
+    // job is to hold credentials that must not end up somewhere they can be
+    // read back. The status and the path are enough to reconstruct a sequence.
+    eprintln!("{method} {path} -> {}", response.status().as_u16());
+    response
 }
 
 fn cors() -> tower_http::cors::CorsLayer {

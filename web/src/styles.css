@@ -2183,6 +2183,18 @@ textarea.task-input {
   }
 
   /*
+   * Four headline figures in a row, not two stacked pairs.
+   *
+   * They are one reading — spend, cache, savings, budget left — and stacking
+   * them into two rows on a column wide enough for four asks the eye to travel
+   * twice for a glance that should take once. Two-up is right on a phone and
+   * only there.
+   */
+  .tiles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  /*
    * The cost strip starts where the content does.
    *
    * Fixed to `left: 0`, it ran the full width of the window and sat on top of
