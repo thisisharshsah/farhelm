@@ -161,6 +161,8 @@ fn base_router(state: Arc<AppState>) -> Router {
         .route("/v1/tasks/{id}/review", post(review_task))
         .route("/v1/tasks/{id}/revert", post(revert_task))
         .route("/v1/complete", post(complete))
+        // The same gateway, in the shape every existing tool already speaks.
+        .route("/v1/messages", post(crate::messages::messages))
         .route("/v1/hooks/tool-request", post(hook_tool_request))
         .route("/v1/hooks/stop", post(hook_stop))
         .route("/v1/hooks/notification", post(hook_notification))
@@ -208,6 +210,7 @@ fn local_cors() -> CorsLayer {
 
 // ---------------------------------------------------------------- errors
 
+#[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
     message: String,
@@ -218,6 +221,28 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: what.into(),
+        }
+    }
+
+    /// The status a client will see. For tests in sibling modules.
+    #[cfg(test)]
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    /// For tests in sibling modules.
+    #[cfg(test)]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// For handlers in sibling modules. The fields stay private so a status and
+    /// a message are always chosen together, rather than one being filled in
+    /// and the other left at whatever `Default` would have given.
+    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
         }
     }
 }

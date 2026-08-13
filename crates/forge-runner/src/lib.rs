@@ -11,6 +11,7 @@ pub mod commands;
 pub mod hook;
 pub mod hook_cli;
 pub mod mcp;
+pub mod messages;
 pub mod pty;
 pub mod relay;
 pub mod seed;
