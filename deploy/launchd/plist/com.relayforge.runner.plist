@@ -8,6 +8,14 @@
 	<string>com.relayforge.runner</string>
 	<key>ProcessType</key>
 	<string>Background</string>
+	<!-- launchd starts a job with a minimal PATH, so an agent installed under
+	     a user prefix (~/.local/bin, Homebrew) is invisible to it and the
+	     runner reports "no agents installed" on a machine that has them. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>HOME_DIR/.local/bin:HOME_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/sh</string>
