@@ -55,8 +55,12 @@ USAGE:
                    a rule you just wrote actually fires.
 
 ENVIRONMENT:
+    FORGE_CREDENTIAL_COMMAND
+                         a command printing a bearer token, re-run as it
+                         expires — the option that needs no metered API key
+                         and no second visit
     ANTHROPIC_API_KEY    enables /v1/complete (a Console key)
-    ANTHROPIC_AUTH_TOKEN enables it with a short-lived bearer token instead
+    ANTHROPIC_AUTH_TOKEN a bearer token, read once and never refreshed
     ANTHROPIC_BASE_URL   redirect to a compatible endpoint
     FORGE_RUNNER_URL     where `hook` reaches the daemon (default loopback:7842)
     FORGE_MACHINE_NAME   overrides the hostname used for this machine
@@ -455,7 +459,7 @@ async fn serve_async(flags: Flags) -> Fallible {
     // The gateway is only constructed when a provider is configured, so the
     // read-only API and the app work on a fresh clone with no credentials.
     let mut provider =
-        "none (set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN to enable /v1/complete)".to_owned();
+        "none (set FORGE_CREDENTIAL_COMMAND to enable /v1/complete and /v1/messages)".to_owned();
 
     // Chosen before the state is built, because the PTY backend owns its panes
     // and there can only be one of it.

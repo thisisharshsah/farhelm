@@ -155,9 +155,30 @@ pub fn price_of(model: &str) -> Result<ModelPrice, UnknownModel> {
     if model.starts_with(LOCAL_MODEL_PREFIX) {
         return Ok(local_price(model));
     }
+    if let Some(exact) = PRICES.iter().find(|price| price.model == model) {
+        return Ok(*exact);
+    }
+
+    // A dated id resolved from the alias we asked for.
+    //
+    // Requests are sent with an alias — `claude-haiku-4-5` — and the provider
+    // answers naming the snapshot it actually ran, `claude-haiku-4-5-20251001`.
+    // Insisting on an exact match meant every successful call died at the
+    // ledger: the model had already answered and been paid for, and the only
+    // thing that failed was recording it.
+    //
+    // Longest match wins, so `claude-opus-4-5-…` cannot be priced by a shorter
+    // entry that happens to be a prefix of it. The date suffix is required to
+    // start with `-` for the same reason: `claude-opus-45` must not match
+    // `claude-opus-4`.
     PRICES
         .iter()
-        .find(|price| price.model == model)
+        .filter(|price| {
+            model
+                .strip_prefix(price.model)
+                .is_some_and(|rest| rest.starts_with('-'))
+        })
+        .max_by_key(|price| price.model.len())
         .copied()
         .ok_or_else(|| UnknownModel(model.to_owned()))
 }
@@ -278,6 +299,36 @@ mod tests {
         for price in PRICES {
             assert_eq!(price_of(price.model).unwrap().model, price.model);
         }
+    }
+
+    #[test]
+    fn a_dated_snapshot_is_priced_as_the_alias_it_came_from() {
+        // The provider answers with the snapshot it ran, not the alias asked
+        // for. Without this every successful call failed at the ledger — after
+        // the model had answered and the money was already spent.
+        let dated = price_of("claude-haiku-4-5-20251001").unwrap();
+        assert_eq!(dated.model, "claude-haiku-4-5");
+        assert_eq!(
+            dated.input_per_mtok,
+            price_of("claude-haiku-4-5").unwrap().input_per_mtok
+        );
+    }
+
+    #[test]
+    fn the_longest_matching_entry_wins() {
+        // Guards a family where one id is a prefix of another: a shorter entry
+        // must not price a longer model's calls at its own rate.
+        for price in PRICES {
+            let dated = format!("{}-20990101", price.model);
+            assert_eq!(price_of(&dated).unwrap().model, price.model, "{dated}");
+        }
+    }
+
+    #[test]
+    fn a_suffix_without_a_separator_is_not_a_match() {
+        // `claude-opus-45` is a different model from `claude-opus-4`, and
+        // pricing it as one would be silently wrong on every call.
+        assert!(price_of("claude-opus-5x").is_err());
     }
 
     #[test]

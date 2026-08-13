@@ -308,12 +308,28 @@ pub enum Credential {
 pub const OAUTH_BETA: &str = "oauth-2025-04-20";
 
 pub struct AnthropicClient {
-    credential: Credential,
+    /// Not a credential — a way of getting one. See `credential.rs`: a
+    /// subscription token expires within hours, so a value captured at startup
+    /// turns into 401s mid-afternoon with no way out but a restart.
+    source: crate::credential::CredentialSource,
     base_url: String,
     http: reqwest::Client,
     /// Opt into server-side fallbacks. On by default; a refused call in an
     /// agent loop is worse than a slightly more expensive one.
     fallbacks: bool,
+    /// Optional parameters a given model has been observed to refuse.
+    ///
+    /// Learned rather than listed. Which models accept `output_config.effort`
+    /// or `fallbacks` is a fact about the provider's current line-up, and a
+    /// table here would be wrong the week it changes — failing every call to a
+    /// model with a 400 naming a parameter the caller never set. The provider
+    /// already knows and says so plainly, so the first refusal is remembered
+    /// and no later call to that model carries the field.
+    ///
+    /// Keyed by model, because support genuinely differs between them: the same
+    /// request is fine on Sonnet 5 and refused on Haiku 4.5.
+    unsupported:
+        std::sync::RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>,
 }
 
 impl AnthropicClient {
@@ -322,14 +338,20 @@ impl AnthropicClient {
     }
 
     pub fn with_credential(credential: Credential) -> Self {
+        Self::with_source(crate::credential::CredentialSource::Static(credential))
+    }
+
+    /// Take the token from a command, re-run as it ages out.
+    pub fn with_source(source: crate::credential::CredentialSource) -> Self {
         Self {
-            credential,
+            source,
             base_url: "https://api.anthropic.com".into(),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(600))
                 .build()
                 .expect("reqwest client"),
             fallbacks: true,
+            unsupported: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
@@ -348,14 +370,27 @@ impl AnthropicClient {
     ///
     /// `ANTHROPIC_BASE_URL` redirects to a compatible endpoint — a local
     /// vLLM/Ollama shim for the self-hosted small tier (§7), or a test server.
+    /// Build from the environment, preferring the source that does not expire
+    /// into a support ticket.
+    ///
+    /// `FORGE_CREDENTIAL_COMMAND` is checked first on purpose. If someone has
+    /// gone to the trouble of configuring a helper, they want the refreshing
+    /// one — and a stale `ANTHROPIC_API_KEY` left in a file from a previous
+    /// experiment should not quietly win and start billing them per token.
     pub fn from_env() -> Option<Self> {
-        let credential = usable_key(std::env::var("ANTHROPIC_API_KEY").ok())
-            .map(Credential::ApiKey)
-            .or_else(|| {
-                usable_key(std::env::var("ANTHROPIC_AUTH_TOKEN").ok()).map(Credential::AuthToken)
-            })?;
+        let source = match usable_key(std::env::var("FORGE_CREDENTIAL_COMMAND").ok()) {
+            Some(command) => crate::credential::CredentialSource::command(command),
+            None => crate::credential::CredentialSource::Static(
+                usable_key(std::env::var("ANTHROPIC_API_KEY").ok())
+                    .map(Credential::ApiKey)
+                    .or_else(|| {
+                        usable_key(std::env::var("ANTHROPIC_AUTH_TOKEN").ok())
+                            .map(Credential::AuthToken)
+                    })?,
+            ),
+        };
 
-        let client = Self::with_credential(credential);
+        let client = Self::with_source(source);
         Some(match std::env::var("ANTHROPIC_BASE_URL") {
             Ok(base) if !base.trim().is_empty() => {
                 client.with_base_url(base.trim_end_matches('/').to_owned())
@@ -364,12 +399,56 @@ impl AnthropicClient {
         })
     }
 
+    /// Top-level fields that can be dropped without changing what was asked.
+    ///
+    /// `messages`, `system`, `tools`, `model` and `max_tokens` are deliberately
+    /// absent: dropping any of those to satisfy a 400 would send a different
+    /// request from the one the caller made and bill them for the answer.
+    const OPTIONAL: &'static [&'static str] = &["output_config", "fallbacks"];
+
+    fn strip_unsupported(&self, model: &str, body: &mut serde_json::Value) {
+        let Ok(map) = self.unsupported.read() else {
+            return;
+        };
+        let Some(fields) = map.get(model) else {
+            return;
+        };
+        if let Some(object) = body.as_object_mut() {
+            for field in fields {
+                object.remove(field);
+            }
+        }
+    }
+
+    fn remember_unsupported(&self, model: &str, field: &str) {
+        if let Ok(mut map) = self.unsupported.write() {
+            map.entry(model.to_owned())
+                .or_default()
+                .insert(field.to_owned());
+        }
+    }
+
+    /// Which optional field a refusal is about, if it is about one.
+    ///
+    /// Matched on the field name appearing in the provider's own message. The
+    /// wording differs between models — "does not support the effort parameter"
+    /// and "does not support the `fallbacks` parameter" — so the name is what
+    /// is looked for rather than any particular sentence around it.
+    fn refused_field(body: &serde_json::Value, message: &str) -> Option<&'static str> {
+        if !message.contains("does not support") {
+            return None;
+        }
+        Self::OPTIONAL.iter().copied().find(|field| {
+            body.get(*field).is_some()
+                && (message.contains(field)
+                    // `output_config` is refused by the name of what is inside it.
+                    || (*field == "output_config" && message.contains("effort")))
+        })
+    }
+
     /// How this client will describe itself in the startup banner.
     pub fn credential_kind(&self) -> &'static str {
-        match self.credential {
-            Credential::ApiKey(_) => "api key",
-            Credential::AuthToken(_) => "auth token",
-        }
+        self.source.kind()
     }
 
     /// Point at a different endpoint — a local vLLM/Ollama shim, or a test server.
@@ -403,7 +482,11 @@ impl AnthropicClient {
         if self.fallbacks {
             betas.push(FALLBACK_BETA);
         }
-        if matches!(self.credential, Credential::AuthToken(_)) {
+        if matches!(
+            self.source,
+            crate::credential::CredentialSource::Command { .. }
+                | crate::credential::CredentialSource::Static(Credential::AuthToken(_))
+        ) {
             betas.push(OAUTH_BETA);
         }
         (!betas.is_empty()).then(|| betas.join(","))
@@ -418,9 +501,16 @@ impl ModelClient for AnthropicClient {
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json");
 
+        // Resolved per request rather than per process, so a token that aged
+        // out between calls is replaced without anybody restarting anything.
+        let credential = self
+            .source
+            .get()
+            .map_err(|err| DispatchError::Transport(err.to_string()))?;
+
         // Different headers, not two spellings of one: a bearer token sent as
         // `x-api-key` is a 401.
-        builder = match &self.credential {
+        builder = match &credential {
             Credential::ApiKey(key) => builder.header("x-api-key", key),
             Credential::AuthToken(token) => {
                 builder.header("authorization", format!("Bearer {token}"))
@@ -431,17 +521,44 @@ impl ModelClient for AnthropicClient {
             builder = builder.header("anthropic-beta", betas);
         }
 
-        let response = builder
-            .json(&self.body(&request))
-            .send()
-            .await
-            .map_err(|err| DispatchError::Transport(err.to_string()))?;
+        let mut body = self.body(&request);
+        self.strip_unsupported(&request.model, &mut body);
 
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|err| DispatchError::Transport(err.to_string()))?;
+        // At most one retry per optional field, so a model that refuses both
+        // settles in two extra round trips and never loops.
+        let mut status;
+        let mut text;
+        let mut attempts = 0;
+        loop {
+            let send = builder
+                .try_clone()
+                .ok_or_else(|| DispatchError::Transport("request is not retryable".into()))?;
+            let response = send
+                .json(&body)
+                .send()
+                .await
+                .map_err(|err| DispatchError::Transport(err.to_string()))?;
+            status = response.status();
+            text = response
+                .text()
+                .await
+                .map_err(|err| DispatchError::Transport(err.to_string()))?;
+
+            if status != reqwest::StatusCode::BAD_REQUEST || attempts >= Self::OPTIONAL.len() {
+                break;
+            }
+            // The provider is the authority on its own parameters. Surfacing a
+            // 400 about a field the caller never set would be asking them to
+            // debug our request.
+            let Some(field) = Self::refused_field(&body, &text) else {
+                break;
+            };
+            self.remember_unsupported(&request.model, field);
+            if let Some(object) = body.as_object_mut() {
+                object.remove(field);
+            }
+            attempts += 1;
+        }
 
         if !status.is_success() {
             let message = serde_json::from_str::<serde_json::Value>(&text)

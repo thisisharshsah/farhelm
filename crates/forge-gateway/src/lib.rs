@@ -26,6 +26,7 @@ pub mod batch;
 pub mod cache;
 pub mod compaction;
 pub mod context;
+pub mod credential;
 pub mod dispatch;
 pub mod pipeline;
 pub mod pregate;

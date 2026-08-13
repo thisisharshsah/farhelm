@@ -318,6 +318,13 @@ pub async fn messages(
     // Validated before the provider is looked at, so a bad request says so.
     let request = translate(&headers, body)?;
 
+    // The gateway attributes spend to a session, and a caller coming in over
+    // the Messages API has no reason to have created one — it does not know
+    // this system exists. Making them create one first would be the exact
+    // "do the same thing again before you can start" this endpoint is meant to
+    // remove, so the bucket creates itself on first use.
+    ensure_bucket(&state, request.session_id.as_str())?;
+
     let Some(gateway) = &state.gateway else {
         return Err(ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -377,6 +384,68 @@ pub async fn messages(
         return Ok(stream_of(view).into_response());
     }
     Ok(Json(view).into_response())
+}
+
+/// Create the session a request is billed against, if it is not there yet.
+///
+/// Idempotent, and deliberately cheap: one lookup on the common path, two
+/// inserts exactly once per bucket. The repo row exists because a session
+/// belongs to one — there is no real checkout behind an API call, so it points
+/// at the runner's own home and is named for what it is.
+fn ensure_bucket(state: &AppState, session_id: &str) -> Result<(), ApiError> {
+    use forge_app::store::{FleetStore, SessionStore};
+    use forge_proto::types::{Agent, Repo, Session, SessionStatus};
+
+    let store_err = |err: forge_app::store::StoreError| {
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+    };
+
+    if state
+        .store
+        .get_session(session_id)
+        .map_err(store_err)?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let repo_id = format!("repo-api-{}", state.machine_id);
+    if state.store.get_repo(&repo_id).map_err(store_err)?.is_none() {
+        state
+            .store
+            .upsert_repo(&Repo {
+                id: repo_id.clone(),
+                machine_id: state.machine_id.clone(),
+                path: String::new(),
+                name: "API calls".to_owned(),
+                budget_usd: None,
+            })
+            .map_err(store_err)?;
+    }
+
+    state
+        .store
+        .upsert_session(&Session {
+            id: session_id.to_owned(),
+            repo_id,
+            // The gateway is the agent here: nothing else is driving this turn.
+            agent: Agent::Forge,
+            tmux_target: None,
+            // Running, not Done: a bucket that is closed the moment it is
+            // created would show up in the fleet as a finished session, and
+            // every subsequent call would be spend against a dead one.
+            status: SessionStatus::Running,
+            plan_id: None,
+            // No cap by default. A cap invented here would start refusing calls
+            // for a reason the caller never chose and cannot see.
+            budget_usd: None,
+            spent_usd: 0.0,
+            started_at: forge_app::time::now_ms(),
+            ended_at: None,
+            agent_session_id: None,
+        })
+        .map_err(store_err)?;
+    Ok(())
 }
 
 fn header_str(headers: &HeaderMap, name: &str) -> Option<String> {
