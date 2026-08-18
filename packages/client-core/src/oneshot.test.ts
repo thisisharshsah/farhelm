@@ -140,17 +140,22 @@ describe("fetching a fleet once", () => {
 
 describe("sending one command", () => {
   it("seals it so the relay cannot read it", async () => {
+    // The id is long and distinctive because the assertion below searches the
+    // *whole* frame, and the frame is mostly random base64url. A two-character
+    // canary like `a1` collides with a nonce roughly one run in ten — which is
+    // a test that fails for a reason having nothing to do with sealing.
+    const canary = "approval-canary-9Q7";
     const pending = sendCommandOnce(
       pairing,
-      { type: "decide", approval_id: "a1", decision: "approved" },
+      { type: "decide", approval_id: canary, decision: "approved" },
       20,
     );
     await opened();
 
-    expect(socket().sent[0]).not.toContain("a1");
+    expect(socket().sent[0]).not.toContain(canary);
     expect(readSent(socket())).toEqual({
       type: "decide",
-      approval_id: "a1",
+      approval_id: canary,
       decision: "approved",
     });
     await expect(pending).resolves.toEqual({ refused: null });
