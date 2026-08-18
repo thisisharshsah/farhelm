@@ -39,6 +39,7 @@ use forge_gateway::{CompleteRequest, Gateway, GatewayError, ModelClient, ToolCal
 use forge_proto::types::TaskType;
 
 use crate::diff::ChangeSet;
+use crate::git::Worktree;
 use crate::tools::{self, Supervisor};
 use crate::workspace::Workspace;
 
@@ -78,6 +79,10 @@ const MAX_CONVENTION_BYTES: usize = 8 * 1024;
 pub struct TaskSpec {
     /// The session this task's spend is billed to.
     pub session_id: String,
+    /// Names this task's branch and its checkout. Distinct from `session_id`
+    /// because a retry is a new task on the same session, and two tasks sharing
+    /// a branch would have one silently inherit the other's work.
+    pub task_id: String,
     pub repo_path: PathBuf,
     /// What the human asked for.
     pub prompt: String,
@@ -96,13 +101,24 @@ impl TaskSpec {
         repo_path: impl Into<PathBuf>,
         prompt: impl Into<String>,
     ) -> Self {
+        let session_id = session_id.into();
         Self {
-            session_id: session_id.into(),
+            // Callers that have a real task id set it; the default keeps the
+            // branch tied to something rather than to a constant every task
+            // would collide on.
+            task_id: session_id.clone(),
+            session_id,
             repo_path: repo_path.into(),
             prompt: prompt.into(),
             max_steps: DEFAULT_MAX_STEPS,
             verify: true,
         }
+    }
+
+    /// Name this task's branch after `id`.
+    pub fn with_task_id(mut self, id: impl Into<String>) -> Self {
+        self.task_id = id.into();
+        self
     }
 }
 
@@ -138,9 +154,14 @@ impl Outcome {
 #[derive(Debug)]
 pub struct TaskRun {
     pub outcome: Outcome,
-    /// The staging overlay, with the proposed edits still in it. Serialisable,
-    /// so a task can wait for review across a runner restart.
-    pub workspace: Workspace,
+    /// The branch and checkout the work is on. `None` only when the task never
+    /// got one — an unusable repository — in which case there is nothing to
+    /// review, merge or discard.
+    ///
+    /// Serialisable, so a task can wait for review across a runner restart. The
+    /// overlay this replaced had to serialise both sides of every file it
+    /// touched; this is four strings, because the work itself is in git.
+    pub worktree: Option<Worktree>,
     pub changes: ChangeSet,
     /// The agent's closing message — the first thing a reviewer reads.
     pub summary: String,
@@ -216,23 +237,41 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     supervisor: &Sup,
     spec: &TaskSpec,
 ) -> TaskRun {
-    let mut workspace = match Workspace::open(&spec.repo_path) {
+    /// A run that ended before it had anywhere to work.
+    fn failed(why: String) -> TaskRun {
+        TaskRun {
+            outcome: Outcome::Failed(why),
+            worktree: None,
+            changes: ChangeSet::default(),
+            summary: String::new(),
+            transcript: Vec::new(),
+            assessment: None,
+            cost_usd: 0.0,
+            steps: 0,
+        }
+    }
+
+    // Cut the branch before anything else. A task with nowhere isolated to work
+    // must not start: the alternative is an agent editing the tree somebody is
+    // sitting in, which is precisely what this crate exists to prevent.
+    //
+    // Git is required, and the two ways it can be missing are reported apart
+    // because they have different fixes — one is "this is not a repository",
+    // the other is "commit once first".
+    let worktree = match Worktree::create(&spec.repo_path, &spec.task_id) {
+        Ok(worktree) => worktree,
+        Err(err) => return failed(err.to_string()),
+    };
+
+    // The agent reads and writes through the checkout, never the repository.
+    let mut workspace = match Workspace::open(worktree.path()) {
         Ok(workspace) => workspace,
         Err(err) => {
-            return TaskRun {
-                outcome: Outcome::Failed(err.to_string()),
-                // Nothing to stage into: the repo could not be opened. Detached
-                // rather than re-opening something else, because every other
-                // root would fail to canonicalise for the same reasons this one
-                // did and there would be nothing left to fall back to.
-                workspace: Workspace::detached(&spec.repo_path),
-                changes: ChangeSet::default(),
-                summary: String::new(),
-                transcript: Vec::new(),
-                assessment: None,
-                cost_usd: 0.0,
-                steps: 0,
-            };
+            // The branch exists but is unusable. Take it back out rather than
+            // leaving a checkout nobody will ever look at.
+            let message = err.to_string();
+            let _ = worktree.discard();
+            return failed(message);
         }
     };
 
@@ -299,7 +338,9 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
 
         if response.tool_calls.is_empty() {
             summary = response.text.trim().to_owned();
-            outcome = if workspace.changes().is_empty() {
+            // Asking git rather than an in-memory map: one `git diff`, once,
+            // at the point the model says it is finished.
+            outcome = if worktree.change_set().is_ok_and(|set| set.is_empty()) {
                 Outcome::NoChanges
             } else {
                 Outcome::Proposed
@@ -351,7 +392,12 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         stable.history.push(Turn::assistant(summary.clone()));
     }
 
-    let changes = workspace.changes();
+    // Presentation still belongs to `crate::diff`, so the bytes that reach a
+    // phone are produced by the same differ with the same line numbering the
+    // clients have unit tests for. Git decides isolation and lifecycle; the
+    // change set is unchanged, which is the only reason this swap does not
+    // touch three clients.
+    let changes = worktree.change_set().unwrap_or_default();
 
     // ---- C10: one frontier call, on the diff alone --------------------------
     //
@@ -380,7 +426,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
 
     TaskRun {
         outcome,
-        workspace,
+        worktree: Some(worktree),
         changes,
         summary,
         transcript: stable.history,
@@ -473,6 +519,12 @@ mod tests {
         store
     }
 
+    /// A real repository with one commit.
+    ///
+    /// A task cuts a branch before it does anything, so there is no such thing
+    /// as running one outside git any more. These fixtures are therefore real
+    /// repositories rather than bare directories — which also means what they
+    /// assert is what actually happens on somebody's machine.
     struct TempRepo(PathBuf);
 
     impl TempRepo {
@@ -480,8 +532,37 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("forge-task-{name}"));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
-            Self(dir)
+            let repo = Self(dir);
+            repo.git(&["init", "-q", "-b", "main"]);
+            repo
         }
+
+        fn git(&self, args: &[&str]) {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.0)
+                .args(args)
+                .status()
+                .expect("git should be installed");
+            assert!(status.success(), "git {args:?} failed");
+        }
+
+        /// Commit whatever has been written, so there is a base to branch from.
+        fn commit(&self) -> &Self {
+            self.git(&["add", "-A"]);
+            self.git(&[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            ]);
+            self
+        }
+
         fn write(&self, relative: &str, content: &str) {
             let path = self.0.join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -502,6 +583,7 @@ mod tests {
     async fn an_edit_becomes_a_proposed_diff_and_the_tree_is_untouched() {
         let repo = TempRepo::new("propose");
         repo.write("src/main.rs", "fn main() {\n    println!(\"old\");\n}\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![
             ScriptedClient::calls(vec![(
@@ -540,6 +622,7 @@ mod tests {
     async fn applying_the_run_writes_exactly_what_was_reviewed() {
         let repo = TempRepo::new("apply");
         repo.write("a.txt", "before\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![
             ScriptedClient::calls(vec![(
@@ -553,15 +636,78 @@ mod tests {
         let run = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
 
         let reviewed = run.changes.render();
-        run.workspace.apply().unwrap();
+
+        // Nothing has reached the branch the human is on yet.
+        assert_eq!(repo.read("a.txt"), "before\n");
+
+        // Approving is a merge, and the merge is what moves their tree.
+        let worktree = run.worktree.unwrap();
+        worktree.commit("agent task").unwrap();
+        assert!(matches!(
+            worktree.merge_into_base().unwrap(),
+            crate::git::Merge::FastForwarded { .. }
+        ));
         assert_eq!(repo.read("a.txt"), "after\n");
         assert!(reviewed.contains("+after"));
+        worktree.release().unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_agent_can_run_its_own_tests_against_its_own_edits() {
+        // The reason the staging overlay was replaced, asserted directly.
+        //
+        // Under staging, `run` executed against the repository's working tree,
+        // which by construction did not contain the agent's edits — so the
+        // agent wrote a file in step one and `cat` in step two printed the old
+        // contents. An agent could not check its own work, which is most of
+        // what makes a coding agent worth supervising.
+        let repo = TempRepo::new("selftest");
+        repo.write("a.txt", "before\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![
+            ScriptedClient::calls(vec![(
+                crate::tools::WRITE_FILE,
+                serde_json::json!({"path": "a.txt", "content": "after\n"}),
+            )]),
+            // Upper-cased deliberately: "after" also appears in the write
+            // call's own arguments, which are rendered into the transcript, so
+            // asserting on it would pass even if the command saw nothing.
+            // "AFTER" can only come from the command having read the file.
+            ScriptedClient::calls(vec![(
+                RUN,
+                serde_json::json!({"command": "tr a-z A-Z < a.txt"}),
+            )]),
+            ScriptedClient::text("confirmed"),
+        ]);
+        let store = store(None);
+        let gateway = Gateway::new(&store, client, GatewayConfig::default());
+        let run = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
+
+        let transcript = run
+            .transcript
+            .iter()
+            .map(|turn| turn.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            transcript.contains("AFTER"),
+            "the command must see the agent's own edit; transcript was:\n{transcript}"
+        );
+
+        // And the repository the human is sitting in still has not moved.
+        assert_eq!(repo.read("a.txt"), "before\n");
+
+        if let Some(worktree) = run.worktree {
+            worktree.discard().unwrap();
+        }
     }
 
     #[tokio::test]
     async fn a_task_that_changes_nothing_does_not_ask_for_a_review() {
         let repo = TempRepo::new("nochanges");
         repo.write("a.txt", "unchanged\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![
             ScriptedClient::calls(vec![("read_file", serde_json::json!({"path": "a.txt"}))]),
@@ -580,6 +726,7 @@ mod tests {
     async fn a_tool_error_is_reported_back_and_the_agent_carries_on() {
         let repo = TempRepo::new("toolerror");
         repo.write("real.txt", "content\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![
             ScriptedClient::calls(vec![(
@@ -611,6 +758,7 @@ mod tests {
     async fn a_denied_command_does_not_run_and_the_agent_is_told_why() {
         let repo = TempRepo::new("denied");
         repo.write("a.txt", "x\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![
             ScriptedClient::calls(vec![(
@@ -635,6 +783,7 @@ mod tests {
     async fn the_step_limit_still_hands_back_what_was_staged() {
         let repo = TempRepo::new("steplimit");
         repo.write("a.txt", "0\n");
+        repo.commit();
 
         // A model that reads forever and never stops.
         let client = ScriptedClient::looping(ScriptedClient::calls(vec![(
@@ -658,6 +807,7 @@ mod tests {
     async fn an_exhausted_budget_stops_the_loop_and_says_which_cap() {
         let repo = TempRepo::new("budget");
         repo.write("a.txt", "x\n");
+        repo.commit();
 
         let client = ScriptedClient::looping(ScriptedClient::calls(vec![(
             "read_file",
@@ -683,6 +833,7 @@ mod tests {
         // prefix of turn N+1's, every breakpoint ahead of the change is lost.
         let repo = TempRepo::new("append");
         repo.write("a.txt", "x\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![
             ScriptedClient::calls(vec![("read_file", serde_json::json!({"path": "a.txt"}))]),
@@ -710,6 +861,7 @@ mod tests {
     async fn retrieval_and_the_pre_gate_run_on_the_first_step_only() {
         let repo = TempRepo::new("firststep");
         repo.write("a.txt", "x\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![
             ScriptedClient::calls(vec![("read_file", serde_json::json!({"path": "a.txt"}))]),
@@ -728,6 +880,7 @@ mod tests {
         let repo = TempRepo::new("conventions");
         repo.write("CLAUDE.md", "Never touch generated files.");
         repo.write("a.txt", "x\n");
+        repo.commit();
 
         let client = ScriptedClient::new(vec![ScriptedClient::text("nothing to do")]);
         let store = store(None);
@@ -761,9 +914,9 @@ mod tests {
         assert!(matches!(run.outcome, Outcome::Failed(_)));
         assert!(run.changes.is_empty());
         assert_eq!(run.cost_usd, 0.0);
-        // The placeholder workspace is inert: applying it writes nothing rather
-        // than erroring on a root that was never resolvable.
-        assert_eq!(run.workspace.apply().unwrap(), Vec::<String>::new());
+        // No branch, because there was nowhere to cut one from. Nothing to
+        // merge and nothing to discard, which is what `None` says.
+        assert!(run.worktree.is_none());
     }
 
     #[test]

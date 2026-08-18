@@ -30,6 +30,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_task_verification.sql"),
     include_str!("../migrations/0006_usage_time_index.sql"),
     include_str!("../migrations/0007_dispatch.sql"),
+    include_str!("../migrations/0008_task_worktree.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -38,7 +39,7 @@ const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, 
 /// Ordered to match the `?1..?19` in `upsert_task` and the indices in
 /// [`read_task`]. Three lists that have to agree, so they sit together.
 const TASK_COLUMNS: &str = "id, session_id, repo_id, prompt, status, summary, diff_json, \
-     staged_json, files_changed, lines_added, lines_removed, steps, cost_usd, error, \
+     worktree_json, files_changed, lines_added, lines_removed, steps, cost_usd, error, \
      review_note, decided_via, created_at, updated_at, decided_at, verify_grade, \
      verify_notes, verify_model";
 
@@ -50,7 +51,7 @@ struct RawTask {
     status: String,
     summary: String,
     diff_json: String,
-    staged_json: String,
+    worktree_json: String,
     files_changed: i64,
     lines_added: i64,
     lines_removed: i64,
@@ -76,7 +77,7 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<RawTask> {
         status: row.get(4)?,
         summary: row.get(5)?,
         diff_json: row.get(6)?,
-        staged_json: row.get(7)?,
+        worktree_json: row.get(7)?,
         files_changed: row.get(8)?,
         lines_added: row.get(9)?,
         lines_removed: row.get(10)?,
@@ -106,7 +107,7 @@ impl TryFrom<RawTask> for AgentTask {
             status: parse_enum::<TaskStatus>(&raw.status)?,
             summary: raw.summary,
             diff_json: raw.diff_json,
-            staged_json: raw.staged_json,
+            worktree_json: raw.worktree_json,
             files_changed: raw.files_changed,
             lines_added: raw.lines_added,
             lines_removed: raw.lines_removed,
@@ -1187,7 +1188,7 @@ impl TaskStore for SqliteStore {
                    status = excluded.status,
                    summary = excluded.summary,
                    diff_json = excluded.diff_json,
-                   staged_json = excluded.staged_json,
+                   worktree_json = excluded.worktree_json,
                    files_changed = excluded.files_changed,
                    lines_added = excluded.lines_added,
                    lines_removed = excluded.lines_removed,
@@ -1210,7 +1211,7 @@ impl TaskStore for SqliteStore {
                 task.status.as_str(),
                 task.summary,
                 task.diff_json,
-                task.staged_json,
+                task.worktree_json,
                 task.files_changed,
                 task.lines_added,
                 task.lines_removed,
@@ -1643,7 +1644,7 @@ mod tests {
             status,
             summary: String::new(),
             diff_json: r#"{"files":[]}"#.into(),
-            staged_json: "{}".into(),
+            worktree_json: "{}".into(),
             files_changed: 2,
             lines_added: 40,
             lines_removed: 7,

@@ -811,28 +811,32 @@ mod tests {
     }
 
     #[test]
-    fn a_branch_and_the_overlay_describe_the_same_change_identically() {
-        // The property that makes the switchover safe. Three clients render
-        // `ChangeSet` and one of them reimplements the renderer in Swift, so a
-        // worktree must produce exactly what the overlay produced — otherwise
-        // replacing one with the other is a wire change wearing a refactor's
-        // clothes.
-        let repo = TempRepo::new("parity").with_committed("b.txt", "keep\n");
+    fn a_change_set_from_a_branch_is_the_shape_three_clients_render() {
+        // This was a parity test against the staging overlay while both
+        // existed; the overlay is gone, so what it pins now is the shape
+        // itself. Three clients render `ChangeSet` and one of them
+        // reimplements the renderer in Swift, so a change here is a wire
+        // change wearing a refactor's clothes.
+        let repo = TempRepo::new("shape").with_committed("b.txt", "keep\n");
 
-        let mut overlay = crate::workspace::Workspace::open(&repo.0).unwrap();
-        overlay.stage_write("a.txt", "two\n").unwrap();
-        overlay.stage_write("new.txt", "hello\nworld\n").unwrap();
-        overlay.stage_delete("b.txt").unwrap();
-
-        let tree = Worktree::create(&repo.0, "parity").unwrap();
+        let tree = Worktree::create(&repo.0, "shape").unwrap();
         std::fs::write(tree.path().join("a.txt"), "two\n").unwrap();
         std::fs::write(tree.path().join("new.txt"), "hello\nworld\n").unwrap();
         std::fs::remove_file(tree.path().join("b.txt")).unwrap();
 
-        let from_branch = tree.change_set().unwrap();
-        assert_eq!(from_branch, overlay.changes());
-        assert_eq!(from_branch.files.len(), 3);
-        assert_eq!(from_branch.added(), 3);
+        let changes = tree.change_set().unwrap();
+
+        assert_eq!(changes.files.len(), 3);
+        assert_eq!(changes.added(), 3);
+        // Sorted by path, so a card renders in a stable order run to run.
+        let paths: Vec<&str> = changes.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["a.txt", "b.txt", "new.txt"]);
+
+        let kinds: Vec<ChangeKind> = changes.files.iter().map(|f| f.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![ChangeKind::Modified, ChangeKind::Deleted, ChangeKind::Added]
+        );
         tree.discard().unwrap();
     }
 
@@ -865,37 +869,33 @@ mod tests {
     }
 
     #[test]
-    fn the_two_backing_stores_agree_about_a_trailing_newline() {
-        // Two separate things are being pinned here.
-        //
-        // First: reading a blob must not go through the trimming helper. If it
-        // did, every file ending in a newline would come back one byte short
-        // and the first `change_set` on an untouched repository would report
-        // changes nobody made. Hence `git_bytes`.
-        //
-        // Second, and less comfortable: a change that is *only* a trailing
-        // newline is invisible to `crate::diff`, which compares files by line
-        // and cannot represent "the last line lost its terminator". That is a
-        // property of the differ, not of either backing store — so the useful
-        // assertion is that the branch and the overlay are wrong in exactly the
-        // same way, which is what makes them interchangeable.
+    fn reading_a_blob_does_not_lose_a_trailing_newline() {
+        // If blob reads went through the trimming helper, every file ending in
+        // a newline would come back one byte short and the first `change_set`
+        // on an untouched checkout would report changes nobody made. Hence
+        // `git_bytes`.
         let repo = TempRepo::new("newline").with_committed("c.txt", "line\n");
-
         let tree = Worktree::create(&repo.0, "newline").unwrap();
+
         std::fs::write(tree.path().join("c.txt"), "line\n").unwrap();
         assert!(
             tree.change_set().unwrap().is_empty(),
             "identical bytes must not read as a change"
         );
 
+        // And the known limit, recorded rather than asserted away: a change
+        // that is *only* a lost trailing newline is invisible to `crate::diff`,
+        // which compares by line and cannot represent "the last line lost its
+        // terminator". Git sees it; the differ does not.
         std::fs::write(tree.path().join("c.txt"), "line").unwrap();
-        let mut overlay = crate::workspace::Workspace::open(&repo.0).unwrap();
-        overlay.stage_write("c.txt", "line").unwrap();
-
-        assert_eq!(
-            tree.change_set().unwrap(),
-            overlay.changes(),
-            "branch and overlay must agree, whatever the differ does"
+        assert!(
+            tree.change_set().unwrap().is_empty(),
+            "the differ cannot represent this, and pretending otherwise would \
+             mean a card that renders an empty change"
+        );
+        assert!(
+            !tree.diff().unwrap().is_empty(),
+            "git itself must still see it"
         );
         tree.discard().unwrap();
     }

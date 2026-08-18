@@ -81,11 +81,36 @@ fn store(session: &str) -> SqliteStore {
 struct TempRepo(std::path::PathBuf);
 
 impl TempRepo {
+    /// A real repository with the file committed — a task cuts a branch from
+    /// `HEAD`, so content that was never committed is content the agent will
+    /// not see.
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("forge-c10-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("retry.rs"), "fn backoff() -> u64 {\n    1\n}\n").unwrap();
+
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .status()
+                .expect("git should be installed");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "-A"]);
+        git(&[
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "base",
+        ]);
         Self(dir)
     }
 }
