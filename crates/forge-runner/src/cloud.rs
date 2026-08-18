@@ -28,6 +28,7 @@
 //! working on its old channel in the meantime and says so at startup, because
 //! failing silently here would be indistinguishable from a network problem.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -135,6 +136,213 @@ impl std::fmt::Display for CloudError {
 }
 
 impl std::error::Error for CloudError {}
+
+/* ------------------------------------------------------- self-enrolment */
+
+/// Where a self-enrolled machine keeps what it was given.
+///
+/// Beside `forge.key` and `forge.db`, so "where is my state" and "how do I
+/// start over" keep having one answer.
+pub const DEFAULT_CREDENTIALS_FILE: &str = "forge.cloud.json";
+
+/// What `forge-runner login` writes and `forge-runner serve` reads.
+///
+/// This holds an enrolment key, which is a live credential: it is written
+/// `0600` before any bytes reach it and refused on load if the mode says
+/// otherwise, exactly as [`forge_crypto::keystore`] treats the identity key.
+/// The reasoning is the same and so is the failure — a daemon that looks
+/// healthy while its credential is world-readable.
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct Credentials {
+    /// The control plane this was issued by, as *it* named itself — not as it
+    /// was typed on a command line. A machine that enrolled against
+    /// `https://farhelm.aurovie.com` must keep going there after somebody types
+    /// the IP once.
+    pub url: String,
+    pub enrollment_key: String,
+    /// What this machine called itself when it asked. Kept so a later `serve`
+    /// enrols under the same name and is recognised as the same machine rather
+    /// than parked as a key change.
+    pub name: String,
+}
+
+#[derive(Debug)]
+pub enum CredentialsError {
+    Io(std::io::Error),
+    Malformed(String),
+    /// Readable by someone other than its owner.
+    TooPermissive {
+        path: PathBuf,
+        mode: u32,
+    },
+}
+
+impl std::fmt::Display for CredentialsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CredentialsError::Io(err) => write!(f, "{err}"),
+            CredentialsError::Malformed(why) => write!(f, "unreadable: {why}"),
+            CredentialsError::TooPermissive { path, mode } => write!(
+                f,
+                "{} is mode {mode:o}; it holds an enrolment key and must be readable \
+                 only by you — `chmod 600 {}`",
+                path.display(),
+                path.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CredentialsError {}
+
+impl Credentials {
+    /// Read stored credentials. `Ok(None)` when there simply are none, which is
+    /// the ordinary state of a machine nobody has run `login` on.
+    pub fn load(path: &Path) -> std::result::Result<Option<Self>, CredentialsError> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(CredentialsError::Io(err)),
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(path)
+                .map_err(CredentialsError::Io)?
+                .permissions()
+                .mode()
+                & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(CredentialsError::TooPermissive {
+                    path: path.to_path_buf(),
+                    mode,
+                });
+            }
+        }
+
+        serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|err| CredentialsError::Malformed(err.to_string()))
+    }
+
+    /// Write credentials, creating the file `0600` **before** anything is
+    /// written to it. Never written first and chmod-ed after: that gap is a
+    /// real window on a shared box.
+    pub fn save(&self, path: &Path) -> std::result::Result<(), CredentialsError> {
+        use std::io::Write as _;
+
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+
+        let mut file = options.open(path).map_err(CredentialsError::Io)?;
+        let body = serde_json::to_vec_pretty(self)
+            .map_err(|err| CredentialsError::Malformed(err.to_string()))?;
+        file.write_all(&body).map_err(CredentialsError::Io)?;
+        file.write_all(b"\n").map_err(CredentialsError::Io)?;
+
+        // An existing file keeps its old mode through `create(true)`, so tighten
+        // it explicitly for the overwrite case — a second `login` must not
+        // inherit whatever the first one's file had been chmod-ed to.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(CredentialsError::Io)?;
+        }
+        Ok(())
+    }
+}
+
+/// What the control plane says when a machine asks to join.
+#[derive(Debug, Deserialize)]
+pub struct DeviceCode {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub interval: u64,
+    pub expires_in: i64,
+}
+
+/// Where a poll has got to.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DeviceAnswer {
+    Pending {
+        interval: u64,
+    },
+    Approved {
+        enrollment_key: String,
+        cloud_url: String,
+    },
+    Denied,
+    Expired,
+}
+
+/// Ask a control plane to let this machine in.
+pub async fn request_device_code(
+    base_url: &str,
+    name: &str,
+    version: &str,
+) -> Result<DeviceCode, CloudError> {
+    let url = format!("{}/v1/device/code", base_url.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({ "name": name, "version": version }))
+        .send()
+        .await
+        .map_err(|err| CloudError::Unreachable(format!("{url}: {err}")))?;
+
+    if !response.status().is_success() {
+        return Err(CloudError::Refused(describe(response).await));
+    }
+    response
+        .json()
+        .await
+        .map_err(|err| CloudError::Refused(format!("unexpected answer from {url}: {err}")))
+}
+
+/// Ask whether a human has answered yet.
+pub async fn poll_device_code(
+    base_url: &str,
+    device_code: &str,
+) -> Result<DeviceAnswer, CloudError> {
+    let url = format!("{}/v1/device/token", base_url.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({ "device_code": device_code }))
+        .send()
+        .await
+        .map_err(|err| CloudError::Unreachable(format!("{url}: {err}")))?;
+
+    if !response.status().is_success() {
+        return Err(CloudError::Refused(describe(response).await));
+    }
+    response
+        .json()
+        .await
+        .map_err(|err| CloudError::Refused(format!("unexpected answer from {url}: {err}")))
+}
+
+/// Pull the service's own error message out of a failed response.
+async fn describe(response: reqwest::Response) -> String {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(json) => json
+            .get("error")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{status}")),
+        Err(_) if body.trim().is_empty() => format!("{status}"),
+        Err(_) => format!("{status}: {body}"),
+    }
+}
 
 /// How long to keep trying to enrol at startup before carrying on without it.
 ///
@@ -448,6 +656,112 @@ mod tests {
             kind: "phone".to_owned(),
             public_key: public_key.to_owned(),
         }
+    }
+
+    /// A path in the temp directory, unique per test.
+    fn temp_path(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "forge-credentials-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    fn sample() -> Credentials {
+        Credentials {
+            url: "https://farhelm.aurovie.com".into(),
+            enrollment_key: "frg_secret".into(),
+            name: "build-server".into(),
+        }
+    }
+
+    #[test]
+    fn credentials_round_trip() {
+        let path = temp_path("round-trip");
+        sample().save(&path).unwrap();
+
+        let loaded = Credentials::load(&path).unwrap().unwrap();
+        assert_eq!(loaded.url, "https://farhelm.aurovie.com");
+        assert_eq!(loaded.enrollment_key, "frg_secret");
+        assert_eq!(loaded.name, "build-server");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_machine_nobody_has_logged_in_has_no_credentials_and_that_is_not_an_error() {
+        // The ordinary state of a fresh checkout. Reporting it as a failure
+        // would put an error on every loopback-only startup.
+        assert!(Credentials::load(&temp_path("absent")).unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credentials_are_created_unreadable_by_anyone_else() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = temp_path("mode");
+        sample().save(&path).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "was {mode:o}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_world_readable_credential_file_is_refused_rather_than_used() {
+        // The same rule the identity key follows, for the same reason: a daemon
+        // that looks healthy while its credential is readable by every user on
+        // the box is the failure worth being loud about.
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = temp_path("permissive");
+        sample().save(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(matches!(
+            Credentials::load(&path),
+            Err(CredentialsError::TooPermissive { .. })
+        ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overwriting_tightens_a_file_that_had_been_loosened() {
+        // `create(true)` keeps an existing file's mode, so a second `login`
+        // would otherwise inherit whatever the first one's file was chmod-ed to.
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = temp_path("retighten");
+        sample().save(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        sample().save(&path).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "was {mode:o}");
+        assert!(Credentials::load(&path).unwrap().is_some());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_corrupt_credential_file_is_an_error_not_an_unenrolled_machine() {
+        let path = temp_path("corrupt");
+        std::fs::write(&path, "{ not json").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        assert!(matches!(
+            Credentials::load(&path),
+            Err(CredentialsError::Malformed(_))
+        ));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

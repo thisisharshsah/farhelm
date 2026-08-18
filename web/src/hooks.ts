@@ -13,6 +13,12 @@ export type Route =
   | { view: "new-task" }
   /** The workspace: machines, devices, people, enrolment keys. */
   | { view: "account" }
+  /**
+   * Approving a machine that ran `forge-runner login`. The code is in the URL
+   * when the runner's printed link was followed, and null when somebody
+   * navigated here to type it.
+   */
+  | { view: "connect"; code: string | null }
   | { view: "billing" };
 
 function parseHash(hash: string): Route {
@@ -29,6 +35,7 @@ function parseHash(hash: string): Route {
   }
   if (parts[0] === "new") return { view: "new-session" };
   if (parts[0] === "account") return { view: "account" };
+  if (parts[0] === "connect") return { view: "connect", code: parts[1] ?? null };
   // Stripe returns here with `?checkout=done`, which lands in the hash.
   if (parts[0]?.startsWith("billing")) return { view: "billing" };
   return { view: "fleet" };

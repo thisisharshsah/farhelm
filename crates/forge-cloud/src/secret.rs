@@ -109,9 +109,154 @@ pub fn hash_token(token: &str) -> String {
     B64.encode(Sha256::digest(token.as_bytes()))
 }
 
+/// The alphabet a user code is drawn from.
+///
+/// Chosen for someone reading a code off a server's console and typing it into
+/// a phone. No `0`/`O`, no `1`/`I`/`L`, and no vowels — the first two because
+/// they are misread, the third because a code that spells a word is a code
+/// somebody will report as offensive. Twenty-eight symbols, so eight of them
+/// carry a shade over 38 bits.
+const USER_CODE_ALPHABET: &[u8] = b"BCDFGHJKMNPQRSTVWXYZ23456789";
+
+/// Characters in a user code, before the separating dash is added.
+const USER_CODE_LEN: usize = 8;
+
+/// A short code a human reads aloud or types, in `XXXX-XXXX` form.
+///
+/// Deliberately *not* [`random_secret`]. This one is transcribed by a person, so
+/// it trades entropy for legibility — which is safe only because it is useless
+/// on its own: approving a code grants nothing to whoever typed it, it releases
+/// a credential to whoever holds the matching device code, and that is 256 bits
+/// that never left the machine. The user code's job is to stop somebody
+/// approving a *different* machine's request by accident, and to be
+/// unguessable within its short life.
+pub fn new_user_code() -> String {
+    let mut out = String::with_capacity(USER_CODE_LEN + 1);
+    for index in 0..USER_CODE_LEN {
+        if index == USER_CODE_LEN / 2 {
+            out.push('-');
+        }
+        out.push(pick(USER_CODE_ALPHABET) as char);
+    }
+    out
+}
+
+/// One uniformly random byte from `alphabet`.
+///
+/// Rejection sampling rather than `% alphabet.len()`: the modulo would make the
+/// first few symbols measurably likelier, which is the classic way a code that
+/// looks random ends up with a fraction of the entropy it claims.
+fn pick(alphabet: &[u8]) -> u8 {
+    let len = alphabet.len() as u8;
+    let ceiling = u8::MAX - (u8::MAX % len) - 1;
+    let mut byte = [0u8; 1];
+    loop {
+        rand_core::OsRng.fill_bytes(&mut byte);
+        if byte[0] <= ceiling {
+            return alphabet[(byte[0] % len) as usize];
+        }
+    }
+}
+
+/// Normalise a user code as typed: upper-cased, dashes and spaces removed.
+///
+/// People type `bkpt4qw9`, `BKPT-4QW9` and `bkpt 4qw9` and mean the same thing.
+/// Storing and comparing the normalised form means the lookup is one indexed
+/// query rather than a set of variants.
+pub fn normalise_user_code(code: &str) -> String {
+    code.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
+/// Render a normalised user code back into the form it is shown in.
+pub fn format_user_code(code: &str) -> String {
+    let code = normalise_user_code(code);
+    if code.len() == USER_CODE_LEN {
+        format!(
+            "{}-{}",
+            &code[..USER_CODE_LEN / 2],
+            &code[USER_CODE_LEN / 2..]
+        )
+    } else {
+        code
+    }
+}
+
+/// The prefix a device code carries. Never shown to a human — this is the half
+/// that stays on the machine — but the prefix makes one recognisable in a log.
+pub const DEVICE_CODE_PREFIX: &str = "frgd_";
+
+/// Mint a device code: 256 bits, held only by the machine that asked.
+pub fn new_device_code() -> String {
+    format!("{DEVICE_CODE_PREFIX}{}", random_secret())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_user_code_is_readable_and_typed_back_the_same() {
+        let code = new_user_code();
+        assert_eq!(code.len(), USER_CODE_LEN + 1, "{code}");
+        assert_eq!(&code[4..5], "-");
+
+        // However somebody types it, it resolves to the same stored form.
+        let stored = normalise_user_code(&code);
+        assert_eq!(stored.len(), USER_CODE_LEN);
+        assert_eq!(normalise_user_code(&code.to_lowercase()), stored);
+        assert_eq!(normalise_user_code(&code.replace('-', " ")), stored);
+        assert_eq!(normalise_user_code(&code.replace('-', "")), stored);
+        assert_eq!(format_user_code(&stored), code);
+    }
+
+    #[test]
+    fn a_user_code_avoids_the_characters_people_misread() {
+        // 0/O and 1/I/L are the pairs that turn a support call into a second
+        // support call.
+        for _ in 0..200 {
+            let code = normalise_user_code(&new_user_code());
+            assert!(
+                !code.contains(['0', 'O', '1', 'I', 'L']),
+                "ambiguous character in {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn user_codes_do_not_repeat() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..500 {
+            assert!(seen.insert(new_user_code()), "a user code repeated");
+        }
+    }
+
+    #[test]
+    fn every_symbol_of_the_alphabet_is_reachable() {
+        // The check that catches a biased or truncated picker: if `pick` used
+        // `% len` on a range that does not divide evenly, or sampled too few
+        // bits, some symbols would never appear.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..4_000 {
+            seen.extend(normalise_user_code(&new_user_code()).bytes());
+        }
+        assert_eq!(
+            seen.len(),
+            USER_CODE_ALPHABET.len(),
+            "some symbols never appeared, which means the picker is biased"
+        );
+    }
+
+    #[test]
+    fn a_device_code_is_a_full_strength_secret_unlike_a_user_code() {
+        let device = new_device_code();
+        assert!(device.starts_with(DEVICE_CODE_PREFIX));
+        // 32 bytes base64url, which is the half that must never be guessable.
+        assert_eq!(device.len(), DEVICE_CODE_PREFIX.len() + 43);
+        assert_ne!(new_device_code(), device);
+    }
 
     #[test]
     fn a_password_verifies_against_its_own_hash() {

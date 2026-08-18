@@ -17,7 +17,8 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::model::{
-    Account, Device, EnrollmentKey, Membership, Org, Runner, Subscription, normalize_email,
+    Account, Device, DeviceAuthStatus, DeviceAuthorization, EnrollmentKey, Membership, Org, Runner,
+    Subscription, normalize_email,
 };
 use crate::plan::{Plan, SubscriptionStatus, Usage};
 use crate::secret;
@@ -27,6 +28,7 @@ use forge_crypto::token::Role;
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_oauth.sql"),
+    include_str!("../migrations/0003_device_authorization.sql"),
 ];
 
 #[derive(Debug)]
@@ -55,6 +57,20 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 
 fn backend(err: rusqlite::Error) -> StoreError {
     StoreError::Backend(err.to_string())
+}
+
+fn row_to_device_authorization(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceAuthorization> {
+    let status: String = row.get(3)?;
+    Ok(DeviceAuthorization {
+        user_code: row.get(0)?,
+        name: row.get(1)?,
+        version: row.get(2)?,
+        // An unparseable status is treated as denied rather than pending: a
+        // corrupt row must not become an approval anybody can collect.
+        status: DeviceAuthStatus::parse(&status).unwrap_or(DeviceAuthStatus::Denied),
+        created_at: row.get(4)?,
+        expires_at: row.get(5)?,
+    })
 }
 
 /// One row of `oauth_code`, as it comes back from SQLite.
@@ -825,6 +841,178 @@ impl CloudStore {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(backend)
     }
 
+    /* ------------------------------------------------- device authorization */
+
+    /// Record a machine's request to join, and return nothing — the caller
+    /// already holds both codes, and neither is recoverable from here.
+    pub fn insert_device_authorization(
+        &self,
+        device_code: &str,
+        auth: &DeviceAuthorization,
+    ) -> Result<()> {
+        self.lock()?
+            .execute(
+                "INSERT INTO device_authorization (device_code_hash, user_code, name, version, \
+                 status, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    secret::hash_token(device_code),
+                    auth.user_code,
+                    auth.name,
+                    auth.version,
+                    auth.status.as_str(),
+                    auth.created_at,
+                    auth.expires_at,
+                ],
+            )
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    /// Look a request up by the code a human typed.
+    ///
+    /// Expired rows are returned rather than hidden: "that code has expired" is
+    /// a better answer than "no such code", and only this layer knows which it
+    /// is.
+    pub fn device_authorization(&self, user_code: &str) -> Result<Option<DeviceAuthorization>> {
+        self.lock()?
+            .query_row(
+                "SELECT user_code, name, version, status, created_at, expires_at FROM \
+                 device_authorization WHERE user_code = ?1",
+                params![secret::normalise_user_code(user_code)],
+                row_to_device_authorization,
+            )
+            .optional()
+            .map_err(backend)
+    }
+
+    /// Approve a request and attach the enrolment key it releases.
+    ///
+    /// Conditional on the row still being `pending` and still being live, in
+    /// one statement: two people approving the same code at the same instant
+    /// must mint one key, not two, and the loser must be told so rather than
+    /// silently overwriting the winner's.
+    pub fn approve_device_authorization(
+        &self,
+        user_code: &str,
+        org_id: &str,
+        account_id: &str,
+        enrollment_key: &str,
+        now_ms: i64,
+    ) -> Result<bool> {
+        let changed = self
+            .lock()?
+            .execute(
+                "UPDATE device_authorization SET status = 'approved', org_id = ?2, \
+                 approved_by = ?3, enrollment_key = ?4 WHERE user_code = ?1 \
+                 AND status = 'pending' AND expires_at > ?5",
+                params![
+                    secret::normalise_user_code(user_code),
+                    org_id,
+                    account_id,
+                    enrollment_key,
+                    now_ms,
+                ],
+            )
+            .map_err(backend)?;
+        Ok(changed == 1)
+    }
+
+    /// Refuse a request. Same conditional shape, and no key is ever minted.
+    pub fn deny_device_authorization(&self, user_code: &str, now_ms: i64) -> Result<bool> {
+        let changed = self
+            .lock()?
+            .execute(
+                "UPDATE device_authorization SET status = 'denied' WHERE user_code = ?1 \
+                 AND status = 'pending' AND expires_at > ?2",
+                params![secret::normalise_user_code(user_code), now_ms],
+            )
+            .map_err(backend)?;
+        Ok(changed == 1)
+    }
+
+    /// Hand the enrolment key to whoever holds the device code, once.
+    ///
+    /// The read and the clear are one statement. Anything else is a race: two
+    /// concurrent polls would both see a key and both return it, and a
+    /// credential this flow promises is single-use would have been issued
+    /// twice.
+    ///
+    /// Returns the status either way, so a caller can tell "not yet" from "no"
+    /// from "already collected" without a second query.
+    pub fn collect_device_authorization(
+        &self,
+        device_code: &str,
+        now_ms: i64,
+    ) -> Result<Option<(DeviceAuthorization, Option<String>)>> {
+        let hash = secret::hash_token(device_code);
+        let conn = self.lock()?;
+
+        let found: Option<DeviceAuthorization> = conn
+            .query_row(
+                "SELECT user_code, name, version, status, created_at, expires_at FROM \
+                 device_authorization WHERE device_code_hash = ?1",
+                params![hash],
+                row_to_device_authorization,
+            )
+            .optional()
+            .map_err(backend)?;
+
+        let Some(auth) = found else {
+            return Ok(None);
+        };
+        if auth.status != DeviceAuthStatus::Approved || auth.is_expired(now_ms) {
+            return Ok(Some((auth, None)));
+        }
+
+        // Read, then clear — and the clear is conditional on the key still being
+        // there, so the caller that loses the race is told `None` rather than
+        // handed a second copy. `conn` is held across both statements (the
+        // store is a `Mutex<Connection>`), which is what makes the pair
+        // indivisible.
+        //
+        // Not `RETURNING`: SQLite yields the *new* row, which is the NULL this
+        // statement just wrote.
+        let key: Option<String> = conn
+            .query_row(
+                "SELECT enrollment_key FROM device_authorization WHERE device_code_hash = ?1",
+                params![hash],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(backend)?
+            .flatten();
+
+        if key.is_none() {
+            return Ok(Some((auth, None)));
+        }
+        let cleared = conn
+            .execute(
+                "UPDATE device_authorization SET enrollment_key = NULL WHERE \
+                 device_code_hash = ?1 AND enrollment_key IS NOT NULL",
+                params![hash],
+            )
+            .map_err(backend)?;
+
+        Ok(Some((auth, if cleared == 1 { key } else { None })))
+    }
+
+    /// Drop requests nobody answered.
+    ///
+    /// Called on the same tick as any other housekeeping. An expired row holds
+    /// no key — it was either collected or never minted — but leaving them
+    /// accumulating would let the `user_code` space fill up with dead entries
+    /// that a fresh request could collide with.
+    pub fn purge_device_authorizations(&self, now_ms: i64) -> Result<usize> {
+        let removed = self
+            .lock()?
+            .execute(
+                "DELETE FROM device_authorization WHERE expires_at <= ?1",
+                params![now_ms],
+            )
+            .map_err(backend)?;
+        Ok(removed)
+    }
+
     /// Resolve a presented enrolment key to the organisation it belongs to.
     ///
     /// Revoked keys resolve to `None` rather than to an error, so a revoked key
@@ -1302,6 +1490,191 @@ mod tests {
                 NOW,
             )
             .unwrap()
+    }
+
+    /// A pending request from a machine calling itself `name`, and its codes.
+    fn requested(store: &CloudStore, name: &str) -> (String, String) {
+        let device_code = secret::new_device_code();
+        let user_code = secret::normalise_user_code(&secret::new_user_code());
+        store
+            .insert_device_authorization(
+                &device_code,
+                &DeviceAuthorization {
+                    user_code: user_code.clone(),
+                    name: name.into(),
+                    version: "0.1.0".into(),
+                    status: DeviceAuthStatus::Pending,
+                    created_at: NOW,
+                    expires_at: NOW + 900_000,
+                },
+            )
+            .unwrap();
+        (device_code, user_code)
+    }
+
+    #[test]
+    fn a_machine_waits_until_somebody_approves_it() {
+        let store = store();
+        let (account, org) = signed_up(&store);
+        let (device_code, user_code) = requested(&store, "build-server");
+
+        // Nothing to collect while it is pending — and, crucially, no key has
+        // been minted, so there is nothing sitting there to leak.
+        let (auth, key) = store
+            .collect_device_authorization(&device_code, NOW)
+            .unwrap()
+            .unwrap();
+        assert_eq!(auth.status, DeviceAuthStatus::Pending);
+        assert_eq!(key, None);
+        assert_eq!(auth.name, "build-server");
+
+        assert!(
+            store
+                .approve_device_authorization(&user_code, &org.id, &account.id, "frg_secret", NOW)
+                .unwrap()
+        );
+
+        let (auth, key) = store
+            .collect_device_authorization(&device_code, NOW)
+            .unwrap()
+            .unwrap();
+        assert_eq!(auth.status, DeviceAuthStatus::Approved);
+        assert_eq!(key.as_deref(), Some("frg_secret"));
+    }
+
+    #[test]
+    fn an_approved_key_can_only_be_collected_once() {
+        // The property the single UPDATE…RETURNING exists for. Two polls
+        // arriving together must not both walk away with the credential.
+        let store = store();
+        let (account, org) = signed_up(&store);
+        let (device_code, user_code) = requested(&store, "laptop");
+        store
+            .approve_device_authorization(&user_code, &org.id, &account.id, "frg_secret", NOW)
+            .unwrap();
+
+        let first = store
+            .collect_device_authorization(&device_code, NOW)
+            .unwrap()
+            .unwrap();
+        let second = store
+            .collect_device_authorization(&device_code, NOW)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(first.1.as_deref(), Some("frg_secret"));
+        assert_eq!(second.1, None, "the key was handed out twice");
+        assert_eq!(second.0.status, DeviceAuthStatus::Approved);
+    }
+
+    #[test]
+    fn only_the_first_of_two_approvals_mints_a_key() {
+        let store = store();
+        let (account, org) = signed_up(&store);
+        let (_, user_code) = requested(&store, "shared");
+
+        assert!(
+            store
+                .approve_device_authorization(&user_code, &org.id, &account.id, "frg_first", NOW)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .approve_device_authorization(&user_code, &org.id, &account.id, "frg_second", NOW)
+                .unwrap(),
+            "a second approval must not overwrite the first"
+        );
+    }
+
+    #[test]
+    fn a_denied_request_releases_nothing_and_says_so() {
+        // Kept rather than deleted, so the machine polling is told no and
+        // stops, instead of timing out and retrying into a wall.
+        let store = store();
+        let (device_code, user_code) = requested(&store, "not-mine");
+
+        assert!(store.deny_device_authorization(&user_code, NOW).unwrap());
+
+        let (auth, key) = store
+            .collect_device_authorization(&device_code, NOW)
+            .unwrap()
+            .unwrap();
+        assert_eq!(auth.status, DeviceAuthStatus::Denied);
+        assert_eq!(key, None);
+    }
+
+    #[test]
+    fn a_denied_request_cannot_then_be_approved() {
+        let store = store();
+        let (account, org) = signed_up(&store);
+        let (_, user_code) = requested(&store, "refused");
+
+        store.deny_device_authorization(&user_code, NOW).unwrap();
+        assert!(
+            !store
+                .approve_device_authorization(&user_code, &org.id, &account.id, "frg_x", NOW)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn an_expired_request_can_neither_be_approved_nor_collected() {
+        let store = store();
+        let (account, org) = signed_up(&store);
+        let (device_code, user_code) = requested(&store, "too-slow");
+        let later = NOW + 900_001;
+
+        assert!(
+            !store
+                .approve_device_authorization(&user_code, &org.id, &account.id, "frg_x", later)
+                .unwrap()
+        );
+
+        // And one approved in time still cannot be collected out of time: the
+        // window bounds how long a minted credential can sit unclaimed.
+        store
+            .approve_device_authorization(&user_code, &org.id, &account.id, "frg_x", NOW)
+            .unwrap();
+        let (_, key) = store
+            .collect_device_authorization(&device_code, later)
+            .unwrap()
+            .unwrap();
+        assert_eq!(key, None);
+    }
+
+    #[test]
+    fn a_device_code_nobody_issued_is_not_found() {
+        let store = store();
+        assert_eq!(
+            store
+                .collect_device_authorization(&secret::new_device_code(), NOW)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_user_code_is_found_however_it_was_typed() {
+        let store = store();
+        let (_, user_code) = requested(&store, "typed");
+        let pretty = secret::format_user_code(&user_code);
+
+        for typed in [pretty.clone(), pretty.to_lowercase(), user_code.clone()] {
+            let found = store.device_authorization(&typed).unwrap();
+            assert_eq!(
+                found.map(|auth| auth.name),
+                Some("typed".to_owned()),
+                "{typed}"
+            );
+        }
+    }
+
+    #[test]
+    fn purging_removes_only_what_has_expired() {
+        let store = store();
+        requested(&store, "live");
+        assert_eq!(store.purge_device_authorizations(NOW).unwrap(), 0);
+        assert_eq!(store.purge_device_authorizations(NOW + 900_001).unwrap(), 1);
     }
 
     #[test]
