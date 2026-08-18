@@ -8,6 +8,9 @@ rust-version.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# The build script reads `frontendDist` out of tauri.conf.json rather than
+# repeating the path, so the two cannot drift apart. See build.rs.
+serde_json = "1"
 
 [dependencies]
 forge-app.workspace = true

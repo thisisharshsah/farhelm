@@ -162,6 +162,18 @@ fn resolve_app_dir(explicit: Option<&str>) -> Option<std::path::PathBuf> {
 
     candidates.into_iter().find_map(built)
 }
+
+/// Whether what we found is the desktop build script's placeholder rather than
+/// the built app.
+///
+/// The placeholder exists so the Rust build does not depend on a JavaScript
+/// build (see `desktop/src-tauri/build.rs`), and it is worth serving — it is the
+/// page that says what to run. But it must not be *reported* as the app. A
+/// banner line claiming the app is up, over a page saying it is not built, is
+/// the kind of disagreement that costs an hour to notice.
+fn is_placeholder_app(dir: &std::path::Path) -> bool {
+    dir.join(".not-built").is_file()
+}
 const DEFAULT_KEY: &str = "forge.key";
 
 fn main() -> ExitCode {
@@ -618,6 +630,10 @@ async fn serve_async(flags: Flags) -> Fallible {
         flags.key
     );
     match &app_dir {
+        Some(dir) if is_placeholder_app(dir) => println!(
+            "  app        not built — http://{addr}/ explains what to run\n\
+             \x20            (`pnpm --filter @relayforge/web build`)"
+        ),
         Some(dir) => println!("  app        http://{addr}/  (from {})", dir.display()),
         None => println!(
             "  app        not found — run `pnpm --filter @relayforge/web build`,\n\
@@ -1381,5 +1397,28 @@ mod app_dir_tests {
         // it were the app — every route would 404 with no explanation.
         let dir = TempDir::new("no-index");
         assert_eq!(resolve_app_dir(Some(&dir.0.display().to_string())), None);
+    }
+
+    #[test]
+    fn the_build_scripts_placeholder_is_served_but_not_called_the_app() {
+        // `desktop/src-tauri/build.rs` writes an index.html so that cargo does
+        // not depend on pnpm. It is worth serving — it says what to run — but
+        // reporting it as the app would mean a banner that disagrees with the
+        // page it points at.
+        let dir = TempDir::new("placeholder").with_index();
+        std::fs::write(dir.0.join(".not-built"), "").unwrap();
+
+        assert_eq!(
+            resolve_app_dir(Some(&dir.0.display().to_string())),
+            Some(dir.0.clone()),
+            "the placeholder is still served"
+        );
+        assert!(is_placeholder_app(&dir.0));
+    }
+
+    #[test]
+    fn a_real_build_is_not_mistaken_for_the_placeholder() {
+        let dir = TempDir::new("real").with_index();
+        assert!(!is_placeholder_app(&dir.0));
     }
 }
