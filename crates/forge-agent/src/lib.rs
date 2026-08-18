@@ -37,6 +37,7 @@
 //! [`verify`].
 
 pub mod diff;
+pub mod git;
 pub mod script;
 pub mod task;
 pub mod tools;
