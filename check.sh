@@ -8,6 +8,14 @@ set -euo pipefail
 
 step() { printf '\n\033[1m▸ %s\033[0m\n' "$1"; }
 
+step "Web app + service worker build"
+# First, not last. The desktop crate's `frontendDist` points at `web/dist`, and
+# `tauri::generate_context!` reads it at macro-expansion time — so every cargo
+# command below wants it to exist. The build script writes a placeholder when it
+# is missing, which keeps a bare `cargo test --workspace` working; running the
+# real build here means the rest of this script lints and tests what ships.
+pnpm --filter @relayforge/web build >/dev/null
+
 step "Rust: format"
 cargo fmt --all --check
 
@@ -62,9 +70,6 @@ pnpm -r typecheck
 
 step "JavaScript: tests"
 pnpm -r test
-
-step "Web app + service worker build"
-pnpm --filter @relayforge/web build >/dev/null
 
 step "Swift: the watch"
 if command -v swift >/dev/null; then
