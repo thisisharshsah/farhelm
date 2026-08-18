@@ -569,3 +569,258 @@ async fn two_devices_on_one_channel_still_only_hear_ciphertext() {
     let opened = phone.open(runner.public_key(), &forwarded).unwrap();
     assert_eq!(opened, b"rm -rf /very/secret/path");
 }
+
+/* ------------------------------------------------- self-enrolment (device flow) */
+
+/// The whole point of the device flow: a machine joins a workspace without
+/// anybody copying a secret onto it.
+#[tokio::test]
+async fn a_machine_enrols_itself_after_a_human_approves_the_code() {
+    let world = spawn().await;
+    let (access, _) = world.sign_up("harsh@example.com").await;
+
+    // 1. The machine asks. Unauthenticated — it has no credential yet.
+    let (status, issued) = world
+        .post(
+            "/v1/device/code",
+            None,
+            json!({ "name": "build-server", "version": "0.1.0" }),
+        )
+        .await;
+    assert_eq!(status, 200, "{issued}");
+    let device_code = issued["device_code"].as_str().unwrap().to_owned();
+    let user_code = issued["user_code"].as_str().unwrap().to_owned();
+    assert!(
+        user_code.contains('-'),
+        "user code should be legible: {user_code}"
+    );
+    assert!(
+        issued["verification_uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("/#/connect"),
+        "{issued}"
+    );
+
+    // 2. Polling before anybody answers says so, and releases nothing.
+    let (status, answer) = world
+        .post(
+            "/v1/device/token",
+            None,
+            json!({ "device_code": device_code }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(answer["status"], "pending");
+    assert!(answer["enrollment_key"].is_null());
+
+    // 3. The signed-in human sees which machine is asking before deciding.
+    let (status, pending) = world.get(&format!("/v1/device/{user_code}"), &access).await;
+    assert_eq!(status, 200, "{pending}");
+    assert_eq!(pending["name"], "build-server");
+    assert_eq!(pending["status"], "pending");
+
+    // 4. …and approves it.
+    let (status, decided) = world
+        .post(
+            &format!("/v1/device/{user_code}/approve"),
+            Some(&access),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["status"], "approved");
+
+    // 5. The machine collects the credential it was never told.
+    let (status, answer) = world
+        .post(
+            "/v1/device/token",
+            None,
+            json!({ "device_code": device_code }),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(answer["status"], "approved");
+    let key = answer["enrollment_key"].as_str().unwrap().to_owned();
+    assert!(key.starts_with("frg_"), "{key}");
+
+    // 6. And that key actually enrols it — the whole flow is worth nothing if
+    //    what it hands back is not the credential the enrol route accepts.
+    let (status, enrolled) = world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({
+                "name": "build-server",
+                "public_key": forge_crypto::Identity::generate().public_key().to_string(),
+                "version": "0.1.0",
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{enrolled}");
+    assert!(!enrolled["channel"].as_str().unwrap().is_empty());
+
+    // 7. The machine is now in the fleet the web app renders.
+    let (status, workspace) = world.get("/v1/workspace", &access).await;
+    assert_eq!(status, 200);
+    let runners = workspace["runners"].as_array().unwrap();
+    assert_eq!(runners.len(), 1);
+    assert_eq!(runners[0]["name"], "build-server");
+}
+
+#[tokio::test]
+async fn a_credential_is_handed_over_exactly_once() {
+    // Two polls racing must not both walk away with a usable key.
+    let world = spawn().await;
+    let (access, _) = world.sign_up("harsh@example.com").await;
+
+    let (_, issued) = world
+        .post("/v1/device/code", None, json!({ "name": "laptop" }))
+        .await;
+    let device_code = issued["device_code"].as_str().unwrap().to_owned();
+    let user_code = issued["user_code"].as_str().unwrap().to_owned();
+    world
+        .post(
+            &format!("/v1/device/{user_code}/approve"),
+            Some(&access),
+            json!({}),
+        )
+        .await;
+
+    let (_, first) = world
+        .post(
+            "/v1/device/token",
+            None,
+            json!({ "device_code": device_code }),
+        )
+        .await;
+    let (_, second) = world
+        .post(
+            "/v1/device/token",
+            None,
+            json!({ "device_code": device_code }),
+        )
+        .await;
+
+    assert_eq!(first["status"], "approved");
+    assert!(first["enrollment_key"].as_str().is_some());
+    assert_eq!(
+        second["status"], "expired",
+        "the key was released a second time: {second}"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_machine_is_told_no_rather_than_left_polling() {
+    let world = spawn().await;
+    let (access, _) = world.sign_up("harsh@example.com").await;
+
+    let (_, issued) = world
+        .post("/v1/device/code", None, json!({ "name": "not-mine" }))
+        .await;
+    let device_code = issued["device_code"].as_str().unwrap().to_owned();
+    let user_code = issued["user_code"].as_str().unwrap().to_owned();
+
+    let (status, _) = world
+        .post(
+            &format!("/v1/device/{user_code}/deny"),
+            Some(&access),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200);
+
+    let (_, answer) = world
+        .post(
+            "/v1/device/token",
+            None,
+            json!({ "device_code": device_code }),
+        )
+        .await;
+    assert_eq!(answer["status"], "denied");
+    assert!(answer["enrollment_key"].is_null());
+}
+
+#[tokio::test]
+async fn a_code_cannot_be_approved_by_somebody_who_is_not_signed_in() {
+    let world = spawn().await;
+    world.sign_up("harsh@example.com").await;
+
+    let (_, issued) = world
+        .post("/v1/device/code", None, json!({ "name": "target" }))
+        .await;
+    let user_code = issued["user_code"].as_str().unwrap().to_owned();
+
+    let (status, _) = world
+        .post(&format!("/v1/device/{user_code}/approve"), None, json!({}))
+        .await;
+    assert_eq!(status, 401, "an unauthenticated approval must be refused");
+}
+
+#[tokio::test]
+async fn one_workspace_cannot_approve_a_code_and_have_another_pay_for_it() {
+    // The code carries no workspace of its own — it belongs to whoever approves
+    // it. What must not happen is a machine landing anywhere but in the
+    // approver's fleet.
+    let world = spawn().await;
+    let (mine, _) = world.sign_up("harsh@example.com").await;
+    let (theirs, _) = world.sign_up("someone@example.com").await;
+
+    let (_, issued) = world
+        .post("/v1/device/code", None, json!({ "name": "contested" }))
+        .await;
+    let device_code = issued["device_code"].as_str().unwrap().to_owned();
+    let user_code = issued["user_code"].as_str().unwrap().to_owned();
+
+    world
+        .post(
+            &format!("/v1/device/{user_code}/approve"),
+            Some(&theirs),
+            json!({}),
+        )
+        .await;
+
+    let (_, answer) = world
+        .post(
+            "/v1/device/token",
+            None,
+            json!({ "device_code": device_code }),
+        )
+        .await;
+    let key = answer["enrollment_key"].as_str().unwrap().to_owned();
+    world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({
+                "name": "contested",
+                "public_key": forge_crypto::Identity::generate().public_key().to_string(),
+                "version": "0.1.0",
+            }),
+        )
+        .await;
+
+    // It landed in the approver's fleet, and only there.
+    let (_, theirs_workspace) = world.get("/v1/workspace", &theirs).await;
+    let (_, my_workspace) = world.get("/v1/workspace", &mine).await;
+    assert_eq!(theirs_workspace["runners"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        my_workspace["runners"].as_array().unwrap().len(),
+        0,
+        "a machine appeared in a workspace that never approved it"
+    );
+}
+
+#[tokio::test]
+async fn a_device_code_nobody_issued_is_answered_the_same_as_an_expired_one() {
+    // Distinguishing them would let somebody probe for live codes.
+    let world = spawn().await;
+    let (_, answer) = world
+        .post(
+            "/v1/device/token",
+            None,
+            json!({ "device_code": "frgd_not-a-real-code" }),
+        )
+        .await;
+    assert_eq!(answer["status"], "expired");
+}

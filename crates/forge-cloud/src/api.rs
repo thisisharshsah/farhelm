@@ -31,7 +31,8 @@ use forge_crypto::token::{Audience, Claims, Role};
 
 use crate::billing::BillingError;
 use crate::model::{
-    Account, Device, EnrollmentKey, Org, Runner, RunnerView, Subscription, Workspace,
+    Account, Device, DeviceAuthStatus, DeviceAuthorization, EnrollmentKey, Org, Runner, RunnerView,
+    Subscription, Workspace,
 };
 use crate::plan::{Limits, Plan, Resource, Usage, may_add};
 use crate::secret;
@@ -83,6 +84,11 @@ pub fn router(state: Arc<CloudState>) -> Router {
         .route("/v1/billing/checkout", post(checkout))
         .route("/v1/billing/portal", post(portal))
         // -- a machine
+        .route("/v1/device/code", post(request_device_code))
+        .route("/v1/device/token", post(collect_device_token))
+        .route("/v1/device/{user_code}", get(pending_device))
+        .route("/v1/device/{user_code}/approve", post(approve_device))
+        .route("/v1/device/{user_code}/deny", post(deny_device))
         .route("/v1/runners/enroll", post(enroll_runner))
         .route("/v1/runners/heartbeat", post(heartbeat))
         // The clients are served from the same origin in production (one
@@ -176,6 +182,16 @@ impl ApiError {
 
     fn bad_request(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, message)
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_FOUND, message)
+    }
+
+    /// The request was understood and the state says no — a code somebody
+    /// already answered, most often because two people opened the same link.
+    fn conflict(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, message)
     }
 }
 
@@ -1273,6 +1289,290 @@ async fn revoke_enrollment_key(
         .store
         .revoke_enrollment_key(&caller.org_id, &id, now_ms())?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/* --------------------------------------------------- device authorization */
+
+/// How long a machine's request stays open.
+///
+/// Long enough to walk to another room and unlock a phone; short enough that a
+/// code read aloud in an office is useless by the time it matters. Both the
+/// approval and the collection have to happen inside it.
+const DEVICE_CODE_TTL_MS: i64 = 15 * 60 * 1000;
+
+/// How often the machine should poll, in seconds.
+///
+/// Sent to the client rather than hard-coded there, so this deployment can slow
+/// it down without shipping a new runner.
+const DEVICE_POLL_INTERVAL_SECS: u64 = 5;
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceCodeBody {
+    /// What the machine calls itself. This is the whole of what a human sees
+    /// before they approve, so it is worth the runner sending its hostname.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceCodeIssued {
+    /// The machine's half. Never displayed, never typed — it is what proves the
+    /// collector is the same process that asked.
+    pub device_code: String,
+    /// The human's half, in `XXXX-XXXX` form.
+    pub user_code: String,
+    /// Where to go and approve it.
+    pub verification_uri: String,
+    pub interval: u64,
+    pub expires_in: i64,
+}
+
+/// A machine asks to join. Unauthenticated, necessarily — the entire point is
+/// that this machine has no credential yet.
+///
+/// Nothing is granted here and no key is minted: this only creates a request
+/// that a signed-in human can later agree to. That is what makes it safe to
+/// leave open.
+async fn request_device_code(
+    State(state): State<Arc<CloudState>>,
+    Json(body): Json<DeviceCodeBody>,
+) -> ApiResult<DeviceCodeIssued> {
+    let now = now_ms();
+    // Housekeeping on the one route that creates rows, so dead requests cannot
+    // accumulate and collide with a fresh user code.
+    let _ = state.store.purge_device_authorizations(now);
+
+    let device_code = secret::new_device_code();
+    let user_code = secret::new_user_code();
+    let auth = DeviceAuthorization {
+        user_code: secret::normalise_user_code(&user_code),
+        name: sane_name(&body.name, "A machine"),
+        version: body.version.clone(),
+        status: DeviceAuthStatus::Pending,
+        created_at: now,
+        expires_at: now + DEVICE_CODE_TTL_MS,
+    };
+    state
+        .store
+        .insert_device_authorization(&device_code, &auth)?;
+
+    Ok(Json(DeviceCodeIssued {
+        device_code,
+        user_code,
+        // Hash route, like every other link this service hands out — the web
+        // app is a single page and `/connect` alone would 404 on refresh.
+        verification_uri: format!(
+            "{}/#/connect",
+            state.config.public_url.trim_end_matches('/')
+        ),
+        interval: DEVICE_POLL_INTERVAL_SECS,
+        expires_in: DEVICE_CODE_TTL_MS / 1000,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceTokenBody {
+    pub device_code: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DeviceTokenAnswer {
+    /// Still waiting on a human. The machine polls again.
+    Pending { interval: u64 },
+    /// Approved, and here is the credential — once.
+    Approved {
+        enrollment_key: String,
+        /// Echoed back so the runner writes the URL it actually enrolled
+        /// against, rather than whatever was typed on the command line.
+        cloud_url: String,
+    },
+    /// A human said no. The machine stops rather than polling into a wall.
+    Denied,
+    /// Nobody answered in time, or the credential was already collected.
+    Expired,
+}
+
+/// The machine collects its credential, presenting the device code it kept.
+///
+/// Unauthenticated in the session sense and authenticated in the only sense
+/// that matters here: the device code is 256 bits that never left the machine,
+/// and it is the sole thing that can turn somebody's approval into a key.
+async fn collect_device_token(
+    State(state): State<Arc<CloudState>>,
+    Json(body): Json<DeviceTokenBody>,
+) -> ApiResult<DeviceTokenAnswer> {
+    let now = now_ms();
+    let found = state
+        .store
+        .collect_device_authorization(body.device_code.trim(), now)?;
+
+    // A device code nobody issued and one that has expired are answered
+    // identically. Distinguishing them would let somebody probe for live codes.
+    let Some((auth, key)) = found else {
+        return Ok(Json(DeviceTokenAnswer::Expired));
+    };
+
+    let answer = match auth.status {
+        _ if auth.is_expired(now) => DeviceTokenAnswer::Expired,
+        DeviceAuthStatus::Pending => DeviceTokenAnswer::Pending {
+            interval: DEVICE_POLL_INTERVAL_SECS,
+        },
+        DeviceAuthStatus::Denied => DeviceTokenAnswer::Denied,
+        DeviceAuthStatus::Approved => match key {
+            Some(enrollment_key) => DeviceTokenAnswer::Approved {
+                enrollment_key,
+                cloud_url: state.config.public_url.clone(),
+            },
+            // Approved, but the key is gone — this poll lost the race with the
+            // one that collected it. Not an error to report to a human: the
+            // machine that has it is already enrolling.
+            None => DeviceTokenAnswer::Expired,
+        },
+    };
+    Ok(Json(answer))
+}
+
+/// What the approval screen shows before anybody taps yes.
+async fn pending_device(
+    caller: Caller,
+    State(state): State<Arc<CloudState>>,
+    Path(user_code): Path<String>,
+) -> ApiResult<DeviceAuthorization> {
+    caller.requires(Role::Admin)?;
+    let now = now_ms();
+
+    let auth = state
+        .store
+        .device_authorization(&user_code)?
+        .filter(|auth| !auth.is_expired(now))
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "that code is not one this workspace is waiting on — check it, or ask \
+                 the machine for a fresh one",
+            )
+        })?;
+    Ok(Json(auth))
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceDecision {
+    pub user_code: String,
+    pub name: String,
+    pub status: DeviceAuthStatus,
+}
+
+/// A signed-in human lets the machine in.
+///
+/// This is where the enrolment key is minted — not when the machine asked. A
+/// key that existed before anybody agreed would be a credential sitting in the
+/// database waiting for whoever found it.
+///
+/// Admin-only, like creating an enrolment key by hand: this adds a machine to
+/// the workspace, and the fact that the request came from the machine rather
+/// than from the web app does not make it a smaller decision.
+async fn approve_device(
+    caller: Caller,
+    State(state): State<Arc<CloudState>>,
+    Path(user_code): Path<String>,
+) -> ApiResult<DeviceDecision> {
+    caller.requires(Role::Admin)?;
+    let now = now_ms();
+
+    let auth = state
+        .store
+        .device_authorization(&user_code)?
+        .filter(|auth| !auth.is_expired(now))
+        .ok_or_else(|| {
+            ApiError::not_found("that code has expired — ask the machine for a fresh one")
+        })?;
+
+    if auth.status != DeviceAuthStatus::Pending {
+        return Err(ApiError::conflict(format!(
+            "that code was already {}",
+            auth.status.as_str()
+        )));
+    }
+
+    // A machine counts against the plan the moment it can enrol, so the limit
+    // is checked here rather than at enrolment — refusing after somebody has
+    // already tapped approve is a worse place to find out.
+    let subscription = state.store.subscription(&caller.org_id)?;
+    may_add(
+        subscription.effective_plan(),
+        state.store.usage(&caller.org_id)?,
+        Resource::Runner,
+    )?;
+
+    let token = secret::new_enrollment_key();
+    let key = EnrollmentKey {
+        id: new_id("key"),
+        org_id: caller.org_id.clone(),
+        // Named after the machine, so the key list reads as a list of machines
+        // rather than a list of anonymous secrets.
+        name: format!("{} (self-enrolled)", auth.name),
+        prefix: secret::displayed_prefix(&token),
+        created_at: now,
+        created_by: caller.account_id.clone(),
+        last_used_at: None,
+        revoked_at: None,
+    };
+    state
+        .store
+        .insert_enrollment_key(&key, &secret::hash_token(&token))?;
+
+    if !state.store.approve_device_authorization(
+        &user_code,
+        &caller.org_id,
+        &caller.account_id,
+        &token,
+        now,
+    )? {
+        // Somebody else approved it between the read above and this write. The
+        // key just minted is not attached to anything, so revoke it rather than
+        // leaving a live credential nobody will ever use.
+        let _ = state
+            .store
+            .revoke_enrollment_key(&caller.org_id, &key.id, now);
+        return Err(ApiError::conflict("that code was already answered"));
+    }
+
+    Ok(Json(DeviceDecision {
+        user_code: secret::format_user_code(&user_code),
+        name: auth.name,
+        status: DeviceAuthStatus::Approved,
+    }))
+}
+
+/// A signed-in human refuses.
+async fn deny_device(
+    caller: Caller,
+    State(state): State<Arc<CloudState>>,
+    Path(user_code): Path<String>,
+) -> ApiResult<DeviceDecision> {
+    caller.requires(Role::Admin)?;
+    let now = now_ms();
+
+    let auth = state
+        .store
+        .device_authorization(&user_code)?
+        .filter(|auth| !auth.is_expired(now))
+        .ok_or_else(|| ApiError::not_found("that code has expired"))?;
+
+    if !state.store.deny_device_authorization(&user_code, now)? {
+        return Err(ApiError::conflict(format!(
+            "that code was already {}",
+            auth.status.as_str()
+        )));
+    }
+
+    Ok(Json(DeviceDecision {
+        user_code: secret::format_user_code(&user_code),
+        name: auth.name,
+        status: DeviceAuthStatus::Denied,
+    }))
 }
 
 /* ------------------------------------------------------------------- billing */

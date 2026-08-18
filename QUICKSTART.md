@@ -143,16 +143,45 @@ forge-cloud --app-dir web/dist                  # accounts, plans, the app
 forge-relay --vapid-key vapid.key --auth-from http://127.0.0.1:7844
 ```
 
-Open `http://127.0.0.1:7844`, create an account, then
-**Workspace → Add a machine → Create key**. On the machine you want supervised:
+Open `http://127.0.0.1:7844` and create an account. Then, **on the machine you
+want supervised** — including one you only have over SSH:
 
 ```sh
-FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=http://127.0.0.1:7844 forge-runner serve
+forge-runner login --cloud http://127.0.0.1:7844
+```
+
+It prints a code and waits:
+
+```
+  Open   http://127.0.0.1:7844/#/connect
+  Code   BKPT-4QW9
+
+  Approve it as "build-server". Waiting…
+```
+
+Open that link anywhere you are already signed in — laptop, phone — type the
+code, and confirm the machine's name. The runner stores what it is given and
+from then on:
+
+```sh
+forge-runner serve          # no flags, no environment variables
 ```
 
 It appears in your fleet within thirty seconds. On the phone, open the app and
 sign in with the same account — **no pairing code, no QR, and no need to be on
 the runner's network.** Pick the machine if you have more than one.
+
+`forge-runner logout` forgets the stored credential on that machine.
+
+> **Why it works this way.** The machine generates a 256-bit secret it never
+> shows anybody, and you get eight characters you can read off a console. The
+> credential is minted only when you approve, and handed only to whoever holds
+> that secret — so nothing usable ever passes through your clipboard, your shell
+> history, or a chat message. It is the same shape as `gh auth login`.
+>
+> The older way still works and is the right one for machines you provision from
+> a script: create a key under **Workspace → Add a machine**, then start the
+> runner with `FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=… forge-runner serve`.
 
 Then turn on notifications, and read the iOS note at the end of Route B: it is
 the single most common reason push appears broken.

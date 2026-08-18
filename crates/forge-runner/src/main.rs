@@ -6,6 +6,7 @@
 //! (M2), and the relay link (M3).
 
 use forge_sqlite::SqliteStore;
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,6 +37,8 @@ USAGE:
     forge-runner demo
     forge-runner hook
     forge-runner install-hooks
+    forge-runner login --cloud <url> [--cloud-name <name>] [--cloud-file <path>]
+    forge-runner logout [--cloud-file <path>]
     forge-runner pair [--port <port>]
     forge-runner policy [--policy <path>] [<command>...]
     forge-runner install-service [--relay <ws-url>]
@@ -48,6 +51,12 @@ USAGE:
     hook           Read a Claude Code hook event on stdin, answer on stdout.
                    Not run by hand — registered in .claude/settings.json.
     install-hooks  Print the settings block that registers this binary.
+    login          Join a workspace by asking. Prints a short code, waits while
+                   you approve it in the web app, then stores what it is given —
+                   after which `serve` needs no cloud flags at all. Nothing is
+                   copied by hand, and it works over SSH. `serve --cloud <url>`
+                   does this by itself on a machine that has not enrolled.
+    logout         Forget those stored credentials on this machine.
     pair           Mint a pairing offer and show it as a QR code.
     install-service  Print a systemd unit with this machine's paths filled in.
     policy         Show the destructive-command rules in force. With a command,
@@ -71,6 +80,7 @@ ENVIRONMENT:
 
 DEFAULTS:
     --db forge.db    --port 7842    --app-dir web/dist    --key forge.key
+    --cloud-file forge.cloud.json   (written by `login`, mode 0600)
     --policy forge.policy.toml   (optional; the built-in rules stand alone)
     --terminal auto  (tmux when installed, otherwise this process's own PTYs)
 
@@ -84,11 +94,29 @@ TERMINAL BACKENDS:
 With --relay, the runner dials out to a relay and becomes reachable from a
 paired phone anywhere. Without it, it serves on loopback only.
 
-With --cloud and --cloud-key it enrols with a control plane instead, and there
-is nothing to pair: the machine appears in your fleet, and any device signed
-into that workspace can reach it. The control plane says which relay to dial, so
---relay is not needed alongside it. Create an enrolment key in the web app under
-Settings → Machines.
+With a control plane it enrols instead, and there is nothing to pair: the
+machine appears in your fleet, and any device signed into that workspace can
+reach it. The control plane says which relay to dial, so --relay is not needed
+alongside it.
+
+The short way, and the one to use — on a machine that has never enrolled,
+`serve` asks rather than giving up:
+
+    forge-runner serve --cloud https://your-control-plane
+
+It prints a code, waits while you approve it in the web app, stores what it is
+given, and carries straight on into serving. Every later `serve` needs no flags
+at all. `forge-runner login` does the joining half on its own, for when you want
+to enrol now and start the daemon later.
+
+Asking only happens on a terminal. Under launchd or systemd there is nobody to
+read a code, so a service with no stored credential says so and serves loopback
+rather than blocking.
+
+`login` prints a code, you approve it once in the web app, and the credential is
+written here rather than typed here. The long way — creating an enrolment key
+under Settings → Machines and passing --cloud-key — still works, and is what to
+use for a fleet you provision from a script.
 
 Enrolling does not weaken the encryption. Devices still generate their own keys
 and everything still travels sealed between a device and this machine; what the
@@ -148,6 +176,8 @@ fn main() -> ExitCode {
         Some("hook") => run_hook(),
         Some("install-hooks") => install_hooks(),
         Some("pair") => pair(&flags),
+        Some("login") => login(&flags),
+        Some("logout") => logout(&flags),
         Some("policy") => policy_command(&flags, &args[1..]),
         Some("install-service") => install_service(&flags),
         _ => {
@@ -180,6 +210,8 @@ struct Flags {
     cloud_key: Option<String>,
     /// What this machine is called in the fleet. Defaults to its hostname.
     cloud_name: Option<String>,
+    /// Where `login` writes what it was given, and where `serve` looks for it.
+    cloud_file: String,
     /// This machine's public URL, when it is exposed as an MCP connector.
     /// Absent means the connector is not served at all.
     mcp_url: Option<String>,
@@ -209,6 +241,8 @@ impl Flags {
             cloud: value_of("--cloud").or_else(|| std::env::var("FORGE_CLOUD_URL").ok()),
             cloud_key: value_of("--cloud-key").or_else(|| std::env::var("FORGE_CLOUD_KEY").ok()),
             cloud_name: value_of("--cloud-name"),
+            cloud_file: value_of("--cloud-file")
+                .unwrap_or_else(|| forge_runner::cloud::DEFAULT_CREDENTIALS_FILE.to_owned()),
             mcp_url: value_of("--mcp-url").or_else(|| std::env::var("FORGE_MCP_URL").ok()),
             terminal: value_of("--terminal"),
             policy: value_of("--policy"),
@@ -405,7 +439,7 @@ async fn serve_async(flags: Flags) -> Fallible {
     // Awaited rather than spawned: which relay to dial and which channel to
     // publish on are the control plane's answers, and starting the link on a
     // guess would mean publishing into silence until the first heartbeat landed.
-    let cloud_session = match cloud_config(&flags) {
+    let cloud_session = match cloud_config_or_ask(&flags).await {
         Some(config) => {
             match forge_runner::cloud::enroll_with_retry(&config, identity.public_key().as_str())
                 .await
@@ -843,25 +877,225 @@ fn mcp_settings(
 
 /// The control-plane configuration, if this runner has one.
 ///
-/// Both a URL and a key are required. A URL without a key used to be a plausible
-/// half-configuration; it is not, because enrolment is the only thing this link
-/// does first, and it cannot happen anonymously.
+/// Two ways to have one, checked in this order:
+///
+/// 1. `--cloud` **and** `--cloud-key`, as before. Explicit flags win, so a
+///    machine can be pointed somewhere else for one run without disturbing what
+///    `login` stored.
+/// 2. Whatever `forge-runner login` wrote. This is the path that makes a fresh
+///    install a single command with no secret to copy — see [`login`].
+///
+/// A URL without a key was once a plausible half-configuration; it is not,
+/// because enrolment is the only thing this link does first and it cannot happen
+/// anonymously. It is now also unnecessary: `--cloud` alone will use a stored
+/// key if there is one.
 fn cloud_config(flags: &Flags) -> Option<forge_runner::cloud::CloudConfig> {
-    let base_url = flags.cloud.clone()?;
-    let Some(enrollment_key) = flags.cloud_key.clone() else {
-        eprintln!(
-            "  cloud      --cloud was given without --cloud-key (or FORGE_CLOUD_KEY); \
-             not enrolling"
-        );
-        return None;
+    let version = env!("CARGO_PKG_VERSION").to_owned();
+
+    if let (Some(base_url), Some(enrollment_key)) = (flags.cloud.clone(), flags.cloud_key.clone()) {
+        return Some(forge_runner::cloud::CloudConfig {
+            base_url,
+            enrollment_key,
+            name: flags.cloud_name.clone().unwrap_or_else(machine_name),
+            version,
+        });
+    }
+
+    let stored = match forge_runner::cloud::Credentials::load(Path::new(&flags.cloud_file)) {
+        Ok(stored) => stored,
+        Err(err) => {
+            // Loud, not silent. A credential file that exists but cannot be
+            // read is a machine that will quietly serve loopback only, and the
+            // reason has to be on the banner rather than in somebody's guess.
+            eprintln!("  cloud      {}: {err}", flags.cloud_file);
+            None
+        }
     };
 
-    Some(forge_runner::cloud::CloudConfig {
-        base_url,
-        enrollment_key,
-        name: flags.cloud_name.clone().unwrap_or_else(machine_name),
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+    match stored {
+        Some(stored) => Some(forge_runner::cloud::CloudConfig {
+            // An explicit `--cloud` still overrides where to go, so a stored
+            // machine can be repointed at a staging control plane for one run.
+            base_url: flags.cloud.clone().unwrap_or(stored.url),
+            enrollment_key: stored.enrollment_key,
+            name: flags.cloud_name.clone().unwrap_or(stored.name),
+            version,
+        }),
+        // Silent, deliberately. Whether "no credential" is worth complaining
+        // about depends on what happens next, and only the caller knows: on a
+        // terminal it is about to be fixed by asking, and saying "run login
+        // first" immediately before doing exactly that reads as a bug.
+        // `cloud_config_or_ask` reports it in the case that stays broken.
+        None => None,
+    }
+}
+
+/// Enrol this machine by asking, rather than by being told a secret.
+///
+/// The shape is the OAuth device authorization grant, for the reason it exists:
+/// the thing that needs a credential — a server over SSH, a desktop app on a
+/// laptop — is not the thing that can conveniently show somebody a login page.
+/// So the machine generates a secret it keeps, gets back eight characters a
+/// person can read off a console, and waits while they approve it wherever they
+/// are already signed in.
+///
+/// What this replaces is copying `frg_…` by hand, which put a long-lived bearer
+/// credential through a clipboard, a shell history and quite often a chat
+/// message — and could not be done at all on a box whose browser belongs to
+/// somebody else.
+fn login(flags: &Flags) -> Fallible {
+    let base_url = flags
+        .cloud
+        .clone()
+        .ok_or("--cloud <url> is required — that is the control plane to join")?;
+    let name = flags.cloud_name.clone().unwrap_or_else(machine_name);
+    let path = Path::new(&flags.cloud_file).to_path_buf();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    runtime.block_on(async move {
+        ask_to_join(&base_url, &name, &path).await?;
+        println!("  `forge-runner serve` now connects with no further flags.");
+        Ok(())
     })
+}
+
+/// Run the device flow to completion and write what it yields.
+///
+/// Shared by [`login`] and by `serve` on a machine that has never enrolled,
+/// because they are the same exchange — one of them just happens to be on the
+/// way to somewhere else.
+async fn ask_to_join(
+    base_url: &str,
+    name: &str,
+    path: &Path,
+) -> Result<forge_runner::cloud::Credentials, Box<dyn std::error::Error>> {
+    use forge_runner::cloud::{Credentials, DeviceAnswer};
+
+    let version = env!("CARGO_PKG_VERSION");
+    let issued = forge_runner::cloud::request_device_code(base_url, name, version).await?;
+
+    println!();
+    println!("  Open   {}", issued.verification_uri);
+    println!("  Code   {}", issued.user_code);
+    println!();
+    println!("  Approve it as \"{name}\". Waiting…");
+
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_secs(issued.expires_in.max(0) as u64);
+    let mut interval = Duration::from_secs(issued.interval.clamp(1, 60));
+
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err("nobody approved that code in time — run `login` again".into());
+        }
+        tokio::time::sleep(interval).await;
+
+        match forge_runner::cloud::poll_device_code(base_url, &issued.device_code).await {
+            Ok(DeviceAnswer::Pending { interval: next }) => {
+                interval = Duration::from_secs(next.clamp(1, 60));
+            }
+            Ok(DeviceAnswer::Approved {
+                enrollment_key,
+                cloud_url,
+            }) => {
+                let credentials = Credentials {
+                    url: cloud_url,
+                    enrollment_key,
+                    name: name.to_owned(),
+                };
+                credentials.save(path)?;
+
+                println!("  ✔ approved — enrolled as \"{name}\"");
+                println!();
+                println!("  Credentials written to {}", path.display());
+                return Ok(credentials);
+            }
+            Ok(DeviceAnswer::Denied) => Err("that request was refused")?,
+            Ok(DeviceAnswer::Expired) => {
+                Err("that code expired before it was approved — run `login` again")?
+            }
+            // The control plane going away mid-wait is not a refusal. Keep
+            // polling: a human walking to another room takes longer than a
+            // restart does.
+            Err(forge_runner::cloud::CloudError::Unreachable(_)) => {}
+            Err(err) => Err(err.to_string())?,
+        }
+    }
+}
+
+/// The control-plane configuration, asking for one if this machine has none.
+///
+/// `serve` on a machine that had never enrolled used to print a line about
+/// missing flags and carry on serving loopback — technically correct and
+/// useless, because the person watching had just typed the one command they
+/// knew and got a daemon nothing could reach.
+///
+/// So if there is a control plane to join and no credential to join it with,
+/// this *asks*, right there in the terminal, and carries on into `serve` once
+/// somebody approves. Installing and connecting become one command.
+///
+/// **Only when a human is watching.** Under launchd or systemd there is nobody
+/// to read a code, and a service that blocked for fifteen minutes waiting for
+/// an approval that cannot arrive would be a far worse failure than the loopback
+/// fallback it replaced. Non-interactive keeps exactly the old behaviour.
+async fn cloud_config_or_ask(flags: &Flags) -> Option<forge_runner::cloud::CloudConfig> {
+    use std::io::IsTerminal as _;
+
+    if let Some(config) = cloud_config(flags) {
+        return Some(config);
+    }
+
+    let base_url = flags.cloud.clone()?;
+    if !std::io::stdin().is_terminal() {
+        eprintln!(
+            "  cloud      no credential for {base_url}, and nothing is watching to \
+             approve one — run `forge-runner login --cloud {base_url}` here, or set \
+             FORGE_CLOUD_KEY"
+        );
+        eprintln!("  cloud      continuing on loopback only");
+        return None;
+    }
+
+    let name = flags.cloud_name.clone().unwrap_or_else(machine_name);
+    let path = Path::new(&flags.cloud_file).to_path_buf();
+    println!("  cloud      this machine has not joined {base_url} yet.");
+
+    match ask_to_join(&base_url, &name, &path).await {
+        Ok(credentials) => Some(forge_runner::cloud::CloudConfig {
+            base_url: credentials.url,
+            enrollment_key: credentials.enrollment_key,
+            name: credentials.name,
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        }),
+        Err(err) => {
+            eprintln!("  cloud      {err}");
+            eprintln!("  cloud      continuing on loopback only");
+            None
+        }
+    }
+}
+
+/// Forget what `login` stored.
+fn logout(flags: &Flags) -> Fallible {
+    let path = Path::new(&flags.cloud_file);
+    match std::fs::remove_file(path) {
+        Ok(()) => {
+            println!("Removed {}.", path.display());
+            println!(
+                "The machine stays in the fleet until somebody removes it there — \
+                 this only stops *this* copy from reconnecting."
+            );
+            Ok(())
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            println!("Nothing stored at {} — nothing to do.", path.display());
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 /// What to call this machine in the fleet.

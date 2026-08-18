@@ -139,6 +139,37 @@ export interface EnrollmentKey {
   revoked_at: number | null;
 }
 
+/** A machine waiting to be let into the workspace. */
+export interface PendingDevice {
+  /** Normalised: upper case, no dash. */
+  user_code: string;
+  /**
+   * What the machine calls itself — the only thing a human has to go on when
+   * deciding, so it is shown prominently rather than as a subtitle.
+   */
+  name: string;
+  version: string;
+  status: "pending" | "approved" | "denied";
+  created_at: number;
+  expires_at: number;
+}
+
+export interface DeviceDecision {
+  user_code: string;
+  name: string;
+  status: "pending" | "approved" | "denied";
+}
+
+/**
+ * Codes are shown as `BKPT-4QW9` and typed every other way.
+ *
+ * The server normalises too — this is so the URL a person is looking at matches
+ * what they typed, not a correctness measure.
+ */
+export function normaliseUserCode(code: string): string {
+  return code.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+}
+
 export interface PlanCard {
   plan: Plan;
   name: string;
@@ -567,6 +598,36 @@ export class CloudClient {
 
   revokeEnrollmentKey(id: string): Promise<void> {
     return this.call("DELETE", `/v1/enrollment-keys/${id}`);
+  }
+
+  /* ------------------------------------------------------- self-enrolment */
+
+  /**
+   * What a machine that ran `forge-runner login` is waiting to be told.
+   *
+   * The code is normalised here rather than at the call sites: people type it
+   * off a terminal with or without its dash, in either case.
+   */
+  pendingDevice(userCode: string): Promise<PendingDevice> {
+    return this.call<PendingDevice>(
+      "GET",
+      `/v1/device/${normaliseUserCode(userCode)}`,
+    );
+  }
+
+  /** Let it in. This is what mints its enrolment key. */
+  approveDevice(userCode: string): Promise<DeviceDecision> {
+    return this.call<DeviceDecision>(
+      "POST",
+      `/v1/device/${normaliseUserCode(userCode)}/approve`,
+    );
+  }
+
+  denyDevice(userCode: string): Promise<DeviceDecision> {
+    return this.call<DeviceDecision>(
+      "POST",
+      `/v1/device/${normaliseUserCode(userCode)}/deny`,
+    );
   }
 
   /* --------------------------------------------------------------- billing */

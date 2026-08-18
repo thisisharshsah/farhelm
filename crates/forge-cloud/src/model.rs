@@ -198,6 +198,63 @@ impl EnrollmentKey {
     }
 }
 
+/// Where a machine's request to join a workspace has got to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceAuthStatus {
+    /// Nobody has looked at it yet.
+    Pending,
+    /// Approved, and the credential is waiting to be collected — or has been.
+    Approved,
+    /// A human said no. Kept rather than deleted so the machine polling is told
+    /// "no" and stops, instead of timing out and retrying into a wall.
+    Denied,
+}
+
+impl DeviceAuthStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeviceAuthStatus::Pending => "pending",
+            DeviceAuthStatus::Approved => "approved",
+            DeviceAuthStatus::Denied => "denied",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "pending" => Some(DeviceAuthStatus::Pending),
+            "approved" => Some(DeviceAuthStatus::Approved),
+            "denied" => Some(DeviceAuthStatus::Denied),
+            _ => None,
+        }
+    }
+}
+
+/// A machine waiting to be let in.
+///
+/// Carries no secret, in keeping with the rest of this module: neither the
+/// device code (only its hash is stored) nor the enrolment key the approval
+/// mints. What a human needs in order to decide is the machine's name and when
+/// it asked — everything else would be noise on a confirmation screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceAuthorization {
+    /// Normalised: upper case, no dash.
+    pub user_code: String,
+    /// What the machine calls itself. The only thing the human has to go on,
+    /// so it is captured when the request is made and never rewritten.
+    pub name: String,
+    pub version: String,
+    pub status: DeviceAuthStatus,
+    pub created_at: i64,
+    pub expires_at: i64,
+}
+
+impl DeviceAuthorization {
+    pub fn is_expired(&self, now_ms: i64) -> bool {
+        now_ms >= self.expires_at
+    }
+}
+
 /// Everything the app needs to render the account area in one request.
 ///
 /// One round trip rather than five, because this is the payload behind the

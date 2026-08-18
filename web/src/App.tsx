@@ -4,6 +4,7 @@ import { sessionIdOf, useResource, useRoute } from "./hooks";
 import { migratePairing, webPairingStore } from "./platform";
 import { loopbackAvailable, useConnection } from "./connection";
 import { AuthScreen, MachinePicker, WelcomeScreen, readableError } from "./components/Auth";
+import { Connect } from "./components/Connect";
 import { AccountScreen, BillingScreen } from "./components/Account";
 import { PushSettings } from "./components/PushSettings";
 import { NewSession } from "./components/NewSession";
@@ -505,6 +506,27 @@ export default function App() {
             onAddMachine={() => navigate("/account")}
             busy={false}
           />
+        ) : null}
+
+        {route.view === "connect" ? (
+          connection.mode === "cloud" && connection.cloud ? (
+            <Connect
+              cloud={connection.cloud}
+              initialCode={route.code}
+              onDone={() => navigate("/")}
+            />
+          ) : (
+            // Signing in is the prerequisite, not an error. Say what to do
+            // rather than rendering an empty screen next to a live code.
+            <section className="card" aria-label="Connect a machine">
+              <h2 className="chart-title">Connect a machine</h2>
+              <p className="tile-note">
+                Sign in to this workspace first — approving a machine is a
+                decision only a member of it can make. The code stays valid for
+                fifteen minutes.
+              </p>
+            </section>
+          )
         ) : null}
 
         {route.view === "account" ? (
