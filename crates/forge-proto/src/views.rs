@@ -205,7 +205,7 @@ pub struct OutputLine {
 
 /// A task as a list renders it.
 ///
-/// Deliberately without `diff_json` or `staged_json`: the change set can be
+/// Deliberately without `diff_json` or `worktree_json`: the change set can be
 /// megabytes, and a list of twenty tasks would ship all twenty copies of it to
 /// a phone that is showing one line each.
 #[derive(Debug, Clone, Serialize)]

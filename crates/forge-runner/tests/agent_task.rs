@@ -108,12 +108,45 @@ fn state_for(provider_addr: SocketAddr) -> Arc<AppState> {
 struct TempRepo(PathBuf);
 
 impl TempRepo {
+    /// A real repository — a task cuts a branch before it does anything, so
+    /// there is no running one outside git.
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("forge-e2e-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
+        let repo = Self(dir);
+        repo.git(&["init", "-q", "-b", "main"]);
+        repo
     }
+
+    fn git(&self, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.0)
+            .args(args)
+            .status()
+            .expect("git should be installed");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    /// Commit what has been written, so the branch has a base to cut from.
+    /// A task cuts from `HEAD`, so uncommitted content is content it will not
+    /// see.
+    fn commit(&self) {
+        self.git(&["add", "-A"]);
+        self.git(&[
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ]);
+    }
+
     fn write(&self, relative: &str, content: &str) {
         std::fs::write(self.0.join(relative), content).unwrap();
     }
@@ -172,6 +205,7 @@ async fn wait_for_status(
 async fn a_task_proposes_a_diff_and_only_writes_it_once_approved() {
     let repo = TempRepo::new("propose");
     repo.write("src.txt", "fn greet() {\n    say(\"old\");\n}\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![
@@ -280,6 +314,7 @@ async fn a_task_proposes_a_diff_and_only_writes_it_once_approved() {
 async fn a_command_the_agent_wants_to_run_raises_an_approval_and_blocks() {
     let repo = TempRepo::new("approval");
     repo.write("a.txt", "x\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![
@@ -382,6 +417,7 @@ async fn the_prompt_sent_to_the_provider_is_cache_shaped() {
     // what carries the prefix over the line in real use, and it only exists if
     // there is something to retrieve.
     let repo = TempRepo::new("cacheshape");
+    repo.commit();
     for index in 0..8 {
         repo.write(
             &format!("retry_{index}.rs"),
@@ -474,6 +510,7 @@ async fn the_prompt_sent_to_the_provider_is_cache_shaped() {
 async fn a_rejected_change_set_comes_back_carrying_the_reason_it_was_refused() {
     let repo = TempRepo::new("retry");
     repo.write("a.txt", "original\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![
@@ -601,6 +638,7 @@ async fn a_rejected_change_set_comes_back_carrying_the_reason_it_was_refused() {
 async fn the_frontier_models_read_of_the_diff_lands_on_the_review_card() {
     let repo = TempRepo::new("verify");
     repo.write("a.txt", "before\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![
@@ -674,6 +712,7 @@ async fn the_frontier_models_read_of_the_diff_lands_on_the_review_card() {
 async fn a_verification_that_cannot_be_parsed_never_reads_as_a_pass() {
     let repo = TempRepo::new("unparseable");
     repo.write("a.txt", "before\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![
@@ -720,6 +759,7 @@ async fn a_verification_that_cannot_be_parsed_never_reads_as_a_pass() {
 async fn a_waiting_change_set_reaches_the_home_screen_and_the_task_list() {
     let repo = TempRepo::new("fleet");
     repo.write("a.txt", "before\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![
@@ -793,6 +833,7 @@ async fn a_waiting_change_set_reaches_the_home_screen_and_the_task_list() {
 async fn an_applied_change_set_can_be_taken_back_off_disk() {
     let repo = TempRepo::new("undo");
     repo.write("a.txt", "original\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![
@@ -868,6 +909,7 @@ async fn an_applied_change_set_can_be_taken_back_off_disk() {
 async fn the_runner_refuses_to_draft_more_tasks_than_its_ceiling() {
     let repo = TempRepo::new("cap");
     repo.write("a.txt", "x\n");
+    repo.commit();
 
     // A provider that never answers, so every started task stays in the loop
     // holding its slot for the duration of this test.
@@ -932,6 +974,7 @@ async fn the_runner_refuses_to_draft_more_tasks_than_its_ceiling() {
 #[tokio::test]
 async fn a_task_started_without_a_provider_is_refused_rather_than_queued() {
     let repo = TempRepo::new("noprovider");
+    repo.commit();
     let state = forge_runner::test_support::state(
         SqliteStore::open_in_memory().unwrap(),
         Arc::new(forge_crypto::Identity::generate()),
@@ -975,6 +1018,7 @@ async fn reviewing_over_the_command_layer_enforces_the_same_rules() {
 
     let repo = TempRepo::new("commands");
     repo.write("a.txt", "before\n");
+    repo.commit();
 
     let provider = Arc::new(Provider {
         replies: Mutex::new(vec![

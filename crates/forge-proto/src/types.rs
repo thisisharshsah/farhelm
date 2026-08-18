@@ -622,11 +622,11 @@ impl TaskStatus {
 
 /// One run of the native agent: a prompt, and the change set it proposed.
 ///
-/// `staged_json` is an opaque string here, like `BatchItem::request_json`: it is
-/// `forge-agent`'s staging overlay, which is that crate's business and nobody
-/// else's. `diff_json` is a serialised [`crate::diff::ChangeSet`] — a shape this
-/// crate does own — and is stored as text because it is written once and read
-/// whole, never queried into.
+/// `worktree_json` is an opaque string here, like `BatchItem::request_json`: it
+/// describes the branch `forge-agent` did the work on, which is that crate's
+/// business and nobody else's. `diff_json` is a serialised
+/// [`crate::diff::ChangeSet`] — a shape this crate does own — and is stored as
+/// text because it is written once and read whole, never queried into.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentTask {
     pub id: String,
@@ -640,10 +640,16 @@ pub struct AgentTask {
     pub summary: String,
     /// The serialised `ChangeSet` a reviewer is shown.
     pub diff_json: String,
-    /// The serialised staging overlay `apply` writes from. Held separately from
-    /// the diff so a phone can render a review card without being sent the full
-    /// contents of every touched file.
-    pub staged_json: String,
+    /// The serialised [`forge_agent::Worktree`]-shaped descriptor: which branch
+    /// this task's work is on, where its checkout is, and what it was cut from.
+    /// Held separately from the diff so a phone can render a review card
+    /// without being sent it, and never handed to a client at all — see
+    /// [`crate::views::TaskView`].
+    ///
+    /// Four strings. The staging overlay this replaced stored both sides of
+    /// every file the task touched, which is why a change set used to have a
+    /// size limit measured in megabytes.
+    pub worktree_json: String,
     pub files_changed: i64,
     pub lines_added: i64,
     pub lines_removed: i64,

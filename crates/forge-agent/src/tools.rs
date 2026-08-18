@@ -1,9 +1,15 @@
 //! The agent's tools: their schemas, and what happens when one is called.
 //!
-//! Six of the seven only touch the staging overlay, so they need no permission
-//! and raise no card — reading a file and proposing an edit are both reversible
-//! by doing nothing. The seventh, `run`, executes a real command in the real
-//! repo, and it is the only one that goes through the approval queue.
+//! Six of the seven only touch the task's own checkout, so they need no
+//! permission and raise no card — reading a file and editing one inside a
+//! throwaway branch are both reversible by throwing the branch away. The
+//! seventh, `run`, executes a real command, and it is the only one that goes
+//! through the approval queue.
+//!
+//! `run` executes **in that same checkout**, which is the whole reason the
+//! overlay was replaced: under staging it ran against a working tree that by
+//! construction did not contain the agent's own edits, so an agent could not
+//! test its own work.
 //!
 //! That asymmetry is the design. Approving twelve individual edits is not
 //! supervision, it is a captcha; the edits are reviewed *once*, together, as a
@@ -212,8 +218,8 @@ pub fn definitions() -> Vec<serde_json::Value> {
         serde_json::json!({
             "name": EDIT_FILE,
             "description": "Replace an exact string in a file. old_string must appear exactly \
-                once — include surrounding lines to make it unique. The change is staged for \
-                human review, not written to disk.",
+                once — include surrounding lines to make it unique. You are working on your own \
+                branch, so this writes immediately; the whole change set is reviewed at the end.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -226,8 +232,8 @@ pub fn definitions() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "name": WRITE_FILE,
-            "description": "Write a whole file, creating it if needed. Staged for human \
-                review, not written to disk. Prefer edit_file for changes to existing files.",
+            "description": "Write a whole file, creating it if needed. Writes immediately, to \
+                your own branch. Prefer edit_file for changes to existing files.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -239,7 +245,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "name": DELETE_FILE,
-            "description": "Delete a file. Staged for human review, not applied to disk.",
+            "description": "Delete a file from your branch.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -250,9 +256,9 @@ pub fn definitions() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "name": RUN,
-            "description": "Run a shell command in the repository root — tests, a build, a \
-                linter. This one needs human approval before it executes, and it sees the \
-                working tree as it is on disk, without your staged edits.",
+            "description": "Run a shell command — tests, a build, a linter. This one needs \
+                human approval before it executes. It runs in your own checkout, so it sees \
+                every edit you have made: run the tests before you finish.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -317,32 +323,28 @@ pub async fn execute<S: Supervisor>(
             let path = str_arg(call, "path")?.to_owned();
             let old = str_arg(call, "old_string")?.to_owned();
             let new = str_arg(call, "new_string")?.to_owned();
-            workspace.stage_edit(&path, &old, &new)?;
-            supervisor.note(&format!("✎ staged an edit to {path}"));
-            Ok(format!("staged an edit to {path}"))
+            workspace.edit(&path, &old, &new)?;
+            supervisor.note(&format!("✎ edited {path}"));
+            Ok(format!("edited {path}"))
         }
 
         WRITE_FILE => {
             let path = str_arg(call, "path")?.to_owned();
             let content = str_arg(call, "content")?.to_owned();
             let existed = workspace.exists(&path);
-            workspace.stage_write(&path, content)?;
+            workspace.write(&path, content)?;
             supervisor.note(&format!(
-                "✎ staged {} {path}",
-                if existed {
-                    "a rewrite of"
-                } else {
-                    "a new file"
-                }
+                "✎ {} {path}",
+                if existed { "rewrote" } else { "created" }
             ));
-            Ok(format!("staged a write to {path}"))
+            Ok(format!("wrote {path}"))
         }
 
         DELETE_FILE => {
             let path = str_arg(call, "path")?.to_owned();
-            workspace.stage_delete(&path)?;
-            supervisor.note(&format!("✎ staged a deletion of {path}"));
-            Ok(format!("staged a deletion of {path}"))
+            workspace.delete(&path)?;
+            supervisor.note(&format!("✎ deleted {path}"));
+            Ok(format!("deleted {path}"))
         }
 
         RUN => {
@@ -526,7 +528,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_edit_stages_rather_than_writes() {
+    async fn an_edit_is_written_so_the_agents_own_tests_can_see_it() {
         let dir = temp_repo("edit");
         std::fs::write(dir.join("a.txt"), "before\n").unwrap();
         let mut workspace = Workspace::open(&dir).unwrap();
@@ -542,12 +544,21 @@ mod tests {
         .await
         .unwrap();
 
+        // The assertion this test used to make was the opposite: that the file
+        // on disk was untouched. Under the overlay that was the safety
+        // property; it also meant `run` executed against a tree without the
+        // agent's edits in it, so `cargo test` tested the code as it was before
+        // the task started.
+        //
+        // Isolation now comes from the checkout being a branch of its own, so
+        // writing immediately is safe *and* is what makes an agent able to
+        // check its own work.
         assert_eq!(
             std::fs::read_to_string(dir.join("a.txt")).unwrap(),
-            "before\n",
-            "the tool wrote to disk — nothing may touch the working tree before review"
+            "after\n",
+            "the edit must be on disk, or the agent cannot test what it wrote"
         );
-        assert_eq!(workspace.changes().files.len(), 1);
+        assert_eq!(workspace.read("a.txt").unwrap(), "after\n");
     }
 
     #[tokio::test]

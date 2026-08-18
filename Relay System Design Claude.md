@@ -820,18 +820,18 @@ bad unit of review. `Bash: pytest -x` tells you nothing about whether the work
 is right. It is a yes/no you answer in a hurry to unblock a process.
 
 The unit worth reviewing is a **diff**. So `forge-agent` runs a tool loop
-through the existing cost gateway, stages every edit in an overlay instead of
-writing it, and hands back a unified diff for a human to approve or reject. That
+through the existing cost gateway, does its work on a branch of its own, and
+hands back a unified diff for a human to approve or reject. That
 is the Cursor-shaped half of the product — except the review happens on a phone,
 against a budget, with the same destructive-command classifier in the path.
 
 Three decisions worth recording, because each one had a plausible alternative:
 
-- **Edits are staged; only `run` raises a card.** The alternative — approving
-  each edit as the agent makes it — is not supervision, it is a captcha, and it
-  would have made a twelve-edit task unusable from a phone. Commands still go
-  through the queue one at a time because a command is what cannot be undone by
-  doing nothing.
+- **Edits are reviewed together; only `run` raises a card.** The alternative —
+  approving each edit as the agent makes it — is not supervision, it is a
+  captcha, and it would have made a twelve-edit task unusable from a phone.
+  Commands still go through the queue one at a time because a command is what
+  cannot be undone by doing nothing.
 - **The loop calls `Gateway::complete` rather than a provider.** Anything else
   would have made the budget guard, the router, the ledger and the prompt cache
   advisory for the system's own agent — the one caller most able to run up a
@@ -858,13 +858,11 @@ Four things followed from the review screen existing, and all are part of M6:
   call reads the finished patch. Measured at **50% against frontier-throughout**
   on an identical task; the verifier's input was 866 bytes against 4,716 for the
   final drafting turn, which is the whole argument in two numbers.
-- **Undo.** The overlay was already keeping both sides of every file so it could
-  render a diff, which means reverting is `apply` with the two swapped. Without
-  it, "applied" was the only irreversible step in a system whose entire design
-  is that nothing is — a denial leaves no state, a rejection leaves no state,
-  and then approving quietly overwrote the working tree for good. Guarded in the
-  mirror direction: undoing over a later human edit is refused, so the tree only
-  moves between two states somebody has seen.
+- **Undo.** Without it, "applied" was the only irreversible step in a system
+  whose entire design is that nothing is — a denial leaves no state, a rejection
+  leaves no state, and then approving quietly overwrote the working tree for
+  good. Guarded in the mirror direction: undoing over a later human edit is
+  refused, so the tree only moves between two states somebody has seen.
 - **A ceiling on concurrent tasks.** `start` is non-blocking by design, which
   made it unbounded by accident: fifty POSTs were fifty agents drafting in
   parallel against a repo that has no cap by default. Three at once, `429`
@@ -876,6 +874,34 @@ the same mistake — a property the design *relies* on (nothing is irreversible;
 spend is bounded) that the new code did not actually provide, in a place where
 the old code never had to. Adding a first-class *actor* to a system built for
 supervising other people's actors is where those gaps live.
+
+### The overlay became a branch (M6, revised)
+
+The staging overlay above was replaced by a git worktree per task. The review
+property is unchanged — nothing reaches the branch you are on until you approve
+— but it is now provided by git rather than by holding both sides of every file
+in memory and in a database row.
+
+Three things the overlay cost, and this does not:
+
+- **The agent can run its own tests.** `run` executed against a working tree that
+  by construction did not contain the agent's staged edits, so `cargo test` in
+  step nine tested the code as it stood in step one. This was the expensive one,
+  and it is why the change was worth making at all.
+- **A change set is no longer capped by what fits in a row.** What is stored is
+  four strings naming a branch; the cap that remains is on the rendered diff,
+  which is what a phone actually has to display.
+- **Approving, rejecting and undoing are git operations.** A fast-forward merge,
+  a branch deletion, and a revert commit. Undo is deliberately additive rather
+  than a rewind: the commit may already have been pushed, and moving history
+  under somebody is how an undo destroys work it was never shown.
+
+The cost, stated plainly: **a task now requires a git repository with at least
+one commit**, and it cuts from `HEAD` rather than from your uncommitted work. An
+agent asked to "finish what I was editing" will not see what you were editing.
+That is the reproducible choice and what a cloud agent working from a pushed ref
+would do, but it is a real behavioural difference and it is why the two failure
+modes — not a repository, no commits — are reported apart, with different fixes.
 
 **Unproven:** no real model has driven the loop. See the README's known gaps.
 

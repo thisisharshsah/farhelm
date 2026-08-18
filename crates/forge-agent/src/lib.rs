@@ -13,14 +13,17 @@
 //!          tools ─┘        read · list · search · edit · write · delete · run
 //!              │
 //!              ▼
-//!        staging overlay ──▶ unified diff ──▶ a human ──▶ applied, or discarded
+//!     the task's own branch ──▶ unified diff ──▶ a human ──▶ merged, or deleted
 //! ```
 //!
 //! Three properties hold it together, and each has tests named after the
 //! failure it prevents:
 //!
-//! 1. **Edits are staged, never written.** Nothing reaches the working tree
-//!    until somebody approves the whole change set. See [`workspace`].
+//! 1. **Edits land on a branch of the task's own, never on yours.** Nothing
+//!    reaches the branch you are sitting on until somebody approves the whole
+//!    change set, and approving is a fast-forward merge. Because the work is
+//!    somewhere real, the agent's own tests see its own edits — which is what
+//!    the staging overlay this replaced could not do. See [`git`].
 //! 2. **Only `run` needs a card.** Approving twelve edits one at a time is a
 //!    captcha, not supervision; the edits are reviewed together, as a diff.
 //!    Commands go through the classifier every other agent already uses. See
@@ -45,7 +48,8 @@ pub mod verify;
 pub mod workspace;
 
 pub use diff::{ChangeKind, ChangeSet, DiffLine, FileDiff, Hunk, Tag};
+pub use git::{GitError, Merge, Worktree};
 pub use task::{Outcome, TaskRun, TaskSpec, run};
 pub use tools::{Supervisor, ToolCall, Verdict};
 pub use verify::{Assessment, Grade};
-pub use workspace::{Staged, Workspace, WorkspaceError};
+pub use workspace::{Workspace, WorkspaceError};

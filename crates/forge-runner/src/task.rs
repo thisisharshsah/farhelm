@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use forge_agent::{Outcome, TaskSpec, Verdict, Workspace};
+use forge_agent::{Merge, Outcome, TaskSpec, Verdict, Worktree};
 use forge_app::id::new_id;
 use forge_app::store::{TaskOutcome, prelude::*};
 use forge_app::time::now_ms;
@@ -364,7 +364,7 @@ fn create_rows(state: &AppState, request: &StartTask) -> Result<(AgentTask, Sess
         status: TaskStatus::Running,
         summary: String::new(),
         diff_json: String::new(),
-        staged_json: String::new(),
+        worktree_json: String::new(),
         files_changed: 0,
         lines_added: 0,
         lines_removed: 0,
@@ -448,7 +448,11 @@ pub fn start(state: &Arc<AppState>, request: StartTask) -> Result<AgentTask, Tas
             session.id.clone(),
             PathBuf::from(&request.repo_path),
             instruction,
-        );
+        )
+        // The branch is named after the task, not the session: a retry is a new
+        // task on the same session, and sharing a branch would let one silently
+        // inherit the other's work.
+        .with_task_id(task.id.clone());
         if let Some(max_steps) = request.max_steps.filter(|steps| *steps > 0) {
             spec.max_steps = max_steps;
         }
@@ -524,30 +528,46 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
         task.verify_model = Some(assessment.model.clone()).filter(|model| !model.is_empty());
     }
 
-    // Serialising the overlay is what lets a review card survive a restart.
-    // If it fails the task is still *reviewable* — the diff is separate — but
-    // it could not be applied, so say so now rather than at approval time.
-    //
-    // The size check comes first for the same reason: better to refuse a change
-    // set at the point it was produced than to write megabytes into a row the
-    // fleet query then reads on every refresh.
-    let staged_bytes = outcome.workspace.staged_bytes();
-    if staged_bytes > MAX_CHANGE_SET_BYTES {
-        task.error = Some(format!(
-            "the change set is {staged_bytes} bytes across {} files, over the \
-             {MAX_CHANGE_SET_BYTES}-byte limit — it was not stored, so it cannot \
-             be applied. Ask for a narrower change.",
-            outcome.changes.files.len()
-        ));
-    } else {
-        match serde_json::to_string(&outcome.workspace) {
-            Ok(json) => task.staged_json = json,
+    // Which branch the work is on is what lets a review card survive a restart.
+    // If it cannot be written the task is still *reviewable* — the diff is
+    // separate — but it could not be merged, so say so now rather than at
+    // approval time.
+    // No branch at all means the task failed before it had one, and
+    // `outcome.outcome` already carries why — so there is nothing to record and
+    // nothing to say.
+    if let Some(worktree) = &outcome.worktree {
+        match serde_json::to_string(worktree) {
+            Ok(json) => task.worktree_json = json,
             Err(err) => {
-                task.error = Some(format!("the staged change set could not be stored: {err}"));
+                task.error = Some(format!("the task's branch could not be recorded: {err}"));
             }
         }
     }
+
     task.diff_json = serde_json::to_string(&outcome.changes).unwrap_or_default();
+
+    // The cap applies to the *diff* now, which is the thing that actually lands
+    // in this row and gets read by the fleet query on every refresh. Under the
+    // overlay it had to cover both sides of every touched file, because that is
+    // what was being stored; a branch is four strings however large the change.
+    //
+    // Still kept rather than thrown away: the task remains reviewable one file
+    // at a time, and refusing to *store* the work would destroy it.
+    if task.diff_json.len() > MAX_CHANGE_SET_BYTES {
+        task.error = Some(format!(
+            "the change set renders to {} bytes across {} files, over the \
+             {MAX_CHANGE_SET_BYTES}-byte limit — it is on branch {} if you want it, \
+             but it is too large to review here. Ask for a narrower change.",
+            task.diff_json.len(),
+            outcome.changes.files.len(),
+            outcome
+                .worktree
+                .as_ref()
+                .map(|tree| tree.branch())
+                .unwrap_or("(none)"),
+        ));
+        task.diff_json = String::new();
+    }
 
     task.status = match &outcome.outcome {
         _ if task.error.is_some() => TaskStatus::Failed,
@@ -671,6 +691,22 @@ pub fn review(
             }
         }
     } else {
+        // Rejecting throws the work away: the checkout goes, the branch goes,
+        // and nothing was ever written where the human was looking. That is the
+        // whole of "reject" — there is no half-applied state to clean up.
+        //
+        // Best-effort, and after the decision is recorded. A branch that could
+        // not be deleted is disk to reclaim, not a reason to tell somebody
+        // their rejection did not take.
+        match discard_branch(&decided) {
+            Ok(true) => {}
+            Ok(false) => {}
+            Err(err) => eprintln!(
+                "task {}: rejected, but the branch stayed: {err}",
+                decided.id
+            ),
+        }
+
         state.push_output(
             &decided.session_id,
             format!(
@@ -685,28 +721,123 @@ pub fn review(
     Ok(decided)
 }
 
-/// Write an approved change set to the working tree.
+/// Merge an approved task into the branch the human is on.
+///
+/// Fast-forward only. If the base moved while the task was waiting to be
+/// reviewed, this refuses and says so rather than resolving somebody else's
+/// conflict for them — and the work survives on its branch either way, which is
+/// the improvement over the overlay, where a stale change set was simply stuck.
+///
+/// The checkout is released on success: the commits stay reachable, the disk
+/// does not. Keeping the *branch* is what makes [`revert`] possible without
+/// storing a commit id anywhere.
 fn apply(task: &AgentTask) -> Result<Vec<String>, TaskError> {
-    overlay(task)?
-        .apply()
-        .map_err(|err| TaskError::Apply(err.to_string()))
+    let worktree = branch_of(task)?;
+
+    let files: Vec<String> = worktree
+        .changed_files()
+        .map(|changed| changed.into_iter().map(|change| change.path).collect())
+        .unwrap_or_default();
+
+    worktree
+        .commit(&commit_message(task))
+        .map_err(|err| TaskError::Apply(err.to_string()))?;
+
+    match worktree
+        .merge_into_base()
+        .map_err(|err| TaskError::Apply(err.to_string()))?
+    {
+        Merge::FastForwarded { .. } => {
+            // Best-effort: the merge is what mattered, and a checkout left on
+            // disk is untidy rather than wrong.
+            let branch = worktree.branch().to_owned();
+            if let Err(err) = worktree.release() {
+                eprintln!("task {}: merged, but the checkout stayed: {err}", task.id);
+            }
+            let _ = branch;
+            Ok(files)
+        }
+        Merge::Diverged => Err(TaskError::Apply(format!(
+            "the branch you are on has moved since this task was reviewed, so its \
+             change set no longer applies cleanly. The work is on {} — merge it by \
+             hand, or reject this and retry.",
+            worktree.branch()
+        ))),
+    }
 }
 
-fn overlay(task: &AgentTask) -> Result<Workspace, TaskError> {
-    serde_json::from_str(&task.staged_json)
-        .map_err(|err| TaskError::Apply(format!("the stored change set is unreadable: {err}")))
+/// The commit a merged task leaves behind.
+///
+/// The prompt, because the question a `git log` reader is asking is what this
+/// change was *for*, and the agent's own summary is written for a review card
+/// that has the diff next to it.
+fn commit_message(task: &AgentTask) -> String {
+    let prompt = task.prompt.trim();
+    let subject: String = prompt
+        .lines()
+        .next()
+        .unwrap_or("Agent task")
+        .chars()
+        .take(72)
+        .collect();
+    format!("{subject}\n\nRelayForge task {}.\n\n{prompt}", task.id)
 }
 
-/// Take an applied change set back off the working tree.
+/// Delete a rejected task's branch and checkout.
 ///
-/// The overlay held both sides all along, so undoing is the same walk with them
-/// swapped — see [`forge_agent::Workspace::revert`]. This is what keeps
-/// "applied" from being the one irreversible step in a system where every other
-/// one is undone by doing nothing.
+/// `Ok(false)` when there was nothing to delete, which is the ordinary case for
+/// a task that failed before it had a branch.
+fn discard_branch(task: &AgentTask) -> Result<bool, TaskError> {
+    if task.worktree_json.trim().is_empty() {
+        return Ok(false);
+    }
+    let worktree: Worktree = serde_json::from_str(&task.worktree_json)
+        .map_err(|err| TaskError::Apply(format!("the stored branch is unreadable: {err}")))?;
+    worktree
+        .discard()
+        .map_err(|err| TaskError::Apply(err.to_string()))?;
+    Ok(true)
+}
+
+/// The branch a task's work is on, as recorded when it ran.
+fn branch_of(task: &AgentTask) -> Result<Worktree, TaskError> {
+    if task.worktree_json.trim().is_empty() {
+        return Err(TaskError::Apply(
+            "this task has no branch recorded — it predates the move to worktrees, \
+             or it failed before it had one. Retry it."
+                .into(),
+        ));
+    }
+    let worktree: Worktree = serde_json::from_str(&task.worktree_json)
+        .map_err(|err| TaskError::Apply(format!("the stored branch is unreadable: {err}")))?;
+
+    if !worktree.is_present() {
+        // A worktree survives a runner restart but not somebody deleting it, or
+        // a `git worktree prune`. Saying which is better than letting git raise a
+        // confusing error three calls later.
+        return Err(TaskError::Apply(format!(
+            "the checkout for branch {} is gone — nothing here can be merged. \
+             The commits may still be on the branch.",
+            worktree.branch()
+        )));
+    }
+    Ok(worktree)
+}
+
+/// Take an applied task back off the branch it was merged into.
 ///
-/// Refuses if any touched file has moved since: reverting over somebody's later
-/// edit would throw *their* work away, which is the mistake this whole feature
-/// exists to prevent in the other direction.
+/// This is what keeps "applied" from being the one irreversible step in a
+/// system where every other one is undone by doing nothing.
+///
+/// A **revert commit**, not a rewind — see [`forge_agent::Worktree::undo`]. The
+/// overlay could put the old bytes back because it was holding them; moving
+/// history instead would be tidier and is exactly what must not happen once a
+/// commit may have been pushed.
+///
+/// Refuses if the revert does not apply cleanly, which means somebody edited
+/// the same lines afterwards: undoing over their work would throw it away,
+/// which is the mistake this whole feature exists to prevent in the other
+/// direction.
 pub fn revert(
     state: &Arc<AppState>,
     task_id: &str,
@@ -724,9 +855,15 @@ pub fn revert(
         )));
     }
 
-    let written = overlay(&task)?
-        .revert()
+    let worktree: Worktree = serde_json::from_str(&task.worktree_json)
+        .map_err(|err| TaskError::Apply(format!("the stored branch is unreadable: {err}")))?;
+    worktree
+        .undo()
         .map_err(|err| TaskError::Apply(err.to_string()))?;
+    let written: Vec<String> = worktree
+        .changed_files()
+        .map(|changed| changed.into_iter().map(|change| change.path).collect())
+        .unwrap_or_default();
 
     task.status = TaskStatus::Reverted;
     task.decided_via = Some(via);
@@ -761,6 +898,7 @@ mod tests {
         AppState::with_gateway(SqliteStore::open_in_memory().unwrap(), |_| None)
     }
 
+    /// A real repository with one commit — a task cannot run without one.
     struct TempRepo(PathBuf);
 
     impl TempRepo {
@@ -768,10 +906,51 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("forge-runner-task-{name}"));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
-            Self(dir)
+            let repo = Self(dir);
+            repo.git(&["init", "-q", "-b", "main"]);
+            repo
         }
+
+        fn git(&self, args: &[&str]) {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.0)
+                .args(args)
+                .status()
+                .expect("git should be installed");
+            assert!(status.success(), "git {args:?} failed");
+        }
+
+        fn commit(&self) {
+            self.git(&["add", "-A"]);
+            self.git(&[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-q",
+                // Some fixtures set up twice on one repo; the second has
+                // nothing new, and git calls that an error.
+                "--allow-empty",
+                "-m",
+                "base",
+            ]);
+        }
+
         fn path(&self) -> String {
             self.0.display().to_string()
+        }
+
+        /// The subject lines of this repository's commits, newest first.
+        fn log(&self) -> String {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.0)
+                .args(["log", "--format=%s"])
+                .output()
+                .expect("git should be installed");
+            String::from_utf8_lossy(&out.stdout).into_owned()
         }
     }
 
@@ -781,13 +960,14 @@ mod tests {
         }
     }
 
-    /// A task row parked in `awaiting_review` with a real staged change.
+    /// A task row parked in `awaiting_review`, with its work really on a branch.
+    ///
+    /// Deliberately not a hand-built fixture: the work is done through
+    /// [`Worktree`] exactly as a run would do it, so what these tests approve
+    /// and reject is the same thing a real task produces.
     fn awaiting(state: &Arc<AppState>, repo: &TempRepo, before: &str, after: &str) -> AgentTask {
         std::fs::write(repo.0.join("a.txt"), before).unwrap();
-
-        let mut workspace = Workspace::open(&repo.0).unwrap();
-        workspace.stage_write("a.txt", after).unwrap();
-        let changes = workspace.changes();
+        repo.commit();
 
         let (mut task, _) = create_rows(
             state,
@@ -801,8 +981,12 @@ mod tests {
         )
         .unwrap();
 
+        let worktree = Worktree::create(&repo.0, &task.id).unwrap();
+        std::fs::write(worktree.path().join("a.txt"), after).unwrap();
+        let changes = worktree.change_set().unwrap();
+
         task.status = TaskStatus::AwaitingReview;
-        task.staged_json = serde_json::to_string(&workspace).unwrap();
+        task.worktree_json = serde_json::to_string(&worktree).unwrap();
         task.diff_json = serde_json::to_string(&changes).unwrap();
         task.files_changed = changes.files.len() as i64;
         task.lines_added = changes.added() as i64;
@@ -823,6 +1007,13 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(repo.0.join("a.txt")).unwrap(),
             "after\n"
+        );
+        // Approving is a merge, so the work is in history rather than being an
+        // uncommitted edit somebody has to notice and commit themselves.
+        assert!(
+            repo.log().contains("change it"),
+            "the task should have landed as a commit: {}",
+            repo.log()
         );
     }
 
@@ -905,7 +1096,14 @@ mod tests {
         );
         let stored = state.store.get_task(&task.id).unwrap().unwrap();
         assert_eq!(stored.status, TaskStatus::Failed);
-        assert!(stored.error.unwrap().contains("changed on disk"));
+        // The guarantee is unchanged; what enforces it moved. The overlay
+        // compared each file against what it captured and said "changed on
+        // disk". Git refuses a fast-forward that would overwrite uncommitted
+        // work, and says so in its own words — so the assertion is on the
+        // property, which is that somebody's edit survived and the failure was
+        // reported rather than swallowed.
+        let error = stored.error.unwrap();
+        assert!(!error.is_empty(), "a refused approval must say why");
     }
 
     #[test]
@@ -989,11 +1187,16 @@ mod tests {
         let repo = TempRepo::new("retry-huge");
         let mut previous = rejected(&state, &repo, Some("too much"));
 
-        // A change set far past the cap.
+        // A change set far past the cap. Built through the differ directly:
+        // what is being tested is the retry prompt's truncation, and going via
+        // a real branch would just be a slower way to obtain the same diff.
         let huge: String = (0..40_000).map(|i| format!("line {i}\n")).collect();
-        let mut workspace = Workspace::open(&repo.0).unwrap();
-        workspace.stage_write("a.txt", huge).unwrap();
-        previous.diff_json = serde_json::to_string(&workspace.changes()).unwrap();
+        let changes = forge_agent::ChangeSet {
+            files: forge_agent::diff::file_diff("a.txt", Some(""), Some(&huge))
+                .into_iter()
+                .collect(),
+        };
+        previous.diff_json = serde_json::to_string(&changes).unwrap();
 
         let prompt = retry_prompt(&previous);
         assert!(prompt.contains("[patch truncated]"));
