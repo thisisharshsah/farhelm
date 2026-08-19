@@ -25,15 +25,6 @@ say()  { printf '  %s\n' "$*"; }
 bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die()  { printf '\n\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Piped into bash, so stdin is the script itself — a prompt has to come from the
-# terminal explicitly or it silently reads the rest of this file.
-ask() {
-  local prompt="$1" reply=""
-  [ -e /dev/tty ] || { echo "no"; return; }
-  read -r -p "$prompt" reply < /dev/tty || reply=""
-  echo "$reply"
-}
-
 bold "RelayForge — installing from $CLOUD"
 
 # ---------------------------------------------------------------- platform ---
@@ -45,7 +36,9 @@ case "$os-$arch" in
   Darwin-x86_64) target="x86_64-apple-darwin" ;;
   Linux-x86_64)  target="x86_64-unknown-linux-gnu" ;;
   Linux-aarch64) target="aarch64-unknown-linux-gnu" ;;
-  *) die "unsupported platform $os $arch — build from source: https://github.com/  (cargo build --release -p forge-runner)" ;;
+  *) die "unsupported platform $os $arch — build it yourself:
+       git clone https://github.com/thisisharshsah/farhelm.git
+       cargo build --release -p forge-runner" ;;
 esac
 say "platform   $os $arch → $target"
 
@@ -99,7 +92,7 @@ else
   src="${FORGE_SRC:-$tmp/src}"
   if [ ! -d "$src" ]; then
     command -v git >/dev/null || die "git is required to build from source"
-    git clone --depth 1 "${FORGE_REPO:-https://github.com/harshsah/relayforge}" "$src" \
+    git clone --depth 1 "${FORGE_REPO:-https://github.com/thisisharshsah/farhelm.git}" "$src" \
       || die "could not clone the source — set FORGE_SRC to a local checkout"
   fi
   ( cd "$src" && cargo build --release -p forge-runner ) || die "the build failed"
@@ -127,7 +120,10 @@ bold "Joining $CLOUD"
 say "A code will appear. Approve it where you are already signed in."
 
 cd "$HOME_DIR"
-# `login` prints and polls; it never reads stdin, so it is safe under a pipe.
+# Safe under a pipe: `login` prints a code and polls, and never reads stdin.
+# Anything here that did would consume the rest of this script, because piped
+# into bash the script *is* stdin — so if a prompt is ever added, it has to read
+# from /dev/tty explicitly.
 "$BIN_DIR/forge-runner" login --cloud "$CLOUD"
 
 # ------------------------------------------------------------------ next ---
