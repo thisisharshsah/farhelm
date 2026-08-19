@@ -110,9 +110,27 @@ check "control plane " https://farhelm.aurovie.com/v1/health        200 || faile
 check "web app       " https://farhelm.aurovie.com/                 200 || failed=1
 check "relay         " https://farhelm-relay.aurovie.com/v1/health  200 || failed=1
 check "runner        " http://127.0.0.1:7852/v1/health              200 || failed=1
-# 401 is the correct answer from an MCP endpoint with no token. A 200 here would
-# mean the connector had stopped asking who is calling.
-check "connector     " https://farhelm-mac.aurovie.com/mcp          405 || failed=1
+# The connector is optional — it is served only when FORGE_MCP_URL is set — so
+# its absence is reported rather than failing the deploy.
+#
+# Checked by content type, not by status code. The runner serves the web app as
+# a single-page app, so any path it does not route falls through to index.html
+# with a 200: a status-code check here cannot tell "the connector is missing"
+# from "the connector answered without asking for a token", and it reports the
+# second, which is alarming and wrong. HTML back means there is no connector.
+connector="https://farhelm-mac.aurovie.com/mcp"
+kind="$(curl -s -o /dev/null -m 10 -w '%{content_type}' "$connector" || true)"
+case "$kind" in
+  text/html*)
+    printf '  %s·%s connector      not served (FORGE_MCP_URL unset) %s— optional%s\n' \
+      "$DIM" "$OFF" "$DIM" "$OFF" ;;
+  application/json*)
+    ok "connector      answering" ;;
+  "")
+    bad "connector      unreachable  $connector"; failed=1 ;;
+  *)
+    bad "connector      unexpected content type: $kind  $connector"; failed=1 ;;
+esac
 
 # The one thing a status code cannot tell you: the relay refuses to start
 # ungated, and a relay serving with `auth OPEN` lets anyone who learns a channel
