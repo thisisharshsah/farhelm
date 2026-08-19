@@ -111,7 +111,9 @@ say "version    $("$BIN_DIR/forge-runner" --help | head -1)"
 if [ -f "$HOME_DIR/forge.cloud.json" ]; then
   bold "Already joined"
   say "$HOME_DIR/forge.cloud.json exists — this machine has enrolled before."
-  say "Start it with:  cd $HOME_DIR && $BIN_DIR/forge-runner serve"
+  say "If it is not in your fleet, the daemon needs restarting to read it:"
+  say "  launchctl kickstart -k gui/\$(id -u)/com.relayforge.runner"
+  say "Or start one:   cd $HOME_DIR && $BIN_DIR/forge-runner serve"
   say "To join somewhere else: $BIN_DIR/forge-runner logout, then re-run this."
   exit 0
 fi
@@ -127,13 +129,42 @@ cd "$HOME_DIR"
 "$BIN_DIR/forge-runner" login --cloud "$CLOUD"
 
 # ------------------------------------------------------------------ next ---
+#
+# A credential is read at startup and nowhere else, so a runner that was
+# already running when this script enrolled it is a runner that has not
+# enrolled. It sits there reporting "loopback only" while the fleet shows
+# nothing, and the machine looks like it failed to connect when in fact it
+# never restarted.
+#
+# So if this machine runs the daemon as a service, restart it here rather than
+# printing advice to start one by hand — which on a machine that already has
+# one would mean two processes fighting for the same port.
+
+restarted=no
+if command -v launchctl >/dev/null \
+   && launchctl list 2>/dev/null | grep -q com.relayforge.runner; then
+  if launchctl kickstart -k "gui/$(id -u)/com.relayforge.runner" >/dev/null 2>&1; then
+    restarted=yes
+    say "restarted  com.relayforge.runner, so it picks up the new credential"
+  fi
+elif command -v systemctl >/dev/null \
+     && systemctl --user is-active --quiet relayforge 2>/dev/null; then
+  if systemctl --user restart relayforge >/dev/null 2>&1; then
+    restarted=yes
+    say "restarted  relayforge.service, so it picks up the new credential"
+  fi
+fi
 
 bold "Done"
-say "Start the runner:   cd $HOME_DIR && $BIN_DIR/forge-runner serve"
+if [ "$restarted" = yes ]; then
+  say "This machine should appear in your fleet within about thirty seconds."
+else
+  say "Start the runner:   cd $HOME_DIR && $BIN_DIR/forge-runner serve"
+  say "Keep it running:    $BIN_DIR/forge-runner install-service"
+fi
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) say "Add to PATH:        export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
-say "Keep it running:    $BIN_DIR/forge-runner install-service"
 [ "$installed_from_source" = yes ] && say "(built from source — re-run this script to update)"
 exit 0
