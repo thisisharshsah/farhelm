@@ -403,6 +403,11 @@ export function SessionScreen({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /* The transcript is the part worth more room, and on a phone "more room" has
+     to mean all of it — a taller card inside a scrolling page is still a
+     letterbox. Local state, not a route: enlarging is a way of looking at this
+     screen, not a different screen to come back to. */
+  const [expanded, setExpanded] = useState(false);
   const dictation = useDictation((spoken) =>
     setText((current) => (current ? `${current} ${spoken}` : spoken)),
   );
@@ -479,10 +484,29 @@ export function SessionScreen({
         </section>
       ) : null}
 
-      <section className="card transcript-card">
+      <section
+        className="card transcript-card"
+        data-expanded={expanded ? "yes" : undefined}
+      >
         <div className="chart-title">
           <span>Live output</span>
+          {/* What the agent is doing, where you are already looking. A session
+              that is working and silent is indistinguishable from one that has
+              died unless something says so. */}
+          {session.is_live ? (
+            <span className="working" aria-live="polite">
+              <span className="working-dot" aria-hidden="true" />
+              {session.status === "awaiting_approval" ? "waiting on you" : "working"}
+            </span>
+          ) : null}
           <span className="spacer" />
+          <button
+            className="btn btn-quiet btn-small"
+            onClick={() => setExpanded((open) => !open)}
+            aria-pressed={expanded}
+          >
+            {expanded ? "Shrink" : "Enlarge"}
+          </button>
           {/* Stopping is loopback-only for the same reason starting is: it ends
               a process on somebody's machine. Hidden rather than disabled over
               the relay — a button that always refuses teaches nothing. */}
