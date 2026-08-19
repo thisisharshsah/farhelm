@@ -365,7 +365,34 @@ impl AppState {
             .find(|&k| previous[previous.len() - k..] == fresh[..k])
             .unwrap_or(0);
 
-        let new_lines = fresh[overlap..].to_vec();
+        // That suffix rule assumes a terminal that *scrolls*: new output arrives
+        // at the bottom and everything above keeps its place. A full-screen TUI
+        // does not work that way. Claude Code repaints the whole pane — banner,
+        // tips, a spinner glyph that changes every frame — so two consecutive
+        // snapshots overlap almost nowhere, the rule concludes that everything
+        // is new, and the entire screen is emitted again. Poll after poll, the
+        // transcript becomes the same banner a hundred times over with a
+        // different spinner character each time, and the actual answer is
+        // somewhere inside it.
+        //
+        // A repaint is recognisable: no overlap at all, yet most of what is on
+        // screen was on screen a moment ago. In that case the only honest
+        // "new output" is the lines that were not there before.
+        //
+        // Scrolling is untouched — it has an overlap, so it never reaches here —
+        // and that matters, because agents without a hook system are read
+        // through this pane and dropping a line would drop a question somebody
+        // is waiting on.
+        let new_lines = if overlap == 0 && is_repaint(&previous, &fresh) {
+            fresh
+                .iter()
+                .filter(|line| !previous.contains(line))
+                .cloned()
+                .collect()
+        } else {
+            fresh[overlap..].to_vec()
+        };
+
         snapshots.insert(session_id.to_owned(), fresh);
         new_lines
     }
@@ -398,6 +425,32 @@ impl AppState {
                 Vec::new()
             })
     }
+}
+
+/// Whether two snapshots are the same screen redrawn rather than a scroll.
+///
+/// Judged by how much of the new screen was already on the old one. A repaint
+/// changes a spinner and maybe a line or two; a scroll moves everything up, so
+/// even where the suffix rule misses, most lines are still shared. The
+/// The threshold is three fifths rather than something stricter: a frame that
+/// advances a spinner *and* adds a couple of lines still shares only about
+/// two thirds of its screen, and demanding more than that lets the whole banner
+/// through again. It stays a majority, because treating a scroll as a repaint
+/// would drop real output and that is the more expensive mistake — though a
+/// scroll almost never arrives here at all, since it has an overlap.
+fn is_repaint(previous: &[String], fresh: &[String]) -> bool {
+    let interesting: Vec<&String> = fresh
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if interesting.len() < 4 || previous.is_empty() {
+        return false;
+    }
+    let shared = interesting
+        .iter()
+        .filter(|line| previous.contains(**line))
+        .count();
+    shared * 5 >= interesting.len() * 3
 }
 
 #[cfg(test)]
@@ -446,6 +499,140 @@ mod tests {
     fn a_session_nobody_has_written_to_still_reads_empty() {
         let state = state();
         assert!(state.output_tail("never-seen", 10).is_empty());
+    }
+
+    /// A full-screen TUI: a fixed banner, and one line that changes per frame.
+    fn frame(spinner: &str, body: &[&str]) -> String {
+        let mut screen = vec![
+            "╭─── Claude Code v2.1.235 ───╮".to_string(),
+            "│ Tips for getting started   │".to_string(),
+            "│ Welcome back!              │".to_string(),
+            "╰────────────────────────────╯".to_string(),
+            format!("{spinner} thinking"),
+        ];
+        screen.extend(body.iter().map(|line| line.to_string()));
+        screen.join("\n")
+    }
+
+    #[test]
+    fn a_repainting_tui_does_not_re_emit_its_whole_screen() {
+        // The failure this prevents, and it is what the transcript actually
+        // looked like: Claude Code repaints its entire pane every frame, the
+        // suffix rule found no overlap, and the banner plus the tips box plus
+        // the spinner went into the transcript again on every poll — a hundred
+        // copies of the same screen with a different spinner glyph, the answer
+        // buried somewhere inside.
+        let state = state();
+
+        let first = state.new_output_lines("s1", &frame("✢", &["Reading entitlements.rs"]));
+        assert!(first.len() > 4, "the first frame is all new: {first:?}");
+
+        // Same screen, spinner advanced, one line of genuinely new content.
+        let second = state.new_output_lines(
+            "s1",
+            &frame("✳", &["Reading entitlements.rs", "There are two rungs"]),
+        );
+
+        assert!(
+            !second.iter().any(|line| line.contains("Welcome back")),
+            "the banner was emitted again: {second:?}"
+        );
+        assert!(
+            second.iter().any(|line| line.contains("two rungs")),
+            "the new line was lost: {second:?}"
+        );
+        assert!(
+            second.len() <= 2,
+            "a repaint should yield the changed lines only, got {second:?}"
+        );
+    }
+
+    #[test]
+    fn the_screen_that_prompted_this_stops_repeating() {
+        // Taken from a real transcript: Claude Code's banner, the Fable notice,
+        // the prompt, and an answer being written a word at a time. Before the
+        // repaint rule this produced the banner once per poll, which is what
+        // the session view actually looked like.
+        let state = state();
+        let banner = [
+            "╭─── Claude Code v2.1.235 ───╮",
+            "│ Tips for getting started   │",
+            "│ Welcome back!              │",
+            "╰────────────────────────────╯",
+            "▎ Fable 5 is now a standard part of your Max plan",
+            "❯ what's our suggested upgrade",
+        ];
+        let screen = |spinner: &str, answer: &str| {
+            let mut lines: Vec<String> = banner.iter().map(|l| l.to_string()).collect();
+            lines.push(format!("{spinner} Cogitated for 1m 15s"));
+            lines.push(answer.to_string());
+            lines.join("\n")
+        };
+
+        state.new_output_lines("s1", &screen("✢", "There isn't one global"));
+        let mut emitted = Vec::new();
+        for (spinner, answer) in [
+            ("✳", "There isn't one global"),
+            ("✶", "There isn't one global \"suggested upgrade\""),
+            (
+                "✻",
+                "There isn't one global \"suggested upgrade\" — the ladder",
+            ),
+        ] {
+            emitted.extend(state.new_output_lines("s1", &screen(spinner, answer)));
+        }
+
+        let banners = emitted
+            .iter()
+            .filter(|line| line.contains("Welcome back"))
+            .count();
+        assert_eq!(banners, 0, "the banner repeated: {emitted:?}");
+        assert!(
+            emitted.iter().any(|line| line.contains("the ladder")),
+            "the answer never arrived: {emitted:?}"
+        );
+    }
+
+    #[test]
+    fn a_scrolling_log_still_reports_every_line() {
+        // The property that must not be traded away for the one above. Agents
+        // without a hook system are read through this pane, so a dropped line
+        // is a question somebody is waiting on that never arrives.
+        let state = state();
+        state.new_output_lines("s1", "one\ntwo\nthree");
+
+        let next = state.new_output_lines("s1", "two\nthree\nfour\nfive");
+        assert_eq!(next, vec!["four".to_string(), "five".to_string()]);
+    }
+
+    #[test]
+    fn a_repeated_line_in_a_scrolling_log_is_not_swallowed() {
+        // Content-based de-duplication only applies to a repaint. A build that
+        // legitimately prints the same line twice must still show it twice.
+        let state = state();
+        state.new_output_lines("s1", "compiling\nok");
+        let next = state.new_output_lines("s1", "compiling\nok\ncompiling\nok");
+        assert_eq!(next, vec!["compiling".to_string(), "ok".to_string()]);
+    }
+
+    #[test]
+    fn an_unchanged_screen_reports_nothing_new() {
+        // The suffix rule already covers this and must keep covering it: a
+        // poll that finds the pane exactly as it left it has nothing to say.
+        let state = state();
+        state.new_output_lines("s1", "$ ls\nfile.txt");
+        assert!(state.new_output_lines("s1", "$ ls\nfile.txt").is_empty());
+    }
+
+    #[test]
+    fn a_short_screen_is_never_judged_a_repaint() {
+        // Two or three recurring lines are not evidence of a TUI. Below the
+        // size floor the content rule is not consulted at all, so a quiet
+        // agent that reprints a short prompt is still reported.
+        assert!(!is_repaint(
+            &["$ ls".to_string(), "file.txt".to_string()],
+            &["$ ls".to_string(), "file.txt".to_string()]
+        ));
     }
 
     #[test]
