@@ -2396,3 +2396,64 @@ textarea.task-input {
 .transcript-card .chart-title .btn-small:hover {
   border-color: var(--baseline);
 }
+
+/* ------------------------------------------------- enlarged transcript */
+
+/*
+ * Enlarging the transcript, because it is the only part of this screen that can
+ * use the room and the one you actually read.
+ *
+ * Fixed to the viewport rather than merely taller: inside a scrolling page a
+ * taller card is still a letterbox, and on a phone it is a letterbox you have
+ * to scroll the page to see the bottom of.
+ */
+.transcript-card[data-expanded] {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  margin: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  /* The notch and the home indicator, on the phone this is mostly used from. */
+  padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem
+    max(0.75rem, env(safe-area-inset-bottom));
+  background: var(--surface-1);
+}
+
+.transcript-card[data-expanded] .output {
+  flex: 1;
+  max-height: none;
+}
+
+/* What the agent is doing, said where you are already looking. */
+.working {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.working-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--series-1);
+  animation: working-pulse 1.6s ease-in-out infinite;
+}
+
+/*
+ * A pulse rather than a spinner. A spinner claims progress it cannot know
+ * about, and a session waiting on *you* is not making any — the label says
+ * which, and the dot only says "still here".
+ */
+@keyframes working-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-dot { animation: none; opacity: 0.8; }
+}
