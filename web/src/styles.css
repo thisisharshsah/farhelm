@@ -20,7 +20,10 @@
 
   --text-primary: #0b0b0b;
   --text-secondary: #52514e;
-  --text-muted: #898781;
+  /* Darkened from #898781, which measured ~3.4:1 on --surface-1 and so failed
+     the 4.5 floor for text at this size. This clears it while staying clearly
+     third in the hierarchy behind primary and secondary. */
+  --text-muted: #6b6a64;
 
   --gridline: #e1e0d9;
   --baseline: #c3c2b7;
@@ -40,10 +43,49 @@
   --status-critical: #d03b3b;
   --success-text: #006300;
 
-  --radius: 12px;
+  /* Spacing. A 4px grid, named by step rather than by size, so a change of
+     mind about density is one edit here instead of two hundred in the file.
+     Everything below uses these; a literal padding in a rule is a bug unless
+     it is doing something the scale cannot express. */
+  --s-1: 0.25rem;  /*  4px */
+  --s-2: 0.5rem;   /*  8px */
+  --s-3: 0.75rem;  /* 12px */
+  --s-4: 1rem;     /* 16px */
+  --s-5: 1.25rem;  /* 20px */
+  --s-6: 1.5rem;   /* 24px */
+  --s-8: 2rem;     /* 32px */
+  --s-10: 2.5rem;  /* 40px */
+  --s-12: 3rem;    /* 48px */
+
+  /* Radii. Four steps, each with a job: controls, inputs, cards, pills. A card
+     is the largest because it is the thing the eye reads as an object; a
+     control inside one must be tighter or the corners fight. */
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-full: 999px;
+  /* Kept: rules across this file already reach for it, and a card radius is
+     what they meant. */
+  --radius: var(--r-xl);
+
+  /* Type. A fifth-based scale, rounded to something the eye can tell apart.
+     Sizes only — weight and colour carry hierarchy at least as much, and a
+     scale with nine steps ends up used as six. */
+  --t-xs: 0.72rem;
+  --t-sm: 0.8rem;
+  --t-base: 0.9rem;
+  --t-md: 1rem;
+  --t-lg: 1.25rem;
+  --t-xl: 1.6rem;
+
   --tap: 44px;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* The focus ring, as one token. Two pixels of the accent with an offset, so
+     it reads on both surfaces without touching the control's own border. */
+  --focus: 0 0 0 2px var(--page), 0 0 0 4px var(--series-1);
 
   /* Elevation.
      Two levels, not five. A card either sits on the page or floats above it;
@@ -80,7 +122,7 @@
 :where(button, a, input, textarea, select, [tabindex]):focus-visible {
   outline: 2px solid var(--series-1);
   outline-offset: 2px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -137,9 +179,44 @@
 body {
   margin: 0;
   font-family: var(--font);
+  /* Left at the browser's own size, which is the reader's preference and may
+     not be 16px. Setting --t-base here instead would have quietly shrunk every
+     element that does not name a size of its own; the scale is for components
+     that ask for it. */
+  line-height: 1.5;
   background: var(--page);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Tabular figures everywhere. Costs and counts change in place all over this
+     app, and proportional digits make a number jitter as it updates. */
+  font-variant-numeric: tabular-nums;
+  text-rendering: optimizeLegibility;
+}
+
+/*
+ * Links get the same three states as everything else. Underlined by default
+ * rather than on hover: an underline that appears only on hover is a link you
+ * have to find first.
+ */
+/* No anchors in the app today — every navigation is a button against the hash
+   router. These are here so the first one added inherits the same three states
+   as everything else rather than arriving unstyled. */
+a {
+  color: var(--series-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: color var(--quick) var(--ease);
+}
+
+a:hover {
+  color: color-mix(in srgb, var(--series-1) 82%, var(--text-primary));
+  text-decoration-thickness: 2px;
+}
+
+a:active {
+  color: color-mix(in srgb, var(--series-1) 70%, var(--text-primary));
 }
 
 button {
@@ -310,8 +387,8 @@ button {
 .skeleton {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.5rem 0;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
 }
 
 .skeleton-card {
@@ -362,7 +439,7 @@ button {
 .rail-org {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--s-2);
   padding: 0.35rem 0.5rem 0.75rem;
   min-width: 0;
 }
@@ -382,7 +459,7 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 0.1rem 0.4rem;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: var(--surface-1);
   border: 1px solid var(--border);
   color: var(--text-secondary);
@@ -391,12 +468,12 @@ button {
 .rail-search {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--s-2);
   width: 100%;
   padding: 0.45rem 0.6rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--s-2);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--r-md);
   background: var(--surface-1);
   color: var(--text-muted);
   font-size: 0.875rem;
@@ -417,7 +494,7 @@ kbd {
   font: 500 0.7rem/1 var(--font);
   padding: 0.2rem 0.35rem;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: var(--page);
   color: var(--text-muted);
 }
@@ -435,7 +512,7 @@ kbd {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  margin: 0.5rem 0 0.25rem;
+  margin: var(--s-2) 0 var(--s-1);
   padding: 0 0.6rem;
 }
 
@@ -447,7 +524,7 @@ kbd {
   width: 100%;
   padding: 0.45rem 0.6rem;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: none;
   color: var(--text-secondary);
   font-size: 0.9rem;
@@ -509,7 +586,7 @@ kbd {
 .rail-status {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--s-2);
   padding: 0.4rem 0.6rem;
   font-size: 0.8rem;
   color: var(--text-muted);
@@ -544,7 +621,7 @@ kbd {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--surface-1);
   box-shadow: var(--lift-2);
   animation: palette-rise var(--quick) var(--ease);
@@ -589,7 +666,7 @@ kbd {
   align-items: center;
   gap: 0.6rem;
   padding: 0.5rem 0.55rem;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   color: var(--text-secondary);
 }
@@ -642,8 +719,8 @@ kbd {
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
   padding-top: calc(0.75rem + env(safe-area-inset-top));
   background: color-mix(in srgb, var(--page) 88%, transparent);
   backdrop-filter: blur(12px);
@@ -689,7 +766,7 @@ kbd {
   display: inline-grid;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--surface-1);
   font-size: 0.9rem;
 }
@@ -701,7 +778,7 @@ kbd {
 .back {
   border: none;
   background: none;
-  padding: 0.25rem 0.5rem 0.25rem 0;
+  padding: var(--s-1) var(--s-2) var(--s-1) 0;
   min-height: var(--tap);
   color: var(--text-secondary);
   font-size: 0.95rem;
@@ -709,10 +786,10 @@ kbd {
 
 main {
   flex: 1;
-  padding: 0.75rem 1rem 1.5rem;
+  padding: var(--s-3) var(--s-4) var(--s-6);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--s-3);
 }
 
 /* Anti-pattern guard: never blank the view on refetch — hold the last render
@@ -725,8 +802,12 @@ main {
 .card {
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.875rem 1rem;
+  border-radius: var(--r-xl);
+  padding: var(--s-4);
+  box-shadow: var(--lift-1);
+  /* Cards are the objects on this page. Giving them the shadow — and giving
+     nothing else one — is what makes the hierarchy read at a glance rather
+     than being spelled out in borders. */
 }
 
 .muted {
@@ -740,7 +821,7 @@ main {
 .empty {
   text-align: center;
   color: var(--text-muted);
-  padding: 2.5rem 1rem;
+  padding: var(--s-10) var(--s-4);
   font-size: 0.9rem;
 }
 
@@ -767,7 +848,7 @@ main {
 .session-head {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: var(--s-2);
 }
 
 .session-name {
@@ -825,23 +906,23 @@ main {
   font-family: var(--mono);
   font-size: 0.85rem;
   background: var(--surface-2);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 0.6rem 0.7rem;
-  margin: 0.5rem 0;
+  margin: var(--s-2) 0;
   overflow-x: auto;
   white-space: pre;
 }
 
 .approval-actions {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
 }
 
 .btn {
   flex: 1;
   min-height: var(--tap);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--surface-1);
   font-weight: 600;
@@ -866,7 +947,7 @@ main {
 .notice {
   font-size: 0.8rem;
   color: var(--text-secondary);
-  margin-top: 0.5rem;
+  margin-top: var(--s-2);
   display: flex;
   gap: 0.4rem;
   align-items: flex-start;
@@ -876,7 +957,7 @@ main {
 
 .steps {
   list-style: none;
-  margin: 0.5rem 0 0;
+  margin: var(--s-2) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -928,7 +1009,7 @@ main {
   font-size: 0.78rem;
   line-height: 1.55;
   background: var(--surface-2);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 0.7rem 0.8rem;
   max-height: 15rem;
   overflow-y: auto;
@@ -973,7 +1054,7 @@ main {
      output is what makes the two read apart at a glance. */
   max-width: min(85%, 34rem);
   padding: 0.35rem 0.6rem;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--series-1) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--series-1) 30%, transparent);
   color: var(--text-primary);
@@ -993,20 +1074,31 @@ main {
 
 .composer {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
 }
 
 .composer input {
   flex: 1;
   min-height: var(--tap);
-  padding: 0 0.75rem;
+  padding: 0 var(--s-3);
   font: inherit;
-  font-size: 0.95rem;
+  font-size: var(--t-md);
   color: var(--text-primary);
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
+  transition:
+    border-color var(--quick) var(--ease),
+    box-shadow var(--quick) var(--ease);
+}
+
+.composer input:hover:not(:focus) {
+  border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+}
+
+.composer input::placeholder {
+  color: var(--text-muted);
 }
 
 .composer input:focus-visible {
@@ -1026,17 +1118,36 @@ main {
 .pair-input {
   display: block;
   width: 100%;
-  padding: 0.55rem 0.75rem;
+  padding: var(--s-2) var(--s-3);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
   /* A key blob has no words in it — proportional type turns `l1I` and `O0`
      into a guessing game when the paste goes wrong. */
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   color: var(--text-primary);
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   resize: vertical;
+  transition:
+    border-color var(--quick) var(--ease),
+    background var(--quick) var(--ease);
+}
+
+/* An input that reacts to the pointer before it is clicked tells you it is an
+   input. Without it a bordered box on a card is indistinguishable from a
+   read-only field showing a value. */
+.pair-input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+}
+
+.pair-input::placeholder {
+  color: var(--text-muted);
+}
+
+.pair-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 textarea.pair-input {
@@ -1058,8 +1169,8 @@ input.pair-input {
 
 .row-actions {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
 }
 
 /* ------------------------------------------------------------- cost strip */
@@ -1072,7 +1183,7 @@ input.pair-input {
   z-index: 6;
   display: flex;
   justify-content: center;
-  gap: 1rem;
+  gap: var(--s-4);
   padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom));
   font-size: 0.82rem;
   background: color-mix(in srgb, var(--page) 92%, transparent);
@@ -1128,7 +1239,7 @@ input.pair-input {
   margin-bottom: 0.6rem;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--s-2);
 }
 
 .chart-title .spacer {
@@ -1138,7 +1249,7 @@ input.pair-input {
 .linkish {
   border: none;
   background: none;
-  padding: 0.25rem;
+  padding: var(--s-1);
   font-size: 0.75rem;
   color: var(--text-secondary);
   text-decoration: underline;
@@ -1149,14 +1260,14 @@ input.pair-input {
    so meaning never rests on hue alone. */
 .meter {
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--surface-2);
   overflow: hidden;
 }
 
 .meter-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--status-good);
   transition: width 200ms ease;
 }
@@ -1193,7 +1304,7 @@ input.pair-input {
   display: grid;
   grid-template-columns: 4.2rem 1fr auto;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--s-2);
   /* Hit target comfortably above the mark height. */
   min-height: 26px;
   padding: 1px 0;
@@ -1234,7 +1345,7 @@ input.pair-input {
   z-index: 8;
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 0.35rem 0.5rem;
   font-size: 0.75rem;
   color: var(--text-primary);
@@ -1273,7 +1384,7 @@ table.values th:last-child {
 /* --------------------------------------------------------- empty states */
 
 .empty-state {
-  padding: 1.5rem 1rem;
+  padding: var(--s-6) var(--s-4);
   text-align: center;
 }
 
@@ -1284,7 +1395,7 @@ table.values th:last-child {
 }
 
 .empty-state .btn {
-  margin-top: 0.75rem;
+  margin-top: var(--s-3);
 }
 
 /* ----------------------------------------------------------- agent picker */
@@ -1307,7 +1418,7 @@ table.values th:last-child {
   color: var(--text-primary);
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   cursor: pointer;
 }
 
@@ -1340,7 +1451,7 @@ table.values th:last-child {
 .status-chip {
   padding: 0.1rem 0.45rem;
   font-size: 0.7rem;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   white-space: nowrap;
   color: var(--text-secondary);
   background: var(--surface-2);
@@ -1368,7 +1479,7 @@ table.values th:last-child {
 
 .task-row-prompt,
 .task-prompt {
-  margin: 0.25rem 0;
+  margin: var(--s-1) 0;
   font-size: 0.85rem;
   color: var(--text-secondary);
   /* Two lines in a list: enough to tell two tasks apart, not enough to push
@@ -1388,7 +1499,7 @@ table.values th:last-child {
 }
 
 .task-summary {
-  margin: 0.5rem 0;
+  margin: var(--s-2) 0;
   font-size: 0.85rem;
   color: var(--text-secondary);
 }
@@ -1408,17 +1519,17 @@ textarea.task-input {
 }
 
 .verdict {
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
   border-top: 1px solid var(--gridline);
 }
 
 /* C10's read of the diff. A left edge and a glyph, matching the approval card's
    grammar — the glyph is what survives greyscale and a colour-blind reader. */
 .second-opinion {
-  margin-top: 0.75rem;
+  margin-top: var(--s-3);
   padding: 0.6rem 0.75rem;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--surface-2);
   border-left: 3px solid var(--text-muted);
 }
@@ -1447,7 +1558,7 @@ textarea.task-input {
 }
 
 .second-opinion .tile-note {
-  margin-top: 0.25rem;
+  margin-top: var(--s-1);
 }
 
 /* A waiting change set on the home screen. Borrows `.approval`'s amber edge —
@@ -1466,12 +1577,12 @@ textarea.task-input {
 .diff {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--s-2);
 }
 
 .diff-file {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 
@@ -1579,7 +1690,7 @@ textarea.task-input {
 }
 
 .diff-text {
-  padding-right: 0.75rem;
+  padding-right: var(--s-3);
 }
 
 /* Added and removed lines carry a tint *and* a leading +/− glyph. The glyph is
@@ -1631,14 +1742,14 @@ textarea.task-input {
 
 .hero {
   text-align: center;
-  padding: 1rem 0.25rem;
+  padding: var(--s-4) var(--s-1);
 }
 
 .hero-mark {
   font-size: 2.5rem;
   line-height: 1;
   color: var(--series-1);
-  margin-bottom: 1rem;
+  margin-bottom: var(--s-4);
   /* Rises once on load. A front door is the one place a moment of motion buys
      something: it tells you the app is alive before any data has arrived. */
   animation: rise 420ms var(--ease) both;
@@ -1656,7 +1767,7 @@ textarea.task-input {
 }
 
 .hero-title {
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--s-2);
   font-size: 1.4rem;
   font-weight: 650;
   letter-spacing: -0.015em;
@@ -1664,7 +1775,7 @@ textarea.task-input {
 }
 
 .hero-sub {
-  margin: 0 auto 1.5rem;
+  margin: 0 auto var(--s-6);
   max-width: 26rem;
   color: var(--text-secondary);
   font-size: 0.95rem;
@@ -1680,7 +1791,7 @@ textarea.task-input {
 }
 
 .hero-note {
-  margin: 1.5rem auto 0;
+  margin: var(--s-6) auto 0;
   max-width: 24rem;
   font-size: 0.78rem;
   color: var(--text-muted);
@@ -1690,14 +1801,28 @@ textarea.task-input {
 /* --------------------------------------------------------------- buttons */
 
 .btn {
+  border-radius: var(--r-md);
+  font-weight: 550;
+  letter-spacing: -0.005em;
   transition:
     background var(--quick) var(--ease),
     border-color var(--quick) var(--ease),
+    color var(--quick) var(--ease),
+    box-shadow var(--quick) var(--ease),
     transform var(--quick) var(--ease);
 }
 
 .btn:hover:not(:disabled) {
   background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--text-primary) 22%, transparent);
+}
+
+/* Disabled has to look unavailable, not merely be unavailable. Reduced opacity
+   alone reads as "loading"; the cursor says which it is. */
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* A press that moves is a press that registered, on a touchscreen where there
@@ -1712,9 +1837,32 @@ textarea.task-input {
   color: #ffffff;
 }
 
+.btn-primary {
+  box-shadow: var(--lift-1);
+}
+
 .btn-primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--series-1) 88%, #000000);
   border-color: color-mix(in srgb, var(--series-1) 88%, #000000);
+  box-shadow: var(--lift-2);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--series-1) 78%, #000000);
+  box-shadow: var(--lift-1);
+}
+
+/* A quiet button is quiet until you reach for it. */
+.btn-quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-primary);
 }
 
 .btn-lg {
@@ -1747,11 +1895,11 @@ textarea.task-input {
 
 .auth-switch {
   display: flex;
-  gap: 0.25rem;
-  padding: 0.25rem;
+  gap: var(--s-1);
+  padding: var(--s-1);
   background: var(--surface-2);
-  border-radius: 10px;
-  margin-bottom: 0.5rem;
+  border-radius: var(--r-md);
+  margin-bottom: var(--s-2);
 }
 
 .auth-tab {
@@ -1759,7 +1907,7 @@ textarea.task-input {
   min-height: 36px;
   border: none;
   background: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-size: 0.88rem;
   font-weight: 550;
   color: var(--text-secondary);
@@ -1776,17 +1924,17 @@ textarea.task-input {
 
 .machine-list {
   list-style: none;
-  margin: 0.5rem 0 0;
+  margin: var(--s-2) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--s-2);
 }
 
 .machine-item {
-  padding: 0.75rem;
+  padding: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--surface-1);
 }
 
@@ -1796,11 +1944,11 @@ textarea.task-input {
   gap: 0.6rem;
   width: 100%;
   min-height: var(--tap);
-  padding: 0.5rem 0.75rem;
+  padding: var(--s-2) var(--s-3);
   text-align: left;
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   transition: border-color var(--quick) var(--ease);
 }
 
@@ -1816,7 +1964,7 @@ textarea.task-input {
 .machine-headline {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--s-2);
   min-width: 0;
 }
 
@@ -1868,20 +2016,20 @@ textarea.task-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--s-3);
 }
 
 .key-list {
   list-style: none;
-  margin: 0.5rem 0 0;
+  margin: var(--s-2) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--s-2);
 }
 
 .key-list > li {
-  padding: 0.5rem 0;
+  padding: var(--s-2) 0;
   border-top: 1px solid var(--gridline);
 }
 
@@ -1892,8 +2040,8 @@ textarea.task-input {
 .inline-form {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
 }
 
 .inline-form .pair-input {
@@ -1905,12 +2053,12 @@ textarea.task-input {
 
 .inline-form .btn {
   flex: 0 0 auto;
-  padding: 0 1rem;
+  padding: 0 var(--s-4);
 }
 
 .inline-input {
   margin: 0;
-  padding: 0.25rem 0.5rem;
+  padding: var(--s-1) var(--s-2);
   font-family: var(--font);
   font-weight: 600;
 }
@@ -1932,14 +2080,14 @@ textarea.task-input {
 .usage-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
 }
 
 .usage-tile {
   padding: 0.6rem;
   background: var(--surface-2);
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 
 /* At the limit is information, not an error — you are using what you paid for.
@@ -1964,7 +2112,7 @@ textarea.task-input {
 
 .plan-chip {
   padding: 0.2rem 0.55rem;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--surface-2);
   border: 1px solid var(--border);
   font-size: 0.7rem;
@@ -1975,7 +2123,7 @@ textarea.task-input {
 
 .badge {
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   font-size: 0.7rem;
   font-weight: 600;
   white-space: nowrap;
@@ -1990,7 +2138,7 @@ textarea.task-input {
 
 .plan-grid {
   display: grid;
-  gap: 0.75rem;
+  gap: var(--s-3);
   grid-template-columns: 1fr;
 }
 
@@ -2003,7 +2151,7 @@ textarea.task-input {
 .plan-card {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--s-2);
 }
 
 .plan-card.is-current {
@@ -2063,18 +2211,18 @@ textarea.task-input {
 
 .success-panel {
   display: block;
-  padding: 0.75rem;
-  border-radius: 10px;
+  padding: var(--s-3);
+  border-radius: var(--r-md);
   background: var(--surface-2);
-  margin-top: 0.75rem;
+  margin-top: var(--s-3);
 }
 
 .warn-text {
   display: block;
   padding: 0.6rem 0.75rem;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--status-warning) 12%, transparent);
-  margin-top: 0.5rem;
+  margin-top: var(--s-2);
 }
 
 .error-text {
@@ -2083,11 +2231,11 @@ textarea.task-input {
 
 .secret-block {
   display: block;
-  margin: 0.5rem 0;
+  margin: var(--s-2) 0;
   padding: 0.6rem;
   background: var(--page);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-family: var(--mono);
   font-size: 0.72rem;
   /* A key has no spaces to break at, so it must be told it may wrap — otherwise
@@ -2110,11 +2258,11 @@ textarea.task-input {
 .diff-summary {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--s-2);
   padding: 0.6rem 0.85rem;
   margin-bottom: 0.6rem;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--surface-2);
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -2152,6 +2300,8 @@ textarea.task-input {
 .diff-word {
   background: color-mix(in srgb, currentColor 14%, transparent);
   color: inherit;
+  /* Below the scale on purpose: this is a 3px marker bar, not a
+     surface, and a corner large enough to notice would eat it. */
   border-radius: 3px;
   padding: 0 1px;
   box-decoration-break: clone;
@@ -2229,7 +2379,7 @@ textarea.task-input {
   .session-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
-    gap: 0.75rem;
+    gap: var(--s-3);
   }
 
   /*
@@ -2335,7 +2485,7 @@ textarea.task-input {
 .session-view {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--s-3);
   flex: 1;
   /* Without this a flex child refuses to shrink below its content, the column
      overflows instead of scrolling, and the composer leaves the screen. */
