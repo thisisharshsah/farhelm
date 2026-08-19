@@ -36,7 +36,7 @@ USAGE:
     forge-runner status [--db <path>]
     forge-runner demo
     forge-runner hook
-    forge-runner install-hooks [<repo>] [--print]
+    forge-runner install-hooks [<repo>] [--global] [--print]
     forge-runner login --cloud <url> [--cloud-name <name>] [--cloud-file <path>]
     forge-runner logout [--cloud-file <path>]
     forge-runner pair [--port <port>]
@@ -52,8 +52,10 @@ USAGE:
                    Not run by hand — registered in .claude/settings.json.
     install-hooks  Register the hook bridge in a repo's .claude/settings.json,
                    merging so nothing else in that file is disturbed. Defaults
-                   to the repo you are standing in. --print gives you the block
-                   to paste instead.
+                   to the repo you are standing in. --global writes to
+                   ~/.claude/settings.json instead, which supervises every repo
+                   on this machine and is the one-and-done option. --print gives
+                   you the block to paste.
     login          Join a workspace by asking. Prints a short code, waits while
                    you approve it in the web app, then stores what it is given —
                    after which `serve` needs no cloud flags at all. Nothing is
@@ -310,14 +312,26 @@ fn install_hooks(args: &[String]) -> Fallible {
         return Ok(());
     }
 
-    // The repo you are in, unless you name another — the common case is
-    // standing in it, and the common case should need no argument.
-    let target = args
-        .iter()
-        .find(|arg| !arg.starts_with("--"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let settings = target.join(".claude").join("settings.json");
+    // `--global` writes to ~/.claude/settings.json, which Claude Code reads for
+    // every project. That is one setup instead of one per repository, and it is
+    // the difference between supervision you have to remember and supervision
+    // that is simply on. Per-repo stays the default, because turning it on
+    // everywhere is a decision worth typing.
+    let settings = if args.iter().any(|arg| arg == "--global") {
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .map_err(|_| "HOME is not set, so there is no user settings file to write")?;
+        home.join(".claude").join("settings.json")
+    } else {
+        // The repo you are in, unless you name another — the common case is
+        // standing in it, and the common case should need no argument.
+        args.iter()
+            .find(|arg| !arg.starts_with("--"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".claude")
+            .join("settings.json")
+    };
 
     match hook_cli::install_into(&settings, &binary)? {
         hook_cli::Installed::Created => {
@@ -337,8 +351,13 @@ fn install_hooks(args: &[String]) -> Fallible {
         }
     }
 
+    let scope = if args.iter().any(|arg| arg == "--global") {
+        "every repo on this machine"
+    } else {
+        "that repo"
+    };
     println!(
-        "\nEvery tool call Claude Code makes in that repo now waits for you.\n\
+        "\nEvery tool call Claude Code makes in {scope} now waits for you.\n\
          With the daemon down, hooks defer to Claude Code's own prompt rather \n\
          than blocking — RelayForge being off degrades to plain Claude Code."
     );

@@ -11,6 +11,7 @@ use forge_proto::types::{
     AgentTask, Approval, BatchItem, BatchStatus, Budget, DecidedVia, Decision, Device, Machine,
     Plan, PlanStep, Repo, Session, TaskStatus, UsageEvent,
 };
+use forge_proto::views::OutputLine;
 
 #[cfg(test)]
 mod tests {
@@ -205,6 +206,32 @@ store_port! {
     /// re-attaches to the session it belongs to instead of creating a new one
     /// on every tool call.
     fn find_session_by_agent_id(&self, agent_session_id: &str) -> Result<Option<Session>>;
+    }
+}
+
+store_port! {
+    /// What was said in a session, kept so it can be read back.
+    ///
+    /// Its own port rather than three more methods on [`SessionStore`], because
+    /// the pipeline that reads sessions has no business writing transcripts —
+    /// and `forge-gateway`'s narrow-port test says so by refusing to compile if
+    /// the bound widens. Only the runner implements this.
+    TranscriptStore {
+    /// Record output lines against a session so they survive a restart.
+    ///
+    /// Takes a slice rather than a line: output arrives in bursts, and one
+    /// transaction per burst is the difference between a transcript that keeps
+    /// up with a build and one that becomes the reason the build is slow.
+    fn append_output(&self, session_id: &str, lines: &[OutputLine]) -> Result<()>;
+
+    /// The newest `limit` lines of a session's transcript, oldest first.
+    fn output_tail(&self, session_id: &str, limit: usize) -> Result<Vec<OutputLine>>;
+
+    /// Drop everything but the newest `keep` lines of a session.
+    ///
+    /// A transcript is worth keeping; an unbounded one is a disk that fills up
+    /// while nobody is looking.
+    fn prune_output(&self, session_id: &str, keep: usize) -> Result<usize>;
     }
 }
 
@@ -416,6 +443,7 @@ pub trait Store:
     + TaskStore
     + ResponseCache
     + DeviceStore
+    + TranscriptStore
 {
 }
 
@@ -429,7 +457,7 @@ pub trait Store:
 pub mod prelude {
     pub use super::{
         ApprovalStore, BatchStore, DeviceStore, FleetStore, LedgerStore, PlanStore, ResponseCache,
-        SessionStore, Store, TaskStore,
+        SessionStore, Store, TaskStore, TranscriptStore,
     };
 }
 
@@ -443,6 +471,7 @@ impl<T> Store for T where
         + TaskStore
         + ResponseCache
         + DeviceStore
+        + TranscriptStore
 {
 }
 

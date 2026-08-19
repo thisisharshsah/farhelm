@@ -31,6 +31,17 @@ pub type RunnerGateway = Gateway<Arc<SqliteStore>, AnthropicClient>;
 /// scroll past what a glance can use anyway.
 const OUTPUT_TAIL_CAPACITY: usize = 200;
 
+/// Lines kept on disk per session.
+///
+/// Larger than the live tail because this is the part you scroll back through:
+/// the instruction that started the work should still be there when the work
+/// finishes. Bounded because a transcript nobody trims is a disk that fills up
+/// while nobody is looking.
+const OUTPUT_HISTORY_CAPACITY: usize = 5_000;
+
+/// How many lines between trims of the stored transcript.
+const PRUNE_EVERY: u32 = 500;
+
 /// Resolve this runner's machine row, creating it on first start.
 ///
 /// The id is derived from the hostname rather than random, so restarting the
@@ -137,6 +148,8 @@ pub struct AppState {
     /// [`crate::task::reconcile_after_restart`].
     pub running_tasks: std::sync::atomic::AtomicUsize,
     output: Mutex<HashMap<String, OutputBuffer>>,
+    /// Lines written since each session's transcript was last trimmed.
+    since_prune: Mutex<HashMap<String, u32>>,
     /// Last pane snapshot per session, for [`AppState::new_output_lines`].
     snapshots: Mutex<HashMap<String, Vec<String>>>,
 }
@@ -249,6 +262,7 @@ impl AppState {
             }),
             running_tasks: std::sync::atomic::AtomicUsize::new(0),
             output: Mutex::new(HashMap::new()),
+            since_prune: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(HashMap::new()),
         })
     }
@@ -277,10 +291,48 @@ impl AppState {
             line
         };
 
+        // Written through to the store so the transcript survives a restart.
+        // The ring buffer above is still the live tail — reading the last few
+        // lines of a running session must not touch the disk — and this is the
+        // record behind it.
+        //
+        // A failure here is logged rather than propagated: losing a line of
+        // history is bad, and refusing to show the user the line that is
+        // already on their screen would be worse.
+        if let Err(err) = self
+            .store
+            .append_output(session_id, std::slice::from_ref(&line))
+        {
+            eprintln!("session {session_id}: output not recorded: {err}");
+        }
+        self.note_output_written(session_id);
+
         self.publish(ServerEvent::OutputChunk {
             session_id: session_id.to_owned(),
             line,
         });
+    }
+
+    /// Trim a session's stored transcript now and then.
+    ///
+    /// Every `PRUNE_EVERY` lines rather than on every one: the delete is a
+    /// scan, and paying for it once per line would make a chatty build pay for
+    /// tidiness it does not need yet.
+    fn note_output_written(&self, session_id: &str) {
+        let due = {
+            let mut counts = self.since_prune.lock().expect("prune counter poisoned");
+            let count = counts.entry(session_id.to_owned()).or_insert(0);
+            *count += 1;
+            if *count >= PRUNE_EVERY {
+                *count = 0;
+                true
+            } else {
+                false
+            }
+        };
+        if due && let Err(err) = self.store.prune_output(session_id, OUTPUT_HISTORY_CAPACITY) {
+            eprintln!("session {session_id}: transcript not pruned: {err}");
+        }
     }
 
     /// Which lines of a pane snapshot have not been sent yet.
@@ -320,16 +372,31 @@ impl AppState {
 
     /// The most recent `limit` lines, oldest first.
     pub fn output_tail(&self, session_id: &str, limit: usize) -> Vec<OutputLine> {
-        let buffers = self.output.lock().expect("output buffers poisoned");
-        let Some(buffer) = buffers.get(session_id) else {
-            return Vec::new();
-        };
-        buffer
-            .lines
-            .iter()
-            .skip(buffer.lines.len().saturating_sub(limit))
-            .cloned()
-            .collect()
+        {
+            let buffers = self.output.lock().expect("output buffers poisoned");
+            if let Some(buffer) = buffers.get(session_id) {
+                return buffer
+                    .lines
+                    .iter()
+                    .skip(buffer.lines.len().saturating_sub(limit))
+                    .cloned()
+                    .collect();
+            }
+        }
+
+        // Nothing in memory. Either this session predates the current process —
+        // a restart, which used to mean the transcript was simply gone — or it
+        // has produced nothing yet. The store knows which.
+        //
+        // Deliberately not repopulating the ring buffer: that is the live tail
+        // of a running session, and filling it from history would make a
+        // finished session look like it is still producing output.
+        self.store
+            .output_tail(session_id, limit)
+            .unwrap_or_else(|err| {
+                eprintln!("session {session_id}: transcript unreadable: {err}");
+                Vec::new()
+            })
     }
 }
 
@@ -339,6 +406,46 @@ mod tests {
 
     fn state() -> Arc<AppState> {
         AppState::with_gateway(SqliteStore::open_in_memory().unwrap(), |_| None)
+    }
+
+    #[test]
+    fn a_transcript_outlives_the_process_that_wrote_it() {
+        // The failure this prevents, and the reason any of this exists: the
+        // tail lived in memory, so a deploy, a crash or a closed laptop emptied
+        // every session's transcript and the screen you steer from came back
+        // blank.
+        //
+        // A file-backed store opened twice *is* the restart. An in-memory one
+        // would not do: it dies with its connection, so it could not tell a
+        // transcript that persisted from one that never left the process.
+        let path = std::env::temp_dir().join(format!(
+            "forge-transcript-{}-{:?}.db",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let before = AppState::with_gateway(SqliteStore::open(&path).unwrap(), |_| None);
+            before.push_output("s1", "\u{203a} fix the failing test", 10);
+            before.push_output("s1", "running cargo test\u{2026}", 11);
+            assert_eq!(before.output_tail("s1", 10).len(), 2);
+        }
+
+        let after = AppState::with_gateway(SqliteStore::open(&path).unwrap(), |_| None);
+        let tail = after.output_tail("s1", 10);
+
+        assert_eq!(tail.len(), 2, "the transcript did not survive the restart");
+        assert_eq!(tail[0].text, "\u{203a} fix the failing test");
+        assert_eq!(tail[1].text, "running cargo test\u{2026}");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_session_nobody_has_written_to_still_reads_empty() {
+        let state = state();
+        assert!(state.output_tail("never-seen", 10).is_empty());
     }
 
     #[test]

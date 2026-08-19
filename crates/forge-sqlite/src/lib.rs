@@ -13,13 +13,14 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use forge_app::store::{
     ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, LedgerStore, PlanStore,
     ResponseCache, Result, SessionStore, StoreError, TaskOutcome, TaskStore, TimeRange,
-    UsageTotals,
+    TranscriptStore, UsageTotals,
 };
 use forge_proto::types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
     Device, DeviceKind, Dispatch, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo,
     Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
 };
+use forge_proto::views::OutputLine;
 
 /// Applied in order; the index+1 is the `PRAGMA user_version` they leave behind.
 const MIGRATIONS: &[&str] = &[
@@ -31,6 +32,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_usage_time_index.sql"),
     include_str!("../migrations/0007_dispatch.sql"),
     include_str!("../migrations/0008_task_worktree.sql"),
+    include_str!("../migrations/0009_session_output.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -697,6 +699,75 @@ impl SessionStore for SqliteStore {
             .optional()
             .map_err(backend)?;
         raw.map(Session::try_from).transpose()
+    }
+}
+
+impl TranscriptStore for SqliteStore {
+    fn append_output(&self, session_id: &str, lines: &[OutputLine]) -> Result<()> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.lock()?;
+        // One transaction for the whole burst. Output arrives in bursts, and a
+        // commit per line is what turns a transcript into the reason a build
+        // feels slow.
+        let tx = conn.transaction().map_err(backend)?;
+        {
+            let mut statement = tx
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO session_output (session_id, seq, text, at_ms) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .map_err(backend)?;
+            for line in lines {
+                statement
+                    .execute(params![session_id, line.seq as i64, line.text, line.at_ms])
+                    .map_err(backend)?;
+            }
+        }
+        tx.commit().map_err(backend)
+    }
+
+    fn output_tail(&self, session_id: &str, limit: usize) -> Result<Vec<OutputLine>> {
+        let conn = self.lock()?;
+        // Newest first in SQL so the limit takes the *end* of the transcript,
+        // then reversed for display: a reader wants the last hundred lines in
+        // the order they happened, not the first hundred.
+        let mut statement = conn
+            .prepare(
+                "SELECT seq, text, at_ms FROM session_output WHERE session_id = ?1 \
+                 ORDER BY seq DESC LIMIT ?2",
+            )
+            .map_err(backend)?;
+        let rows = statement
+            .query_map(params![session_id, limit as i64], |row| {
+                Ok(OutputLine {
+                    seq: row.get::<_, i64>(0)? as u64,
+                    text: row.get(1)?,
+                    at_ms: row.get(2)?,
+                })
+            })
+            .map_err(backend)?;
+        let mut lines = rows
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        lines.reverse();
+        Ok(lines)
+    }
+
+    fn prune_output(&self, session_id: &str, keep: usize) -> Result<usize> {
+        let conn = self.lock()?;
+        // Everything below the newest `keep` sequence numbers, in one delete.
+        let removed = conn
+            .execute(
+                "DELETE FROM session_output WHERE session_id = ?1 AND seq <= (\
+                   SELECT seq FROM session_output WHERE session_id = ?1 \
+                   ORDER BY seq DESC LIMIT 1 OFFSET ?2\
+                 )",
+                params![session_id, keep as i64],
+            )
+            .map_err(backend)?;
+        Ok(removed)
     }
 }
 
@@ -1617,6 +1688,118 @@ mod tests {
             .upsert_session(&session("session-1", Some(5.0)))
             .unwrap();
         store
+    }
+
+    fn line(seq: u64, text: &str) -> OutputLine {
+        OutputLine {
+            seq,
+            text: text.into(),
+            at_ms: NOW_MS + seq as i64,
+        }
+    }
+
+    #[test]
+    fn a_transcript_survives_being_written_and_read_back() {
+        // The whole point: output used to live in memory and die with the
+        // process, so a deploy emptied every session's transcript.
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+
+        store
+            .append_output("s1", &[line(0, "› fix the test"), line(1, "running…")])
+            .unwrap();
+
+        let back = store.output_tail("s1", 10).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].text, "› fix the test");
+        assert_eq!(back[1].text, "running…");
+        assert_eq!(back[0].seq, 0);
+    }
+
+    #[test]
+    fn the_tail_is_the_newest_lines_in_the_order_they_happened() {
+        // Two things at once, and getting either backwards is a transcript
+        // nobody can read: the limit must take the *end*, and what comes back
+        // must be oldest-first.
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+        let lines: Vec<OutputLine> = (0..50).map(|i| line(i, &format!("line {i}"))).collect();
+        store.append_output("s1", &lines).unwrap();
+
+        let back = store.output_tail("s1", 5).unwrap();
+        assert_eq!(
+            back.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+            vec!["line 45", "line 46", "line 47", "line 48", "line 49"]
+        );
+    }
+
+    #[test]
+    fn pruning_keeps_the_newest_and_drops_the_rest() {
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+        let lines: Vec<OutputLine> = (0..100).map(|i| line(i, &format!("line {i}"))).collect();
+        store.append_output("s1", &lines).unwrap();
+
+        let removed = store.prune_output("s1", 10).unwrap();
+        assert_eq!(removed, 90);
+
+        let back = store.output_tail("s1", 100).unwrap();
+        assert_eq!(back.len(), 10);
+        assert_eq!(back[0].text, "line 90");
+        assert_eq!(back[9].text, "line 99");
+    }
+
+    #[test]
+    fn pruning_a_transcript_shorter_than_the_limit_removes_nothing() {
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+        store.append_output("s1", &[line(0, "only line")]).unwrap();
+
+        assert_eq!(store.prune_output("s1", 10).unwrap(), 0);
+        assert_eq!(store.output_tail("s1", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn re_appending_the_same_line_does_not_duplicate_it() {
+        // The primary key is (session_id, seq), so a retry after a partial
+        // write settles rather than producing a transcript that says
+        // everything twice.
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+        store.append_output("s1", &[line(0, "once")]).unwrap();
+        store.append_output("s1", &[line(0, "once")]).unwrap();
+
+        assert_eq!(store.output_tail("s1", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn one_sessions_transcript_is_not_anothers() {
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+        store.upsert_session(&session("s2", None)).unwrap();
+        store.append_output("s1", &[line(0, "mine")]).unwrap();
+        store.append_output("s2", &[line(0, "theirs")]).unwrap();
+
+        assert_eq!(store.output_tail("s1", 10).unwrap()[0].text, "mine");
+        assert_eq!(store.output_tail("s2", 10).unwrap()[0].text, "theirs");
+        store.prune_output("s1", 0).unwrap();
+        assert_eq!(store.output_tail("s2", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_session_with_no_output_has_an_empty_transcript_rather_than_an_error() {
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+        assert!(store.output_tail("s1", 10).unwrap().is_empty());
+        assert_eq!(store.prune_output("s1", 10).unwrap(), 0);
+    }
+
+    #[test]
+    fn appending_nothing_is_not_a_write() {
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+        store.append_output("s1", &[]).unwrap();
+        assert!(store.output_tail("s1", 10).unwrap().is_empty());
     }
 
     fn session(id: &str, budget_usd: Option<f64>) -> Session {
