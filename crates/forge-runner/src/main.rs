@@ -6,7 +6,7 @@
 //! (M2), and the relay link (M3).
 
 use forge_sqlite::SqliteStore;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,7 +36,7 @@ USAGE:
     forge-runner status [--db <path>]
     forge-runner demo
     forge-runner hook
-    forge-runner install-hooks
+    forge-runner install-hooks [<repo>] [--print]
     forge-runner login --cloud <url> [--cloud-name <name>] [--cloud-file <path>]
     forge-runner logout [--cloud-file <path>]
     forge-runner pair [--port <port>]
@@ -50,7 +50,10 @@ USAGE:
     demo           Price a synthetic session and print the ledger summary.
     hook           Read a Claude Code hook event on stdin, answer on stdout.
                    Not run by hand — registered in .claude/settings.json.
-    install-hooks  Print the settings block that registers this binary.
+    install-hooks  Register the hook bridge in a repo's .claude/settings.json,
+                   merging so nothing else in that file is disturbed. Defaults
+                   to the repo you are standing in. --print gives you the block
+                   to paste instead.
     login          Join a workspace by asking. Prints a short code, waits while
                    you approve it in the web app, then stores what it is given —
                    after which `serve` needs no cloud flags at all. Nothing is
@@ -186,7 +189,7 @@ fn main() -> ExitCode {
         Some("status") => status(&flags.db),
         Some("demo") => demo(),
         Some("hook") => run_hook(),
-        Some("install-hooks") => install_hooks(),
+        Some("install-hooks") => install_hooks(&args[1..]),
         Some("pair") => pair(&flags),
         Some("login") => login(&flags),
         Some("logout") => logout(&flags),
@@ -289,16 +292,55 @@ fn run_hook() -> Fallible {
         .block_on(hook_cli::run())
 }
 
-fn install_hooks() -> Fallible {
+/// Register the hook bridge in the repository you are standing in.
+///
+/// This used to print a JSON block for somebody to paste. That is a step per
+/// repository, repeated forever, and it fails silently in the ordinary ways
+/// pasting fails — a stray comma, or the wrong object. It writes the file now,
+/// merging so that nothing else in the settings is disturbed, and `--print`
+/// still gives you the block if you would rather do it yourself.
+fn install_hooks(args: &[String]) -> Fallible {
     let binary = std::env::current_exe()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| "forge-runner".to_owned());
 
-    println!("Add this to .claude/settings.json in the repo you want supervised:\n");
-    println!("{}", hook_cli::settings_snippet(&binary));
+    if args.iter().any(|arg| arg == "--print") {
+        println!("Add this to .claude/settings.json in the repo you want supervised:\n");
+        println!("{}", hook_cli::settings_snippet(&binary));
+        return Ok(());
+    }
+
+    // The repo you are in, unless you name another — the common case is
+    // standing in it, and the common case should need no argument.
+    let target = args
+        .iter()
+        .find(|arg| !arg.starts_with("--"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let settings = target.join(".claude").join("settings.json");
+
+    match hook_cli::install_into(&settings, &binary)? {
+        hook_cli::Installed::Created => {
+            println!("Wrote {}", settings.display());
+        }
+        hook_cli::Installed::Merged => {
+            println!(
+                "Added the hooks to {} — everything else in it was left alone.",
+                settings.display()
+            );
+        }
+        hook_cli::Installed::Replaced => {
+            println!("Repointed the hooks in {} at {binary}.", settings.display());
+        }
+        hook_cli::Installed::AlreadyCurrent => {
+            println!("{} is already set up. Nothing to do.", settings.display());
+        }
+    }
+
     println!(
-        "\nThen start the daemon with `forge-runner serve`. With the daemon down, \n\
-         hooks defer to Claude Code's own permission prompt rather than blocking."
+        "\nEvery tool call Claude Code makes in that repo now waits for you.\n\
+         With the daemon down, hooks defer to Claude Code's own prompt rather \n\
+         than blocking — RelayForge being off degrades to plain Claude Code."
     );
     Ok(())
 }
