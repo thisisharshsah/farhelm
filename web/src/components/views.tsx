@@ -306,17 +306,48 @@ function OutputTail({ lines }: { lines: OutputLine[] }) {
 
   return (
     <div className="output" ref={ref} onScroll={onScroll} aria-live="polite">
-      {lines.map((line) => (
-        <div
-          className="output-line"
-          key={line.seq}
-          data-kind={line.text.startsWith("›") ? "instruction" : "agent"}
-        >
-          {line.text || " "}
+      {turnsOf(lines).map((turn) => (
+        <div className="turn" data-kind={turn.kind} key={turn.lines[0]?.seq}>
+          {turn.kind === "instruction" ? (
+            <span className="turn-who">You</span>
+          ) : null}
+          <div className="turn-body">
+            {turn.lines.map((line) => (
+              <div className="output-line" key={line.seq}>
+                {line.text || " "}
+              </div>
+            ))}
+          </div>
         </div>
       ))}
     </div>
   );
+}
+
+type Turn = { kind: "instruction" | "agent"; lines: OutputLine[] };
+
+/**
+ * Group consecutive lines by who produced them.
+ *
+ * The tail was one flat run of monospace where the only thing separating your
+ * instruction from a thousand lines of build output was its colour. Reading it
+ * back on a phone meant hunting for what you had asked. Grouping lets a turn be
+ * spaced and labelled once rather than per line, which is what makes it scan as
+ * a conversation rather than a log.
+ *
+ * The prefix below is how the runner marks an instruction in the tail. That is
+ * a presentation detail, so unpicking it stays here rather than becoming a wire
+ * field three clients would have to agree about.
+ */
+function turnsOf(lines: OutputLine[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const line of lines) {
+    const kind = line.text.startsWith("›") ? "instruction" : "agent";
+    const last = turns[turns.length - 1];
+    if (last && last.kind === kind) last.lines.push(line);
+    else turns.push({ kind, lines: [line] });
+  }
+  return turns;
 }
 
 /** Dictation fills the box; sending stays a deliberate tap. */

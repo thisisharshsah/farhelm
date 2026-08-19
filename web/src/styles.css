@@ -937,8 +937,58 @@ main {
   color: var(--text-secondary);
 }
 
-.output-line[data-kind="instruction"] {
+/*
+ * A turn, not a line.
+ *
+ * The tail used to be one flat run of monospace, and the only thing separating
+ * what you asked from a thousand lines of build output was a colour. On a phone
+ * that meant scrolling back through the output hunting for your own words.
+ *
+ * So a turn is spaced and labelled once, and the two voices are given different
+ * shapes rather than different hues: your instruction sits in a tinted block in
+ * the body font, the agent's output stays monospace and full width because it
+ * is terminal output and column alignment is part of its meaning.
+ */
+.turn + .turn {
+  margin-top: 0.55rem;
+}
+
+.turn[data-kind="instruction"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+}
+
+.turn-who {
+  font-family: var(--font);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.turn[data-kind="instruction"] .turn-body {
+  /* Capped rather than full width: a short instruction against a wide column of
+     output is what makes the two read apart at a glance. */
+  max-width: min(85%, 34rem);
+  padding: 0.35rem 0.6rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--series-1) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--series-1) 30%, transparent);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* The marker did its job by being grouped; repeating it on every line is noise. */
+.turn[data-kind="instruction"] .output-line::first-letter {
   color: var(--series-1);
+}
+
+.turn[data-kind="agent"] .turn-body {
+  color: var(--text-secondary);
 }
 
 .composer {
