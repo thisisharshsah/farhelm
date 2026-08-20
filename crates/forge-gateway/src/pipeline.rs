@@ -268,6 +268,17 @@ pub struct Gateway<S, C> {
     config: GatewayConfig,
 }
 
+/// Only for the real client. Deliberately not on [`ModelClient`]: a test double
+/// has no credential to be unready, and putting it on the trait would make
+/// every double implement a method describing a problem it cannot have.
+impl<S> Gateway<S, crate::dispatch::AnthropicClient> {
+    /// Whether a credential can be obtained right now — see
+    /// [`crate::dispatch::AnthropicClient::credential_ready`].
+    pub fn credential_ready(&self) -> Result<(), crate::credential::CredentialError> {
+        self.client.credential_ready()
+    }
+}
+
 impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
     pub fn new(store: S, client: C, config: GatewayConfig) -> Self {
         Self {
