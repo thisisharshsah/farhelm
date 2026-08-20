@@ -482,6 +482,14 @@ pub struct RunnerStatus {
     /// `/v1/complete` and `/v1/messages` are open. Without it agent tasks
     /// cannot run at all.
     pub gateway: bool,
+    /// Why the gateway cannot actually be used, when it is configured but not
+    /// working. `None` means a credential was obtained.
+    ///
+    /// Configured and working are different states, and only this one is worth
+    /// acting on: with a credential *command*, the command does not run until a
+    /// request needs it, so a runner pointed at one that cannot produce a token
+    /// starts cleanly and reports a gateway it cannot use.
+    pub credential_error: Option<String>,
     /// Reachable from a phone, rather than from this machine's browser only.
     pub relay: Option<String>,
     pub machine_id: String,
@@ -503,8 +511,17 @@ async fn status(State(state): State<Arc<AppState>>) -> ApiResult<RunnerStatus> {
         .map(|agent| agent.id)
         .collect();
 
+    // Probed, not assumed. Cheap on the common path — a live token comes from
+    // the same cache the next request will use.
+    let credential_error = state
+        .gateway
+        .as_ref()
+        .and_then(|gateway| gateway.credential_ready().err())
+        .map(|err| err.to_string());
+
     Ok(Json(RunnerStatus {
         gateway: state.gateway.is_some(),
+        credential_error,
         relay: state.relay.as_ref().map(|relay| relay.url.clone()),
         machine_id: state.machine_id.clone(),
         agents,

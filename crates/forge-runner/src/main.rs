@@ -1235,7 +1235,19 @@ fn doctor(flags: &Flags) -> Fallible {
         }
 
         // 3. The gateway. Without it agent tasks cannot run at all.
-        if status.get("gateway").and_then(|v| v.as_bool()) == Some(true) {
+        let credential_error = status
+            .get("credential_error")
+            .and_then(|v| v.as_str())
+            .filter(|why| !why.is_empty());
+
+        if let Some(why) = credential_error {
+            // Configured, and unusable. Worth its own message: "gateway off"
+            // would send you looking for a setting that is already set.
+            problems += 1;
+            bad("gateway", "configured, but no credential can be obtained");
+            println!("                  {why}");
+            fix("ant auth login   (then restart the runner)");
+        } else if status.get("gateway").and_then(|v| v.as_bool()) == Some(true) {
             good("gateway", "on — agent tasks can run");
         } else {
             problems += 1;

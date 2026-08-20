@@ -451,6 +451,22 @@ impl AnthropicClient {
         self.source.kind()
     }
 
+    /// Whether a credential can actually be obtained right now.
+    ///
+    /// The distinction this exists for: constructing the client only checks
+    /// that a *source* is configured. With `FORGE_CREDENTIAL_COMMAND` the
+    /// command is not run until the first request, so a runner pointed at a
+    /// command that cannot produce a token starts cleanly, reports a gateway,
+    /// and then fails every call — which reads as "the model is broken" rather
+    /// than "you have not logged in".
+    ///
+    /// This runs the source for real, so the answer is the one a request would
+    /// get. It costs nothing on the common path: a live token is served from
+    /// the same cache the next request will use.
+    pub fn credential_ready(&self) -> Result<(), crate::credential::CredentialError> {
+        self.source.get().map(|_| ())
+    }
+
     /// Point at a different endpoint — a local vLLM/Ollama shim, or a test server.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
