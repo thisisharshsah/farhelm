@@ -39,6 +39,7 @@ USAGE:
     forge-runner install-hooks [<repo>] [--global] [--print]
     forge-runner login --cloud <url> [--cloud-name <name>] [--cloud-file <path>]
     forge-runner logout [--cloud-file <path>]
+    forge-runner doctor [--port <port>]
     forge-runner pair [--port <port>]
     forge-runner policy [--policy <path>] [<command>...]
     forge-runner install-service [--relay <ws-url>]
@@ -62,6 +63,9 @@ USAGE:
                    copied by hand, and it works over SSH. `serve --cloud <url>`
                    does this by itself on a machine that has not enrolled.
     logout         Forget those stored credentials on this machine.
+    doctor         Check the whole setup and say what is wrong. Every problem
+                   it reports names the command that fixes it. Run this first
+                   when something is not happening and you cannot see why.
     pair           Mint a pairing offer and show it as a QR code.
     install-service  Print a systemd unit with this machine's paths filled in.
     policy         Show the destructive-command rules in force. With a command,
@@ -195,6 +199,7 @@ fn main() -> ExitCode {
         Some("pair") => pair(&flags),
         Some("login") => login(&flags),
         Some("logout") => logout(&flags),
+        Some("doctor") => doctor(&flags),
         Some("policy") => policy_command(&flags, &args[1..]),
         Some("install-service") => install_service(&flags),
         _ => {
@@ -1153,6 +1158,169 @@ async fn cloud_config_or_ask(flags: &Flags) -> Option<forge_runner::cloud::Cloud
             None
         }
     }
+}
+
+/// Say what is wrong with this setup, and the one command that fixes each thing.
+///
+/// Written after watching every individual piece report success while the thing
+/// as a whole did nothing. A machine can be installed, enrolled, online and
+/// visible in the fleet, and still be unable to do either of the two things
+/// this product does — because a credential is commented out and no hooks are
+/// registered. Nothing said so. The banner mentioned both, as facts rather than
+/// as problems, twelve lines apart and only at startup.
+///
+/// The rule here: every failure names the command that fixes it. A check that
+/// reports a problem without one is a check that has moved the work rather than
+/// done it.
+fn doctor(flags: &Flags) -> Fallible {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let base = format!("http://127.0.0.1:{}", flags.port);
+        let client = reqwest::Client::new();
+        let mut problems = 0usize;
+
+        println!();
+
+        // 1. The daemon. Everything else is unknowable without it.
+        let status: Option<serde_json::Value> = match client
+            .get(format!("{base}/v1/status"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response.json().await.ok(),
+            _ => None,
+        };
+
+        let Some(status) = status else {
+            // Not counted: this branch returns, and the count is only there to
+            // total up what the reader can act on below.
+            // "No status" has two causes with opposite fixes, and telling them
+            // apart matters: a daemon that is up but too old to answer is not
+            // a daemon you should be told to start. Health has been there all
+            // along, so it separates them.
+            let alive = client
+                .get(format!("{base}/v1/health"))
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+                .map(|response| response.status().is_success())
+                .unwrap_or(false);
+
+            if alive {
+                bad("runner", "running, but too old to answer /v1/status");
+                fix("./deploy/redeploy.sh runner  (or reinstall and restart it)");
+                println!();
+                println!("  The rest cannot be checked until it is on a build that reports.");
+            } else {
+                bad("runner", &format!("not answering on {base}"));
+                fix(&format!("forge-runner serve --port {}", flags.port));
+                println!();
+                println!("  Nothing else can be checked until it is up.");
+            }
+            return Ok(());
+        };
+        good("runner", &format!("listening on {base}"));
+
+        // 2. Reachable from anywhere, or from this machine's browser only.
+        match status.get("relay").and_then(|v| v.as_str()) {
+            Some(url) => good("fleet", &format!("connected · {url}")),
+            None => {
+                problems += 1;
+                bad("fleet", "loopback only — no phone can reach this machine");
+                fix("forge-runner login --cloud <url>, then restart the runner");
+            }
+        }
+
+        // 3. The gateway. Without it agent tasks cannot run at all.
+        if status.get("gateway").and_then(|v| v.as_bool()) == Some(true) {
+            good("gateway", "on — agent tasks can run");
+        } else {
+            problems += 1;
+            bad("gateway", "off — agent tasks cannot run");
+            fix(
+                "put FORGE_CREDENTIAL_COMMAND or ANTHROPIC_API_KEY where the \
+                 daemon reads its environment, then restart it",
+            );
+        }
+
+        // 4. Hooks. The check the daemon cannot do for itself: these live in
+        //    the *user's* files, and their absence is silent by construction —
+        //    an agent with no hooks simply never calls.
+        let home = std::env::var("HOME").ok().map(PathBuf::from);
+        let global = home
+            .as_ref()
+            .map(|home| home.join(".claude").join("settings.json"));
+        let here = PathBuf::from(".claude").join("settings.json");
+        let installed = |path: &Path| {
+            std::fs::read_to_string(path)
+                .map(|text| text.contains("forge-runner hook") || text.contains("hook\""))
+                .unwrap_or(false)
+        };
+
+        match (global.as_deref().is_some_and(installed), installed(&here)) {
+            (true, _) => good("supervision", "hooks installed for every repo"),
+            (false, true) => good("supervision", "hooks installed in this repo only"),
+            (false, false) => {
+                problems += 1;
+                bad(
+                    "supervision",
+                    "no hooks — nothing an agent does will reach this runner",
+                );
+                fix("forge-runner install-hooks --global");
+            }
+        }
+
+        // 5. Something to supervise.
+        let agents: Vec<&str> = status
+            .get("agents")
+            .and_then(|v| v.as_array())
+            .map(|list| list.iter().filter_map(|a| a.as_str()).collect())
+            .unwrap_or_default();
+        if agents.is_empty() {
+            problems += 1;
+            bad("agents", "none installed on this machine");
+            fix("install Claude Code — it is the one verified end to end");
+        } else {
+            good("agents", &agents.join(", "));
+        }
+
+        // 6. Has anything ever arrived? A setup that looks right and has never
+        //    seen a session usually means hooks in a file the agent does not
+        //    read.
+        let sessions = status.get("sessions").and_then(|v| v.as_i64()).unwrap_or(0);
+        if sessions == 0 {
+            println!(
+                "  \u{b7} sessions      none yet — start an agent in a repo and it \
+                 should appear"
+            );
+        } else {
+            good("sessions", &format!("{sessions} recorded"));
+        }
+
+        println!();
+        match problems {
+            0 => println!("  \u{2713} nothing to fix."),
+            1 => println!("  1 problem above. Fix it and run `forge-runner doctor` again."),
+            n => println!("  {n} problems above, in the order they block you."),
+        }
+        println!();
+        Ok(())
+    })
+}
+
+fn good(label: &str, detail: &str) {
+    println!("  \u{2713} {label:<13} {detail}");
+}
+
+fn bad(label: &str, detail: &str) {
+    println!("  \u{2717} {label:<13} {detail}");
+}
+
+fn fix(command: &str) {
+    println!("                  fix: {command}");
 }
 
 /// Forget what `login` stored.

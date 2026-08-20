@@ -166,6 +166,7 @@ fn base_router(state: Arc<AppState>) -> Router {
         .route("/v1/hooks/tool-request", post(hook_tool_request))
         .route("/v1/hooks/stop", post(hook_stop))
         .route("/v1/hooks/notification", post(hook_notification))
+        .route("/v1/status", get(status))
         .route("/v1/events", get(events))
         .route("/v1/pair/offer", post(pair_offer))
         .route("/v1/pair/claim", post(pair_claim))
@@ -466,6 +467,54 @@ async fn list_sessions(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Sess
         .map(|session| view_of(&state, &lookups, session))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(views))
+}
+
+/// What this runner can actually do right now.
+///
+/// Separate from `/v1/health`, which answers "is the process alive" and is what
+/// a deploy script polls. This answers the question a person has: *why is
+/// nothing happening*. The daemon is the only thing that can: it holds the
+/// gateway, it knows which relay it dialled, and under launchd or systemd its
+/// environment is not the one a terminal would see — so a check run from a
+/// shell cannot read any of it.
+#[derive(Debug, Serialize)]
+pub struct RunnerStatus {
+    /// `/v1/complete` and `/v1/messages` are open. Without it agent tasks
+    /// cannot run at all.
+    pub gateway: bool,
+    /// Reachable from a phone, rather than from this machine's browser only.
+    pub relay: Option<String>,
+    pub machine_id: String,
+    /// Agents installed on this machine, by id.
+    pub agents: Vec<String>,
+    /// Sessions this runner has ever recorded. Zero with hooks installed means
+    /// nothing has reached it yet.
+    pub sessions: i64,
+    pub version: String,
+}
+
+async fn status(State(state): State<Arc<AppState>>) -> ApiResult<RunnerStatus> {
+    // The same list `/v1/agents` serves, filtered. Deriving "installed" a
+    // second way here is how two endpoints end up disagreeing about whether
+    // Claude Code is on this machine.
+    let agents = crate::views::build_agent_list()
+        .into_iter()
+        .filter(|agent| agent.installed)
+        .map(|agent| agent.id)
+        .collect();
+
+    Ok(Json(RunnerStatus {
+        gateway: state.gateway.is_some(),
+        relay: state.relay.as_ref().map(|relay| relay.url.clone()),
+        machine_id: state.machine_id.clone(),
+        agents,
+        sessions: state
+            .store
+            .list_sessions()
+            .map(|s| s.len() as i64)
+            .unwrap_or(0),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    }))
 }
 
 async fn fleet(State(state): State<Arc<AppState>>) -> ApiResult<FleetView> {
