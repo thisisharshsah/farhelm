@@ -1590,10 +1590,7 @@ fn doctor(flags: &Flags) -> Fallible {
         } else {
             problems += 1;
             bad("gateway", "off — agent tasks cannot run");
-            fix(
-                "put FORGE_CREDENTIAL_COMMAND or ANTHROPIC_API_KEY where the \
-                 daemon reads its environment, then restart it",
-            );
+            fix("forge-runner auth   (or --api-key <key>), then restart the runner");
         }
 
         // 4. Hooks. The check the daemon cannot do for itself: these live in
