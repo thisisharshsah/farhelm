@@ -23,6 +23,9 @@ portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Verifying a downloaded binary before a daemon is told to execute it.
+# Same version forge-crypto uses.
+sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 # `rustls-tls-webpki-roots` is load-bearing, not tidiness: without a TLS feature

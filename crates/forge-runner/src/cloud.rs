@@ -259,6 +259,96 @@ impl Credentials {
     }
 }
 
+/// Where the model credential lives, when farhelm set it up.
+///
+/// Beside `forge.cloud.json`, for the same reason and with the same rules.
+pub const DEFAULT_MODEL_CREDENTIAL_FILE: &str = "forge.credential.json";
+
+/// How this machine obtains a token for the model provider.
+///
+/// The alternative was `FORGE_CREDENTIAL_COMMAND` in whatever file the service
+/// manager happens to source, which meant knowing that launchd hands a job its
+/// own environment, that the command needs an absolute path because of it, and
+/// which of three files the daemon actually reads. Three things to get right,
+/// none of them about running an agent.
+///
+/// A file the runner owns removes all three: `forge-runner auth` writes it,
+/// `serve` reads it, and nothing has to be exported by anybody. The environment
+/// still wins where it is set — a deployment that already exports a credential
+/// should not have it quietly overridden by a file left behind by an
+/// experiment.
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct ModelCredential {
+    /// A command printing a bearer token on stdout, re-run as the old one ages
+    /// out. Stored rather than the token itself: a subscription token lives
+    /// hours, and a file holding one would be stale by morning.
+    pub command: String,
+    /// What produced this, for a human reading the file later.
+    #[serde(default)]
+    pub source: String,
+}
+
+impl ModelCredential {
+    /// Read the stored credential command. `Ok(None)` when there is none.
+    ///
+    /// Permission-checked like [`Credentials`]: the command is not itself a
+    /// secret, but it is the handle to one, and a world-writable file here is a
+    /// world-writable instruction the daemon will execute.
+    pub fn load(path: &Path) -> std::result::Result<Option<Self>, CredentialsError> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(CredentialsError::Io(err)),
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(path)
+                .map_err(CredentialsError::Io)?
+                .permissions()
+                .mode()
+                & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(CredentialsError::TooPermissive {
+                    path: path.to_path_buf(),
+                    mode,
+                });
+            }
+        }
+
+        serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|err| CredentialsError::Malformed(err.to_string()))
+    }
+
+    /// Write it `0600`, created with that mode rather than chmod-ed after.
+    pub fn save(&self, path: &Path) -> std::result::Result<(), CredentialsError> {
+        use std::io::Write as _;
+
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path).map_err(CredentialsError::Io)?;
+        let body = serde_json::to_vec_pretty(self)
+            .map_err(|err| CredentialsError::Malformed(err.to_string()))?;
+        file.write_all(&body).map_err(CredentialsError::Io)?;
+        file.write_all(b"\n").map_err(CredentialsError::Io)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(CredentialsError::Io)?;
+        }
+        Ok(())
+    }
+}
+
 /// What the control plane says when a machine asks to join.
 #[derive(Debug, Deserialize)]
 pub struct DeviceCode {

@@ -39,6 +39,7 @@ USAGE:
     forge-runner install-hooks [<repo>] [--global] [--print]
     forge-runner login --cloud <url> [--cloud-name <name>] [--cloud-file <path>]
     forge-runner logout [--cloud-file <path>]
+    forge-runner auth [--api-key <key>] [--status] [--forget]
     forge-runner doctor [--port <port>]
     forge-runner pair [--port <port>]
     forge-runner policy [--policy <path>] [<command>...]
@@ -63,6 +64,12 @@ USAGE:
                    copied by hand, and it works over SSH. `serve --cloud <url>`
                    does this by itself on a machine that has not enrolled.
     logout         Forget those stored credentials on this machine.
+    auth           Set this machine up to talk to the model provider. With no
+                   arguments it signs you in with your subscription, fetching
+                   the Anthropic CLI first if it is missing, and stores how to
+                   obtain a token — nothing to export and no PATH to get right.
+                   --api-key stores a key instead. --status shows what is
+                   stored; --forget removes it.
     doctor         Check the whole setup and say what is wrong. Every problem
                    it reports names the command that fixes it. Run this first
                    when something is not happening and you cannot see why.
@@ -89,7 +96,8 @@ ENVIRONMENT:
 
 DEFAULTS:
     --db forge.db    --port 7842    --app-dir web/dist    --key forge.key
-    --cloud-file forge.cloud.json   (written by `login`, mode 0600)
+    --cloud-file forge.cloud.json        (written by `login`, mode 0600)
+    --credential-file forge.credential.json  (written by `auth`, mode 0600)
     --policy forge.policy.toml   (optional; the built-in rules stand alone)
     --terminal auto  (tmux when installed, otherwise this process's own PTYs)
 
@@ -199,6 +207,7 @@ fn main() -> ExitCode {
         Some("pair") => pair(&flags),
         Some("login") => login(&flags),
         Some("logout") => logout(&flags),
+        Some("auth") => auth(&flags, &args[1..]),
         Some("doctor") => doctor(&flags),
         Some("policy") => policy_command(&flags, &args[1..]),
         Some("install-service") => install_service(&flags),
@@ -234,6 +243,9 @@ struct Flags {
     cloud_name: Option<String>,
     /// Where `login` writes what it was given, and where `serve` looks for it.
     cloud_file: String,
+    /// Where `auth` writes how to obtain a model token, and where `serve`
+    /// looks for it.
+    credential_file: String,
     /// This machine's public URL, when it is exposed as an MCP connector.
     /// Absent means the connector is not served at all.
     mcp_url: Option<String>,
@@ -265,6 +277,8 @@ impl Flags {
             cloud_name: value_of("--cloud-name"),
             cloud_file: value_of("--cloud-file")
                 .unwrap_or_else(|| forge_runner::cloud::DEFAULT_CREDENTIALS_FILE.to_owned()),
+            credential_file: value_of("--credential-file")
+                .unwrap_or_else(|| forge_runner::cloud::DEFAULT_MODEL_CREDENTIAL_FILE.to_owned()),
             mcp_url: value_of("--mcp-url").or_else(|| std::env::var("FORGE_MCP_URL").ok()),
             terminal: value_of("--terminal"),
             policy: value_of("--policy"),
@@ -585,10 +599,30 @@ async fn serve_async(flags: Flags) -> Fallible {
     let policy = load_policy(&flags)?;
     let (policy_added, policy_retired) = policy.rule_count();
 
+    let credential_file = flags.credential_file.clone();
     let state = AppState::build_with_policy(
         store,
         |store| {
-            let client = AnthropicClient::from_env()?;
+            // The environment first, so a deployment that already exports a
+            // credential keeps working and is not overridden by a file left
+            // behind by an experiment. Then what `forge-runner auth` stored,
+            // which is the path that needs nothing exported by anybody.
+            let client = AnthropicClient::from_env().or_else(|| {
+                let path = Path::new(&credential_file);
+                match forge_runner::cloud::ModelCredential::load(path) {
+                    Ok(Some(stored)) => Some(AnthropicClient::with_source(
+                        forge_gateway::credential::CredentialSource::command(stored.command),
+                    )),
+                    Ok(None) => None,
+                    Err(err) => {
+                        // Loud: a credential file that exists and cannot be
+                        // read is a gateway that will be off for a reason
+                        // nobody can see from the banner.
+                        eprintln!("  gateway    {}: {err}", path.display());
+                        None
+                    }
+                }
+            })?;
             let config = GatewayConfig::default();
             provider = format!(
                 "anthropic ({}) — small {} / large {} / frontier {}",
@@ -1158,6 +1192,310 @@ async fn cloud_config_or_ask(flags: &Flags) -> Option<forge_runner::cloud::Cloud
             None
         }
     }
+}
+
+/// Set this machine up to talk to the model provider, in one command.
+///
+/// Everything this does could be done by hand, and by hand it is three separate
+/// things to get right: install a CLI, sign in with it, then tell the daemon
+/// where to find it — which means knowing that launchd hands a service its own
+/// environment, that the command therefore needs an absolute path, and which of
+/// several files that service actually sources. None of those are about running
+/// an agent.
+///
+/// What it deliberately does **not** do is implement a second OAuth client.
+/// Whatever tool signed in owns the refresh flow and holds the refresh token in
+/// whatever store its platform thinks is right; a login here would be a second
+/// place a refresh token lives and a second thing to keep current. So this
+/// drives `ant` rather than replacing it — you just never have to think about
+/// `ant`.
+fn auth(flags: &Flags, args: &[String]) -> Fallible {
+    use forge_runner::cloud::ModelCredential;
+
+    let path = Path::new(&flags.credential_file).to_path_buf();
+
+    if args.iter().any(|arg| arg == "--status") {
+        return match ModelCredential::load(&path)? {
+            Some(stored) => {
+                println!("  command  {}", stored.command);
+                println!("  source   {}", stored.source);
+                println!("  file     {}", path.display());
+                println!("\n  `forge-runner doctor` says whether it still works.");
+                Ok(())
+            }
+            None => {
+                println!("Nothing stored. Run `forge-runner auth` to set it up.");
+                Ok(())
+            }
+        };
+    }
+
+    if args.iter().any(|arg| arg == "--forget") {
+        return match std::fs::remove_file(&path) {
+            Ok(()) => {
+                println!("Removed {}.", path.display());
+                println!("The gateway is off until something else supplies a credential.");
+                Ok(())
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                println!("Nothing stored at {} — nothing to do.", path.display());
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        };
+    }
+
+    // An API key, for anyone who would rather pay per token than sign in.
+    if let Some(index) = args.iter().position(|arg| arg == "--api-key") {
+        let key = args
+            .get(index + 1)
+            .ok_or("--api-key needs the key after it")?
+            .trim()
+            .to_owned();
+        if key.is_empty() {
+            return Err("--api-key was given an empty value".into());
+        }
+        // Stored as a command that prints it, so `serve` has one way of
+        // obtaining a credential rather than two code paths.
+        ModelCredential {
+            command: format!("printf %s {}", shell_quote(&key)),
+            source: "an API key given to `forge-runner auth --api-key`".into(),
+        }
+        .save(&path)?;
+        println!("Stored an API key in {}.", path.display());
+        println!("Restart the runner, and `forge-runner doctor` should read green.");
+        return Ok(());
+    }
+
+    let ant = match locate_ant() {
+        Some(found) => {
+            println!("  ant        {}", found.display());
+            found
+        }
+        None => {
+            println!("  ant        not installed — fetching it");
+            install_ant()?
+        }
+    };
+
+    println!();
+    println!("  A browser will open. Sign in with the account whose subscription");
+    println!("  you want this machine to use.");
+    println!();
+
+    let signed_in = std::process::Command::new(&ant)
+        .args(["auth", "login"])
+        .status()
+        .map_err(|err| format!("could not run {}: {err}", ant.display()))?;
+    if !signed_in.success() {
+        return Err("that sign-in did not complete — nothing was stored".into());
+    }
+
+    // The absolute path, because the daemon's PATH is not the shell's — the
+    // single most likely way this works here and fails there. And
+    // `--access-token`, because the bare command prints the whole credentials
+    // JSON, which becomes an empty Authorization header.
+    let command = format!("{} auth print-credentials --access-token", ant.display());
+
+    // Proven before it is stored. A credential command written down without
+    // being run is exactly the failure this command exists to remove.
+    let probe = std::process::Command::new(&ant)
+        .args(["auth", "print-credentials", "--access-token"])
+        .output()
+        .map_err(|err| format!("could not run {}: {err}", ant.display()))?;
+    if !probe.status.success() || probe.stdout.is_empty() {
+        return Err(format!(
+            "signed in, but `{command}` produced no token — nothing was stored. {}",
+            String::from_utf8_lossy(&probe.stderr).trim()
+        )
+        .into());
+    }
+
+    ModelCredential {
+        command,
+        source: "a subscription, via `ant auth login`".into(),
+    }
+    .save(&path)?;
+
+    println!();
+    println!("  \u{2713} signed in, and a token was obtained.");
+    println!("  Stored in {}", path.display());
+    println!();
+    println!("  Restart the runner and it will use this — nothing to export.");
+    Ok(())
+}
+
+/// Single-quote a value for a POSIX shell.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Download the Anthropic CLI for this platform and put it on the daemon's PATH.
+///
+/// Its published asset names do not follow the pattern the install docs build
+/// for Linux: macOS ships `..._macos_arm64.zip`, not `..._darwin_arm64.tar.gz`.
+/// Constructing the name from `uname` gets a 404 on exactly the platform most
+/// people are on, so the release is listed and the asset matched by name.
+///
+/// `~/.local/bin` because that is where a user-scoped binary belongs and,
+/// conveniently, what a service's PATH is usually made to include — but the
+/// stored command uses the absolute path regardless, so it does not matter
+/// whether it is on anyone's PATH.
+fn install_ant() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "amd64"
+    };
+    let (os, extension) = if cfg!(target_os = "macos") {
+        ("macos", "zip")
+    } else if cfg!(target_os = "linux") {
+        ("linux", "tar.gz")
+    } else {
+        return Err(
+            "no published build for this platform — install `ant` by hand, \
+                    then run this again"
+                .into(),
+        );
+    };
+
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set")?;
+    let bin = PathBuf::from(&home).join(".local").join("bin");
+    std::fs::create_dir_all(&bin)?;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    runtime.block_on(async move {
+        let client = reqwest::Client::builder()
+            .user_agent("forge-runner")
+            .build()?;
+        let release: serde_json::Value = client
+            .get("https://api.github.com/repos/anthropics/anthropic-cli/releases/latest")
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let want = format!("_{os}_{arch}.{extension}");
+        let asset = release["assets"]
+            .as_array()
+            .and_then(|assets| {
+                assets.iter().find(|asset| {
+                    asset["name"]
+                        .as_str()
+                        .is_some_and(|name| name.ends_with(&want))
+                })
+            })
+            .ok_or_else(|| format!("no published asset ending in {want}"))?;
+        let name = asset["name"].as_str().unwrap_or_default().to_owned();
+        let url = asset["browser_download_url"]
+            .as_str()
+            .ok_or("that asset has no download url")?;
+
+        println!("             {name}");
+        let bytes = client.get(url).send().await?.bytes().await?;
+
+        // Checked against the published list. This is a binary about to be run
+        // by a daemon; a truncated download that happens to unpack is worse
+        // than a failed one.
+        if let Some(sums) = release["assets"].as_array().and_then(|assets| {
+            assets.iter().find(|asset| {
+                asset["name"]
+                    .as_str()
+                    .is_some_and(|n| n.ends_with("checksums.txt"))
+            })
+        }) && let Some(sums_url) = sums["browser_download_url"].as_str()
+        {
+            let listed = client.get(sums_url).send().await?.text().await?;
+            let want_sum = listed
+                .lines()
+                .find(|line| line.ends_with(&name))
+                .and_then(|line| line.split_whitespace().next())
+                .ok_or("that asset is not in the checksum list")?;
+            let got = {
+                use sha2::{Digest as _, Sha256};
+                format!("{:x}", Sha256::digest(&bytes))
+            };
+            if got != want_sum {
+                return Err(format!("checksum mismatch for {name} — refusing to install").into());
+            }
+            println!("             checksum verified");
+        }
+
+        let staged = bin.join(".ant.download");
+        std::fs::write(&staged, &bytes)?;
+
+        // Unpacked with the system tools rather than by linking an archive
+        // library into the daemon: this runs once, by hand, and `unzip`/`tar`
+        // are present wherever this binary is.
+        let unpacked = bin.join(".ant.unpacked");
+        let _ = std::fs::remove_dir_all(&unpacked);
+        std::fs::create_dir_all(&unpacked)?;
+        let ok = if extension == "zip" {
+            std::process::Command::new("unzip")
+                .args(["-o", "-q"])
+                .arg(&staged)
+                .arg("-d")
+                .arg(&unpacked)
+                .status()?
+        } else {
+            std::process::Command::new("tar")
+                .arg("-xzf")
+                .arg(&staged)
+                .arg("-C")
+                .arg(&unpacked)
+                .status()?
+        };
+        if !ok.success() {
+            return Err("could not unpack the download".into());
+        }
+
+        let extracted = unpacked.join("ant");
+        if !extracted.is_file() {
+            return Err("the archive did not contain `ant`".into());
+        }
+
+        let target = bin.join("ant");
+        std::fs::copy(&extracted, bin.join(".ant.new"))?;
+        std::fs::rename(bin.join(".ant.new"), &target)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
+        }
+        // Gatekeeper refuses a quarantined binary, and the message it gives
+        // says nothing about quarantine.
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("xattr")
+                .args(["-d", "com.apple.quarantine"])
+                .arg(&target)
+                .status();
+        }
+
+        let _ = std::fs::remove_file(&staged);
+        let _ = std::fs::remove_dir_all(&unpacked);
+        println!("             installed {}", target.display());
+        Ok(target)
+    })
+}
+
+/// Find `ant`, including where this command would have put it.
+fn locate_ant() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        let local = PathBuf::from(&home).join(".local").join("bin").join("ant");
+        if local.is_file() {
+            return Some(local);
+        }
+    }
+    let output = std::process::Command::new("sh")
+        .args(["-c", "command -v ant"])
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (output.status.success() && !path.is_empty()).then(|| PathBuf::from(path))
 }
 
 /// Say what is wrong with this setup, and the one command that fixes each thing.
