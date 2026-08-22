@@ -25,119 +25,113 @@ use farhelm_runner::state::{self, AppState, ServerEvent};
 use farhelm_runner::{api, hook_cli, relay, seed, service, session, terminal};
 
 const USAGE: &str = "\
-farhelm-runner — Farhelm runner daemon
+farhelm — supervise your coding agents from anywhere, and cut what they cost
 
 USAGE:
-    farhelm serve [--demo] [--db <path>] [--port <port>] [--app-dir <path>]
-                       [--relay <ws-url>] [--key <path>] [--terminal tmux|pty]
-                       [--cloud <url> --cloud-key <frg_…>] [--cloud-name <name>]
-                       [--mcp-url <https-url>]
-    farhelm seed [--db <path>]
-    farhelm status [--db <path>]
-    farhelm demo
-    farhelm hook
-    farhelm install-hooks [<repo>] [--global] [--print]
-    farhelm login --cloud <url> [--cloud-name <name>] [--cloud-file <path>]
-    farhelm logout [--cloud-file <path>]
-    farhelm auth [--api-key <key>] [--status] [--forget]
-    farhelm doctor [--port <port>]
-    farhelm pair [--port <port>]
-    farhelm policy [--policy <path>] [<command>...]
-    farhelm install-service [--relay <ws-url>]
+    farhelm                 where this machine stands, and what is left to do
+    farhelm <command> …
 
-    serve          Start the localhost API. --demo runs against a seeded
-                   in-memory database with simulated agent activity.
-    seed           Write the wireframe fleet into a database file.
-    status         Print schema version, sessions, and spend.
-    demo           Price a synthetic session and print the ledger summary.
-    hook           Read a Claude Code hook event on stdin, answer on stdout.
-                   Not run by hand — registered in .claude/settings.json.
-    install-hooks  Register the hook bridge in a repo's .claude/settings.json,
-                   merging so nothing else in that file is disturbed. Defaults
-                   to the repo you are standing in. --global writes to
-                   ~/.claude/settings.json instead, which supervises every repo
-                   on this machine and is the one-and-done option. --print gives
-                   you the block to paste.
-    login          Join a workspace by asking. Prints a short code, waits while
-                   you approve it in the web app, then stores what it is given —
-                   after which `serve` needs no cloud flags at all. Nothing is
-                   copied by hand, and it works over SSH. `serve --cloud <url>`
-                   does this by itself on a machine that has not enrolled.
-    logout         Forget those stored credentials on this machine.
-    auth           Set this machine up to talk to the model provider. With no
-                   arguments it signs you in with your subscription, fetching
-                   the Anthropic CLI first if it is missing, and stores how to
-                   obtain a token — nothing to export and no PATH to get right.
-                   --api-key stores a key instead. --status shows what is
-                   stored; --forget removes it.
-    doctor         Check the whole setup and say what is wrong. Every problem
-                   it reports names the command that fixes it. Run this first
-                   when something is not happening and you cannot see why.
-    pair           Mint a pairing offer and show it as a QR code.
-    install-service  Print a systemd unit with this machine's paths filled in.
-    policy         Show the destructive-command rules in force. With a command,
-                   print how that command would be classified — the way to check
-                   a rule you just wrote actually fires.
+SETTING UP
+    setup            Every step that is not done yet, asked one at a time and
+                     explained. Safe to re-run: it does what is missing and
+                     skips what is not. This is the whole quickstart.
+    auth             The model credential. With no arguments it signs you in
+                     with your subscription, fetching the Anthropic CLI first if
+                     it is missing, and stores how to obtain a token — nothing
+                     to export and no PATH to get right. --api-key stores a key
+                     instead; --status shows what is stored; --forget removes it.
+    install-hooks    Register the hook bridge in .claude/settings.json, merging
+                     so nothing else in the file is disturbed. Defaults to the
+                     repo you are standing in; --global covers every repo on
+                     this machine and is the one-and-done option; --print gives
+                     you the block to paste.
+    login            Join a workspace by asking: prints a short code, waits
+                     while you approve it in the web app, stores what it is
+                     given. Nothing is copied by hand and it works over SSH.
+                     After it, `serve` needs no cloud flags at all.
+    logout           Forget those credentials on this machine.
+    install-service  A unit file for this machine, with its paths filled in, and
+                     the one line that installs it.
 
-ENVIRONMENT:
-    FORGE_CREDENTIAL_COMMAND
-                         a command printing a bearer token, re-run as it
-                         expires — the option that needs no metered API key
-                         and no second visit
-    ANTHROPIC_API_KEY    enables /v1/complete (a Console key)
-    ANTHROPIC_AUTH_TOKEN a bearer token, read once and never refreshed
-    ANTHROPIC_BASE_URL   redirect to a compatible endpoint
-    FORGE_RUNNER_URL     where `hook` reaches the daemon (default loopback:7842)
-    FORGE_MACHINE_NAME   overrides the hostname used for this machine
-    FORGE_CLOUD_URL      same as --cloud
-    FORGE_CLOUD_KEY      same as --cloud-key, and the better place for it —
-                         a credential on a command line is in every `ps`
-    FORGE_MCP_URL        same as --mcp-url
+RUNNING
+    serve            Start the daemon: the API, the fleet, the gateway. --demo
+                     runs against a seeded in-memory database with simulated
+                     activity and writes nothing to disk.
+    doctor           Check a running setup and say what is wrong. Every problem
+                     it reports names the command that fixes it. Run this when
+                     something is not happening and you cannot see why.
+    status           Schema version, sessions and spend, straight from the
+                     database. Needs no daemon.
+    policy           The destructive-command rules in force. With a command
+                     after it, prints how that command would be classified —
+                     the way to check a rule you wrote actually fires, short of
+                     asking an agent to run something drastic.
+    pair             Mint a pairing offer and show it as a QR code.
 
-DEFAULTS:
-    --db forge.db    --port 7842    --app-dir web/dist    --key forge.key
-    --cloud-file forge.cloud.json        (written by `login`, mode 0600)
-    --credential-file forge.credential.json  (written by `auth`, mode 0600)
-    --policy forge.policy.toml   (optional; the built-in rules stand alone)
+SERVING OTHERS
+    cloud            The control plane: accounts, workspaces, plans, the fleet
+                     registry, and the web app. `farhelm cloud --help`.
+    relay            Ciphertext fan-out between a runner and its devices, plus
+                     WebPush wake-ups it cannot read. `farhelm relay --help`.
+
+OTHER
+    hook             Reads a Claude Code hook event on stdin and answers on
+                     stdout. Not run by hand — `install-hooks` registers it.
+    seed             Write the wireframe fleet into a database file.
+    demo             Price a synthetic session and print the ledger summary.
+    help             This.
+
+COMMON FLAGS
+    --db <path>      --port <port>       --key <path>        --app-dir <path>
+    --relay <ws-url> --cloud <url>       --cloud-name <name> --policy <path>
+    --terminal tmux|pty                  --mcp-url <https-url>
+
+DEFAULTS
+    --db farhelm.db   --port 7842   --key farhelm.key   --app-dir web/dist
+    --cloud-file farhelm.cloud.json           (written by `login`, mode 0600)
+    --credential-file farhelm.credential.json (written by `auth`, mode 0600)
+    --policy farhelm.policy.toml   (optional; the built-in rules stand alone)
     --terminal auto  (tmux when installed, otherwise this process's own PTYs)
 
-TERMINAL BACKENDS:
-    tmux   Panes outlive the runner and can be attached to by hand. The right
-           choice on a server: restarting the daemon does not kill an agent
-           mid-task.
+    The `forge`-prefixed names these files and variables had before the rename
+    are still read when the current one is absent, and say so once when used.
+
+ENVIRONMENT
+    FARHELM_CREDENTIAL_COMMAND  a command printing a bearer token, re-run as it
+                                expires. `auth` writes this for you.
+    ANTHROPIC_API_KEY           enables /v1/complete (a Console key)
+    ANTHROPIC_AUTH_TOKEN        a bearer token, read once and never refreshed
+    ANTHROPIC_BASE_URL          redirect to a compatible endpoint
+    FARHELM_RUNNER_URL          where `hook` reaches the daemon (loopback:7842)
+    FARHELM_MACHINE_NAME        overrides the hostname used for this machine
+    FARHELM_CLOUD_URL           same as --cloud
+    FARHELM_CLOUD_KEY           same as --cloud-key, and the better place for it
+                                — a credential on a command line is in every `ps`
+    FARHELM_MCP_URL             same as --mcp-url
+    FARHELM_TMUX                path to the tmux binary
+
+TERMINAL BACKENDS
+    tmux   Panes outlive the daemon and can be attached to by hand. The right
+           choice on a server: restarting does not kill an agent mid-task.
     pty    PTYs this process owns. Needs nothing installed and works on Windows,
-           but sessions die with the runner.
+           but sessions die with the daemon.
 
-With --relay, the runner dials out to a relay and becomes reachable from a
-paired phone anywhere. Without it, it serves on loopback only.
+REACHABILITY
+    On its own the daemon serves loopback only. Enrolled with a control plane it
+    appears in your fleet and any device signed into that workspace can reach
+    it, over a relay the control plane names — so --relay is not needed
+    alongside --cloud. `serve --cloud <url>` on a machine that has never
+    enrolled asks to join rather than giving up, then carries straight on into
+    serving.
 
-With a control plane it enrols instead, and there is nothing to pair: the
-machine appears in your fleet, and any device signed into that workspace can
-reach it. The control plane says which relay to dial, so --relay is not needed
-alongside it.
+    Asking only happens on a terminal. Under launchd or systemd there is nobody
+    to read a code, so a service with no stored credential says so and serves
+    loopback rather than blocking.
 
-The short way, and the one to use — on a machine that has never enrolled,
-`serve` asks rather than giving up:
-
-    farhelm serve --cloud https://your-control-plane
-
-It prints a code, waits while you approve it in the web app, stores what it is
-given, and carries straight on into serving. Every later `serve` needs no flags
-at all. `farhelm login` does the joining half on its own, for when you want
-to enrol now and start the daemon later.
-
-Asking only happens on a terminal. Under launchd or systemd there is nobody to
-read a code, so a service with no stored credential says so and serves loopback
-rather than blocking.
-
-`login` prints a code, you approve it once in the web app, and the credential is
-written here rather than typed here. The long way — creating an enrolment key
-under Settings → Machines and passing --cloud-key — still works, and is what to
-use for a fleet you provision from a script.
-
-Enrolling does not weaken the encryption. Devices still generate their own keys
-and everything still travels sealed between a device and this machine; what the
-control plane provides is a directory and a permission, not a way in.
+    Enrolling does not weaken the encryption. Devices still generate their own
+    keys and everything still travels sealed between a device and this machine;
+    what the control plane provides is a directory and a permission, not a way
+    in.
 ";
 
 const DEFAULT_DB: &str = "farhelm.db";
@@ -220,9 +214,22 @@ fn main() -> ExitCode {
         // one name somebody installed.
         Some("cloud") => farhelm_cloud::cli::run(&args[1..]),
         Some("relay") => farhelm_relay::cli::run(&args[1..]),
-        _ => {
+        Some("setup") => setup_command(&flags),
+        // `help` is the reference; the bare name is the front door. Somebody
+        // typing `farhelm` is asking what this is and what to do about it, and
+        // a hundred lines of flags answers neither question.
+        Some("help") | Some("--help") | Some("-h") => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
+        }
+        None => {
+            print!("{}", front_door(&flags));
+            return ExitCode::SUCCESS;
+        }
+        Some(unknown) => {
+            eprintln!("farhelm: there is no `{unknown}` command.\n");
+            eprint!("{}", front_door(&flags));
+            return ExitCode::FAILURE;
         }
     };
 
@@ -235,6 +242,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[derive(Clone)]
 struct Flags {
     db: String,
     port: u16,
@@ -412,27 +420,63 @@ fn install_hooks(args: &[String]) -> Fallible {
 
 /// `farhelm install-service`
 ///
-/// Prints a unit rather than writing one. Installing a service is a privileged,
-/// system-wide change with an obvious blast radius, and a tool that did it
-/// silently on a machine somebody was only trying out would deserve the
-/// reputation it got. The command to install it is one line and it is printed
-/// alongside.
+/// Writes the definition this machine's own service manager understands, and
+/// prints the one line that loads it. It used to print a systemd unit on every
+/// platform, which meant the answer to "keep it running" on a Mac was a page of
+/// text for a service manager that machine does not have.
+///
+/// It writes the file but does not load it. Writing into your own
+/// `~/Library/LaunchAgents` or a unit directory is reversible and inspectable;
+/// *starting* a background service that executes agents is the part worth
+/// typing yourself, and on Linux it needs a privilege this process should not
+/// be asking for.
 fn install_service(flags: &Flags) -> Fallible {
     let spec = service::ServiceSpec::detect(flags.relay.clone());
+    let manager = service::Manager::detect();
+    let path = manager.path(&spec.home);
+    let body = match manager {
+        service::Manager::Launchd => spec.launchd_plist(),
+        service::Manager::Systemd => spec.runner_unit(),
+    };
 
-    println!("# Save as /etc/systemd/system/farhelm.service\n");
-    print!("{}", spec.runner_unit());
+    // Written where it can be written; printed where it cannot. A root-owned
+    // unit directory is the ordinary case on Linux, and failing there would be
+    // a dead end rather than a step.
+    let written = std::path::Path::new(&path)
+        .parent()
+        .map(|dir| std::fs::create_dir_all(dir).is_ok())
+        .unwrap_or(false)
+        && std::fs::write(&path, &body).is_ok();
+
+    println!();
+    if written {
+        println!("  \u{2713} wrote {path}");
+    } else {
+        println!("  Could not write {path} — here it is to place by hand:");
+        println!();
+        print!("{body}");
+    }
+
+    println!();
+    println!("  Then:");
+    for line in manager.install_commands(&path).lines() {
+        println!("    {line}");
+    }
+    println!();
     println!(
-        "\n# Then:\n\
-         #   sudo systemctl daemon-reload\n\
-         #   sudo systemctl enable --now farhelm\n\
-         #   journalctl -u farhelm -f\n\
-         #\n\
-         # An API key goes in {}/forge.env, not in the unit:\n\
-         #   echo 'ANTHROPIC_API_KEY=sk-…' > {}/forge.env\n\
-         #   chmod 600 {}/forge.env",
-        spec.working_dir, spec.working_dir, spec.working_dir
+        "  It runs in {}, so that is where its database and key live.",
+        spec.working_dir
     );
+    println!(
+        "  A model credential goes in {}/farhelm.env, not in the service:",
+        spec.working_dir
+    );
+    println!(
+        "    echo 'ANTHROPIC_API_KEY=sk-…' > {}/farhelm.env && chmod 600 {}/farhelm.env",
+        spec.working_dir, spec.working_dir
+    );
+    println!("  — or `farhelm auth`, which stores one without an environment file at all.");
+    println!();
     Ok(())
 }
 
@@ -1084,6 +1128,201 @@ fn cloud_config(flags: &Flags) -> Option<farhelm_runner::cloud::CloudConfig> {
         // `cloud_config_or_ask` reports it in the case that stays broken.
         None => None,
     }
+}
+
+/* ------------------------------------------------------------ the front door */
+
+/// What a bare `farhelm` prints: where this machine stands, and the one command
+/// that moves it forward.
+fn front_door(flags: &Flags) -> String {
+    let standing = farhelm_runner::setup::Standing::read(
+        Path::new(&flags.db),
+        Path::new(&flags.cloud_file),
+        Path::new(&flags.credential_file),
+    );
+    farhelm_runner::setup::front_door(&standing, env!("CARGO_PKG_VERSION"))
+}
+
+/// Whether there is a terminal to ask on at all.
+///
+/// Separate from [`confirm`] because asking is not free: probing by calling
+/// `confirm` would print a prompt and consume an answer, so the check for
+/// "should I ask anything" would itself have asked something.
+fn has_terminal() -> bool {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .is_ok()
+}
+
+/// Ask a yes/no question on the terminal, defaulting to yes.
+///
+/// Reads `/dev/tty` rather than stdin. `setup` is exactly the sort of thing
+/// somebody runs from an install script piped into a shell, where stdin *is the
+/// rest of the script* — a prompt reading it would swallow the remaining lines
+/// and act on them. This is the same care `install.sh` documents for `login`.
+///
+/// Returns `None` when there is no terminal to ask on, which is the caller's cue
+/// to print what it would have done rather than to guess. A setup script that
+/// silently chose for you is worse than one that told you what to type.
+fn confirm(question: &str) -> Option<bool> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok()?;
+
+    write!(tty, "  {question} [Y/n] ").ok()?;
+    tty.flush().ok()?;
+
+    let mut answer = String::new();
+    BufReader::new(tty.try_clone().ok()?)
+        .read_line(&mut answer)
+        .ok()?;
+
+    Some(!matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "n" | "no"
+    ))
+}
+
+/// Read a line of text on the terminal. `None` for no terminal or an empty answer.
+fn ask_for(prompt: &str) -> Option<String> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok()?;
+
+    write!(tty, "  {prompt} ").ok()?;
+    tty.flush().ok()?;
+
+    let mut answer = String::new();
+    BufReader::new(tty.try_clone().ok()?)
+        .read_line(&mut answer)
+        .ok()?;
+
+    let answer = answer.trim().to_owned();
+    (!answer.is_empty()).then_some(answer)
+}
+
+/// `farhelm setup` — every remaining step, in the order they block you.
+///
+/// The steps are the ones `farhelm` with no arguments lists, run rather than
+/// printed. Three properties are the whole point:
+///
+/// **It is resumable.** Each step reads the same state the front door does, so
+/// running it twice does the half that failed and skips the half that did not.
+/// There is no session, no progress file, and nothing to reset.
+///
+/// **Every step is refusable.** Declining prints what was skipped and what that
+/// costs, and setup carries on. A wizard that cannot be said no to is a wizard
+/// people quit, and quitting halfway is the state with no summary.
+///
+/// **It never runs without a terminal.** Under a pipe or a service manager there
+/// is nobody to answer, so it prints the commands it would have run. Guessing
+/// on somebody's behalf about credentials and system services is not a
+/// convenience.
+fn setup_command(flags: &Flags) -> Fallible {
+    use farhelm_runner::setup::{Standing, Step};
+
+    let standing = Standing::read(
+        Path::new(&flags.db),
+        Path::new(&flags.cloud_file),
+        Path::new(&flags.credential_file),
+    );
+
+    println!();
+    println!(
+        "  \u{1b}[1mSetting up farhelm\u{1b}[0m in {}",
+        std::env::current_dir()?.display()
+    );
+
+    let remaining = standing.remaining();
+    if remaining.is_empty() {
+        println!();
+        println!("  Everything is already set up here.");
+        println!("  `farhelm serve` starts it; `farhelm doctor` checks a running one.");
+        println!();
+        return Ok(());
+    }
+
+    // No terminal: say what would happen, in order, and stop. This is the
+    // branch a CI job and a service manager land in.
+    if !has_terminal() {
+        println!();
+        println!("  No terminal to ask on, so nothing was changed. In order:");
+        println!();
+        for step in &remaining {
+            println!("    {:<32} {}", step.command(), step.why());
+        }
+        println!();
+        return Ok(());
+    }
+
+    println!("  {} step(s). Each one can be skipped.", remaining.len());
+
+    let mut skipped: Vec<Step> = Vec::new();
+    for step in remaining {
+        println!();
+        println!("  \u{1b}[1m{}\u{1b}[0m — {}", step.title(), step.why());
+
+        if confirm("Do it now?") != Some(true) {
+            skipped.push(step);
+            println!("  Skipped. `{}` when you want it.", step.command());
+            continue;
+        }
+
+        let outcome = match step {
+            Step::Credential => auth(flags, &[]),
+            Step::Hooks => install_hooks(&["--global".to_owned()]),
+            Step::Fleet => match flags
+                .cloud
+                .clone()
+                .or_else(|| ask_for("Control plane URL (blank to skip):"))
+            {
+                Some(url) => {
+                    let mut with_cloud = flags.clone();
+                    with_cloud.cloud = Some(url);
+                    login(&with_cloud)
+                }
+                None => {
+                    skipped.push(step);
+                    println!("  Skipped — no URL given.");
+                    continue;
+                }
+            },
+            Step::Service => install_service(flags),
+        };
+
+        // A failed step is reported and does not stop the rest. The steps are
+        // independent, and abandoning setup because a control plane was
+        // unreachable would leave hooks uninstalled for no reason.
+        if let Err(err) = outcome {
+            println!("  \u{2717} {err}");
+            println!("  Left undone. `{}` to retry.", step.command());
+            skipped.push(step);
+        }
+    }
+
+    println!();
+    if skipped.is_empty() {
+        println!("  \u{2713} All set. `farhelm serve` starts it.");
+    } else {
+        println!("  Done, with {} left:", skipped.len());
+        for step in &skipped {
+            println!("    {:<32} {}", step.command(), step.why());
+        }
+        println!();
+        println!("  `farhelm` on its own shows this list again at any time.");
+    }
+    println!();
+    Ok(())
 }
 
 /// Enrol this machine by asking, rather than by being told a secret.

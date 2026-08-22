@@ -390,9 +390,9 @@ that out on its own; a hand-written `curl` does not.
 ### Against a real database
 
 ```sh
-cargo run -p farhelm-runner -- seed --db forge.db   # optional: write the demo fleet
-cargo run -p farhelm-runner -- serve --db forge.db
-cargo run -p farhelm-runner -- status --db forge.db
+cargo run -p farhelm-runner -- seed --db farhelm.db   # optional: write the demo fleet
+cargo run -p farhelm-runner -- serve --db farhelm.db
+cargo run -p farhelm-runner -- status --db farhelm.db
 ```
 
 `farhelm demo` prices a synthetic session and prints the ledger summary
@@ -443,7 +443,7 @@ farhelm policy                              # what is in force
 farhelm policy flyctl apps destroy prod     # how would this be classified?
 ```
 
-Rules live in `forge.policy.toml` beside the database:
+Rules live in `farhelm.policy.toml` beside the database:
 
 ```toml
 destructive = ["flyctl apps destroy", "make reset-staging"]
@@ -477,7 +477,7 @@ Create an account in the web app, then **Workspace → Add a machine → Create
 key** and start the runner with it:
 
 ```sh
-FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=https://farhelm.aurovie.com \
+FARHELM_CLOUD_KEY=frg_… FARHELM_CLOUD_URL=https://farhelm.aurovie.com \
   cargo run -p farhelm-runner -- serve
 ```
 
@@ -541,7 +541,7 @@ device — which is what makes `decided_via: watch` true and the
 destructive-command rule enforceable. See
 [mobile/watch/README.md](mobile/watch/README.md).
 
-The runner's own keypair lives in `forge.key`, created `0600` and reused across
+The runner's own keypair lives in `farhelm.key`, created `0600` and reused across
 restarts — a new key would silently break every paired device. The runner
 refuses to start from a group- or world-readable key file rather than carrying
 on while its identity is readable by every user on the box.
@@ -738,12 +738,12 @@ vLLM/Ollama shim for the self-hosted small tier, or a test server.
 | `ANTHROPIC_API_KEY` | Enables `/v1/complete` — a Console key, sent as `x-api-key`. Blank counts as unset. |
 | `ANTHROPIC_AUTH_TOKEN` | Same, with a short-lived bearer token instead. Used only when `ANTHROPIC_API_KEY` is unset, and carries the `oauth-2025-04-20` beta the API requires for one. |
 | `ANTHROPIC_BASE_URL` | Redirect to a compatible endpoint |
-| `FORGE_RUNNER_URL` | Where `farhelm hook` reaches the daemon (default `127.0.0.1:7842`) |
-| `FORGE_MACHINE_NAME` | Overrides the hostname used to identify this machine |
-| `FORGE_TMUX` | Path to the tmux binary |
+| `FARHELM_RUNNER_URL` | Where `farhelm hook` reaches the daemon (default `127.0.0.1:7842`) |
+| `FARHELM_MACHINE_NAME` | Overrides the hostname used to identify this machine |
+| `FARHELM_TMUX` | Path to the tmux binary |
 
 The runner's own flags: `--relay <ws-url>` to go remote, `--key <path>` for the
-identity file (default `forge.key`).
+identity file (default `farhelm.key`).
 
 ### The savings, measured
 

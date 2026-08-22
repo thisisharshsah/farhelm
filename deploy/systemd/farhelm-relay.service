@@ -21,7 +21,7 @@ WorkingDirectory=/var/lib/farhelm
 # The key is fetched once at startup, not per request: a relay that asked the
 # control plane on every connection would fail closed the moment that service
 # blinked, which is the opposite of what a relay is for.
-ExecStart=/usr/local/bin/farhelm \
+ExecStart=/usr/local/bin/farhelm relay \
   --bind 127.0.0.1 \
   --port 7843 \
   --vapid-key /var/lib/farhelm/vapid.key \

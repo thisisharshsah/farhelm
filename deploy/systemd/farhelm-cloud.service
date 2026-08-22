@@ -17,7 +17,7 @@ EnvironmentFile=-/etc/farhelm.env
 # --bind 127.0.0.1 is the point of the whole arrangement: this process is
 # reached *through* the tunnel, so there is nothing on a routable address for a
 # misconfigured firewall to expose.
-ExecStart=/usr/local/bin/farhelm \
+ExecStart=/usr/local/bin/farhelm cloud \
   --bind 127.0.0.1 \
   --port 7844 \
   --db /var/lib/farhelm/farhelm-cloud.db \

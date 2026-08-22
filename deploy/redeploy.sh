@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-HOME_DIR="${FORGE_HOME:-$HOME/.farhelm}"
+HOME_DIR="${FARHELM_HOME:-${FORGE_HOME:-$HOME/.farhelm}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -38,28 +38,19 @@ wants() { [[ "$what" == "all" || "$what" == "$1" ]]; }
 
 # ---------------------------------------------------------------- build
 
-crates=()
-wants cloud  && crates+=(-p farhelm-cloud)
-wants relay  && crates+=(-p farhelm-relay)
-wants runner && crates+=(-p farhelm-runner)
-
-if ((${#crates[@]})); then
+# One binary now serves all three jobs, so `cloud`, `relay` and `runner` select
+# which service to *restart* rather than what to build. Building any of them
+# builds the same executable.
+if wants cloud || wants relay || wants runner; then
   step "Building"
-  cargo build --release "${crates[@]}"
+  cargo build --release -p farhelm-runner
   mkdir -p "$HOME_DIR/bin"
-  for name in farhelm-cloud farhelm-relay farhelm-runner; do
-    case "$name" in
-      farhelm-cloud)  wants cloud  || continue ;;
-      farhelm-relay)  wants relay  || continue ;;
-      farhelm-runner) wants runner || continue ;;
-    esac
-    # Installed to a temporary name and moved into place: `cp` onto a running
-    # binary can fail with ETXTBSY, and a half-copied binary is worse than an
-    # old one.
-    cp "target/release/$name" "$HOME_DIR/bin/.$name.new"
-    mv "$HOME_DIR/bin/.$name.new" "$HOME_DIR/bin/$name"
-    ok "$name"
-  done
+  # Installed to a temporary name and moved into place: `cp` onto a running
+  # binary can fail with ETXTBSY, and a half-copied binary is worse than an old
+  # one.
+  cp target/release/farhelm "$HOME_DIR/bin/.farhelm.new"
+  mv "$HOME_DIR/bin/.farhelm.new" "$HOME_DIR/bin/farhelm"
+  ok "farhelm"
 fi
 
 if wants web; then
@@ -110,7 +101,7 @@ check "control plane " https://farhelm.aurovie.com/v1/health        200 || faile
 check "web app       " https://farhelm.aurovie.com/                 200 || failed=1
 check "relay         " https://farhelm-relay.aurovie.com/v1/health  200 || failed=1
 check "runner        " http://127.0.0.1:7852/v1/health              200 || failed=1
-# The connector is optional — it is served only when FORGE_MCP_URL is set — so
+# The connector is optional — it is served only when FARHELM_MCP_URL is set — so
 # its absence is reported rather than failing the deploy.
 #
 # Checked by content type, not by status code. The runner serves the web app as
@@ -122,7 +113,7 @@ connector="https://farhelm-mac.aurovie.com/mcp"
 kind="$(curl -s -o /dev/null -m 10 -w '%{content_type}' "$connector" || true)"
 case "$kind" in
   text/html*)
-    printf '  %s·%s connector      not served (FORGE_MCP_URL unset) %s— optional%s\n' \
+    printf '  %s·%s connector      not served (FARHELM_MCP_URL unset) %s— optional%s\n' \
       "$DIM" "$OFF" "$DIM" "$OFF" ;;
   application/json*)
     ok "connector      answering" ;;

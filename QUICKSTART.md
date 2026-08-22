@@ -50,12 +50,12 @@ The banner tells you what it found:
 
 ```
 farhelm listening on http://127.0.0.1:7842
-  database   forge.db
+  database   farhelm.db
   gateway    none (set ANTHROPIC_API_KEY to enable /v1/complete)
   terminal   tmux · sessions survive a runner restart
   agents     Claude Code  ·  not installed: Codex CLI, Aider, Gemini CLI, Cursor CLI
   policy     built-in rules only (`farhelm policy` to add your own)
-  identity   Ff3k…  (forge.key)
+  identity   Ff3k…  (farhelm.key)
 ```
 
 Open <http://127.0.0.1:7842>. Empty, because nothing is running yet.
@@ -100,7 +100,7 @@ farhelm policy                                # what is in force
 farhelm policy make reset-staging             # how would this be classified?
 ```
 
-Write `~/.farhelm/forge.policy.toml`:
+Write `~/.farhelm/farhelm.policy.toml`:
 
 ```toml
 destructive = ["make reset-staging", "flyctl apps destroy"]
@@ -114,8 +114,8 @@ something drastic.
 ### Turn on the cost gateway (optional)
 
 ```sh
-echo 'ANTHROPIC_API_KEY=sk-…' > forge.env && chmod 600 forge.env
-set -a && . ./forge.env && set +a
+echo 'ANTHROPIC_API_KEY=sk-…' > farhelm.env && chmod 600 farhelm.env
+set -a && . ./farhelm.env && set +a
 farhelm serve
 ```
 
@@ -181,7 +181,7 @@ the runner's network.** Pick the machine if you have more than one.
 >
 > The older way still works and is the right one for machines you provision from
 > a script: create a key under **Workspace → Add a machine**, then start the
-> runner with `FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=… farhelm serve`.
+> runner with `FARHELM_CLOUD_KEY=frg_… FARHELM_CLOUD_URL=… farhelm serve`.
 
 Then turn on notifications, and read the iOS note at the end of Route B: it is
 the single most common reason push appears broken.
@@ -265,7 +265,7 @@ sudo systemctl enable --now farhelm
 journalctl -u farhelm -f
 ```
 
-The unit reads your API key from `forge.env` rather than inlining it, because a
+The unit reads your API key from `farhelm.env` rather than inlining it, because a
 key written into a unit file ends up in `systemctl cat`, in journald, and in your
 shell history.
 
@@ -316,7 +316,7 @@ above.
 Home Screen (iOS), the relay was started without `--vapid-key`, or the relay is
 not behind TLS. The pairing card reports the first two.
 
-**A paired device stopped working after a restart.** `forge.key` was deleted or
+**A paired device stopped working after a restart.** `farhelm.key` was deleted or
 regenerated. Every device is paired against its public half; there is no recovery
 but re-pairing.
 

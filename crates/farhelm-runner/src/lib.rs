@@ -17,6 +17,7 @@ pub mod relay;
 pub mod seed;
 pub mod service;
 pub mod session;
+pub mod setup;
 pub mod state;
 pub mod task;
 pub mod terminal;

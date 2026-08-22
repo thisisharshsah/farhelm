@@ -29,9 +29,9 @@ Then create `~/.farhelm/runner.env`, **mode 0600**:
 
 ```sh
 cat > ~/.farhelm/runner.env <<'ENV'
-FORGE_CLOUD_URL=https://farhelm.aurovie.com
-FORGE_CLOUD_KEY=frg_…
-FORGE_MCP_URL=https://farhelm-mac.aurovie.com
+FARHELM_CLOUD_URL=https://farhelm.aurovie.com
+FARHELM_CLOUD_KEY=frg_…
+FARHELM_MCP_URL=https://farhelm-mac.aurovie.com
 ENV
 chmod 600 ~/.farhelm/runner.env
 ```

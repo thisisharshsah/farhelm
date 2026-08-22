@@ -155,8 +155,8 @@ Open `https://farhelm.aurovie.com`, create an account, then
 supervise:
 
 ```sh
-export FORGE_CLOUD_KEY=frg_…                     # not on the command line —
-export FORGE_CLOUD_URL=https://farhelm.aurovie.com   # it ends up in `ps`
+export FARHELM_CLOUD_KEY=frg_…                     # not on the command line —
+export FARHELM_CLOUD_URL=https://farhelm.aurovie.com   # it ends up in `ps`
 farhelm serve
 ```
 
@@ -270,7 +270,7 @@ Give that runner its own hostname and point it at its loopback port:
 cloudflared tunnel --origincert ~/.cloudflared/cert-aurovie.pem \
   route dns farhelm farhelm-<name>.aurovie.com
 # then in ~/.cloudflared/farhelm.yml, map it to that runner's port, and start it with:
-FORGE_MCP_URL=https://farhelm-<name>.aurovie.com farhelm serve …
+FARHELM_MCP_URL=https://farhelm-<name>.aurovie.com farhelm serve …
 ```
 
 Keep the hostname **first-level** (`farhelm-<name>`, not `<name>.farhelm`) — see
