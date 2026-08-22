@@ -1,4 +1,4 @@
-# RelayForge — System Design Document
+# Farhelm — System Design Document
 
 **A remote control surface + cost-optimization gateway for AI coding agents**
 
@@ -16,7 +16,7 @@ Version 0.1 · July 2026
 
 Coding agents (Claude Code, Codex, OpenCode) stall the moment you walk away from the terminal: a permission prompt sits unanswered, a plan finishes and nothing starts the next step. Existing remote-control options are fragmented (official Remote Control is phone-only and flaky, watch bridges are third-party, glasses are vaporware) and none of them address the second problem: unsupervised agents burn tokens indiscriminately — re-sending the same system prompt every turn, dumping whole files into context, and using a frontier model for work a small model can do.
 
-RelayForge solves both in one system because they share an architecture: **everything flows through one gateway**, which is simultaneously the relay point for remote clients and the enforcement point for cost policy.
+Farhelm solves both in one system because they share an architecture: **everything flows through one gateway**, which is simultaneously the relay point for remote clients and the enforcement point for cost policy.
 
 ### What problem it solves, precisely
 
@@ -151,7 +151,7 @@ Text wireframes; translate to Figma before implementation.
 
 ```
 ┌──────────────────────────────────┐
-│ RelayForge          ⚙  📊        │
+│ Farhelm          ⚙  📊        │
 ├──────────────────────────────────┤
 │ ● payments-api      hetzner-1    │
 │   Step 3/7 · Fix webhook retry   │
@@ -504,10 +504,10 @@ Rejected up front: Kubernetes (one daemon ≠ cluster), Redis (SQLite covers que
 Solo-developer plan, part-time (~15–20 h/week). 10 weeks to public MVP. Board columns: Backlog → This Sprint → In Progress → Review → Done.
 
 ### Milestone 0 — Foundations (Week 1) ✅
-- [x] Repo scaffold: cargo workspace (`crates/forge-core`, `crates/forge-runner`, `crates/forge-relay`; `app/` joins at M3), CI, `rustfmt` + `clippy -D warnings`
+- [x] Repo scaffold: cargo workspace (`crates/forge-core`, `crates/farhelm-runner`, `crates/farhelm-relay`; `app/` joins at M3), CI, `rustfmt` + `clippy -D warnings`
 - [x] SQLite schema v1 migration (all tables from §5, including deferred-feature tables), versioned by `PRAGMA user_version` and applied transactionally
 - [x] Price table module + `usage_event` writer (the ledger exists before the first model call)
-- **Exit criterion:** ✅ `cargo test` green (36 tests); `cargo run -p forge-runner -- demo` renders a cost number.
+- **Exit criterion:** ✅ `cargo test` green (36 tests); `cargo run -p farhelm-runner -- demo` renders a cost number.
 
 ### Milestone 1 — Runner controls an agent (Weeks 2–3) ✅
 - [x] tmux session manager: spawn/attach/kill Claude Code & OpenCode
@@ -529,7 +529,7 @@ than its happy path:
 
 | Situation | Decision returned | Reasoning |
 |---|---|---|
-| Runner unreachable | `defer` | Falls back to Claude Code's own prompt. RelayForge being down degrades to plain Claude Code, never to an unsupervised agent. |
+| Runner unreachable | `defer` | Falls back to Claude Code's own prompt. Farhelm being down degrades to plain Claude Code, never to an unsupervised agent. |
 | Nobody answers in time | `deny`, recorded as `timeout` | D3's principle: convenience must never become catastrophe. |
 | Bug in the bridge | `defer`, exit 0 | Exit 2 would make stderr a *blocking* reason, turning our bug into the user's blocked agent. |
 
@@ -539,7 +539,7 @@ tool call would create a fresh session.
 
 ### Milestone 2 — Cost Gateway v1 ★ (Weeks 3–5, overlaps M1) ✅
 - [x] `/v1/complete` with pipeline stages 1→8 — stage 3 is the real response cache, not a pass-through
-- [x] Prompt assembler with cache breakpoints; **cache-hit-ratio test harness** (`crates/forge-gateway/tests/savings.rs`)
+- [x] Prompt assembler with cache breakpoints; **cache-hit-ratio test harness** (`crates/farhelm-gateway/tests/savings.rs`)
 - [x] Static router table + per-step tier pinning from `PLAN.md`
 - [x] Pre-gate adapters: prettier/eslint/tsc, ruff/mypy/pytest, cargo fmt/clippy/test, gofmt/vet/test
 - [x] Budget guard + 80%/100% events — per-session *and* per-repo caps
@@ -561,7 +561,7 @@ tool call would create a fresh session.
       *(built against the runner's localhost API over SSE; the relay swaps in
       underneath without the client changing)*
 - **Dependency:** WebPush on iOS requires the PWA installed to home screen (iOS 16.4+). This turned out to be worse than "document it": Safari resolves `Notification.requestPermission()` to `"denied"` in a browser tab **without prompting** — no dialog, no error, nothing in the console. A user who hits it concludes the feature is broken. The app detects the case before attempting anything and says what to do instead. The Expo contingency this dependency existed to trigger has since been taken for other reasons — there is now a React Native client too.
-- **Exit criterion:** ⚠️ met in software, not on cellular. `crates/forge-runner/tests/remote_approval.rs` runs the whole path — a device with its own keypair approves through a real relay and the runner records the decision with the right `decided_via` — but over loopback, with a simulated phone. The app now holds up its half: `packages/client-core/src/crypto.test.ts` opens envelopes Rust sealed (and vice versa, against a checked-in fixture), and `transport.test.ts` beside it drives the relay client against a fake socket and a real runner identity. What is left is not code but a measurement — nobody has approved anything from a phone on a train.
+- **Exit criterion:** ⚠️ met in software, not on cellular. `crates/farhelm-runner/tests/remote_approval.rs` runs the whole path — a device with its own keypair approves through a real relay and the runner records the decision with the right `decided_via` — but over loopback, with a simulated phone. The app now holds up its half: `packages/client-core/src/crypto.test.ts` opens envelopes Rust sealed (and vice versa, against a checked-in fixture), and `transport.test.ts` beside it drives the relay client against a fake socket and a real runner identity. What is left is not code but a measurement — nobody has approved anything from a phone on a train.
 
 **One structural consequence worth recording.** There are now two ways for a device to reach the runner: the localhost HTTP API and the relay link. They must not be able to diverge on policy — a transport that forgot the D3 destructive-approval rule would be a silent hole. So every device-initiated action goes through one `commands` module that owns the rule, and both transports are thin adapters over it. The relay test asserts a watch is refused over the relay specifically, so the shared path is verified rather than assumed.
 
@@ -573,7 +573,7 @@ The payload is empty and encrypted. Empty because the relay cannot read the enve
 
 **The change: the relay does not decide who gets woken.** The first version pushed whenever any envelope was published on a channel, which is the obvious place to put it — the relay is where the wake-up is sent from. It is also wrong, and badly. The relay sees ciphertext, so it cannot distinguish an approval request from a line of build output; an agent running `cargo build` would have buzzed every paired phone every ten seconds for the length of the build. The rate limit does not save you, it just sets the buzzing interval.
 
-So the decision moved to the runner, which is the only party that knows what happened: it publishes the sealed event, then explicitly asks for a wake-up via `POST /v1/push/{channel}` if — and only if — the event was an approval request or a budget alert. The relay stays dumb, which is the whole point of the relay. `deserves_a_wake_up` in `crates/forge-runner/src/relay.rs` is four lines and is the most consequential four lines in the push path.
+So the decision moved to the runner, which is the only party that knows what happened: it publishes the sealed event, then explicitly asks for a wake-up via `POST /v1/push/{channel}` if — and only if — the event was an approval request or a budget alert. The relay stays dumb, which is the whole point of the relay. `deserves_a_wake_up` in `crates/farhelm-runner/src/relay.rs` is four lines and is the most consequential four lines in the push path.
 
 **Three things the relay's shape forced, which §6 does not mention.**
 
@@ -690,15 +690,15 @@ Two design decisions carry the weight:
 
 A malformed policy file is a **startup error**, not a fallback to the built-ins. The failure it prevents: somebody writes a rule expecting it to be enforced, makes a typo, and the runner comes up looking healthy while the rule does nothing.
 
-`forge-runner policy <command>` answers "would this be gated?" without asking an agent to run something destructive — which is the only other way to find out.
+`farhelm policy <command>` answers "would this be gated?" without asking an agent to run something destructive — which is the only other way to find out.
 
-**The quickstart, and the bug it found.** Writing it was supposed to be documentation. Walking it from an empty directory — the way it tells you to, `mkdir ~/.relayforge && cd ~/.relayforge && forge-runner serve` — produced a runner that served the API happily and **404'd the app itself**.
+**The quickstart, and the bug it found.** Writing it was supposed to be documentation. Walking it from an empty directory — the way it tells you to, `mkdir ~/.farhelm && cd ~/.farhelm && farhelm serve` — produced a runner that served the API happily and **404'd the app itself**.
 
 `--app-dir` defaulted to the literal relative path `web/dist`, which resolves against the working directory. That works only when the runner is started from the repository root, which is exactly what a state directory is not. The banner also still said `pnpm --dir app build`, a path that stopped existing at the web/mobile split.
 
 Both are the kind of thing no test catches and no amount of re-reading finds, because the code is correct in the situation its author was in. The fix is a search with explicit precedence — working directory, then beside and above the binary, then `/usr/local/share` — and an explicit `--app-dir` is still taken at face value, because silently searching elsewhere after somebody named a directory is worse than serving nothing.
 
-**`forge-runner install-service` prints a systemd unit with this machine's paths already substituted.** A quickstart that says "create a unit, substitute your paths, set your user, mind the working directory" has four places to get it wrong, and the failure mode of most of them is a service that starts, looks healthy, and silently uses the wrong database. It prints rather than writes: installing a system service is privileged and system-wide, and a tool that did it silently on a machine somebody was only trying out would deserve the reputation it got.
+**`farhelm install-service` prints a systemd unit with this machine's paths already substituted.** A quickstart that says "create a unit, substitute your paths, set your user, mind the working directory" has four places to get it wrong, and the failure mode of most of them is a service that starts, looks healthy, and silently uses the wrong database. It prints rather than writes: installing a system service is privileged and system-wide, and a tool that did it silently on a machine somebody was only trying out would deserve the reputation it got.
 
 The unit reads the API key from an `EnvironmentFile` rather than inlining it — a key written into a unit is in `systemctl cat`, in journald, and in shell history. The runner's unit is deliberately *less* hardened than the relay's: the relay keeps nothing across a restart so it gets `ProtectSystem=strict` and `ProtectHome`, while the runner's whole job is running agents in your repositories, and a unit that sandboxed those away is one nobody would keep.
 
@@ -730,7 +730,7 @@ weaker approval path. `crates/forge-core/src/agent.rs` is the whole registry.
 matching on terminal output. The failure it is tuned against is typing `y` at
 something nobody agreed to, so it never guesses: an unmatched prompt is simply
 not seen, and the session sits there — which is what would have happened without
-RelayForge at all. `/v1/agents` reports `verified: false` for every dialect not
+Farhelm at all. `/v1/agents` reports `verified: false` for every dialect not
 checked against the real binary.
 
 **Two bugs worth recording, both found by running it rather than reading it.**
@@ -749,14 +749,14 @@ checked against the real binary.
    in hindsight: **an agent waiting for input has printed nothing since it
    asked.**
 
-**A desktop app.** `forge-runner serve` assumes a box you administer — a shell,
+**A desktop app.** `farhelm serve` assumes a box you administer — a shell,
 tmux, a systemd unit, a spare terminal for the banner. That is right for a VPS
 and wrong for the laptop you write code on, and impossible on Windows. The
 desktop app is the same library in a window: same API, same approval rules, its
 own per-user database and key.
 
 It needed exactly one new thing, and that thing was worth having anyway: a
-terminal backend that does not need tmux. `crates/forge-runner/src/pty.rs` owns
+terminal backend that does not need tmux. `crates/farhelm-runner/src/pty.rs` owns
 its pseudo-terminals, works on Windows via ConPTY, and is *verified against real
 processes* — which tmux, on this machine, still is not.
 
@@ -778,7 +778,7 @@ found by asking "what origin does this actually run on", not by the compiler.
 **What the desktop app deliberately is not.** "Control any computer from your
 phone" is only worth having if it cannot become "control any computer from
 anyone's phone". So it accepts no arbitrary commands from the network. Every
-remote action goes through `forge_runner::commands` — the same gated path the
+remote action goes through `farhelm_runner::commands` — the same gated path the
 localhost API uses. Approvals are *answered*, not issued; instructions are typed
 into an agent's own terminal; destructive commands still cannot be cleared from
 a wrist; a device must be paired on your own network first, and unpairing
@@ -813,13 +813,13 @@ Not in the original plan at all, and the largest single addition since it: the
 runner grew **its own coding agent**, and with it the screen the rest of the
 product was implicitly aiming at.
 
-The plan's whole frame was *supervision* — RelayForge watches an agent somebody
+The plan's whole frame was *supervision* — Farhelm watches an agent somebody
 else wrote and relays its questions to a phone. That frame has a ceiling built
 into it: the thing you get asked about is a **tool call**, and a tool call is a
 bad unit of review. `Bash: pytest -x` tells you nothing about whether the work
 is right. It is a yes/no you answer in a hurry to unblock a process.
 
-The unit worth reviewing is a **diff**. So `forge-agent` runs a tool loop
+The unit worth reviewing is a **diff**. So `farhelm-agent` runs a tool loop
 through the existing cost gateway, does its work on a branch of its own, and
 hands back a unified diff for a human to approve or reject. That
 is the Cursor-shaped half of the product — except the review happens on a phone,
@@ -840,7 +840,7 @@ Three decisions worth recording, because each one had a plausible alternative:
   structured form would have meant reworking the assembler and the compaction
   pass, which are the most heavily tested code in the repo and the reason the
   cache-read ratio is 99% rather than 0%. The trade is written down in
-  `crates/forge-agent/src/task.rs` rather than discovered later.
+  `crates/farhelm-agent/src/task.rs` rather than discovered later.
 
 The security posture is unchanged, and deliberately so: a change set cannot be
 approved from a watch, `run` is classified by the same rules with the same
@@ -932,5 +932,5 @@ Guard-rail metric: **task retry rate** must not rise as context is trimmed — s
 | C6 | Batch deferral | Nightly queue at 50% rates | ⏳ | Halves all background work |
 | C7 | History compaction | Rolling summary + pinned facts | ⏳ | Prevents linear context growth per turn |
 | C8 | Response cache | Exact/semantic hit = $0 | ⏳ | Kills repeated identical questions |
-| C10 | Draft-then-verify | Cheap drafts, strong model reviews diff only | ✅ | **Measured: 50% vs frontier-throughout** (`forge-agent --test draft_then_verify`) |
+| C10 | Draft-then-verify | Cheap drafts, strong model reviews diff only | ✅ | **Measured: 50% vs frontier-throughout** (`farhelm-agent --test draft_then_verify`) |
 | B1 | Plan-once/execute-cheap | Expensive planning amortized across cheap steps | ✅ | Frontier model pays once per plan, not per step |

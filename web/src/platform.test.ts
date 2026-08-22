@@ -1,14 +1,14 @@
 /**
  * The browser-specific layer.
  *
- * Everything portable is tested in `@relayforge/client-core` under Node. What is
+ * Everything portable is tested in `@farhelm/client-core` under Node. What is
  * left here is the three things a browser does differently — `localStorage`,
  * `EventSource`, and `matchMedia` — and the failure modes that only exist
  * because of them.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Identity, PAIRING_STORAGE_KEY, type Pairing } from "@relayforge/client-core";
+import { Identity, PAIRING_STORAGE_KEY, type Pairing } from "@farhelm/client-core";
 import { idbBackend } from "./idb";
 import {
   decisionSurface,

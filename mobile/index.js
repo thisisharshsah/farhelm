@@ -4,7 +4,7 @@
  * `react-native-get-random-values` installs `crypto.getRandomValues`, which
  * Hermes does not provide. TweetNaCl looks for it at *module load* and throws
  * "no PRNG" if it is absent — so this has to run before anything reaches
- * `@relayforge/client-core`. It throwing is the good outcome: the alternative
+ * `@farhelm/client-core`. It throwing is the good outcome: the alternative
  * would be a key generated from a predictable source, which is indistinguishable
  * from a working app right up until it isn't.
  */

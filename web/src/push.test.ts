@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Pairing } from "@relayforge/client-core";
+import type { Pairing } from "@farhelm/client-core";
 import { disablePush, enablePush, isInstalled, pushState } from "./push";
 
 const IOS_UA =

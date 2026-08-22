@@ -14,7 +14,7 @@ import type {
   FleetView,
   Risk,
   TaskView,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import {
   REFUSAL_TAG,
   allowsOneTap,

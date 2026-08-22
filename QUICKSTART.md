@@ -9,7 +9,7 @@ Three stages, each useful on its own. Stop after any of them.
 2. [Reach it from your phone](#2-reach-it-from-your-phone) — 5 minutes
 3. [Keep it running](#3-keep-it-running) — 5 minutes
 
-> If you just want to look at it first, `cargo run -p forge-runner -- serve --demo`
+> If you just want to look at it first, `cargo run -p farhelm-runner -- serve --demo`
 > and open <http://127.0.0.1:7842>. In-memory database, a seeded fleet, nothing
 > written to disk. Come back here when you want it real.
 
@@ -26,9 +26,9 @@ Three stages, each useful on its own. Stop after any of them.
   the runner owns the terminals itself and they end when it does.
 
 ```sh
-git clone <this repo> relayforge && cd relayforge
-cargo build --release -p forge-runner -p forge-relay
-pnpm install && pnpm --filter @relayforge/web build
+git clone <this repo> farhelm && cd farhelm
+cargo build --release -p farhelm-runner -p farhelm-relay
+pnpm install && pnpm --filter @farhelm/web build
 ```
 
 Everything below assumes `target/release` is on your `PATH`, or that you type the
@@ -42,19 +42,19 @@ Pick a directory to keep state in. Everything lives together, so "where is my
 data" and "how do I start over" have one answer.
 
 ```sh
-mkdir -p ~/.relayforge && cd ~/.relayforge
-forge-runner serve
+mkdir -p ~/.farhelm && cd ~/.farhelm
+farhelm serve
 ```
 
 The banner tells you what it found:
 
 ```
-forge-runner listening on http://127.0.0.1:7842
+farhelm listening on http://127.0.0.1:7842
   database   forge.db
   gateway    none (set ANTHROPIC_API_KEY to enable /v1/complete)
   terminal   tmux · sessions survive a runner restart
   agents     Claude Code  ·  not installed: Codex CLI, Aider, Gemini CLI, Cursor CLI
-  policy     built-in rules only (`forge-runner policy` to add your own)
+  policy     built-in rules only (`farhelm policy` to add your own)
   identity   Ff3k…  (forge.key)
 ```
 
@@ -65,7 +65,7 @@ Open <http://127.0.0.1:7842>. Empty, because nothing is running yet.
 In **another terminal**, in the repository you want worked on:
 
 ```sh
-forge-runner install-hooks        # prints a settings block
+farhelm install-hooks        # prints a settings block
 ```
 
 Paste it into that repo's `.claude/settings.json`. From now on, every tool call
@@ -86,7 +86,7 @@ This is the part worth knowing before you rely on it:
 | You approve | `allow` | |
 | You deny | `deny`, with your reason | |
 | Nobody answers in 15 min | `deny`, recorded as `timeout` | An unanswered request must never become an allow |
-| The runner is down | `defer` | Falls back to Claude Code's own prompt — RelayForge being down degrades to plain Claude Code, not to an unsupervised agent |
+| The runner is down | `defer` | Falls back to Claude Code's own prompt — Farhelm being down degrades to plain Claude Code, not to an unsupervised agent |
 | The bridge itself errors | `defer` | A bug here must not block your work |
 
 ### Add rules for your own stack
@@ -96,11 +96,11 @@ The built-in destructive list is broad — `rm -rf`, force pushes, `DROP TABLE`,
 cannot know that `make reset-staging` drops your staging database.
 
 ```sh
-forge-runner policy                                # what is in force
-forge-runner policy make reset-staging             # how would this be classified?
+farhelm policy                                # what is in force
+farhelm policy make reset-staging             # how would this be classified?
 ```
 
-Write `~/.relayforge/forge.policy.toml`:
+Write `~/.farhelm/forge.policy.toml`:
 
 ```toml
 destructive = ["make reset-staging", "flyctl apps destroy"]
@@ -116,7 +116,7 @@ something drastic.
 ```sh
 echo 'ANTHROPIC_API_KEY=sk-…' > forge.env && chmod 600 forge.env
 set -a && . ./forge.env && set +a
-forge-runner serve
+farhelm serve
 ```
 
 `POST /v1/complete` is now the only path to a model provider, which is what makes
@@ -139,15 +139,15 @@ want a single machine and no account anywhere.
 Run the control plane and a relay that trusts it:
 
 ```sh
-forge-cloud --app-dir web/dist                  # accounts, plans, the app
-forge-relay --vapid-key vapid.key --auth-from http://127.0.0.1:7844
+farhelm cloud --app-dir web/dist                  # accounts, plans, the app
+farhelm relay --vapid-key vapid.key --auth-from http://127.0.0.1:7844
 ```
 
 Open `http://127.0.0.1:7844` and create an account. Then, **on the machine you
 want supervised** — including one you only have over SSH:
 
 ```sh
-forge-runner login --cloud http://127.0.0.1:7844
+farhelm login --cloud http://127.0.0.1:7844
 ```
 
 It prints a code and waits:
@@ -164,14 +164,14 @@ code, and confirm the machine's name. The runner stores what it is given and
 from then on:
 
 ```sh
-forge-runner serve          # no flags, no environment variables
+farhelm serve          # no flags, no environment variables
 ```
 
 It appears in your fleet within thirty seconds. On the phone, open the app and
 sign in with the same account — **no pairing code, no QR, and no need to be on
 the runner's network.** Pick the machine if you have more than one.
 
-`forge-runner logout` forgets the stored credential on that machine.
+`farhelm logout` forgets the stored credential on that machine.
 
 > **Why it works this way.** The machine generates a 256-bit secret it never
 > shows anybody, and you get eight characters you can read off a console. The
@@ -181,7 +181,7 @@ the runner's network.** Pick the machine if you have more than one.
 >
 > The older way still works and is the right one for machines you provision from
 > a script: create a key under **Workspace → Add a machine**, then start the
-> runner with `FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=… forge-runner serve`.
+> runner with `FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=… farhelm serve`.
 
 Then turn on notifications, and read the iOS note at the end of Route B: it is
 the single most common reason push appears broken.
@@ -210,7 +210,7 @@ Any VPS. It holds no keys and keeps nothing across a restart, so it is the
 cheapest box you own.
 
 ```sh
-forge-relay --vapid-key vapid.key --push-subject mailto:you@example.com
+farhelm relay --vapid-key vapid.key --push-subject mailto:you@example.com
 ```
 
 Put it behind TLS — a reverse proxy is fine — so devices reach it at
@@ -223,13 +223,13 @@ Put it behind TLS — a reverse proxy is fine — so devices reach it at
 ### Point the runner at it
 
 ```sh
-forge-runner serve --relay wss://relay.example.com
+farhelm serve --relay wss://relay.example.com
 ```
 
 ### Pair your phone
 
 ```sh
-forge-runner pair          # QR, plus the same payload as text
+farhelm pair          # QR, plus the same payload as text
 ```
 
 On the phone, open the app **on your own network** (the runner's LAN address),
@@ -252,8 +252,8 @@ relay.
 ## 3. Keep it running
 
 ```sh
-cd ~/.relayforge
-forge-runner install-service --relay wss://relay.example.com
+cd ~/.farhelm
+farhelm install-service --relay wss://relay.example.com
 ```
 
 That prints a systemd unit with **this machine's paths already in it** — binary,
@@ -261,8 +261,8 @@ user, working directory. Save it, then:
 
 ```sh
 sudo systemctl daemon-reload
-sudo systemctl enable --now relayforge
-journalctl -u relayforge -f
+sudo systemctl enable --now farhelm
+journalctl -u farhelm -f
 ```
 
 The unit reads your API key from `forge.env` rather than inlining it, because a
@@ -274,13 +274,13 @@ For the relay box, the same command on that machine gives you its unit.
 ### macOS
 
 Use [the desktop app](desktop/) instead — same runner, in a window, with a tray
-icon. It keeps its own database under `~/Library/Application Support/RelayForge`.
+icon. It keeps its own database under `~/Library/Application Support/Farhelm`.
 
 ---
 
 ## Which agents actually work
 
-`forge-runner policy` tells you about rules; `GET /v1/agents` tells you about
+`farhelm policy` tells you about rules; `GET /v1/agents` tells you about
 agents, and so does the startup banner.
 
 | Agent | How approvals reach it | Confidence |
@@ -295,7 +295,7 @@ documentation and have not been checked against the real binaries.
 `/v1/agents` reports `verified: false` for all of them.
 
 If a prompt is missed, the fix is a one-line dialect in
-`crates/forge-domain/src/agent.rs`.
+`crates/farhelm-domain/src/agent.rs`.
 
 ---
 

@@ -207,7 +207,7 @@ export class HttpTransport implements Transport {
 
 /* ---------------------------------------------------------------------- relay */
 
-/** Commands the runner accepts. Mirrors `forge_runner::commands::Command`. */
+/** Commands the runner accepts. Mirrors `farhelm_runner::commands::Command`. */
 export type Command =
   | { type: "snapshot" }
   | { type: "session_snapshot"; session_id: string }

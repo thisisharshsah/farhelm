@@ -1,7 +1,7 @@
 /**
  * The phone's half of the control-plane connection.
  *
- * Same client as the web — `@relayforge/client-core` — with the two things a
+ * Same client as the web — `@farhelm/client-core` — with the two things a
  * phone does differently: the session goes in the platform keystore rather than
  * IndexedDB, and the control plane's address has to be typed or built in,
  * because there is no origin to infer it from.
@@ -12,7 +12,7 @@ import {
   CloudClient,
   cloudSessionStore,
   type CloudSession,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { Platform } from "react-native";
 
 /**

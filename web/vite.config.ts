@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-/** The runner's default localhost port (see `forge-runner serve --port`). */
+/** The runner's default localhost port (see `farhelm serve --port`). */
 const RUNNER = process.env.FORGE_RUNNER ?? "http://127.0.0.1:7842";
 
 export default defineConfig({

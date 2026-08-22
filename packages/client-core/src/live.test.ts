@@ -11,8 +11,8 @@
  * without pretending to have run. To run it for real:
  *
  * ```sh
- * cargo run -p forge-relay &
- * cargo run -p forge-runner -- serve --demo --relay ws://127.0.0.1:7843 &
+ * cargo run -p farhelm-relay &
+ * cargo run -p farhelm-runner -- serve --demo --relay ws://127.0.0.1:7843 &
  * cd app && pnpm test
  * ```
  *

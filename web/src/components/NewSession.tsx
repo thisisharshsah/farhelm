@@ -19,15 +19,17 @@
  * after one slips past.
  */
 
+import { getMigratingSync } from "@farhelm/client-core";
 import { useEffect, useState } from "react";
-import type { AgentView, FleetView, Transport } from "@relayforge/client-core";
+import type { AgentView, FleetView, Transport } from "@farhelm/client-core";
 
 /** Remembered between visits — nobody wants to retype an absolute path. */
-const RECENT_KEY = "forge-recent-repos";
+const RECENT_KEY = "farhelm-recent-repos";
+const LEGACY_RECENT_KEY = "forge-recent-repos";
 
 function recentRepos(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as unknown;
+    const raw = JSON.parse(getMigratingSync(RECENT_KEY, LEGACY_RECENT_KEY) ?? "[]") as unknown;
     return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];
@@ -131,12 +133,12 @@ export function NewSession({
         value={repo}
         onChange={(event) => setRepo(event.target.value)}
         placeholder="/Users/you/code/payments-api"
-        list="forge-known-repos"
+        list="farhelm-known-repos"
         spellCheck={false}
         autoCapitalize="none"
         autoCorrect="off"
       />
-      <datalist id="forge-known-repos">
+      <datalist id="farhelm-known-repos">
         {known.map((path) => (
           <option key={path} value={path} />
         ))}

@@ -29,15 +29,16 @@
  * round trip on a cold start is a bad trade.
  */
 
+import { getMigrating } from "./legacy.ts";
 import { ApiError } from "./api.ts";
 import { Identity, type DeviceKind } from "./crypto.ts";
 
 /* ---------------------------------------------------------------- the types */
 
-/** Mirrors `forge_cloud::plan::Plan`. */
+/** Mirrors `farhelm_cloud::plan::Plan`. */
 export type Plan = "free" | "pro" | "team";
 
-/** Mirrors `forge_crypto::token::Role`. Ordered by capability. */
+/** Mirrors `farhelm_crypto::token::Role`. Ordered by capability. */
 export type Role = "viewer" | "runner" | "member" | "admin" | "owner";
 
 export type SubscriptionStatus = "active" | "past_due" | "canceled";
@@ -220,7 +221,9 @@ export interface CloudSessionStore {
   clear(): Promise<void>;
 }
 
-export const CLOUD_SESSION_STORAGE_KEY = "forge-cloud-session";
+export const CLOUD_SESSION_STORAGE_KEY = "farhelm-cloud-session";
+/** What it was called before the rename. See `legacy.ts`. */
+export const LEGACY_CLOUD_SESSION_STORAGE_KEY = "forge-cloud-session";
 
 /**
  * Where this device's own keypair is kept — deliberately *not* inside the
@@ -232,7 +235,9 @@ export const CLOUD_SESSION_STORAGE_KEY = "forge-cloud-session";
  * sign-outs on a two-device plan was enough to lock the account out of its own
  * workspace.
  */
-export const DEVICE_KEY_STORAGE_KEY = "forge-device-key";
+export const DEVICE_KEY_STORAGE_KEY = "farhelm-device-key";
+/** What it was called before the rename. See `legacy.ts`. */
+export const LEGACY_DEVICE_KEY_STORAGE_KEY = "forge-device-key";
 
 /**
  * This device's long-term identity, created once and reused for every later
@@ -242,10 +247,18 @@ export async function deviceIdentity(backend: {
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<void>;
 }): Promise<Identity> {
-  const stored = await backend.get(DEVICE_KEY_STORAGE_KEY);
+  // The legacy key is read but not deleted: this backend has no `remove`, and
+  // the seat this key holds is worth more than a stale entry is worth tidying.
+  // Missing it would generate a fresh identity and consume a second seat —
+  // precisely the failure the comment above this function describes.
+  const stored =
+    (await backend.get(DEVICE_KEY_STORAGE_KEY)) ??
+    (await backend.get(LEGACY_DEVICE_KEY_STORAGE_KEY));
   if (stored) {
     try {
-      return Identity.fromSecret(stored);
+      const identity = Identity.fromSecret(stored);
+      await backend.set(DEVICE_KEY_STORAGE_KEY, stored);
+      return identity;
     } catch {
       // A corrupt key is worth replacing; a *missing* one is not worth
       // inventing a second time.
@@ -270,7 +283,11 @@ export function cloudSessionStore(backend: {
 }): CloudSessionStore {
   return {
     async load() {
-      const raw = await backend.get(CLOUD_SESSION_STORAGE_KEY);
+      const raw = await getMigrating(
+        backend,
+        CLOUD_SESSION_STORAGE_KEY,
+        LEGACY_CLOUD_SESSION_STORAGE_KEY,
+      );
       if (!raw) return null;
       try {
         const session = JSON.parse(raw) as CloudSession;
@@ -603,7 +620,7 @@ export class CloudClient {
   /* ------------------------------------------------------- self-enrolment */
 
   /**
-   * What a machine that ran `forge-runner login` is waiting to be told.
+   * What a machine that ran `farhelm login` is waiting to be told.
    *
    * The code is normalised here rather than at the call sites: people type it
    * off a terminal with or without its dash, in either case.

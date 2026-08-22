@@ -1,5 +1,5 @@
 import Foundation
-import ForgeCrypto
+import FarhelmCrypto
 
 /// The watch's own connection to the relay.
 ///

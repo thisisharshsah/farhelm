@@ -1079,6 +1079,194 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
+name = "farhelm-agent"
+version = "0.1.0"
+dependencies = [
+ "farhelm-app",
+ "farhelm-domain",
+ "farhelm-gateway",
+ "farhelm-proto",
+ "farhelm-sqlite",
+ "ignore",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "farhelm-app"
+version = "0.1.0"
+dependencies = [
+ "farhelm-domain",
+ "farhelm-proto",
+ "uuid",
+]
+
+[[package]]
+name = "farhelm-cloud"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "base64 0.22.1",
+ "farhelm-crypto",
+ "farhelm-mcp",
+ "farhelm-proto",
+ "farhelm-relay",
+ "futures-util",
+ "hmac",
+ "rand_core 0.6.4",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tower-http",
+]
+
+[[package]]
+name = "farhelm-crypto"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "crypto_box",
+ "p256",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "farhelm-desktop"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "farhelm-app",
+ "farhelm-crypto",
+ "farhelm-domain",
+ "farhelm-gateway",
+ "farhelm-proto",
+ "farhelm-runner",
+ "farhelm-sqlite",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tokio",
+]
+
+[[package]]
+name = "farhelm-domain"
+version = "0.1.0"
+dependencies = [
+ "farhelm-proto",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "farhelm-gateway"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "farhelm-app",
+ "farhelm-domain",
+ "farhelm-proto",
+ "farhelm-sqlite",
+ "ignore",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "farhelm-mcp"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "farhelm-crypto",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "farhelm-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "farhelm-relay"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "axum",
+ "base64 0.22.1",
+ "farhelm-crypto",
+ "futures-util",
+ "hkdf",
+ "p256",
+ "rand_core 0.6.4",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+]
+
+[[package]]
+name = "farhelm-runner"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "farhelm-agent",
+ "farhelm-app",
+ "farhelm-cloud",
+ "farhelm-crypto",
+ "farhelm-domain",
+ "farhelm-gateway",
+ "farhelm-mcp",
+ "farhelm-proto",
+ "farhelm-relay",
+ "farhelm-sqlite",
+ "futures-util",
+ "portable-pty",
+ "qrcode",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.28.0",
+ "tower-http",
+]
+
+[[package]]
+name = "farhelm-sqlite"
+version = "0.1.0"
+dependencies = [
+ "farhelm-app",
+ "farhelm-domain",
+ "farhelm-proto",
+ "rusqlite",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1190,173 +1378,6 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
-
-[[package]]
-name = "forge-agent"
-version = "0.1.0"
-dependencies = [
- "forge-app",
- "forge-domain",
- "forge-gateway",
- "forge-proto",
- "forge-sqlite",
- "ignore",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "forge-app"
-version = "0.1.0"
-dependencies = [
- "forge-domain",
- "forge-proto",
- "uuid",
-]
-
-[[package]]
-name = "forge-cloud"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "axum",
- "base64 0.22.1",
- "forge-crypto",
- "forge-mcp",
- "forge-proto",
- "forge-relay",
- "futures-util",
- "hmac",
- "rand_core 0.6.4",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tower-http",
-]
-
-[[package]]
-name = "forge-crypto"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "crypto_box",
- "p256",
- "rand_core 0.6.4",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "forge-domain"
-version = "0.1.0"
-dependencies = [
- "forge-proto",
- "serde",
- "serde_json",
- "sha2",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "forge-gateway"
-version = "0.1.0"
-dependencies = [
- "axum",
- "forge-app",
- "forge-domain",
- "forge-proto",
- "forge-sqlite",
- "ignore",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
-]
-
-[[package]]
-name = "forge-mcp"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "forge-crypto",
- "rand_core 0.6.4",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "forge-proto"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "forge-relay"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "axum",
- "base64 0.22.1",
- "forge-crypto",
- "futures-util",
- "hkdf",
- "p256",
- "rand_core 0.6.4",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-tungstenite 0.28.0",
-]
-
-[[package]]
-name = "forge-runner"
-version = "0.1.0"
-dependencies = [
- "axum",
- "forge-agent",
- "forge-app",
- "forge-crypto",
- "forge-domain",
- "forge-gateway",
- "forge-mcp",
- "forge-proto",
- "forge-relay",
- "forge-sqlite",
- "futures-util",
- "portable-pty",
- "qrcode",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.28.0",
- "tower-http",
-]
-
-[[package]]
-name = "forge-sqlite"
-version = "0.1.0"
-dependencies = [
- "forge-app",
- "forge-domain",
- "forge-proto",
- "rusqlite",
-]
 
 [[package]]
 name = "form_urlencoded"
@@ -3338,26 +3359,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "relayforge-desktop"
-version = "0.1.0"
-dependencies = [
- "axum",
- "forge-app",
- "forge-crypto",
- "forge-domain",
- "forge-gateway",
- "forge-proto",
- "forge-runner",
- "forge-sqlite",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tokio",
-]
 
 [[package]]
 name = "reqwest"

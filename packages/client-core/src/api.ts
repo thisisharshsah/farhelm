@@ -1,7 +1,7 @@
 /**
  * Client for the runner's HTTP API, and the types every client shares.
  *
- * The types mirror the Rust DTOs in `crates/forge-runner/src/api.rs`. They are
+ * The types mirror the Rust DTOs in `crates/farhelm-runner/src/api.rs`. They are
  * hand-written rather than generated because there are a dozen of them and the
  * wire contract is in the design doc — worth revisiting with a schema generator
  * if the relay protocol grows.
@@ -204,7 +204,7 @@ export interface AgentView {
   /** Whether the binary is on this machine's PATH right now. */
   installed: boolean;
   /**
-   * How a decision reaches it. `native` is RelayForge's own agent, which has no
+   * How a decision reaches it. `native` is Farhelm's own agent, which has no
    * bridge and no pane to parse — the loop calls the approval queue in-process.
    */
   approvals: "hook" | "prompt" | "native" | "none";

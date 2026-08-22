@@ -26,7 +26,7 @@ import {
   type Role,
   type RunnerView,
   type Workspace,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { readableError } from "./Auth";
 
 const ROLE_BLURB: Record<Role, string> = {
@@ -383,7 +383,7 @@ function EnrolmentKeys({
 
               <p className="tile-note">Then, on the machine:</p>
               <code className="secret-block">
-                {`FORGE_CLOUD_KEY=${minted.slice(0, 12)}… \\\n  forge-runner serve --cloud ${cloud.baseUrl}`}
+                {`FORGE_CLOUD_KEY=${minted.slice(0, 12)}… \\\n  farhelm serve --cloud ${cloud.baseUrl}`}
               </code>
               <button className="btn btn-small" onClick={() => setMinted(null)}>
                 Done

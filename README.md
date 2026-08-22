@@ -1,4 +1,4 @@
-# RelayForge
+# Farhelm
 
 Supervise AI coding agents from your phone, your watch, or a browser — and cut
 what they cost.
@@ -13,17 +13,17 @@ this file is the reference for what exists today.
 
 | Path | What it is |
 |---|---|
-| `crates/forge-proto` | The wire contract: types, events, commands, read models. Depends on serde and nothing else |
-| `crates/forge-domain` | The rules: pricing, risk classification, the `PLAN.md` state machine, agent capabilities. No I/O, no clock, no async |
-| `crates/forge-app` | Use cases and the storage ports they need |
-| `crates/forge-sqlite` | Those ports, backed by SQLite in WAL mode |
-| `crates/forge-cloud` | The control plane: accounts, organisations, roles, plans, and the machine/device registry. Holds no content — see below |
-| `crates/forge-mcp` | RelayForge as a remote MCP server: the protocol, and the OAuth 2.1 server that guards it |
-| `crates/forge-crypto` | End-to-end encryption: identities, envelopes, pairing, capability tokens, the runner keystore |
-| `crates/forge-gateway` | The cost gateway: the eight-stage pipeline every model call passes through |
-| `crates/forge-agent` | **RelayForge's own coding agent**: a tool loop that proposes a diff instead of applying one |
-| `crates/forge-runner` | The daemon: SQLite store, cost ledger, budget guard, localhost HTTP API |
-| `crates/forge-relay` | Stateless ciphertext fan-out, and WebPush wake-ups it cannot read the content of |
+| `crates/farhelm-proto` | The wire contract: types, events, commands, read models. Depends on serde and nothing else |
+| `crates/farhelm-domain` | The rules: pricing, risk classification, the `PLAN.md` state machine, agent capabilities. No I/O, no clock, no async |
+| `crates/farhelm-app` | Use cases and the storage ports they need |
+| `crates/farhelm-sqlite` | Those ports, backed by SQLite in WAL mode |
+| `crates/farhelm-cloud` | The control plane: accounts, organisations, roles, plans, and the machine/device registry. Holds no content — see below |
+| `crates/farhelm-mcp` | Farhelm as a remote MCP server: the protocol, and the OAuth 2.1 server that guards it |
+| `crates/farhelm-crypto` | End-to-end encryption: identities, envelopes, pairing, capability tokens, the runner keystore |
+| `crates/farhelm-gateway` | The cost gateway: the eight-stage pipeline every model call passes through |
+| `crates/farhelm-agent` | **Farhelm's own coding agent**: a tool loop that proposes a diff instead of applying one |
+| `crates/farhelm-runner` | The daemon: SQLite store, cost ledger, budget guard, localhost HTTP API |
+| `crates/farhelm-relay` | Stateless ciphertext fan-out, and WebPush wake-ups it cannot read the content of |
 | `packages/client-core` | Everything the clients share: crypto, wire types, both transports |
 | `web/` | The PWA: fleet view, session detail, cost dashboard |
 | `mobile/` | The React Native phone app (iOS + Android) |
@@ -40,7 +40,7 @@ watch reimplements the same wire format in Swift, because watchOS has no React
 Native renderer and Apple ships no Salsa20.
 
 That last part is the risky one, so it is the most heavily tested: a fixture in
-`crates/forge-crypto/tests/fixtures/interop.json` is sealed by Rust and by
+`crates/farhelm-crypto/tests/fixtures/interop.json` is sealed by Rust and by
 TweetNaCl, and **all three implementations assert against the same bytes**. See
 [mobile/watch/README.md](mobile/watch/README.md) for the bug this caught.
 
@@ -51,14 +51,14 @@ prints it. Today:
 
 | Agent | How approvals reach it |
 |---|---|
-| **RelayForge** | **Native** — the runner *is* the agent. No bridge, nothing to parse. |
+| **Farhelm** | **Native** — the runner *is* the agent. No bridge, nothing to parse. |
 | Claude Code | **Hook bridge** — the agent calls the runner and blocks. Exact. |
 | Codex CLI, OpenCode, Aider, Gemini CLI, Cursor CLI | **Terminal prompts** — the runner reads the question out of the pane and types the answer back |
 | Shell | Nothing is gated; you are the one typing |
 
 All channels end in the same approval queue: same destructive-command
 classifier, same phone-only rule for `rm -rf`, same budget meter, same
-notification. Adding an agent is a row in `crates/forge-domain/src/agent.rs`.
+notification. Adding an agent is a row in `crates/farhelm-domain/src/agent.rs`.
 
 ## Tasks: the agent that hands you a diff
 
@@ -181,7 +181,7 @@ results. Its verdict (`pass` / `concerns` / `fail`) sits above the patch on the
 review card, so you know what to look for before you start reading.
 
 ```sh
-cargo test -p forge-agent --test draft_then_verify -- --nocapture
+cargo test -p farhelm-agent --test draft_then_verify -- --nocapture
 ```
 
 ```
@@ -237,8 +237,8 @@ verbatim, so the prompt prefix stays byte-identical and every later step reads
 its breakpoints instead of rewriting them.
 
 ```sh
-cargo test -p forge-agent                        # 79 tests
-cargo test -p forge-runner --test agent_task     # the whole path, over real HTTP
+cargo test -p farhelm-agent                        # 79 tests
+cargo test -p farhelm-runner --test agent_task     # the whole path, over real HTTP
 ```
 
 That last one is the honest one: a stand-in provider answering with the
@@ -286,8 +286,8 @@ seeded with a realistic fleet, plus simulated agent output.
 
 ```sh
 pnpm install
-pnpm --filter @relayforge/web build
-cargo run -p forge-runner -- serve --demo
+pnpm --filter @farhelm/web build
+cargo run -p farhelm-runner -- serve --demo
 # → http://127.0.0.1:7842
 ```
 
@@ -299,8 +299,8 @@ Run the runner and Vite side by side; Vite proxies `/v1` to the runner and gives
 you hot reload:
 
 ```sh
-cargo run -p forge-runner -- serve --demo        # terminal 1
-pnpm --filter @relayforge/web dev                # terminal 2 → http://localhost:5173
+cargo run -p farhelm-runner -- serve --demo        # terminal 1
+pnpm --filter @farhelm/web dev                # terminal 2 → http://localhost:5173
 ```
 
 `pnpm dev` binds to `0.0.0.0`, so you can open it on a phone on the same
@@ -309,14 +309,14 @@ network. The runner itself stays on loopback.
 ### The desktop app
 
 ```sh
-pnpm --filter @relayforge/web build     # the window renders this
-cargo run -p relayforge-desktop
+pnpm --filter @farhelm/web build     # the window renders this
+cargo run -p farhelm-desktop
 ```
 
 The same runner, in a window, on macOS / Windows / Linux. It embeds the daemon
 rather than talking to one: same library, same API, same approval rules, its own
-database and key under a per-user directory (`~/Library/Application Support/RelayForge`,
-`%APPDATA%\RelayForge`, or `~/.local/share/relayforge`). Sessions use the PTY
+database and key under a per-user directory (`~/Library/Application Support/Farhelm`,
+`%APPDATA%\Farhelm`, or `~/.local/share/farhelm`). Sessions use the PTY
 backend, so they end when you quit — the tray menu says so.
 
 The window is a **browser pointed at the embedded server**, not Tauri's asset
@@ -324,7 +324,7 @@ protocol. That matters: the app fetches `/v1/fleet` same-origin because it is
 written to be served by the runner, and under `tauri://localhost` those requests
 never reach the server. Loading `http://127.0.0.1:7842` makes the desktop app the
 same deployment the browser already uses — no Tauri-specific client code at all.
-If that port is taken (usually by a `forge-runner serve`), it falls back to a
+If that port is taken (usually by a `farhelm serve`), it falls back to a
 free one rather than refusing to open.
 
 Point it at a relay from Settings and the machine becomes reachable from your
@@ -390,12 +390,12 @@ that out on its own; a hand-written `curl` does not.
 ### Against a real database
 
 ```sh
-cargo run -p forge-runner -- seed --db forge.db   # optional: write the demo fleet
-cargo run -p forge-runner -- serve --db forge.db
-cargo run -p forge-runner -- status --db forge.db
+cargo run -p farhelm-runner -- seed --db forge.db   # optional: write the demo fleet
+cargo run -p farhelm-runner -- serve --db forge.db
+cargo run -p farhelm-runner -- status --db forge.db
 ```
 
-`forge-runner demo` prices a synthetic session and prints the ledger summary
+`farhelm demo` prices a synthetic session and prints the ledger summary
 without touching the network or a file.
 
 ## Checks
@@ -405,7 +405,7 @@ cargo test --workspace                              # 634 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 pnpm -r typecheck && pnpm -r test                   # 161 tests across the three JS packages
-pnpm --filter @relayforge/web build
+pnpm --filter @farhelm/web build
 swift test --package-path mobile/watch              # 37 tests; needs macOS, not a watch
 ```
 
@@ -414,7 +414,7 @@ swift test --package-path mobile/watch              # 37 tests; needs macOS, not
 Register the hook bridge in the repo you want supervised:
 
 ```sh
-cargo run -p forge-runner -- install-hooks    # prints the settings block
+cargo run -p farhelm-runner -- install-hooks    # prints the settings block
 ```
 
 Paste it into that repo's `.claude/settings.json`, then start the daemon. From
@@ -427,20 +427,20 @@ then on every tool call Claude Code makes waits for you.
 | You approve from the phone | `allow` | |
 | You deny | `deny`, with your reason | |
 | Nobody answers within 15 min | `deny`, recorded as `timeout` | An unanswered request must never become an allow |
-| The runner is down | `defer` | Falls back to Claude Code's own prompt — RelayForge being down degrades to plain Claude Code, not to an unsupervised agent |
+| The runner is down | `defer` | Falls back to Claude Code's own prompt — Farhelm being down degrades to plain Claude Code, not to an unsupervised agent |
 | The bridge itself errors | `defer` | A bug here must not block your agent |
 
 Destructive commands (`rm -rf`, `git push --force`, `DROP TABLE`, `mkfs`,
 `sudo`, `curl | sh`, `terraform destroy`, `kubectl delete`, publishing…) are
 classified server-side and **cannot be approved from a watch or a notification
 action** — the API returns 403. The classifier is a speed bump on the approval
-UX, not a sandbox; see `crates/forge-domain/src/risk.rs`.
+UX, not a sandbox; see `crates/farhelm-domain/src/risk.rs`.
 
 The built-in list can't know about your stack. Add your own rules:
 
 ```sh
-forge-runner policy                              # what is in force
-forge-runner policy flyctl apps destroy prod     # how would this be classified?
+farhelm policy                              # what is in force
+farhelm policy flyctl apps destroy prod     # how would this be classified?
 ```
 
 Rules live in `forge.policy.toml` beside the database:
@@ -457,7 +457,7 @@ puts back. A malformed policy file is a startup error, never a silent fallback:
 if you wrote a rule expecting it to be enforced, starting without it is the
 worst possible outcome.
 
-Sessions the runner starts itself live in tmux (`forge:N.0`), so they survive a
+Sessions the runner starts itself live in tmux (`farhelm:N.0`), so they survive a
 closed lid. Sessions adopted from a hook callback have no pane the runner
 controls — instructions to those are recorded and shown on the phone, and the
 response says `delivered: false` rather than pretending.
@@ -469,8 +469,8 @@ Two ways, and the second replaced the first as the default.
 ### Sign in (accounts, several machines, plans)
 
 ```sh
-cargo run -p forge-cloud                                   # the control plane
-cargo run -p forge-relay -- --auth-from http://127.0.0.1:7844
+cargo run -p farhelm-cloud                                   # the control plane
+cargo run -p farhelm relay -- --auth-from http://127.0.0.1:7844
 ```
 
 Create an account in the web app, then **Workspace → Add a machine → Create
@@ -478,7 +478,7 @@ key** and start the runner with it:
 
 ```sh
 FORGE_CLOUD_KEY=frg_… FORGE_CLOUD_URL=https://farhelm.aurovie.com \
-  cargo run -p forge-runner -- serve
+  cargo run -p farhelm-runner -- serve
 ```
 
 The machine appears in your fleet within thirty seconds. **There is no code to
@@ -489,7 +489,7 @@ channel and learns its public key from that call rather than from a photograph.
 What the control plane is *not* is a middlebox. Devices still generate their own
 keys, everything still travels sealed between a device and a machine, and it has
 never held a key that opens any of it — see
-[`crates/forge-cloud/src/lib.rs`](crates/forge-cloud/src/lib.rs). Compromising it
+[`crates/farhelm-cloud/src/lib.rs`](crates/farhelm-cloud/src/lib.rs). Compromising it
 is an access problem, not a content one.
 
 Three things pairing could not do, which fall out of having an identity that is
@@ -508,15 +508,15 @@ Deployment behind a Cloudflare tunnel is in [`deploy/`](deploy/README.md).
 Still supported, and still the simplest thing that works:
 
 ```sh
-cargo run -p forge-relay                                   # on a VPS, or locally
-cargo run -p forge-runner -- serve --relay ws://your-relay:7843
+cargo run -p farhelm-relay                                   # on a VPS, or locally
+cargo run -p farhelm-runner -- serve --relay ws://your-relay:7843
 ```
 
 The runner dials **outbound** and keeps the socket open — it never listens on a
 public port. Pair a device:
 
 ```sh
-cargo run -p forge-runner -- pair      # renders a QR in the terminal
+cargo run -p farhelm-runner -- pair      # renders a QR in the terminal
 ```
 
 The QR carries the relay URL, the channel, the runner's public key, and a
@@ -549,7 +549,7 @@ on while its identity is readable by every user on the box.
 ## The relay, and why it cannot read your code
 
 ```sh
-cargo run -p forge-relay          # → 0.0.0.0:7843
+cargo run -p farhelm-relay          # → 0.0.0.0:7843
 ```
 
 The relay fans encrypted envelopes out to the other members of a channel. It
@@ -561,12 +561,12 @@ the sealed boxes §6 originally specified. A sealed box is anonymous, and the
 runner's public key travels in a pairing QR: anyone who photographed that QR
 could seal a valid-looking `approved` to the runner with no sender to check.
 Authenticated boxes give identical confidentiality plus a sender to verify. The
-reasoning is in `crates/forge-crypto/src/lib.rs`.
+reasoning is in `crates/farhelm-crypto/src/lib.rs`.
 
 The security claim is a test, not a promise:
 
 ```sh
-cargo test -p forge-relay --test end_to_end
+cargo test -p farhelm relay --test end_to_end
 ```
 
 It drives a real WebSocket through the real router and asserts that an approval
@@ -578,7 +578,7 @@ did not join, and that the relay retains nothing once everyone disconnects.
 The runner side has its own:
 
 ```sh
-cargo test -p forge-runner --test remote_approval
+cargo test -p farhelm-runner --test remote_approval
 ```
 
 A simulated phone with its own keypair approves through a real relay and the
@@ -594,7 +594,7 @@ pnpm -r test                            # JavaScript
 swift test --package-path mobile/watch  # Swift
 ```
 
-`packages/client-core/src/crypto.test.ts` opens an envelope that `forge-crypto`
+`packages/client-core/src/crypto.test.ts` opens an envelope that `farhelm-crypto`
 sealed, and Rust opens one that code sealed. The Swift suite opens **both**. The
 fixture is checked in and all three implementations assert against it, so a drift
 between RustCrypto's `crypto_box`, TweetNaCl, and the hand-written Swift fails in
@@ -608,18 +608,18 @@ There is also a live check that runs against a real runner and a real relay and
 **skips itself** when neither is up. Its header says how to start them:
 
 ```sh
-cargo run -p forge-relay &
-cargo run -p forge-runner -- serve --demo --relay ws://127.0.0.1:7843 &
-pnpm --filter @relayforge/client-core test
+cargo run -p farhelm-relay &
+cargo run -p farhelm-runner -- serve --demo --relay ws://127.0.0.1:7843 &
+pnpm --filter @farhelm/client-core test
 ```
 
 ## Getting woken
 
-Without this, RelayForge only works while you are already looking at it. Start
+Without this, Farhelm only works while you are already looking at it. Start
 the relay with a VAPID key:
 
 ```sh
-cargo run -p forge-relay -- --vapid-key vapid.key --push-subject mailto:you@example.com
+cargo run -p farhelm relay -- --vapid-key vapid.key --push-subject mailto:you@example.com
 ```
 
 The key file is created `0600` on first start and reused. **Do not delete it** —
@@ -659,7 +659,7 @@ The crypto is checked against RFC 8291's own worked example — fixed keys, fixe
 salt, fixed expected ciphertext:
 
 ```sh
-cargo test -p forge-relay
+cargo test -p farhelm-relay
 ```
 
 ## The cost gateway
@@ -694,7 +694,7 @@ billed like any other, so a turn that compacted reports what it really cost.
 Measured over 40 turns, from the ledger: **$1.53 → $0.89, 42% saved.**
 
 ```sh
-cargo test -p forge-gateway --test compaction_savings -- --nocapture
+cargo test -p farhelm-gateway --test compaction_savings -- --nocapture
 ```
 
 **That benchmark corrected the design.** The original reasoning was that
@@ -724,7 +724,7 @@ The queue is built around one rule: **being billed twice cannot be undone.**
 Submitting moves a whole batch in one transaction, settling only acts on an item
 still in flight, and `custom_id` is unique — each with a test named after the
 failure it prevents. Wire shapes are exercised over real HTTP against a stand-in
-provider (`cargo test -p forge-gateway --test batch_http`), but **no request has
+provider (`cargo test -p farhelm-gateway --test batch_http`), but **no request has
 been sent to the real endpoint**, so treat the first real flush as the proving
 run.
 
@@ -738,7 +738,7 @@ vLLM/Ollama shim for the self-hosted small tier, or a test server.
 | `ANTHROPIC_API_KEY` | Enables `/v1/complete` — a Console key, sent as `x-api-key`. Blank counts as unset. |
 | `ANTHROPIC_AUTH_TOKEN` | Same, with a short-lived bearer token instead. Used only when `ANTHROPIC_API_KEY` is unset, and carries the `oauth-2025-04-20` beta the API requires for one. |
 | `ANTHROPIC_BASE_URL` | Redirect to a compatible endpoint |
-| `FORGE_RUNNER_URL` | Where `forge-runner hook` reaches the daemon (default `127.0.0.1:7842`) |
+| `FORGE_RUNNER_URL` | Where `farhelm hook` reaches the daemon (default `127.0.0.1:7842`) |
 | `FORGE_MACHINE_NAME` | Overrides the hostname used to identify this machine |
 | `FORGE_TMUX` | Path to the tmux binary |
 
@@ -748,7 +748,7 @@ identity file (default `forge.key`).
 ### The savings, measured
 
 ```sh
-cargo test -p forge-gateway --test savings -- --nocapture
+cargo test -p farhelm-gateway --test savings -- --nocapture
 ```
 
 Replays 50 turns through the real pipeline and asserts the two numbers the
@@ -789,15 +789,15 @@ the model that *ran*, not the one requested.
 | M3 — Relay + phone | done — web app, React Native app, localhost API, relay, E2E crypto, relay link, device pairing, both clients' own crypto, and **WebPush delivery** (VAPID + `aes128gcm`, verified against RFC 8291's worked example). Every read-only screen, the cost dashboard included, now works over the relay |
 | M4 — Watch + budget UX | done in software — budget guard, destructive-command gating, stale-session GC, push wake-ups, and **one-tap Approve/Deny on the notification** (never for destructive commands). A **native watchOS app** is built, with its own paired identity and Swift NaCl implementation — scope the design doc deferred to P2, promoted on request. **The <5s golden path has never been timed**, and nothing has run on a watch (see below) |
 | M5 — Dashboard + hardening | cost dashboard, **batch queue (C6)**, **history compaction (C7)**, **destructive-command policy file**, and the **quickstart + systemd units** done. **Desktop app** (Tauri, any OS) built — scope not in the original plan, added on request. Opt-in beta telemetry outstanding |
-| M6 — Native agent + diff review | done in software — `forge-agent`, the staging overlay, the seven tools, unified diffs computed in-repo, `agent_task` table, five endpoints, four relay commands, reject-and-retry, **undo**, a concurrency ceiling, restart reconciliation, push wake-ups for waiting diffs, **draft-then-verify (C10)**, and review screens on web and phone. **No real model has driven the loop, and no screen has been rendered** (see below) |
+| M6 — Native agent + diff review | done in software — `farhelm-agent`, the staging overlay, the seven tools, unified diffs computed in-repo, `agent_task` table, five endpoints, four relay commands, reject-and-retry, **undo**, a concurrency ceiling, restart reconciliation, push wake-ups for waiting diffs, **draft-then-verify (C10)**, and review screens on web and phone. **No real model has driven the loop, and no screen has been rendered** (see below) |
 
 ### Known gap: tmux is unexercised
 
-`crates/forge-runner/src/terminal.rs` was written on a machine with no tmux
+`crates/farhelm-runner/src/terminal.rs` was written on a machine with no tmux
 installed. Its argv construction is tested exhaustively — that is where
 shell-out bugs live — and the session manager is tested against an in-memory
 fake. But **no line of it has run against a real tmux**. Treat the first
-`forge-runner serve --terminal tmux` on a box with tmux as the real test.
+`farhelm serve --terminal tmux` on a box with tmux as the real test.
 
 This matters less than it did: the PTY backend (`--terminal pty`) *is* verified
 against real processes — spawning, capturing, typing, dead-process detection —
@@ -868,7 +868,7 @@ same `build_dashboard` so a phone and a browser render identical bytes.
 
 ### Known gap: no real model has driven the agent loop
 
-`forge-agent` is exercised end to end — through the real router, the real cost
+`farhelm-agent` is exercised end to end — through the real router, the real cost
 gateway, a real Messages-API client speaking to a stand-in provider, the real
 approval queue, and a real write to disk. Every one of those halves is honest
 except the model's: the provider is a script.

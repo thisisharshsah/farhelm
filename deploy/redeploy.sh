@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-HOME_DIR="${FORGE_HOME:-$HOME/.relayforge}"
+HOME_DIR="${FORGE_HOME:-$HOME/.farhelm}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -39,19 +39,19 @@ wants() { [[ "$what" == "all" || "$what" == "$1" ]]; }
 # ---------------------------------------------------------------- build
 
 crates=()
-wants cloud  && crates+=(-p forge-cloud)
-wants relay  && crates+=(-p forge-relay)
-wants runner && crates+=(-p forge-runner)
+wants cloud  && crates+=(-p farhelm-cloud)
+wants relay  && crates+=(-p farhelm-relay)
+wants runner && crates+=(-p farhelm-runner)
 
 if ((${#crates[@]})); then
   step "Building"
   cargo build --release "${crates[@]}"
   mkdir -p "$HOME_DIR/bin"
-  for name in forge-cloud forge-relay forge-runner; do
+  for name in farhelm-cloud farhelm-relay farhelm-runner; do
     case "$name" in
-      forge-cloud)  wants cloud  || continue ;;
-      forge-relay)  wants relay  || continue ;;
-      forge-runner) wants runner || continue ;;
+      farhelm-cloud)  wants cloud  || continue ;;
+      farhelm-relay)  wants relay  || continue ;;
+      farhelm-runner) wants runner || continue ;;
     esac
     # Installed to a temporary name and moved into place: `cp` onto a running
     # binary can fail with ETXTBSY, and a half-copied binary is worse than an
@@ -64,7 +64,7 @@ fi
 
 if wants web; then
   step "Building the app"
-  pnpm --filter @relayforge/web build >/dev/null
+  pnpm --filter @farhelm/web build >/dev/null
   mkdir -p "$HOME_DIR/web"
   # Deleted first, so a renamed asset does not leave its predecessor behind to
   # be served to anybody holding an old index.html.
@@ -82,9 +82,9 @@ for job in cloud relay runner tunnel; do
     web)    [[ "$job" == cloud ]] || continue ;;   # the control plane serves it
     *)      [[ "$job" == "$what" ]] || continue ;;
   esac
-  launchctl kickstart -k "gui/$(id -u)/com.relayforge.$job" >/dev/null 2>&1 \
-    && ok "com.relayforge.$job" \
-    || bad "com.relayforge.$job did not restart — is it loaded? (launchctl list | grep relayforge)"
+  launchctl kickstart -k "gui/$(id -u)/com.farhelm.$job" >/dev/null 2>&1 \
+    && ok "com.farhelm.$job" \
+    || bad "com.farhelm.$job did not restart — is it loaded? (launchctl list | grep farhelm)"
 done
 
 # ------------------------------------------------------------------ prove

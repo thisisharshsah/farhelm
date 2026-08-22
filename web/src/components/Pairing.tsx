@@ -18,7 +18,7 @@ import {
   claimPairing,
   parseOffer,
   type Pairing,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { decisionSurface, webPairingStore } from "../platform";
 
 export function PairingScreen({
@@ -65,7 +65,7 @@ export function PairingScreen({
     <section className="card" aria-label="Pair this device">
       <div className="chart-title">Pair this device</div>
       <p className="tile-note">
-        Run <code>forge-runner pair</code> on the runner and paste what it
+        Run <code>farhelm pair</code> on the runner and paste what it
         prints. The code works once and expires in ten minutes.
       </p>
 

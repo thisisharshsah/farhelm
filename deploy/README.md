@@ -6,21 +6,21 @@ own machine and is never reachable from the internet — it dials *out*.
 ```text
                     ┌──────────────────── Cloudflare ────────────────────┐
                     │                                                    │
-  farhelm.aurovie.com ──▶ forge-cloud   :7844   accounts, plans, the PWA, MCP
-  farhelm-relay.aurovie.com ──▶ forge-relay :7843   ciphertext fan-out
-  farhelm-mac.aurovie.com   ──▶ forge-runner :7852  this machine's MCP connector
+  farhelm.aurovie.com ──▶ farhelm-cloud   :7844   accounts, plans, the PWA, MCP
+  farhelm-relay.aurovie.com ──▶ farhelm-relay :7843   ciphertext fan-out
+  farhelm-mac.aurovie.com   ──▶ farhelm-runner :7852  this machine's MCP connector
                     │                                                    │
                     └────────────────────────────────────────────────────┘
                                           ▲
                                           │ outbound only
-                                   forge-runner (your laptop, your
+                                   farhelm-runner (your laptop, your
                                    home server — no inbound port)
 ```
 
 Nothing in the tunnel can read your code. The relay forwards envelopes sealed to
 a device key it has never seen, and the control plane holds accounts and public
 keys. Compromising either is an access problem, not a content one — see
-`crates/forge-crypto/src/lib.rs`.
+`crates/farhelm-crypto/src/lib.rs`.
 
 ## Why a second tunnel
 
@@ -102,21 +102,21 @@ explicitly with `--config`, so the two never collide.
 ## 3. Build and install
 
 ```sh
-cargo build --release -p forge-cloud -p forge-relay -p forge-runner
-pnpm --filter @relayforge/web build
+cargo build --release -p farhelm-cloud -p farhelm-relay -p farhelm-runner
+pnpm --filter @farhelm/web build
 
-sudo install -m755 target/release/forge-cloud target/release/forge-relay /usr/local/bin/
-sudo mkdir -p /usr/local/share/relayforge
-sudo cp -r web/dist /usr/local/share/relayforge/web
-sudo mkdir -p /var/lib/relayforge
+sudo install -m755 target/release/farhelm-cloud target/release/farhelm-relay /usr/local/bin/
+sudo mkdir -p /usr/local/share/farhelm
+sudo cp -r web/dist /usr/local/share/farhelm/web
+sudo mkdir -p /var/lib/farhelm
 ```
 
 ## 4. Configure
 
 ```sh
-sudo cp deploy/farhelm.env.example /etc/relayforge.env
-sudo chmod 600 /etc/relayforge.env      # it holds a Stripe key
-sudo $EDITOR /etc/relayforge.env
+sudo cp deploy/farhelm.env.example /etc/farhelm.env
+sudo chmod 600 /etc/farhelm.env      # it holds a Stripe key
+sudo $EDITOR /etc/farhelm.env
 ```
 
 Billing is **off** until `STRIPE_SECRET_KEY` is set, and off is a supported
@@ -131,7 +131,7 @@ so the control plane goes first.
 ```sh
 sudo cp deploy/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now forge-cloud forge-relay cloudflared-farhelm
+sudo systemctl enable --now farhelm-cloud farhelm-relay cloudflared-farhelm
 ```
 
 On macOS there is no systemd. Run the three by hand, or use
@@ -146,7 +146,7 @@ curl -s https://farhelm-relay.aurovie.com/v1/health | python3 -m json.tool
 
 The relay's `auth` field should show a key id rather than `null`. `null` means
 it started without `--auth-from`, and **anyone who learns a channel id can join
-it** — see `crates/forge-relay/src/auth.rs`.
+it** — see `crates/farhelm-relay/src/auth.rs`.
 
 ## 6. Add a machine
 
@@ -157,7 +157,7 @@ supervise:
 ```sh
 export FORGE_CLOUD_KEY=frg_…                     # not on the command line —
 export FORGE_CLOUD_URL=https://farhelm.aurovie.com   # it ends up in `ps`
-forge-runner serve
+farhelm serve
 ```
 
 It appears in your fleet within thirty seconds. There is no code to type on
@@ -167,9 +167,9 @@ either side, and no network you have to be on.
 
 | Process | Binds | Reachable from the internet | Holds |
 |---|---|---|---|
-| `forge-cloud` | `127.0.0.1:7844` | via the tunnel | accounts, plans, public keys |
-| `forge-relay` | `127.0.0.1:7843` | via the tunnel | nothing across a restart |
-| `forge-runner` | `127.0.0.1:7842` | **no** | your repositories, your keys |
+| `farhelm-cloud` | `127.0.0.1:7844` | via the tunnel | accounts, plans, public keys |
+| `farhelm-relay` | `127.0.0.1:7843` | via the tunnel | nothing across a restart |
+| `farhelm-runner` | `127.0.0.1:7842` | **no** | your repositories, your keys |
 | `cloudflared` | — | outbound only | tunnel credentials |
 
 Both server processes bind loopback and are reached *through* the tunnel. That
@@ -199,12 +199,12 @@ Two files, and losing either has a different consequence:
 
 | File | Losing it means |
 |---|---|
-| `/var/lib/relayforge/forge-cloud.db` | every account, workspace and machine is gone |
-| `/var/lib/relayforge/forge-cloud.key` | everyone is signed out, and the relay refuses every token until reconfigured |
+| `/var/lib/farhelm/farhelm-cloud.db` | every account, workspace and machine is gone |
+| `/var/lib/farhelm/farhelm-cloud.key` | everyone is signed out, and the relay refuses every token until reconfigured |
 
 ```sh
-sqlite3 /var/lib/relayforge/forge-cloud.db ".backup /backup/forge-cloud.db"
-cp /var/lib/relayforge/forge-cloud.key /backup/
+sqlite3 /var/lib/farhelm/farhelm-cloud.db ".backup /backup/farhelm-cloud.db"
+cp /var/lib/farhelm/farhelm-cloud.key /backup/
 ```
 
 The relay's `vapid.key` is worth keeping too: every browser push subscription is
@@ -252,7 +252,7 @@ that already has it, behind its own URL.
 
 ### What a connector may never do
 
-Clear a destructive command. `forge_domain`'s rule bars `DecidedVia::Connector`
+Clear a destructive command. `farhelm_domain`'s rule bars `DecidedVia::Connector`
 from anything classified destructive, enforced at the same executor every other
 transport goes through — an agent that could approve its own `rm -rf` would be
 an agent supervising itself. Claude can see the command and tell you about it;
@@ -270,7 +270,7 @@ Give that runner its own hostname and point it at its loopback port:
 cloudflared tunnel --origincert ~/.cloudflared/cert-aurovie.pem \
   route dns farhelm farhelm-<name>.aurovie.com
 # then in ~/.cloudflared/farhelm.yml, map it to that runner's port, and start it with:
-FORGE_MCP_URL=https://farhelm-<name>.aurovie.com forge-runner serve …
+FORGE_MCP_URL=https://farhelm-<name>.aurovie.com farhelm serve …
 ```
 
 Keep the hostname **first-level** (`farhelm-<name>`, not `<name>.farhelm`) — see

@@ -16,7 +16,7 @@
  * because it was not broken; see `styles.css`, `--rail` and the `52rem` query.
  */
 
-import type { Workspace } from "@relayforge/client-core";
+import type { Workspace } from "@farhelm/client-core";
 import type { Route } from "../hooks";
 import { Icon, type IconName } from "./Icon";
 

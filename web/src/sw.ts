@@ -37,7 +37,7 @@ import {
   fetchFleetOnce,
   sendCommandOnce,
   type Pairing,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import {
   decidedNotification,
   refusalNotification,
@@ -49,7 +49,7 @@ import {
 
 declare const self: ServiceWorkerGlobalScope;
 
-const SHELL = "relayforge-shell-v2";
+const SHELL = "farhelm-shell-v2";
 
 /**
  * Show what `notification.ts` composed.
@@ -125,7 +125,7 @@ self.addEventListener("fetch", (event) => {
  */
 function readPairing(): Promise<Pairing | null> {
   return new Promise((resolve) => {
-    const request = indexedDB.open("relayforge", 1);
+    const request = indexedDB.open("farhelm", 1);
     request.onerror = () => resolve(null);
     // If the page has never run, there is no store and nothing to read.
     request.onupgradeneeded = () => request.transaction?.abort();

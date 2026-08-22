@@ -1,12 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! RelayForge desktop.
+//! Farhelm desktop.
 //!
 //! The same runner, on any computer, with a window instead of a terminal.
 //!
 //! # What this is for
 //!
-//! `forge-runner serve` assumes a box you already administer: a shell, tmux
+//! `farhelm serve` assumes a box you already administer: a shell, tmux
 //! installed, a systemd unit, a spare terminal to read the startup banner in.
 //! That is the right shape for a VPS and the wrong shape for the laptop you
 //! actually write code on, and it is unavailable on Windows.
@@ -19,7 +19,7 @@
 //!
 //! **Not a remote administration tool.** It accepts no arbitrary commands from
 //! the network. Everything a phone can ask for goes through
-//! `forge_runner::commands`, which is the same gated path the localhost API
+//! `farhelm_runner::commands`, which is the same gated path the localhost API
 //! uses: approvals are answered, not issued; instructions are typed into an
 //! agent's own terminal; destructive commands still cannot be cleared from a
 //! wrist. A device must be explicitly paired, on your own network, before it can
@@ -55,9 +55,9 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use forge_runner::state::{AppState, RelayInfo};
-use forge_runner::terminal::AnyTerminal;
-use forge_runner::{api, relay, session};
+use farhelm_runner::state::{AppState, RelayInfo};
+use farhelm_runner::terminal::AnyTerminal;
+use farhelm_runner::{api, relay, session};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -68,7 +68,7 @@ use settings::Settings;
 /// The port the embedded runner prefers.
 ///
 /// The same default the CLI uses, so a phone already paired with
-/// `forge-runner serve` on this machine keeps working. Loopback only — anything
+/// `farhelm serve` on this machine keeps working. Loopback only — anything
 /// remote comes through the relay.
 const PREFERRED_PORT: u16 = 7842;
 
@@ -101,12 +101,13 @@ async fn desktop_status(State(state): State<Arc<AppState>>) -> Json<DesktopStatu
         relay: state.relay.as_ref().map(|info| info.url.clone()),
         channel: state.relay.as_ref().map(|info| info.channel.clone()),
         data_directory: Settings::directory().display().to_string(),
-        agents: forge_domain::agent::AGENTS
+        agents: farhelm_domain::agent::AGENTS
             .iter()
             .map(|spec| AgentStatus {
                 id: spec.agent.as_str().to_owned(),
                 name: spec.display_name.to_owned(),
-                installed: spec.binary.is_empty() || forge_runner::pty::binary_exists(spec.binary),
+                installed: spec.binary.is_empty()
+                    || farhelm_runner::pty::binary_exists(spec.binary),
                 supervised: spec.is_supervised(),
             })
             .collect(),
@@ -176,7 +177,7 @@ fn main() {
         }
     });
 
-    println!("RelayForge desktop — serving http://{addr}");
+    println!("Farhelm desktop — serving http://{addr}");
     println!("  data       {}", Settings::directory().display());
     println!(
         "  terminal   {} (sessions end with this app)",
@@ -188,13 +189,13 @@ fn main() {
         .setup(move |app| {
             // The window is a browser on the embedded server. Same origin as the
             // API, so `/v1/*` and the SSE stream work exactly as they do under
-            // `forge-runner serve` — see the module docs.
+            // `farhelm serve` — see the module docs.
             let url = format!("http://{addr}")
                 .parse()
                 .expect("a loopback URL is always valid");
 
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("RelayForge")
+                .title("Farhelm")
                 .inner_size(1100.0, 760.0)
                 .min_inner_size(380.0, 480.0)
                 .build()?;
@@ -203,13 +204,13 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("failed to start RelayForge");
+        .expect("failed to start Farhelm");
 }
 
 /// Listen on loopback, preferring the port a paired phone already knows.
 ///
 /// Falls back to an ephemeral port rather than refusing to start: the usual
-/// reason 7842 is taken is that a `forge-runner serve` is already running, and
+/// reason 7842 is taken is that a `farhelm serve` is already running, and
 /// "the app will not open" is a worse answer than "it opened on another port".
 /// Remote devices reach this machine through the relay, which does not care
 /// which local port it is on.
@@ -218,7 +219,7 @@ async fn bind() -> std::io::Result<tokio::net::TcpListener> {
         Ok(listener) => Ok(listener),
         Err(err) => {
             eprintln!(
-                "port {PREFERRED_PORT} is in use ({err}) — is a `forge-runner serve` \
+                "port {PREFERRED_PORT} is in use ({err}) — is a `farhelm serve` \
                  already running? Falling back to a free port."
             );
             tokio::net::TcpListener::bind(("127.0.0.1", 0)).await
@@ -227,11 +228,11 @@ async fn bind() -> std::io::Result<tokio::net::TcpListener> {
 }
 
 async fn build_state(settings: &Settings) -> Arc<AppState> {
-    let store = forge_sqlite::SqliteStore::open(settings.database_path())
-        .expect("could not open the RelayForge database");
+    let store = farhelm_sqlite::SqliteStore::open(settings.database_path())
+        .expect("could not open the Farhelm database");
 
     let identity = Arc::new(
-        forge_crypto::keystore::load_or_create(settings.key_path())
+        farhelm_crypto::keystore::load_or_create(settings.key_path())
             .expect("could not load this machine's key"),
     );
 
@@ -242,16 +243,16 @@ async fn build_state(settings: &Settings) -> Arc<AppState> {
 
     // A desktop app is the process you are looking at, so PTYs it owns are the
     // right backend — and the only one available on Windows.
-    let terminal = Arc::new(AnyTerminal::Pty(forge_runner::pty::PtyTerminal::new()));
+    let terminal = Arc::new(AnyTerminal::Pty(farhelm_runner::pty::PtyTerminal::new()));
 
     let state = AppState::build_with_terminal(
         store,
         |store| {
-            let client = forge_gateway::dispatch::AnthropicClient::from_env()?;
-            Some(forge_gateway::Gateway::new(
+            let client = farhelm_gateway::dispatch::AnthropicClient::from_env()?;
+            Some(farhelm_gateway::Gateway::new(
                 store,
                 client,
-                forge_gateway::GatewayConfig::default(),
+                farhelm_gateway::GatewayConfig::default(),
             ))
         },
         Arc::clone(&identity),
@@ -285,12 +286,12 @@ async fn build_state(settings: &Settings) -> Arc<AppState> {
 
 /// The relay channel this machine publishes on.
 ///
-/// The rule itself is [`forge_proto::channel_for`]. It used to be written out
-/// here and again in `forge-runner`'s binary; both can be pointed at the same
+/// The rule itself is [`farhelm_proto::channel_for`]. It used to be written out
+/// here and again in `farhelm-runner`'s binary; both can be pointed at the same
 /// `forge.key`, so a drift between them would have published on a channel no
 /// paired device listens to, silently.
-fn channel_for(identity: &forge_crypto::Identity) -> String {
-    forge_proto::channel_for(identity.public_key().as_str())
+fn channel_for(identity: &farhelm_crypto::Identity) -> String {
+    farhelm_proto::channel_for(identity.public_key().as_str())
 }
 
 /// The tray icon.
@@ -299,7 +300,7 @@ fn channel_for(identity: &forge_crypto::Identity) -> String {
 /// way — the whole point is that you walk away from it. Closing the window hides
 /// it; quitting is deliberate, from here.
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Open RelayForge", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Open Farhelm", true, None::<&str>)?;
     let quit = MenuItem::with_id(
         app,
         "quit",
@@ -311,7 +312,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
     TrayIconBuilder::new()
         .menu(&menu)
-        .tooltip("RelayForge")
+        .tooltip("Farhelm")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
@@ -334,14 +335,14 @@ mod tests {
 
     #[test]
     fn the_channel_is_derived_from_the_key_and_is_stable() {
-        let identity = forge_crypto::Identity::generate();
+        let identity = farhelm_crypto::Identity::generate();
         assert_eq!(channel_for(&identity), channel_for(&identity));
         assert!(channel_for(&identity).starts_with("forge-"));
     }
 
     /// The exact channel this key produces.
     ///
-    /// `forge-runner`'s binary derives the same string from the same key with
+    /// `farhelm-runner`'s binary derives the same string from the same key with
     /// its own copy of this rule, and asserts the same constant. The two must
     /// agree: a desktop app and a CLI runner sharing `forge.key` publish on one
     /// channel, and if they disagree the paired phone hears nothing — no error,
@@ -351,7 +352,7 @@ mod tests {
     /// a change from 16 characters to 12 through.
     #[test]
     fn the_channel_rule_is_the_one_the_runner_uses() {
-        let identity = forge_crypto::Identity::from_secret_base64(
+        let identity = farhelm_crypto::Identity::from_secret_base64(
             "tapeuo2KzNeIV8FIWkWZ4JtK39yyr83NmVW2pBYYkaU",
         )
         .unwrap();
@@ -363,14 +364,14 @@ mod tests {
         // A shared channel would put two runners' ciphertext on one fan-out, and
         // pairing one phone would show it the other machine's traffic.
         assert_ne!(
-            channel_for(&forge_crypto::Identity::generate()),
-            channel_for(&forge_crypto::Identity::generate())
+            channel_for(&farhelm_crypto::Identity::generate()),
+            channel_for(&farhelm_crypto::Identity::generate())
         );
     }
 
     #[tokio::test]
     async fn a_taken_port_falls_back_instead_of_refusing_to_start() {
-        // The usual reason 7842 is taken is a `forge-runner serve` already
+        // The usual reason 7842 is taken is a `farhelm serve` already
         // running. "The app will not open" is a worse answer than "it opened
         // somewhere else"; remote devices arrive via the relay either way.
         let hog = tokio::net::TcpListener::bind(("127.0.0.1", PREFERRED_PORT)).await;
@@ -401,9 +402,9 @@ mod tests {
         // protocol, where every same-origin `/v1/*` fetch missed the embedded
         // server entirely and every screen read "cannot reach the runner".
         let state = AppState::build(
-            forge_sqlite::SqliteStore::open_in_memory().unwrap(),
+            farhelm_sqlite::SqliteStore::open_in_memory().unwrap(),
             |_| None,
-            Arc::new(forge_crypto::Identity::generate()),
+            Arc::new(farhelm_crypto::Identity::generate()),
             None,
         );
         let router = api::router_with_app(Arc::clone(&state), None)

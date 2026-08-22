@@ -1,7 +1,7 @@
 /**
  * The parts of the client that only exist in a browser.
  *
- * Everything else lives in `@relayforge/client-core`, which the React Native app
+ * Everything else lives in `@farhelm/client-core`, which the React Native app
  * shares. What is left here is the three things a browser does differently:
  * `EventSource` for the live stream, `localStorage` for the pairing, and
  * `matchMedia` for guessing whether this is a phone-sized surface.
@@ -14,7 +14,7 @@ import {
   pairingStore,
   type EventStream,
   type ServerEvent,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { idbBackend, migrateFromLocalStorage } from "./idb";
 
 /**

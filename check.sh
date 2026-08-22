@@ -14,7 +14,7 @@ step "Web app + service worker build"
 # command below wants it to exist. The build script writes a placeholder when it
 # is missing, which keeps a bare `cargo test --workspace` working; running the
 # real build here means the rest of this script lints and tests what ships.
-pnpm --filter @relayforge/web build >/dev/null
+pnpm --filter @farhelm/web build >/dev/null
 
 step "Rust: format"
 cargo fmt --all --check
@@ -22,17 +22,17 @@ cargo fmt --all --check
 step "Rust: lint"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "forge-domain stays pure"
+step "farhelm-domain stays pure"
 # The rules are the part of the system worth being certain about, and certainty
 # comes from being able to test them without arranging a world first. Nothing in
-# forge-domain may read a clock, open a file, await, or reach the network.
+# farhelm-domain may read a clock, open a file, await, or reach the network.
 #
 # This is a grep because there is no cargo flag for it. forge-core once claimed
 # the same property in its own doc header while depending directly on rusqlite,
 # which is how a claim nobody checks ends up false.
 if grep -rnE '(^|[^a-z_])(std::fs|std::io|std::net|std::process|tokio|reqwest|rusqlite|SystemTime|Instant::now)' \
-     crates/forge-domain/src --include='*.rs' | grep -v '^\S*:[0-9]*://'; then
-  echo "  forge-domain must stay free of I/O, async and the clock — see the hits above"
+     crates/farhelm-domain/src --include='*.rs' | grep -v '^\S*:[0-9]*://'; then
+  echo "  farhelm-domain must stay free of I/O, async and the clock — see the hits above"
   exit 1
 fi
 echo "  no I/O, async, clock or network"
@@ -41,21 +41,21 @@ step "Rust: tests"
 cargo test --workspace
 
 step "Rust: ledger smoke test"
-cargo run -q -p forge-runner -- demo >/dev/null
+cargo run -q -p farhelm-runner -- demo >/dev/null
 
 step "The native agent, end to end over real HTTP"
-cargo test -q -p forge-runner --test agent_task
+cargo test -q -p farhelm-runner --test agent_task
 
 step "Cost benchmarks (M2 exit criteria, printed as well as asserted)"
-cargo test -q -p forge-gateway --test savings -- --nocapture 2>&1 | grep -E "reduction|ratio" || true
-cargo test -q -p forge-gateway --test compaction_savings -- --nocapture 2>&1 | grep -E "saved|given up" || true
-cargo test -q -p forge-agent --test draft_then_verify -- --nocapture 2>&1 | grep -E "reduction|bytes" || true
+cargo test -q -p farhelm-gateway --test savings -- --nocapture 2>&1 | grep -E "reduction|ratio" || true
+cargo test -q -p farhelm-gateway --test compaction_savings -- --nocapture 2>&1 | grep -E "saved|given up" || true
+cargo test -q -p farhelm-agent --test draft_then_verify -- --nocapture 2>&1 | grep -E "reduction|bytes" || true
 
 step "The wire contract, read by both languages"
-# forge-proto writes a fixture from its own types; client-core's wire.test.ts
+# farhelm-proto writes a fixture from its own types; client-core's wire.test.ts
 # asserts every field its hand-written interfaces declare is actually in it. The
 # Rust half alone cannot catch a rename, because it renames both sides at once.
-cargo test -q -p forge-proto --test wire_fixture
+cargo test -q -p farhelm-proto --test wire_fixture
 
 step "No circular imports"
 # `App.tsx` and `screens/Pairing.tsx` were a cycle: a shared text field lived in

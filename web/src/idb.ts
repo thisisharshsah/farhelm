@@ -19,7 +19,7 @@
  * keystore; a browser has no equivalent a PWA can actually benefit from.
  */
 
-const DB_NAME = "relayforge";
+const DB_NAME = "farhelm";
 const DB_VERSION = 1;
 const STORE = "kv";
 

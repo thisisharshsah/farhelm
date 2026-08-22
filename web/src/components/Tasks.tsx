@@ -19,6 +19,7 @@
  * confident lie about where in the file you are looking.
  */
 
+import { getMigratingSync } from "@farhelm/client-core";
 import { useState } from "react";
 import {
   canRevert,
@@ -38,7 +39,7 @@ import {
   type TaskStatus,
   type TaskView,
   type Transport,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   running: "working",
@@ -605,7 +606,7 @@ export function TaskListScreen({
           {transport?.supportsTaskControl ? (
             <>
               <p className="tile-note">
-                Describe a change and RelayForge works on it here, then hands you
+                Describe a change and Farhelm works on it here, then hands you
                 a diff to approve. Nothing reaches your files until you say so.
               </p>
               <button className="btn btn-approve" onClick={onNewTask}>
@@ -639,11 +640,12 @@ export function TaskListScreen({
 
 /* ---------------------------------------------------------------- new task */
 
-const RECENT_KEY = "forge-recent-repos";
+const RECENT_KEY = "farhelm-recent-repos";
+const LEGACY_RECENT_KEY = "forge-recent-repos";
 
 function recentRepos(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as unknown;
+    const raw = JSON.parse(getMigratingSync(RECENT_KEY, LEGACY_RECENT_KEY) ?? "[]") as unknown;
     return Array.isArray(raw)
       ? raw.filter((value): value is string => typeof value === "string")
       : [];
@@ -725,12 +727,12 @@ export function NewTask({
         value={repo}
         onChange={(event) => setRepo(event.target.value)}
         placeholder="/Users/you/code/payments-api"
-        list="forge-known-repos"
+        list="farhelm-known-repos"
         spellCheck={false}
         autoCapitalize="none"
         autoCorrect="off"
       />
-      <datalist id="forge-known-repos">
+      <datalist id="farhelm-known-repos">
         {recentRepos().map((path) => (
           <option key={path} value={path} />
         ))}

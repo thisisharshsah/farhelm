@@ -1,5 +1,5 @@
 {
-  "name": "@relayforge/web",
+  "name": "@farhelm/web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@relayforge/client-core": "workspace:*",
+    "@farhelm/client-core": "workspace:*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

@@ -19,7 +19,7 @@ import {
   registerPush,
   vapidPublicKey,
   type Pairing,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 
 export type PushState =
   | { status: "unsupported"; reason: string }

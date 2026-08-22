@@ -1,17 +1,17 @@
 [workspace]
 resolver = "3"
 members = [
-  "crates/forge-agent",
-  "crates/forge-app",
-  "crates/forge-cloud",
-  "crates/forge-crypto",
-  "crates/forge-domain",
-  "crates/forge-gateway",
-  "crates/forge-mcp",
-  "crates/forge-proto",
-  "crates/forge-runner",
-  "crates/forge-sqlite",
-  "crates/forge-relay",
+  "crates/farhelm-agent",
+  "crates/farhelm-app",
+  "crates/farhelm-cloud",
+  "crates/farhelm-crypto",
+  "crates/farhelm-domain",
+  "crates/farhelm-gateway",
+  "crates/farhelm-mcp",
+  "crates/farhelm-proto",
+  "crates/farhelm-runner",
+  "crates/farhelm-sqlite",
+  "crates/farhelm-relay",
   "desktop/src-tauri",
 ]
 
@@ -22,16 +22,16 @@ license = "MIT"
 rust-version = "1.90"
 
 [workspace.dependencies]
-forge-agent = { path = "crates/forge-agent" }
-forge-app = { path = "crates/forge-app" }
-forge-cloud = { path = "crates/forge-cloud" }
-forge-crypto = { path = "crates/forge-crypto" }
-forge-relay = { path = "crates/forge-relay" }
-forge-domain = { path = "crates/forge-domain" }
-forge-gateway = { path = "crates/forge-gateway" }
-forge-mcp = { path = "crates/forge-mcp" }
-forge-proto = { path = "crates/forge-proto" }
-forge-sqlite = { path = "crates/forge-sqlite" }
+farhelm-agent = { path = "crates/farhelm-agent" }
+farhelm-app = { path = "crates/farhelm-app" }
+farhelm-cloud = { path = "crates/farhelm-cloud" }
+farhelm-crypto = { path = "crates/farhelm-crypto" }
+farhelm-relay = { path = "crates/farhelm-relay" }
+farhelm-domain = { path = "crates/farhelm-domain" }
+farhelm-gateway = { path = "crates/farhelm-gateway" }
+farhelm-mcp = { path = "crates/farhelm-mcp" }
+farhelm-proto = { path = "crates/farhelm-proto" }
+farhelm-sqlite = { path = "crates/farhelm-sqlite" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

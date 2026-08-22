@@ -1,5 +1,5 @@
 import Foundation
-import ForgeCrypto
+import FarhelmCrypto
 
 /// The watch's half of the pairing handshake with the phone.
 ///

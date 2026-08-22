@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "RelayForge",
+  "productName": "Farhelm",
   "version": "0.1.0",
-  "identifier": "dev.relayforge.desktop",
+  "identifier": "dev.farhelm.desktop",
   "build": {
     "frontendDist": "../../web/dist"
   },
@@ -20,6 +20,6 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Supervise AI coding agents from anywhere",
-    "longDescription": "RelayForge turns this machine into a supervised host for AI coding agents. Approvals reach your phone; nothing runs unwatched."
+    "longDescription": "Farhelm turns this machine into a supervised host for AI coding agents. Approvals reach your phone; nothing runs unwatched."
   }
 }

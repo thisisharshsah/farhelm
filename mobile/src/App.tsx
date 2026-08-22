@@ -37,7 +37,7 @@ import {
   type TaskStatus,
   type Transport,
   type Workspace,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { loopbackTransport, phoneIdentity, securePairingStore } from "./platform";
 import {
   DEFAULT_CLOUD_URL,
@@ -450,7 +450,7 @@ export default function App() {
   const title = useMemo(() => {
     switch (route.view) {
       case "fleet":
-        return "RelayForge";
+        return "Farhelm";
       case "session":
         return session?.repo_name ?? "Session";
       case "task":

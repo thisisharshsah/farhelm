@@ -20,7 +20,7 @@ import {
   claimPairing,
   parseOffer,
   type Pairing,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { securePairingStore } from "../platform";
 import { Field } from "../components/pieces";
 import { TAP, type Palette } from "../theme";
@@ -100,7 +100,7 @@ export function PairingScreen({
           Pair this phone
         </Text>
         <Text style={{ color: palette.textSecondary, fontSize: 13 }}>
-          Run <Text style={{ fontFamily: "Menlo" }}>forge-runner pair</Text> and
+          Run <Text style={{ fontFamily: "Menlo" }}>farhelm pair</Text> and
           paste what it prints. The code works once and expires in ten minutes.
         </Text>
 

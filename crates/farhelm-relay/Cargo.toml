@@ -1,0 +1,39 @@
+[package]
+name = "farhelm-relay"
+description = "Farhelm relay: stateless ciphertext fan-out and push trigger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+farhelm-crypto.workspace = true
+
+axum = { version = "0.8", features = ["ws"] }
+# WebPush (RFC 8291/8292). RustCrypto throughout, matching `farhelm-crypto`.
+aes-gcm = "0.10"
+base64 = "0.22"
+hkdf = "0.12"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+# `json` is for `--auth-from`, which reads the control plane's public key at
+# startup. Feature unification made it build without this; naming it here keeps
+# `cargo build -p farhelm-relay` alone working.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+
+[dev-dependencies]
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
+tokio-tungstenite = "0.28"
+
+[lints]
+workspace = true

@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
-import type { Pairing } from "@relayforge/client-core";
+import type { Pairing } from "@farhelm/client-core";
 import { disablePush, enablePush, pushState, type PushState } from "../push";
 
 export function PushSettings({ pairing }: { pairing: Pairing }) {
@@ -44,7 +44,7 @@ export function PushSettings({ pairing }: { pairing: Pairing }) {
 
       {state.status === "needs-install" ? (
         <p className="tile-note">
-          Add RelayForge to your Home Screen first — iOS only allows
+          Add Farhelm to your Home Screen first — iOS only allows
           notifications for installed apps, and refuses silently in a browser
           tab. Share → <b>Add to Home Screen</b>, then open it from there.
         </p>

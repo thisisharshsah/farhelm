@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ServerEvent } from "@relayforge/client-core";
+import type { ServerEvent } from "@farhelm/client-core";
 
 /* ------------------------------------------------------------------ routing */
 
@@ -14,7 +14,7 @@ export type Route =
   /** The workspace: machines, devices, people, enrolment keys. */
   | { view: "account" }
   /**
-   * Approving a machine that ran `forge-runner login`. The code is in the URL
+   * Approving a machine that ran `farhelm login`. The code is in the URL
    * when the runner's printed link was followed, and null when somebody
    * navigated here to type it.
    */

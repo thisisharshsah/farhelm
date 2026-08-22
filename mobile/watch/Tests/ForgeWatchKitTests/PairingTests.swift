@@ -1,8 +1,8 @@
 import Foundation
 import Testing
 
-@testable import ForgeCrypto
-@testable import ForgeWatchKit
+@testable import FarhelmCrypto
+@testable import FarhelmWatchKit
 
 @Suite("watch pairing")
 struct WatchPairingTests {
@@ -104,7 +104,7 @@ struct WireFormatTests {
         let json = try #require(
             JSONSerialization.jsonObject(with: data) as? [String: Any])
 
-        // Field names come from `forge_runner::commands::Command`; a rename here
+        // Field names come from `farhelm_runner::commands::Command`; a rename here
         // is a silent no-op on the runner, which just ignores the envelope.
         #expect(json["type"] as? String == "decide")
         #expect(json["approval_id"] as? String == "a1")

@@ -17,7 +17,7 @@ pnpm ios                          # or: pnpm android
 
 ## What it shares with the web app
 
-Everything that is not a screen. `@relayforge/client-core` holds the crypto, the
+Everything that is not a screen. `@farhelm/client-core` holds the crypto, the
 wire types, the HTTP client, and both transports; this package adds the parts a
 phone does differently:
 
@@ -36,7 +36,7 @@ there is no origin for an injected script to run on and steal the device key.
 
 Hermes has no `crypto.getRandomValues`. TweetNaCl looks for it at *module load*
 and throws "no PRNG" if it is missing, so `react-native-get-random-values` must
-be imported before anything reaches `@relayforge/client-core`. Throwing is the
+be imported before anything reaches `@farhelm/client-core`. Throwing is the
 good outcome — the alternative is a key generated from a predictable source,
 which is indistinguishable from a working app right up until it isn't.
 

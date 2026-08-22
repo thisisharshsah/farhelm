@@ -1,5 +1,5 @@
 /**
- * Everything a RelayForge client needs that is not a screen.
+ * Everything a Farhelm client needs that is not a screen.
  *
  * Three clients import this package: the web PWA, the React Native phone app,
  * and (indirectly, by matching its wire format) the watchOS app. Nothing here
@@ -9,6 +9,7 @@
 
 export { CryptoError } from "./errors.ts";
 export { fromBase64Url, toBase64Url } from "./base64.ts";
+export { getMigrating, getMigratingSync, type KeyValueBackend } from "./legacy.ts";
 export {
   Identity,
   PAIRING_STORAGE_KEY,

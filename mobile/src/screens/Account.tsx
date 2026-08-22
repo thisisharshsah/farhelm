@@ -26,7 +26,7 @@ import {
   type CloudClient,
   type RunnerView,
   type Workspace,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { Button, Card } from "./Pairing";
 import { TAP, type Palette } from "../theme";
 
@@ -61,7 +61,7 @@ export function SignInScreen({
   const [advanced, setAdvanced] = useState(false);
 
   const signingUp = mode === "sign-up";
-  // Mirrors `forge_cloud::secret::MIN_PASSWORD_LEN`, so the rule is visible
+  // Mirrors `farhelm_cloud::secret::MIN_PASSWORD_LEN`, so the rule is visible
   // while typing rather than as a rejection after pressing the button.
   const tooShort = signingUp && password.length > 0 && password.length < 10;
   const ready =

@@ -8,7 +8,7 @@
  * you" when the app is already open in front of the user.
  */
 
-import type { ApprovalView, FleetView } from "@relayforge/client-core";
+import type { ApprovalView, FleetView } from "@farhelm/client-core";
 
 /** `NotificationOptions` plus the fields only a service worker may use. */
 export interface WorkerNotificationOptions extends NotificationOptions {
@@ -39,8 +39,8 @@ const ICONS = { icon: "/icon.svg", badge: "/icon.svg" } as const;
  * stacking into a wall of near-identical rows. The refusal notice gets its own,
  * because it must not be replaced by the next wake-up before it is read.
  */
-const TAG = "relayforge";
-export const REFUSAL_TAG = "relayforge-refused";
+const TAG = "farhelm";
+export const REFUSAL_TAG = "farhelm-refused";
 
 /**
  * Whether an approval may be cleared with one tap from a notification.
@@ -65,7 +65,7 @@ export function wakeUpNotification(context: WakeUpContext): Notification {
       // notification at all is a "silent push", and browsers revoke the
       // permission for those. So: quiet, not absent.
       return {
-        title: "RelayForge",
+        title: "Farhelm",
         options: { body: "Updated.", tag: TAG, silent: true },
       };
 
@@ -73,7 +73,7 @@ export function wakeUpNotification(context: WakeUpContext): Notification {
     case "unreachable":
       // Nothing was decrypted, so nothing specific can be said truthfully.
       return {
-        title: "RelayForge",
+        title: "Farhelm",
         options: { ...ICONS, body: "An agent needs you.", tag: TAG },
       };
 
@@ -94,7 +94,7 @@ function fromFleet(fleet: FleetView): Notification {
     // Something happened — a budget alert, most likely, or an approval that was
     // decided between the push and this connection.
     return {
-      title: "RelayForge",
+      title: "Farhelm",
       options: { ...ICONS, body: "Something needs a look.", tag: TAG },
     };
   }

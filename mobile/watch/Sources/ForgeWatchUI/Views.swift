@@ -1,4 +1,4 @@
-import ForgeWatchKit
+import FarhelmWatchKit
 import SwiftUI
 
 /// The screens.
@@ -25,7 +25,7 @@ public struct RootView: View {
                     FleetList(store: store)
                 }
             }
-            .navigationTitle("RelayForge")
+            .navigationTitle("Farhelm")
         }
         .task { store.start() }
     }
@@ -43,7 +43,7 @@ struct PairingView: View {
                     .font(.headline)
 
                 Text(
-                    "Open RelayForge on your iPhone, go to Watch, and tap below. "
+                    "Open Farhelm on your iPhone, go to Watch, and tap below. "
                         + "This watch makes its own key — the phone only carries the public half."
                 )
                 .font(.footnote)
