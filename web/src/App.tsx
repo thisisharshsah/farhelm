@@ -1,5 +1,6 @@
+import { getMigratingSync } from "@farhelm/client-core";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { OutputLine, ServerEvent } from "@relayforge/client-core";
+import type { OutputLine, ServerEvent } from "@farhelm/client-core";
 import { sessionIdOf, useResource, useRoute } from "./hooks";
 import { migratePairing, webPairingStore } from "./platform";
 import { loopbackAvailable, useConnection } from "./connection";
@@ -22,16 +23,18 @@ import { Icon } from "./components/Icon";
 
 type Theme = "system" | "light" | "dark";
 
+const THEME_KEY = "farhelm-theme";
+
 function useTheme(): [Theme, () => void] {
   const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem("forge-theme") as Theme | null) ?? "system",
+    () => (getMigratingSync(THEME_KEY, "forge-theme") as Theme | null) ?? "system",
   );
 
   useEffect(() => {
     const root = document.documentElement;
     if (theme === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", theme);
-    localStorage.setItem("forge-theme", theme);
+    localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
 
   const cycle = useCallback(
@@ -293,7 +296,7 @@ export default function App() {
 
   const title =
     route.view === "fleet"
-      ? (activeRunner?.name ?? "RelayForge")
+      ? (activeRunner?.name ?? "Farhelm")
       : route.view === "tasks"
         ? "Tasks"
         : route.view === "new-task"

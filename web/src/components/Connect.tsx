@@ -1,7 +1,7 @@
 /**
  * Approving a machine that asked to join.
  *
- * The other half of `forge-runner login`. A machine generates a secret it keeps
+ * The other half of `farhelm login`. A machine generates a secret it keeps
  * and shows its owner eight characters; this is where those eight characters
  * are turned into a decision.
  *
@@ -11,8 +11,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import type { CloudClient, PendingDevice } from "@relayforge/client-core";
-import { normaliseUserCode } from "@relayforge/client-core";
+import type { CloudClient, PendingDevice } from "@farhelm/client-core";
+import { normaliseUserCode } from "@farhelm/client-core";
 
 import { readableError } from "./Auth";
 
@@ -124,7 +124,7 @@ export function Connect({
     <section className="card" aria-label="Connect a machine">
       <h2 className="chart-title">Connect a machine</h2>
       <p className="tile-note">
-        Run <code>forge-runner login</code> on the machine you want to add. It
+        Run <code>farhelm login</code> on the machine you want to add. It
         prints a code — type it here.
       </p>
 

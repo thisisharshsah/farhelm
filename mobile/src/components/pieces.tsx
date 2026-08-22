@@ -25,7 +25,7 @@ import {
   type Decision,
   type SessionView,
   type Transport,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { TAP, statusColor, type Palette } from "../theme";
 
 /* ------------------------------------------------------------ budget meter */

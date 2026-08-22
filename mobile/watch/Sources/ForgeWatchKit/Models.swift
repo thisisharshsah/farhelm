@@ -1,6 +1,6 @@
 import Foundation
 
-/// The wire types, mirroring `crates/forge-runner/src/api.rs` and the TypeScript
+/// The wire types, mirroring `crates/farhelm-runner/src/api.rs` and the TypeScript
 /// in `packages/client-core/src/api.ts`.
 ///
 /// Only the subset a wrist needs is decoded. `SessionView` skips the output tail
@@ -130,7 +130,7 @@ public struct FleetView: Codable, Equatable, Sendable {
     }
 }
 
-/// What the runner pushes. Mirrors `forge_runner::state::ServerEvent`, plus the
+/// What the runner pushes. Mirrors `farhelm_runner::state::ServerEvent`, plus the
 /// `command_error` the relay path adds.
 public enum ServerEvent: Sendable, Equatable {
     case sessionUpsert(sessionID: String)
@@ -181,7 +181,7 @@ extension ServerEvent: Decodable {
     }
 }
 
-/// What a device sends. Mirrors `forge_runner::commands::Command`.
+/// What a device sends. Mirrors `farhelm_runner::commands::Command`.
 ///
 /// The watch sends only three of these. It cannot start a session, control a
 /// plan, or read the cost dashboard — not because of a missing case here, but

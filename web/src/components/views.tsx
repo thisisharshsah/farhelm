@@ -14,7 +14,7 @@ import {
   type SessionDetail as SessionDetailData,
   type SessionView,
   type Transport,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { BudgetMeter, Sparkline, StatTile, TierBars, ValuesTable } from "./charts";
 import { Icon } from "./Icon";
 

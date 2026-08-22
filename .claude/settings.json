@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/harshsah/Project/farhelm/target/debug/forge-runner hook",
+            "command": "/Users/harshsah/Project/farhelm/target/debug/farhelm hook",
             "type": "command"
           }
         ]
@@ -14,7 +14,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/harshsah/Project/farhelm/target/debug/forge-runner hook",
+            "command": "/Users/harshsah/Project/farhelm/target/debug/farhelm hook",
             "type": "command"
           }
         ],
@@ -25,7 +25,7 @@
       {
         "hooks": [
           {
-            "command": "/Users/harshsah/Project/farhelm/target/debug/forge-runner hook",
+            "command": "/Users/harshsah/Project/farhelm/target/debug/farhelm hook",
             "type": "command"
           }
         ]

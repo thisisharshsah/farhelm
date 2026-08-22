@@ -1,7 +1,7 @@
 /**
  * The browser's half of the control-plane connection.
  *
- * Everything portable is in `@relayforge/client-core`. What is left here is the
+ * Everything portable is in `@farhelm/client-core`. What is left here is the
  * three things a browser decides for itself: where the control plane is, what to
  * call this device, and where the session is kept.
  */
@@ -11,7 +11,7 @@ import {
   CloudClient,
   cloudSessionStore,
   type CloudSession,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { idbBackend } from "./idb.ts";
 
 /**

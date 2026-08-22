@@ -18,7 +18,7 @@ const SENTINEL: &str = ".not-built";
 /// Make `frontendDist` exist, because `tauri::generate_context!` panics if it
 /// does not.
 ///
-/// That directory is produced by `pnpm --filter @relayforge/web build`, which
+/// That directory is produced by `pnpm --filter @farhelm/web build`, which
 /// cargo knows nothing about. So on a clean checkout `cargo build --workspace`,
 /// `cargo test --workspace` and `cargo clippy --workspace --all-targets` all
 /// failed here — and `check.sh` could not pass at all, because it lints twelve
@@ -74,7 +74,7 @@ const PLACEHOLDER: &str = r#"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RelayForge — web app not built</title>
+<title>Farhelm — web app not built</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -101,7 +101,7 @@ const PLACEHOLDER: &str = r#"<!doctype html>
   <p>The runner is up — its API is answering on <code>/v1</code>. What is missing
      is the built front end it serves at this address.</p>
   <pre>pnpm install
-pnpm --filter @relayforge/web build</pre>
+pnpm --filter @farhelm/web build</pre>
   <p>Then restart the runner. If the app is built somewhere else, point at it
      with <code>--app-dir &lt;path&gt;</code>.</p>
   <p class="muted">This page is a placeholder written by the desktop crate's

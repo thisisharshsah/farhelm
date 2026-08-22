@@ -1,6 +1,6 @@
 import Foundation
-import ForgeCrypto
-import ForgeWatchKit
+import FarhelmCrypto
+import FarhelmWatchKit
 import SwiftUI
 
 #if canImport(WatchConnectivity)
@@ -183,7 +183,7 @@ final class PhoneLink: NSObject {
 
         func send(_ message: [String: Any], onError: @escaping (String) -> Void) {
             guard let session, session.isReachable else {
-                onError("Open RelayForge on your iPhone, then try again.")
+                onError("Open Farhelm on your iPhone, then try again.")
                 return
             }
             session.sendMessage(

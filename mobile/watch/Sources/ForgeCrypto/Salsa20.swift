@@ -2,9 +2,9 @@
 ///
 /// Written out rather than imported because Apple ships no Salsa20: CryptoKit
 /// has ChaChaPoly and AES-GCM, neither of which is what NaCl `crypto_box` is
-/// built from. The alternative would be changing RelayForge's wire format so the
+/// built from. The alternative would be changing Farhelm's wire format so the
 /// watch could use CryptoKit — but the format is already spoken by Rust
-/// (`crates/forge-crypto`) and TweetNaCl (`packages/client-core`), and a third
+/// (`crates/farhelm-crypto`) and TweetNaCl (`packages/client-core`), and a third
 /// dialect for the sake of one client is how "the phone can't approve anything"
 /// bugs get made.
 ///

@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { createRunnerApi } from "@relayforge/client-core";
+import { createRunnerApi } from "@farhelm/client-core";
 import {
   loadWatchSession,
   servePairing,
@@ -73,7 +73,7 @@ export function WatchScreen({
         ) : session === null ? (
           <Text style={{ color: palette.textSecondary, fontSize: 13 }}>
             No watch is reachable from this device. WatchConnectivity is iOS
-            only, and needs a watch paired to this phone with the RelayForge
+            only, and needs a watch paired to this phone with the Farhelm
             watch app installed.
           </Text>
         ) : (
@@ -83,10 +83,10 @@ export function WatchScreen({
                 ? "Checking…"
                 : reachable
                   ? "Watch is reachable."
-                  : "Watch is paired but not reachable right now — open the RelayForge app on it."}
+                  : "Watch is paired but not reachable right now — open the Farhelm app on it."}
             </Text>
             <Text style={{ color: palette.textSecondary, fontSize: 13 }}>
-              On the watch, open RelayForge and tap <Text style={{ fontWeight: "600" }}>Pair</Text>. It
+              On the watch, open Farhelm and tap <Text style={{ fontWeight: "600" }}>Pair</Text>. It
               generates its own key and asks this phone to redeem a code for it —
               the key itself never leaves your wrist.
             </Text>

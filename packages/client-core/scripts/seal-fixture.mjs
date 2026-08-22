@@ -5,13 +5,13 @@
  * with the *JavaScript* implementation, so the checked-in fixture proves both
  * directions rather than only Rust talking to itself.
  *
- * Run after `cargo test -p forge-crypto --test interop -- --ignored`.
+ * Run after `cargo test -p farhelm-crypto --test interop -- --ignored`.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import nacl from "tweetnacl";
 
 const PATH = new URL(
-  "../../../crates/forge-crypto/tests/fixtures/interop.json",
+  "../../../crates/farhelm-crypto/tests/fixtures/interop.json",
   import.meta.url,
 );
 

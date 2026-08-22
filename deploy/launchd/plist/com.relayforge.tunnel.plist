@@ -5,7 +5,7 @@
 	<key>KeepAlive</key>
 	<true/>
 	<key>Label</key>
-	<string>com.relayforge.tunnel</string>
+	<string>com.farhelm.tunnel</string>
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>ProgramArguments</key>
@@ -20,12 +20,12 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>/Users/harshsah/.relayforge/logs/tunnel.log</string>
+	<string>/Users/harshsah/.farhelm/logs/tunnel.log</string>
 	<key>StandardOutPath</key>
-	<string>/Users/harshsah/.relayforge/logs/tunnel.log</string>
+	<string>/Users/harshsah/.farhelm/logs/tunnel.log</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>WorkingDirectory</key>
-	<string>/Users/harshsah/.relayforge</string>
+	<string>/Users/harshsah/.farhelm</string>
 </dict>
 </plist>

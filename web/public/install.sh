@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install the RelayForge runner and join it to this control plane.
+# Install the Farhelm runner and join it to this control plane.
 #
 #   curl -fsSL https://farhelm.aurovie.com/install.sh | bash
 #
@@ -18,14 +18,14 @@ set -euo pipefail
 # to install against a different deployment:
 #   FORGE_CLOUD=https://staging.example.com bash install.sh
 CLOUD="${FORGE_CLOUD:-https://farhelm.aurovie.com}"
-HOME_DIR="${FORGE_HOME:-$HOME/.relayforge}"
+HOME_DIR="${FORGE_HOME:-$HOME/.farhelm}"
 BIN_DIR="$HOME_DIR/bin"
 
 say()  { printf '  %s\n' "$*"; }
 bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die()  { printf '\n\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-bold "RelayForge — installing from $CLOUD"
+bold "Farhelm — installing from $CLOUD"
 
 # ---------------------------------------------------------------- platform ---
 
@@ -38,7 +38,7 @@ case "$os-$arch" in
   Linux-aarch64) target="aarch64-unknown-linux-gnu" ;;
   *) die "unsupported platform $os $arch — build it yourself:
        git clone https://github.com/thisisharshsah/farhelm.git
-       cargo build --release -p forge-runner" ;;
+       cargo build --release -p farhelm-runner" ;;
 esac
 say "platform   $os $arch → $target"
 
@@ -54,7 +54,7 @@ trap 'rm -rf "$tmp"' EXIT
 # index.html with status 200 rather than a 404. `curl -f` cannot see that. So
 # whatever arrives is checked for being an actual executable before it is
 # allowed anywhere near $BIN_DIR — otherwise a missing build for this platform
-# installs an HTML page named `forge-runner`.
+# installs an HTML page named `farhelm-runner`.
 looks_executable() {
   local file="$1"
   [ -s "$file" ] || return 1
@@ -65,18 +65,18 @@ looks_executable() {
 }
 
 installed_from_source=no
-if curl -fsSL "$CLOUD/dl/$target/forge-runner" -o "$tmp/forge-runner" 2>/dev/null \
-   && looks_executable "$tmp/forge-runner"; then
+if curl -fsSL "$CLOUD/dl/$target/farhelm-runner" -o "$tmp/farhelm-runner" 2>/dev/null \
+   && looks_executable "$tmp/farhelm-runner"; then
   say "runner     downloaded a prebuilt binary"
 
   # Best-effort integrity check. A checksum served beside the binary by the same
   # host is not a supply-chain guarantee — it catches a truncated or corrupted
   # download, which is the failure that actually happens.
-  if curl -fsSL "$CLOUD/dl/$target/forge-runner.sha256" -o "$tmp/sum" 2>/dev/null \
+  if curl -fsSL "$CLOUD/dl/$target/farhelm-runner.sha256" -o "$tmp/sum" 2>/dev/null \
      && grep -qE '^[0-9a-f]{64}' "$tmp/sum"; then
     want="$(tr -d ' \n' < "$tmp/sum" | cut -c1-64)"
-    if command -v shasum >/dev/null; then got="$(shasum -a 256 "$tmp/forge-runner" | cut -d' ' -f1)"
-    else got="$(sha256sum "$tmp/forge-runner" | cut -d' ' -f1)"; fi
+    if command -v shasum >/dev/null; then got="$(shasum -a 256 "$tmp/farhelm-runner" | cut -d' ' -f1)"
+    else got="$(sha256sum "$tmp/farhelm-runner" | cut -d' ' -f1)"; fi
     [ "$want" = "$got" ] || die "checksum mismatch — refusing to install"
     say "checksum   verified"
   fi
@@ -85,8 +85,8 @@ else
   # a dead end, and on a developer machine the toolchain is usually already here.
   command -v cargo >/dev/null \
     || die "no prebuilt binary for $target at $CLOUD, and cargo is not installed.
-       Install Rust (https://rustup.rs) and re-run, or build forge-runner elsewhere
-       and copy it to $BIN_DIR/forge-runner"
+       Install Rust (https://rustup.rs) and re-run, or build farhelm-runner elsewhere
+       and copy it to $BIN_DIR/farhelm-runner"
 
   say "runner     no prebuilt binary for $target — building from source"
   src="${FORGE_SRC:-$tmp/src}"
@@ -95,16 +95,16 @@ else
     git clone --depth 1 "${FORGE_REPO:-https://github.com/thisisharshsah/farhelm.git}" "$src" \
       || die "could not clone the source — set FORGE_SRC to a local checkout"
   fi
-  ( cd "$src" && cargo build --release -p forge-runner ) || die "the build failed"
-  cp "$src/target/release/forge-runner" "$tmp/forge-runner"
+  ( cd "$src" && cargo build --release -p farhelm-runner ) || die "the build failed"
+  cp "$src/target/release/farhelm" "$tmp/farhelm-runner"
   installed_from_source=yes
 fi
 
-chmod 755 "$tmp/forge-runner"
-mv -f "$tmp/forge-runner" "$BIN_DIR/forge-runner.new"
-mv -f "$BIN_DIR/forge-runner.new" "$BIN_DIR/forge-runner"   # atomic over a running copy
-say "installed  $BIN_DIR/forge-runner"
-say "version    $("$BIN_DIR/forge-runner" --help | head -1)"
+chmod 755 "$tmp/farhelm-runner"
+mv -f "$tmp/farhelm-runner" "$BIN_DIR/farhelm-runner.new"
+mv -f "$BIN_DIR/farhelm-runner.new" "$BIN_DIR/farhelm-runner"   # atomic over a running copy
+say "installed  $BIN_DIR/farhelm-runner"
+say "version    $("$BIN_DIR/farhelm-runner" --help | head -1)"
 
 # ------------------------------------------------------------------- join ---
 
@@ -112,9 +112,9 @@ if [ -f "$HOME_DIR/forge.cloud.json" ]; then
   bold "Already joined"
   say "$HOME_DIR/forge.cloud.json exists — this machine has enrolled before."
   say "If it is not in your fleet, the daemon needs restarting to read it:"
-  say "  launchctl kickstart -k gui/\$(id -u)/com.relayforge.runner"
-  say "Or start one:   cd $HOME_DIR && $BIN_DIR/forge-runner serve"
-  say "To join somewhere else: $BIN_DIR/forge-runner logout, then re-run this."
+  say "  launchctl kickstart -k gui/\$(id -u)/com.farhelm.runner"
+  say "Or start one:   cd $HOME_DIR && $BIN_DIR/farhelm serve"
+  say "To join somewhere else: $BIN_DIR/farhelm logout, then re-run this."
   exit 0
 fi
 
@@ -126,7 +126,7 @@ cd "$HOME_DIR"
 # Anything here that did would consume the rest of this script, because piped
 # into bash the script *is* stdin — so if a prompt is ever added, it has to read
 # from /dev/tty explicitly.
-"$BIN_DIR/forge-runner" login --cloud "$CLOUD"
+"$BIN_DIR/farhelm-runner" login --cloud "$CLOUD"
 
 # ------------------------------------------------------------------ next ---
 #
@@ -142,16 +142,16 @@ cd "$HOME_DIR"
 
 restarted=no
 if command -v launchctl >/dev/null \
-   && launchctl list 2>/dev/null | grep -q com.relayforge.runner; then
-  if launchctl kickstart -k "gui/$(id -u)/com.relayforge.runner" >/dev/null 2>&1; then
+   && launchctl list 2>/dev/null | grep -q com.farhelm.runner; then
+  if launchctl kickstart -k "gui/$(id -u)/com.farhelm.runner" >/dev/null 2>&1; then
     restarted=yes
-    say "restarted  com.relayforge.runner, so it picks up the new credential"
+    say "restarted  com.farhelm.runner, so it picks up the new credential"
   fi
 elif command -v systemctl >/dev/null \
-     && systemctl --user is-active --quiet relayforge 2>/dev/null; then
-  if systemctl --user restart relayforge >/dev/null 2>&1; then
+     && systemctl --user is-active --quiet farhelm 2>/dev/null; then
+  if systemctl --user restart farhelm >/dev/null 2>&1; then
     restarted=yes
-    say "restarted  relayforge.service, so it picks up the new credential"
+    say "restarted  farhelm.service, so it picks up the new credential"
   fi
 fi
 
@@ -159,8 +159,8 @@ bold "Done"
 if [ "$restarted" = yes ]; then
   say "This machine should appear in your fleet within about thirty seconds."
 else
-  say "Start the runner:   cd $HOME_DIR && $BIN_DIR/forge-runner serve"
-  say "Keep it running:    $BIN_DIR/forge-runner install-service"
+  say "Start the runner:   cd $HOME_DIR && $BIN_DIR/farhelm serve"
+  say "Keep it running:    $BIN_DIR/farhelm install-service"
 fi
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

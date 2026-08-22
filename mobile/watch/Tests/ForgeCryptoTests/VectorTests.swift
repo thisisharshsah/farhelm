@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import ForgeCrypto
+@testable import FarhelmCrypto
 
 /// Reference vectors from TweetNaCl, checked at every block boundary.
 ///

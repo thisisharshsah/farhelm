@@ -16,7 +16,7 @@ public struct PairingStore: Sendable {
     private let account: String
 
     public init(
-        service: String = "dev.relayforge.watch",
+        service: String = "dev.farhelm.watch",
         account: String = "forge-device-identity"
     ) {
         self.service = service

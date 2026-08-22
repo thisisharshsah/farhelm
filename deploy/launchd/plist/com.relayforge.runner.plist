@@ -5,7 +5,7 @@
 	<key>KeepAlive</key>
 	<true/>
 	<key>Label</key>
-	<string>com.relayforge.runner</string>
+	<string>com.farhelm.runner</string>
 	<key>ProcessType</key>
 	<string>Background</string>
 	<!-- launchd starts a job with a minimal PATH, so an agent installed under
@@ -20,17 +20,17 @@
 	<array>
 		<string>/bin/sh</string>
 		<string>-c</string>
-		<string>set -a; . /Users/harshsah/.relayforge/runner.env; set +a; exec /Users/harshsah/.relayforge/bin/forge-runner serve --port 7852 --db /Users/harshsah/.relayforge/runner.db --key /Users/harshsah/.relayforge/runner.key --terminal pty</string>
+		<string>set -a; . /Users/harshsah/.farhelm/runner.env; set +a; exec /Users/harshsah/.farhelm/bin/farhelm serve --port 7852 --db /Users/harshsah/.farhelm/runner.db --key /Users/harshsah/.farhelm/runner.key --terminal pty</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>/Users/harshsah/.relayforge/logs/runner.log</string>
+	<string>/Users/harshsah/.farhelm/logs/runner.log</string>
 	<key>StandardOutPath</key>
-	<string>/Users/harshsah/.relayforge/logs/runner.log</string>
+	<string>/Users/harshsah/.farhelm/logs/runner.log</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>WorkingDirectory</key>
-	<string>/Users/harshsah/.relayforge</string>
+	<string>/Users/harshsah/.farhelm</string>
 </dict>
 </plist>

@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// base64url, unpadded — the form every RelayForge component speaks.
+/// base64url, unpadded — the form every Farhelm component speaks.
 public enum Base64URL {
     public static func encode(_ bytes: [UInt8]) -> String {
         Data(bytes).base64EncodedString()
@@ -26,7 +26,7 @@ public enum Base64URL {
     }
 }
 
-/// Exactly what crosses the relay. Mirrors `forge_crypto::Envelope` and the
+/// Exactly what crosses the relay. Mirrors `farhelm_crypto::Envelope` and the
 /// TypeScript `Envelope`, field name for field name — this struct is the wire
 /// format, so its `CodingKeys` are not cosmetic.
 public struct Envelope: Codable, Equatable, Sendable {

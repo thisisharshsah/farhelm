@@ -10,7 +10,7 @@ importers:
 
   mobile:
     dependencies:
-      '@relayforge/client-core':
+      '@farhelm/client-core':
         specifier: workspace:*
         version: link:../packages/client-core
       expo:
@@ -69,7 +69,7 @@ importers:
 
   web:
     dependencies:
-      '@relayforge/client-core':
+      '@farhelm/client-core':
         specifier: workspace:*
         version: link:../packages/client-core
       react:

@@ -32,7 +32,7 @@ import {
   type TaskDetail,
   type TaskStatus,
   type Transport,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { TAP, type Palette } from "../theme";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {

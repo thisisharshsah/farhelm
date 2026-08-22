@@ -21,7 +21,7 @@ import {
   pairingStore,
   type EventStream,
   type ServerEvent,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 
 /**
  * The pairing, in the platform keystore.

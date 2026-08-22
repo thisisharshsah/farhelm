@@ -1,0 +1,54 @@
+[package]
+name = "farhelm-runner"
+description = "Farhelm: supervise your coding agents from anywhere"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# One binary, one name to remember. `cloud` and `relay` are subcommands of it
+# rather than separate executables, so there is nothing to explain about which
+# of three things to install or start.
+[[bin]]
+name = "farhelm"
+path = "src/main.rs"
+
+[dependencies]
+farhelm-agent.workspace = true
+farhelm-cloud.workspace = true
+farhelm-relay.workspace = true
+farhelm-app.workspace = true
+farhelm-sqlite.workspace = true
+farhelm-domain.workspace = true
+farhelm-proto.workspace = true
+farhelm-crypto.workspace = true
+farhelm-gateway.workspace = true
+farhelm-mcp.workspace = true
+
+axum = "0.8"
+futures-util = { version = "0.3", default-features = false }
+qrcode = { version = "0.14", default-features = false }
+portable-pty = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Verifying a downloaded binary before a daemon is told to execute it.
+# Same version farhelm-crypto uses.
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+# `rustls-tls-webpki-roots` is load-bearing, not tidiness: without a TLS feature
+# `connect_async` refuses every `wss://` URL with "TLS support not compiled in",
+# which is every relay reached over the internet. The quickstart has always told
+# people to put the relay behind TLS, and the runner could not do it.
+#
+# webpki-roots rather than the platform store, to match `reqwest`'s `rustls-tls`
+# here and keep one trust anchor set across the process.
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+[dev-dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+
+[lints]
+workspace = true

@@ -1,6 +1,6 @@
 [package]
-name = "relayforge-desktop"
-description = "RelayForge desktop: a supervised agent host you can drive from your phone"
+name = "farhelm-desktop"
+description = "Farhelm desktop: a supervised agent host you can drive from your phone"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,13 +13,13 @@ tauri-build = { version = "2", features = [] }
 serde_json = "1"
 
 [dependencies]
-forge-app.workspace = true
-forge-sqlite.workspace = true
-forge-domain.workspace = true
-forge-proto.workspace = true
-forge-crypto.workspace = true
-forge-gateway.workspace = true
-forge-runner = { path = "../../crates/forge-runner" }
+farhelm-app.workspace = true
+farhelm-sqlite.workspace = true
+farhelm-domain.workspace = true
+farhelm-proto.workspace = true
+farhelm-crypto.workspace = true
+farhelm-gateway.workspace = true
+farhelm-runner = { path = "../../crates/farhelm-runner" }
 
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }

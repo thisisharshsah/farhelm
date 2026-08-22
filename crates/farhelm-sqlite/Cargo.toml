@@ -1,0 +1,17 @@
+[package]
+name = "farhelm-sqlite"
+description = "Farhelm storage adapter: the Store ports, backed by SQLite in WAL mode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+farhelm-app.workspace = true
+farhelm-domain.workspace = true
+farhelm-proto.workspace = true
+
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[lints]
+workspace = true

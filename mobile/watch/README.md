@@ -33,9 +33,9 @@ into a backup (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`).
 
 | Path | What it is |
 |---|---|
-| `Sources/ForgeCrypto` | NaCl `crypto_box` — Salsa20, HSalsa20, Poly1305, XSalsa20-Poly1305, X25519 via CryptoKit |
-| `Sources/ForgeWatchKit` | The relay client, the wire types, Keychain storage, the pairing handshake |
-| `Sources/ForgeWatchUI` | The SwiftUI screens and the observable store |
+| `Sources/FarhelmCrypto` | NaCl `crypto_box` — Salsa20, HSalsa20, Poly1305, XSalsa20-Poly1305, X25519 via CryptoKit |
+| `Sources/FarhelmWatchKit` | The relay client, the wire types, Keychain storage, the pairing handshake |
+| `Sources/FarhelmWatchUI` | The SwiftUI screens and the observable store |
 | `App/` | The `@main` shell — three lines, added to the Xcode target |
 | `Tests/` | 37 tests, all runnable on a Mac |
 
@@ -47,7 +47,7 @@ profile. An app target that carried logic would be logic nothing could test.
 
 Apple ships no Salsa20 and no raw Poly1305 — CryptoKit has ChaChaPoly and
 AES-GCM, neither of which is what `crypto_box` is built from. The alternative was
-changing RelayForge's wire format so the watch could use CryptoKit, which would
+changing Farhelm's wire format so the watch could use CryptoKit, which would
 mean a third dialect for the sake of one client.
 
 **Hand-written crypto that only talks to itself is indistinguishable from
@@ -62,7 +62,7 @@ Two things caught it and now keep it caught:
 
 - `InteropTests` opens envelopes that **RustCrypto's audited `crypto_box`** and
   **TweetNaCl** sealed, from the fixture in
-  `crates/forge-crypto/tests/fixtures/interop.json` — read at its canonical path,
+  `crates/farhelm-crypto/tests/fixtures/interop.json` — read at its canonical path,
   not copied, so it cannot go stale.
 - `VectorTests` checks `seal` and `open` byte-for-byte against TweetNaCl output
   at every length where the padding rules change: 12/13 (the limb boundary),
@@ -77,7 +77,7 @@ cd mobile/watch && swift test
 No watch required. If the interop tests complain the fixture is missing:
 
 ```sh
-cargo test -p forge-crypto --test interop -- --ignored
+cargo test -p farhelm-crypto --test interop -- --ignored
 node packages/client-core/scripts/seal-fixture.mjs
 ```
 
@@ -87,13 +87,13 @@ The package builds and tests on its own; turning it into an installable watch ap
 needs an Xcode project, which is generated rather than checked in.
 
 1. `cd mobile && npx expo prebuild -p ios` — generates `mobile/ios/`.
-2. Open `mobile/ios/RelayForge.xcworkspace`.
-3. **File → New → Target → watchOS → App**. Name it `RelayForgeWatch`, embed it
-   in the `RelayForge` app target.
+2. Open `mobile/ios/Farhelm.xcworkspace`.
+3. **File → New → Target → watchOS → App**. Name it `FarhelmWatch`, embed it
+   in the `Farhelm` app target.
 4. Delete the generated `ContentView.swift` and `…App.swift`; add
-   `mobile/watch/App/RelayForgeWatchApp.swift` instead.
+   `mobile/watch/App/FarhelmWatchApp.swift` instead.
 5. **File → Add Package Dependencies → Add Local…** → `mobile/watch`. Add
-   `ForgeWatchUI` to the watch target.
+   `FarhelmWatchUI` to the watch target.
 6. On the **iOS** target, confirm `react-native-watch-connectivity` linked during
    prebuild — it supplies the phone's half of the handshake.
 

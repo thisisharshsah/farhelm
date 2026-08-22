@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { Identity, createRunnerApi } from "@relayforge/client-core";
+import { Identity, createRunnerApi } from "@farhelm/client-core";
 import { handlePairRequest, servePairing, type WatchSession } from "./bridge.ts";
 
 /** A watch session that records what the phone sent it. */

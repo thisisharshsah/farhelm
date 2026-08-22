@@ -1,5 +1,5 @@
 {
-  "name": "@relayforge/mobile",
+  "name": "@farhelm/mobile",
   "private": true,
   "version": "0.1.0",
   "main": "index.js",
@@ -12,7 +12,7 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
-    "@relayforge/client-core": "workspace:*",
+    "@farhelm/client-core": "workspace:*",
     "expo": "~54.0.0",
     "expo-build-properties": "~1.0.0",
     "expo-secure-store": "~15.0.0",

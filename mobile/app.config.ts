@@ -9,14 +9,14 @@ import type { ExpoConfig } from "expo/config";
  * is checked in beside it and attached by the config plugin.
  */
 const config: ExpoConfig = {
-  name: "RelayForge",
-  slug: "relayforge",
+  name: "Farhelm",
+  slug: "farhelm",
   version: "0.1.0",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
-  scheme: "relayforge",
+  scheme: "farhelm",
   ios: {
-    bundleIdentifier: "dev.relayforge.app",
+    bundleIdentifier: "dev.farhelm.app",
     supportsTablet: false,
     infoPlist: {
       // The runner is reached over plain HTTP on the local network during
@@ -24,11 +24,11 @@ const config: ExpoConfig = {
       // Everything after it is end-to-end encrypted over the relay.
       NSAppTransportSecurity: { NSAllowsLocalNetworking: true },
       NSLocalNetworkUsageDescription:
-        "RelayForge pairs with the runner on your own network. After pairing it talks over the relay instead.",
+        "Farhelm pairs with the runner on your own network. After pairing it talks over the relay instead.",
     },
   },
   android: {
-    package: "dev.relayforge.app",
+    package: "dev.farhelm.app",
   },
   plugins: [
     "expo-secure-store",

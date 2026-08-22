@@ -20,8 +20,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// `~/Library/Application Support/RelayForge`, `%APPDATA%\RelayForge`, or
-    /// `~/.local/share/relayforge`.
+    /// `~/Library/Application Support/Farhelm`, `%APPDATA%\Farhelm`, or
+    /// `~/.local/share/farhelm`.
     pub fn directory() -> PathBuf {
         let base = if cfg!(target_os = "macos") {
             std::env::var_os("HOME")
@@ -42,9 +42,9 @@ impl Settings {
         let directory =
             base.unwrap_or_else(std::env::temp_dir)
                 .join(if cfg!(target_os = "linux") {
-                    "relayforge"
+                    "farhelm"
                 } else {
-                    "RelayForge"
+                    "Farhelm"
                 });
         // Created eagerly: the key file is written with `0600` at creation, and
         // that guarantee is only meaningful if the directory it lands in exists.

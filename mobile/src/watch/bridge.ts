@@ -41,7 +41,7 @@ import {
   claimPairing,
   type PairingOffer,
   type RunnerApi,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 
 /** What the watch sends when it wants in. */
 export interface WatchPairRequest {

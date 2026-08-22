@@ -15,7 +15,7 @@
  */
 
 import { useState } from "react";
-import { CloudError } from "@relayforge/client-core";
+import { CloudError } from "@farhelm/client-core";
 
 export type Mode = "sign-in" | "sign-up";
 
@@ -81,7 +81,7 @@ export function AuthScreen({
   const [name, setName] = useState("");
 
   const signingUp = mode === "sign-up";
-  // Mirrors `forge_cloud::secret::MIN_PASSWORD_LEN`. Checked here so the length
+  // Mirrors `farhelm_cloud::secret::MIN_PASSWORD_LEN`. Checked here so the length
   // rule is visible while typing rather than as a rejection after submitting.
   const tooShort = signingUp && password.length > 0 && password.length < 10;
   const ready =

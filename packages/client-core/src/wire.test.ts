@@ -8,7 +8,7 @@
  * reason `crypto.test.ts` opens a fixture Rust sealed.
  *
  * The fixture is generated from the Rust types
- * (`crates/forge-proto/tests/wire_fixture.rs`, run with `-- --ignored`). Rust
+ * (`crates/farhelm-proto/tests/wire_fixture.rs`, run with `-- --ignored`). Rust
  * checks the committed copy still matches what its types produce; this file
  * checks that everything TypeScript expects is actually in it.
  *
@@ -30,7 +30,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import fixture from "../../../crates/forge-proto/tests/fixtures/wire.json";
+import fixture from "../../../crates/farhelm-proto/tests/fixtures/wire.json";
 import type {
   ApprovalView,
   BudgetView,

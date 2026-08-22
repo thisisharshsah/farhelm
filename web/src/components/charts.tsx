@@ -16,8 +16,8 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { BudgetView, SpendBucket, TierSlice } from "@relayforge/client-core";
-import { TIER_TOKEN, clockTime, pct, usd } from "@relayforge/client-core";
+import type { BudgetView, SpendBucket, TierSlice } from "@farhelm/client-core";
+import { TIER_TOKEN, clockTime, pct, usd } from "@farhelm/client-core";
 
 /* --------------------------------------------------------------- stat tile */
 

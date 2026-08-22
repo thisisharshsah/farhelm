@@ -33,7 +33,7 @@ import {
   type ServerEvent,
   type Transport,
   type Workspace,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { loopbackTransport, webPairingStore } from "./platform";
 import { idbBackend } from "./idb";
 import {
@@ -47,9 +47,9 @@ import {
 export type Mode = "loading" | "welcome" | "loopback" | "cloud" | "legacy";
 
 /** Which machine this browser is watching. Survives a reload. */
-const ACTIVE_RUNNER_KEY = "forge-active-runner";
+const ACTIVE_RUNNER_KEY = "farhelm-active-runner";
 /** Set once the user has chosen loopback, so they are not asked again. */
-const LOOPBACK_CHOICE_KEY = "forge-loopback-only";
+const LOOPBACK_CHOICE_KEY = "farhelm-loopback-only";
 
 export interface Connection {
   mode: Mode;

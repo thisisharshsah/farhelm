@@ -1,7 +1,7 @@
 /**
- * The device half of RelayForge's end-to-end encryption.
+ * The device half of Farhelm's end-to-end encryption.
  *
- * This has to interoperate byte-for-byte with `crates/forge-crypto`, which uses
+ * This has to interoperate byte-for-byte with `crates/farhelm-crypto`, which uses
  * NaCl `crypto_box` (X25519 + XSalsa20-Poly1305), and with the watch's Swift
  * implementation in `mobile/watch/`. TweetNaCl's `nacl.box` is the same
  * construction in the same combined form, so they speak to each other directly —
@@ -26,6 +26,7 @@
  * throws rather than silently producing predictable keys — the right failure.
  */
 
+import { getMigrating } from "./legacy.ts";
 import nacl from "tweetnacl";
 import { CryptoError } from "./errors.ts";
 import { fromBase64Url, toBase64Url } from "./base64.ts";
@@ -44,7 +45,7 @@ function local(bytes: Uint8Array): Uint8Array {
 
 /* -------------------------------------------------------------------- envelope */
 
-/** Exactly what crosses the relay. Mirrors `forge_crypto::Envelope`. */
+/** Exactly what crosses the relay. Mirrors `farhelm_crypto::Envelope`. */
 export interface Envelope {
   channel: string;
   sender_id: string;
@@ -148,7 +149,7 @@ export class Identity {
 
 /* --------------------------------------------------------------------- pairing */
 
-/** What the pairing QR encodes. Mirrors `forge_crypto::PairingOffer`. */
+/** What the pairing QR encodes. Mirrors `farhelm_crypto::PairingOffer`. */
 export interface PairingOffer {
   relay_url: string;
   channel: string;
@@ -276,7 +277,9 @@ export interface PairingStore {
 }
 
 /** The key both clients store under. */
-export const PAIRING_STORAGE_KEY = "forge-device-identity";
+export const PAIRING_STORAGE_KEY = "farhelm-device-identity";
+/** What it was called before the rename. See `legacy.ts`. */
+export const LEGACY_PAIRING_STORAGE_KEY = "forge-device-identity";
 
 /**
  * Build a [`PairingStore`] over any get/set/remove trio.
@@ -292,7 +295,7 @@ export function pairingStore(backend: {
 }): PairingStore {
   return {
     async load() {
-      const raw = await backend.get(PAIRING_STORAGE_KEY);
+      const raw = await getMigrating(backend, PAIRING_STORAGE_KEY, LEGACY_PAIRING_STORAGE_KEY);
       if (!raw) return null;
       try {
         const pairing = JSON.parse(raw) as Pairing;

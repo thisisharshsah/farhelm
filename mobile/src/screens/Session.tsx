@@ -22,7 +22,7 @@ import {
   type PlanStepView,
   type SessionDetail,
   type Transport,
-} from "@relayforge/client-core";
+} from "@farhelm/client-core";
 import { ApprovalCard, BudgetMeter } from "../components/pieces";
 import { Button, Card } from "./Pairing";
 import { TAP, statusColor, type Palette } from "../theme";
