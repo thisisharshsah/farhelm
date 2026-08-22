@@ -6,7 +6,7 @@ import PackageDescription
 /// thin shell over this — which is the point: the part that must be right is the
 /// part that runs under `swift test`.
 let package = Package(
-    name: "ForgeWatch",
+    name: "FarhelmWatch",
     platforms: [.watchOS(.v10), .iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "FarhelmCrypto", targets: ["FarhelmCrypto"]),

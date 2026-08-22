@@ -10,7 +10,8 @@
 	<string>Background</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/harshsah/.farhelm/bin/farhelm-cloud</string>
+		<string>/Users/harshsah/.farhelm/bin/farhelm</string>
+		<string>cloud</string>
 		<string>--bind</string>
 		<string>127.0.0.1</string>
 		<string>--port</string>
