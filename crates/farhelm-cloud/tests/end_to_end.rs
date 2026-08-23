@@ -277,6 +277,71 @@ async fn a_token_cannot_be_aimed_at_someone_elses_channel() {
 }
 
 #[tokio::test]
+async fn a_refusal_says_which_of_the_two_things_is_missing() {
+    // `POST /v1/channel-token` looks up a machine and a device, and either can
+    // be gone. Both answered a bare 404, which left a client unable to tell
+    // "that machine was removed" from "this browser's registration was
+    // removed" — two failures whose recoveries are opposite: pick another
+    // machine, versus re-register this browser.
+    //
+    // On a real deployment that ambiguity meant 244 identical refusals in a log
+    // and a screen that only ever said "connecting".
+    let world = spawn().await;
+    let (access, _) = world.sign_up("harsh@example.com").await;
+
+    let key = world.enrollment_key(&access).await;
+    let (_, enrolled) = world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({"name": "server", "public_key": public_key(), "version": "0.1.0"}),
+        )
+        .await;
+    let (_, device) = world
+        .post(
+            "/v1/devices",
+            Some(&access),
+            json!({"kind": "phone", "name": "iPhone", "public_key": public_key()}),
+        )
+        .await;
+
+    // A machine that is not there names the machine.
+    let (status, body) = world
+        .post(
+            "/v1/channel-token",
+            Some(&access),
+            json!({"runner_id": "run_gone", "device_id": device["id"]}),
+        )
+        .await;
+    assert_eq!(status, 404);
+    let said = body.to_string();
+    assert!(
+        said.contains("runner"),
+        "a missing machine must say so: {said}"
+    );
+
+    // A device that is not there names the device, and names it *differently*
+    // — a client discriminates on this, so the two must not read alike.
+    let (status, body) = world
+        .post(
+            "/v1/channel-token",
+            Some(&access),
+            json!({"runner_id": enrolled["runner_id"], "device_id": "dev_gone"}),
+        )
+        .await;
+    assert_eq!(status, 404);
+    let said = body.to_string();
+    assert!(
+        said.contains("dev_gone"),
+        "a missing device must name it: {said}"
+    );
+    assert!(
+        !said.contains("runner"),
+        "a missing device must not read as a missing machine: {said}"
+    );
+}
+
+#[tokio::test]
 async fn one_workspace_cannot_see_or_touch_anothers_machines() {
     // The tenancy boundary, exercised rather than asserted.
     let world = spawn().await;
