@@ -1898,21 +1898,12 @@ fn doctor(flags: &Flags) -> Fallible {
         // 4. Hooks. The check the daemon cannot do for itself: these live in
         //    the *user's* files, and their absence is silent by construction —
         //    an agent with no hooks simply never calls.
-        let home = std::env::var("HOME").ok().map(PathBuf::from);
-        let global = home
-            .as_ref()
-            .map(|home| home.join(".claude").join("settings.json"));
-        let here = PathBuf::from(".claude").join("settings.json");
-        let installed = |path: &Path| {
-            std::fs::read_to_string(path)
-                .map(|text| text.contains("farhelm hook") || text.contains("hook\""))
-                .unwrap_or(false)
-        };
+        use farhelm_runner::setup::HookScope;
 
-        match (global.as_deref().is_some_and(installed), installed(&here)) {
-            (true, _) => good("supervision", "hooks installed for every repo"),
-            (false, true) => good("supervision", "hooks installed in this repo only"),
-            (false, false) => {
+        match farhelm_runner::setup::hook_scope() {
+            HookScope::Global => good("supervision", "hooks installed for every repo"),
+            HookScope::Repo => good("supervision", "hooks installed in this repo only"),
+            HookScope::None => {
                 problems += 1;
                 bad(
                     "supervision",
