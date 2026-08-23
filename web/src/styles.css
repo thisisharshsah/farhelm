@@ -1041,12 +1041,56 @@ main {
   gap: 0.15rem;
 }
 
+/* Who spoke, and when. One row so the two never wrap apart, and quiet enough
+   that a transcript of forty turns does not become forty headings competing
+   with the words under them. */
+.turn-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: 0.15rem;
+}
+
+.turn[data-kind="instruction"] .turn-head {
+  /* Your own turns sit on the right, so their header does too — a label left
+     of a right-aligned bubble reads as belonging to the turn above it. */
+  flex-direction: row-reverse;
+}
+
 .turn-who {
   font-family: var(--font);
   font-size: 0.68rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-secondary);
+}
+
+.turn-when {
+  font-family: var(--font);
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  /* Never the thing that costs the name its room on a narrow screen. */
+  flex: 0 1 auto;
+}
+
+/* The opener for a folded turn. Reads as a sentence rather than a control,
+   because it is offering the rest of something you are already reading. */
+.turn-more {
+  align-self: flex-start;
+  margin-bottom: 0.25rem;
+  padding: 0.15rem 0.4rem;
+  font-family: var(--font);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.turn-more:hover {
+  color: var(--text-primary);
+  border-style: solid;
 }
 
 .turn[data-kind="instruction"] .turn-body {
