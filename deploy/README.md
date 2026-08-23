@@ -6,8 +6,8 @@ own machine and is never reachable from the internet — it dials *out*.
 ```text
                     ┌──────────────────── Cloudflare ────────────────────┐
                     │                                                    │
-  farhelm.aurovie.com ──▶ farhelm-cloud   :7844   accounts, plans, the PWA, MCP
-  farhelm-relay.aurovie.com ──▶ farhelm-relay :7843   ciphertext fan-out
+  farhelm.aurovie.com ──▶ farhelm cloud   :7844   accounts, plans, the PWA, MCP
+  farhelm-relay.aurovie.com ──▶ farhelm relay :7843   ciphertext fan-out
   farhelm-mac.aurovie.com   ──▶ farhelm-runner :7852  this machine's MCP connector
                     │                                                    │
                     └────────────────────────────────────────────────────┘
@@ -102,10 +102,10 @@ explicitly with `--config`, so the two never collide.
 ## 3. Build and install
 
 ```sh
-cargo build --release -p farhelm-cloud -p farhelm-relay -p farhelm-runner
+cargo build --release -p farhelm-runner    # one binary: serve, cloud, relay
 pnpm --filter @farhelm/web build
 
-sudo install -m755 target/release/farhelm-cloud target/release/farhelm-relay /usr/local/bin/
+sudo install -m755 target/release/farhelm /usr/local/bin/
 sudo mkdir -p /usr/local/share/farhelm
 sudo cp -r web/dist /usr/local/share/farhelm/web
 sudo mkdir -p /var/lib/farhelm

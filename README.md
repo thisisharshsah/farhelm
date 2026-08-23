@@ -411,14 +411,16 @@ swift test --package-path mobile/watch              # 37 tests; needs macOS, not
 
 ## Supervising a real agent
 
-Register the hook bridge in the repo you want supervised:
+Register the hook bridge:
 
 ```sh
-cargo run -p farhelm-runner -- install-hooks    # prints the settings block
+farhelm install-hooks --global      # every repo on this machine
+farhelm install-hooks               # or just the one you are standing in
 ```
 
-Paste it into that repo's `.claude/settings.json`, then start the daemon. From
-then on every tool call Claude Code makes waits for you.
+It writes into `.claude/settings.json`, merging so nothing else in that file is
+disturbed — `--print` still gives you the block if you would rather paste it
+yourself. From then on every tool call Claude Code makes waits for you.
 
 **What happens when things go wrong is the important part:**
 
@@ -469,12 +471,21 @@ Two ways, and the second replaced the first as the default.
 ### Sign in (accounts, several machines, plans)
 
 ```sh
-cargo run -p farhelm-cloud                                   # the control plane
-cargo run -p farhelm relay -- --auth-from http://127.0.0.1:7844
+cargo run -p farhelm-runner -- cloud                                   # the control plane
+cargo run -p farhelm-runner -- relay --auth-from http://127.0.0.1:7844
 ```
 
-Create an account in the web app, then **Workspace → Add a machine → Create
-key** and start the runner with it:
+Create an account in the web app, then run one command on the machine you want
+supervised — it prints a code, you approve it in the app, and the machine
+appears in your fleet:
+
+```sh
+farhelm login --cloud http://127.0.0.1:7844
+```
+
+An enrolment key is still there, under **Workspace → Add a machine →
+Provisioning several from a script?**, for a fleet with nobody present to
+approve anything:
 
 ```sh
 FARHELM_CLOUD_KEY=frg_… FARHELM_CLOUD_URL=https://farhelm.aurovie.com \
@@ -508,7 +519,7 @@ Deployment behind a Cloudflare tunnel is in [`deploy/`](deploy/README.md).
 Still supported, and still the simplest thing that works:
 
 ```sh
-cargo run -p farhelm-relay                                   # on a VPS, or locally
+cargo run -p farhelm-runner -- relay                          # on a VPS, or locally
 cargo run -p farhelm-runner -- serve --relay ws://your-relay:7843
 ```
 
@@ -549,7 +560,7 @@ on while its identity is readable by every user on the box.
 ## The relay, and why it cannot read your code
 
 ```sh
-cargo run -p farhelm-relay          # → 0.0.0.0:7843
+cargo run -p farhelm-runner -- relay   # → 0.0.0.0:7843
 ```
 
 The relay fans encrypted envelopes out to the other members of a channel. It
@@ -608,7 +619,7 @@ There is also a live check that runs against a real runner and a real relay and
 **skips itself** when neither is up. Its header says how to start them:
 
 ```sh
-cargo run -p farhelm-relay &
+cargo run -p farhelm-runner -- relay &
 cargo run -p farhelm-runner -- serve --demo --relay ws://127.0.0.1:7843 &
 pnpm --filter @farhelm/client-core test
 ```
@@ -728,9 +739,14 @@ provider (`cargo test -p farhelm-gateway --test batch_http`), but **no request h
 been sent to the real endpoint**, so treat the first real flush as the proving
 run.
 
-Configure the provider with `ANTHROPIC_API_KEY`. Without it the runner still
-starts and serves everything else; `/v1/complete` returns 503 with a clear
-message. `ANTHROPIC_BASE_URL` redirects to any compatible endpoint — a local
+`farhelm auth` configures the provider: with no arguments it signs you in with
+your subscription, fetching the Anthropic CLI if it is missing, and stores how
+to obtain a token where the daemon reads it — nothing to export and no PATH to
+get right. `--api-key` stores a key instead. The variables below still work and
+still take precedence, for a deployment that already sets them.
+
+Without any credential the runner still starts and serves everything else;
+`/v1/complete` returns 503 with a clear message. `ANTHROPIC_BASE_URL` redirects to any compatible endpoint — a local
 vLLM/Ollama shim for the self-hosted small tier, or a test server.
 
 | Variable | Effect |
