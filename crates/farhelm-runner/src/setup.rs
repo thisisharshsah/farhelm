@@ -170,11 +170,17 @@ impl Standing {
 
 /// Whether the hook bridge is registered, and how widely.
 ///
+/// Public because `doctor` asks the same question, and asked it with its own
+/// slightly different rule until this existed. Two checks that must agree and
+/// are written twice are two checks that will eventually disagree — and the
+/// disagreement here reads as "your supervision is broken" to somebody whose
+/// supervision is fine.
+///
 /// Both spellings count. A machine set up before the rename has
 /// `forge-runner hook` in its settings, and reporting that as "no hooks" would
 /// send somebody to reinstall supervision they already have — and, worse, make
 /// them doubt the supervision that is working.
-fn hook_scope() -> HookScope {
+pub fn hook_scope() -> HookScope {
     let mentions_the_bridge = |path: PathBuf| {
         std::fs::read_to_string(path)
             .map(|text| text.contains("farhelm hook") || text.contains("forge-runner hook"))
