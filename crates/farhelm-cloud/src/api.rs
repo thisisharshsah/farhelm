@@ -1189,7 +1189,22 @@ async fn channel_token(
         ));
     }
 
-    let device = state.store.device(&body.device_id)?;
+    // Named rather than left to the store's generic not-found, because this
+    // handler can 404 for two entirely different reasons with two opposite
+    // recoveries — the machine is gone, or *this browser's* registration is —
+    // and a bare 404 tells the client neither. That ambiguity cost a real
+    // deployment days of "connecting…" with 244 identical refusals in the log
+    // and nothing anywhere naming which of the two was missing.
+    let device = state.store.device(&body.device_id).map_err(|_| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            format!(
+                "device {} is not registered in this workspace — it was removed, \
+                 or it was registered against a different deployment",
+                body.device_id
+            ),
+        )
+    })?;
     if device.org_id != caller.org_id || device.account_id != caller.account_id {
         return Err(ApiError::forbidden("that device is not yours"));
     }

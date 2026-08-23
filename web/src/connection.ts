@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CloudClient,
+  CloudError,
   deviceIdentity,
   RelayTransport,
   type CloudSession,
@@ -179,6 +180,13 @@ export function useConnection(
         setActiveRunnerId((current) => {
           const stillThere = next.runners.some((runner) => runner.id === current);
           if (current && stillThere) return current;
+
+          // The remembered machine is gone — forgotten from the fleet, or
+          // re-enrolled under a new id. Clear it *unconditionally*: this used
+          // to write only when there was exactly one machine to fall back to,
+          // so with none or several the dead id stayed in storage and was
+          // asked for again on every load, forever.
+          localStorage.removeItem(ACTIVE_RUNNER_KEY);
           const only = next.runners.length === 1 ? next.runners[0]!.id : null;
           if (only) localStorage.setItem(ACTIVE_RUNNER_KEY, only);
           return only;
@@ -235,8 +243,46 @@ export function useConnection(
       };
 
       transport = new RelayTransport(connection, async () => {
-        const seat = await cloud.channelToken(runner.id, session.deviceId);
-        return seat.token;
+        try {
+          const seat = await cloud.channelToken(runner.id, session.deviceId);
+          return seat.token;
+        } catch (cause) {
+          // A 404 here means the control plane has no such machine, and no
+          // amount of retrying will change that. Without this the transport
+          // asks again on every reconnection attempt and the screen sits on
+          // "connecting" — which is what a browser pinned to a machine that
+          // had been forgotten from the fleet actually did: the same refusal,
+          // hundreds of times, with nothing on screen to say the machine it
+          // was asking for no longer existed.
+          if (cause instanceof CloudError && cause.status === 404) {
+            // Two different things are missing behind one status, because the
+            // handler looks up a machine and a device and either can be gone.
+            // They need opposite recoveries, so the message decides: forgetting
+            // a machine and re-registering this browser are not interchangeable.
+            if (/runner/i.test(cause.message)) {
+              localStorage.removeItem(ACTIVE_RUNNER_KEY);
+              setActiveRunnerId(null);
+              setError(
+                "That machine is no longer in this workspace — it was removed, " +
+                  "or it re-enrolled and came back with a new identity. Pick it " +
+                  "again below.",
+              );
+              setRevision((value) => value + 1);
+            } else {
+              // This browser's device registration was deleted from the
+              // workspace. Its stored id will never resolve again, and nothing
+              // said so: the link simply never came up, and every retry asked
+              // the same dead question. `claimDeviceSlot` re-registers with the
+              // key this browser already holds, which is the one recovery that
+              // does not cost a seat.
+              setDeviceProblem(
+                "the device registration this browser was using has been removed " +
+                  "from the workspace",
+              );
+            }
+          }
+          throw cause;
+        }
       });
     }
 
