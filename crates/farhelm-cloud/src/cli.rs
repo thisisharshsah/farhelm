@@ -29,6 +29,8 @@ process is a complete deployment.
 
 DEFAULTS:
     --port 7844   --bind 127.0.0.1   --db farhelm-cloud.db   --key farhelm-cloud.key
+    (the `forge-` names these had before the rename are still read when the
+     current ones are absent, and say so once when used)
     --relay-url ws://127.0.0.1:7843
     --public-url http://127.0.0.1:<port>
 
@@ -41,6 +43,18 @@ ENVIRONMENT (billing is off unless STRIPE_SECRET_KEY is set):
 The signing key is created 0600 on first start and reused. Deleting it signs
 everyone out and makes the relay refuse every token until it is reconfigured.
 ";
+
+/// An explicit path is taken at face value; an unqualified default resolves
+/// through [`farhelm_app::legacy`], so a deployment that predates the rename
+/// keeps opening the database it already has.
+fn defaulted(flag: Option<String>, new: &str, old: &str) -> String {
+    match flag {
+        Some(path) => path,
+        None => farhelm_app::legacy::state_path(new, old)
+            .to_string_lossy()
+            .into_owned(),
+    }
+}
 
 /// Run the control plane from `farhelm cloud`'s arguments.
 pub fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -63,8 +77,17 @@ pub fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // tunnel, which reaches it over loopback — binding 0.0.0.0 by default would
     // put accounts and billing on the local network for no reason.
     let bind = value_of("--bind").unwrap_or_else(|| "127.0.0.1".to_owned());
-    let db = value_of("--db").unwrap_or_else(|| "farhelm-cloud.db".to_owned());
-    let key_path = value_of("--key").unwrap_or_else(|| "farhelm-cloud.key".to_owned());
+    // Through `legacy`, not a bare default. These two files are every account,
+    // workspace and enrolment key in the deployment, and SQLite creates a
+    // missing database rather than complaining — so a renamed default does not
+    // fail, it comes up *empty*, and the first thing anybody notices is their
+    // own machines being told their enrolment key is not valid.
+    //
+    // That is not hypothetical: it is what the rename did to the deployment
+    // this was written on, because the path was passed explicitly in a service
+    // definition where no fallback could reach it.
+    let db = defaulted(value_of("--db"), "farhelm-cloud.db", "forge-cloud.db");
+    let key_path = defaulted(value_of("--key"), "farhelm-cloud.key", "forge-cloud.key");
     let app_dir = value_of("--app-dir");
 
     let config = CloudConfig {
@@ -162,4 +185,72 @@ fn serve(
             .await?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A directory holding whichever of the two names the test is about.
+    fn dir(tag: &str, files: &[&str]) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("farhelm-cloud-cli-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in files {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn a_control_plane_that_predates_the_rename_opens_its_own_database() {
+        // The failure this pins is not a missing file — it is a *created* one.
+        // SQLite makes a database that is not there, so pointing the control
+        // plane at the post-rename name on a deployment that has the old one
+        // does not error: it comes up with no accounts, no workspaces and no
+        // enrolment keys, and the first symptom is every machine in the fleet
+        // being told its own key is invalid.
+        let dir = dir("legacy", &["forge-cloud.db", "forge-cloud.key"]);
+        let db = dir.join("farhelm-cloud.db");
+        let old_db = dir.join("forge-cloud.db");
+
+        assert_eq!(
+            defaulted(None, db.to_str().unwrap(), old_db.to_str().unwrap()),
+            old_db.to_string_lossy(),
+            "an upgrade must not silently start on an empty control plane"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_explicit_path_is_still_taken_at_face_value() {
+        // Whatever a service definition names, it gets. Searching elsewhere
+        // after somebody wrote a path down is its own kind of surprise.
+        let dir = dir("explicit", &["forge-cloud.db"]);
+        let named = dir.join("somewhere-else.db");
+        assert_eq!(
+            defaulted(
+                Some(named.to_string_lossy().into_owned()),
+                dir.join("farhelm-cloud.db").to_str().unwrap(),
+                dir.join("forge-cloud.db").to_str().unwrap(),
+            ),
+            named.to_string_lossy(),
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_fresh_deployment_gets_the_current_name() {
+        let dir = dir("fresh", &[]);
+        let db = dir.join("farhelm-cloud.db");
+        assert_eq!(
+            defaulted(
+                None,
+                db.to_str().unwrap(),
+                dir.join("forge-cloud.db").to_str().unwrap()
+            ),
+            db.to_string_lossy(),
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

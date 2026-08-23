@@ -10,7 +10,7 @@
 	<string>Background</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/harshsah/.cargo/bin/cloudflared</string>
+		<string>/Users/harshsah/.local/bin/cloudflared</string>
 		<string>tunnel</string>
 		<string>--config</string>
 		<string>/Users/harshsah/.cloudflared/farhelm.yml</string>

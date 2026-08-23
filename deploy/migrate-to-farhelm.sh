@@ -105,14 +105,38 @@ migrated_any=no
 for job in cloud relay runner tunnel; do
   old_label="com.relayforge.$job"
   new_label="com.farhelm.$job"
-  template="$ROOT/deploy/launchd/plist/$new_label.plist"
+  old_plist="$AGENTS/$old_label.plist"
   target="$AGENTS/$new_label.plist"
 
-  [ -f "$template" ] || { note "$new_label — no template, skipped"; continue; }
+  [ -f "$old_plist" ] || { note "$new_label — nothing to migrate from, skipped"; continue; }
 
+  # Derived from the job that is *running*, never regenerated from the
+  # checked-in template.
+  #
+  # The first version of this script wrote the template out instead, and that
+  # is not a stylistic difference — a template is what the next machine should
+  # get, and it drifts from what this one actually has. On the deployment this
+  # was written for it drifted twice: the template named a `cloudflared` at a
+  # path that does not exist here, so the tunnel died with a config error and
+  # every public hostname answered 530; and it named the post-rename database,
+  # which SQLite obligingly created empty, so the control plane came up with no
+  # accounts in it and told this machine its own enrolment key was invalid.
+  #
+  # Neither failed loudly. Both looked like the migration having broken the
+  # system rather than having pointed it somewhere new. So the only things
+  # changed here are the three that genuinely have to change — the label, the
+  # binary, and the home directory — and every other value is carried across
+  # exactly as it was found.
   if [ "$DRY" = no ]; then
-    sed "s|/Users/harshsah/.farhelm|$NEW_HOME|g; s|HOME_DIR|$HOME|g" "$template" > "$target"
+    sed -e "s|$old_label|$new_label|g" \
+        -e "s|$OLD_HOME|$NEW_HOME|g" \
+        -e "s|$NEW_HOME/bin/forge-runner|$NEW_HOME/bin/farhelm|g" \
+        -e "s|$NEW_HOME/bin/forge-cloud|$NEW_HOME/bin/farhelm</string>\n\t\t<string>cloud|g" \
+        -e "s|$NEW_HOME/bin/forge-relay|$NEW_HOME/bin/farhelm</string>\n\t\t<string>relay|g" \
+        "$old_plist" > "$target"
     plutil -lint "$target" >/dev/null || { bad "$target is not valid — left unloaded"; continue; }
+  else
+    note "$new_label — rewritten from $old_plist, keeping its own paths"
   fi
 
   # Unload the old job before loading the new one: both bind the same port, and
