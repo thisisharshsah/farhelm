@@ -668,8 +668,11 @@ async fn serve_async(flags: Flags) -> Fallible {
 
     // The gateway is only constructed when a provider is configured, so the
     // read-only API and the app work on a fresh clone with no credentials.
-    let mut provider =
-        "none (set FORGE_CREDENTIAL_COMMAND to enable /v1/complete and /v1/messages)".to_owned();
+    // Names the command, not the environment variable. `auth` exists because
+    // exporting a credential command by hand meant getting a service manager's
+    // environment and PATH right, and a banner that points at the variable is
+    // pointing at the three steps that command removed.
+    let mut provider = "none — `farhelm auth` turns on /v1/complete and /v1/messages".to_owned();
 
     // Chosen before the state is built, because the PTY backend owns its panes
     // and there can only be one of it.

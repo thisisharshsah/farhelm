@@ -6,6 +6,7 @@ import { migratePairing, webPairingStore } from "./platform";
 import { loopbackAvailable, useConnection } from "./connection";
 import { AuthScreen, MachinePicker, WelcomeScreen, readableError } from "./components/Auth";
 import { Connect } from "./components/Connect";
+import { AddMachine } from "./components/AddMachine";
 import { AccountScreen, BillingScreen } from "./components/Account";
 import { PushSettings } from "./components/PushSettings";
 import { NewSession } from "./components/NewSession";
@@ -501,14 +502,24 @@ export default function App() {
           </div>
         ) : null}
 
-        {/* A machine has to be chosen before there is anything to render. */}
+        {/* A machine has to be chosen before there is anything to render.
+            With none enrolled there is nothing to choose *between*, so the
+            question is not "which machine" — it is "how do I get one", and the
+            answer is a command to run rather than a screen to navigate to. */}
         {needsMachine && route.view === "fleet" ? (
-          <MachinePicker
-            runners={connection.workspace?.runners ?? []}
-            onPick={connection.pickRunner}
-            onAddMachine={() => navigate("/account")}
-            busy={false}
-          />
+          (connection.workspace?.runners ?? []).length === 0 && connection.cloud ? (
+            <section className="card" aria-label="No machines yet">
+              <div className="chart-title">No machines yet</div>
+              <AddMachine cloud={connection.cloud} onError={setAccountError} variant="bare" />
+            </section>
+          ) : (
+            <MachinePicker
+              runners={connection.workspace?.runners ?? []}
+              onPick={connection.pickRunner}
+              onAddMachine={() => navigate("/account")}
+              busy={false}
+            />
+          )
         ) : null}
 
         {route.view === "connect" ? (

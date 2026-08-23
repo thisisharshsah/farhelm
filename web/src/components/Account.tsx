@@ -20,7 +20,6 @@ import {
   type BillingState,
   type CloudClient,
   type CloudDevice,
-  type EnrollmentKey,
   type MemberView,
   type Plan,
   type Role,
@@ -28,6 +27,7 @@ import {
   type Workspace,
 } from "@farhelm/client-core";
 import { readableError } from "./Auth";
+import { AddMachine } from "./AddMachine";
 
 const ROLE_BLURB: Record<Role, string> = {
   owner: "Everything, including billing",
@@ -138,9 +138,7 @@ export function AccountScreen({
         onForget={(id) => run(() => cloud.forgetRunner(id))}
       />
 
-      {canAdminister ? (
-        <EnrolmentKeys cloud={cloud} onError={setError} />
-      ) : null}
+      {canAdminister ? <AddMachine cloud={cloud} onError={setError} /> : null}
 
       <Devices
         devices={workspace.devices}
@@ -209,7 +207,8 @@ function Machines({
       <div className="chart-title">Machines</div>
       {runners.length === 0 ? (
         <p className="tile-note">
-          None yet. Create an enrolment key below and start the daemon with it.
+          None yet. One command on the machine you want supervised — it is just
+          below.
         </p>
       ) : null}
 
@@ -305,138 +304,6 @@ function Machines({
           </li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-/* -------------------------------------------------------------- enrolment keys */
-
-function EnrolmentKeys({
-  cloud,
-  onError,
-}: {
-  cloud: CloudClient;
-  onError: (message: string) => void;
-}) {
-  const [keys, setKeys] = useState<EnrollmentKey[] | null>(null);
-  const [minted, setMinted] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const load = () => {
-    cloud
-      .enrollmentKeys()
-      .then(setKeys)
-      .catch((cause: unknown) => onError(readableError(cause)));
-  };
-
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (next && keys === null) load();
-  };
-
-  const create = () => {
-    cloud
-      .createEnrollmentKey(name.trim() || "Machines")
-      .then((created) => {
-        setMinted(created.token);
-        setName("");
-        setCopied(false);
-        load();
-      })
-      .catch((cause: unknown) => onError(readableError(cause)));
-  };
-
-  return (
-    <section className="card" aria-label="Enrolment keys">
-      <button className="disclosure" onClick={toggle} aria-expanded={open}>
-        <span className="chart-title">Add a machine</span>
-        <span aria-hidden="true">{open ? "−" : "+"}</span>
-      </button>
-
-      {open ? (
-        <>
-          <p className="tile-note">
-            An enrolment key is what a machine uses to join this workspace. Paste
-            it into the daemon once; every machine you start with it appears
-            here by itself.
-          </p>
-
-          {minted ? (
-            <div className="notice success-panel">
-              <b>Your key — copy it now.</b>
-              <p className="tile-note">
-                Only a hash of it is stored, so this is the one time it can be
-                shown.
-              </p>
-              <code className="secret-block">{minted}</code>
-              <button
-                className="btn"
-                onClick={() => {
-                  void navigator.clipboard.writeText(minted).then(() => setCopied(true));
-                }}
-              >
-                {copied ? "Copied" : "Copy key"}
-              </button>
-
-              <p className="tile-note">Then, on the machine:</p>
-              <code className="secret-block">
-                {`FORGE_CLOUD_KEY=${minted.slice(0, 12)}… \\\n  farhelm serve --cloud ${cloud.baseUrl}`}
-              </code>
-              <button className="btn btn-small" onClick={() => setMinted(null)}>
-                Done
-              </button>
-            </div>
-          ) : (
-            <div className="inline-form">
-              <input
-                className="pair-input"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="What is this key for? e.g. Home server"
-              />
-              <button className="btn btn-primary" onClick={create}>
-                Create key
-              </button>
-            </div>
-          )}
-
-          {keys && keys.length > 0 ? (
-            <ul className="key-list">
-              {keys.map((key) => (
-                <li key={key.id} className="row-between">
-                  <div>
-                    <div className="machine-name">{key.name}</div>
-                    <p className="tile-note">
-                      <code className="key-fragment">{key.prefix}…</code>{" "}
-                      {key.revoked_at
-                        ? "· revoked"
-                        : key.last_used_at
-                          ? `· last used ${new Date(key.last_used_at).toLocaleDateString()}`
-                          : "· never used"}
-                    </p>
-                  </div>
-                  {key.revoked_at ? null : (
-                    <button
-                      className="btn btn-small btn-deny"
-                      onClick={() => {
-                        cloud
-                          .revokeEnrollmentKey(key.id)
-                          .then(load)
-                          .catch((cause: unknown) => onError(readableError(cause)));
-                      }}
-                    >
-                      Revoke
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </>
-      ) : null}
     </section>
   );
 }

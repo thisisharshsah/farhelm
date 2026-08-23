@@ -2245,6 +2245,48 @@ textarea.task-input {
   color: var(--text-primary);
 }
 
+/* A command meant for another machine: the text and the one action on it.
+   Laid out as a row on anything wide enough, and stacked below that — the
+   command is the long element, and a button squeezed beside it on a phone
+   leaves neither readable. */
+.copy-command {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: var(--s-2) 0;
+}
+
+.copy-command .secret-block {
+  flex: 1 1 auto;
+  margin: 0;
+  /* A shell command breaks at its spaces, unlike a key — so it wraps at word
+     boundaries and stays readable rather than being chopped mid-flag. */
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.copy-command .btn {
+  flex: 0 0 auto;
+  /* Aligned with the first line of the command rather than centred against the
+     whole block: a two-line command would otherwise float its button into the
+     middle of nowhere. */
+  margin-top: 0;
+}
+
+@media (max-width: 30rem) {
+  .copy-command {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* The enrolment-key path, folded under the command most people want. */
+.scripted-fleet {
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--gridline);
+}
+
 .reconnecting {
   font-size: 0.75rem;
   color: var(--text-muted);
