@@ -498,6 +498,16 @@ pub struct RunnerStatus {
     /// Sessions this runner has ever recorded. Zero with hooks installed means
     /// nothing has reached it yet.
     pub sessions: i64,
+    /// How many devices may reach this machine.
+    ///
+    /// Enrolled, this is the list the control plane sends on every heartbeat
+    /// and the runner reconciles against — so zero means no phone or browser
+    /// has registered, and **nothing can connect to this machine however
+    /// healthy everything else looks**. That state was invisible: the daemon
+    /// reported a good relay link, the control plane reported a live runner,
+    /// and every device was refused, with the count that explains it held
+    /// locally and never surfaced anywhere.
+    pub devices: i64,
     pub version: String,
 }
 
@@ -529,6 +539,11 @@ async fn status(State(state): State<Arc<AppState>>) -> ApiResult<RunnerStatus> {
             .store
             .list_sessions()
             .map(|s| s.len() as i64)
+            .unwrap_or(0),
+        devices: state
+            .store
+            .list_devices()
+            .map(|devices| devices.len() as i64)
             .unwrap_or(0),
         version: env!("CARGO_PKG_VERSION").to_owned(),
     }))

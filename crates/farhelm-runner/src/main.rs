@@ -1874,7 +1874,40 @@ fn doctor(flags: &Flags) -> Fallible {
             }
         }
 
-        // 3. The gateway. Without it agent tasks cannot run at all.
+        // 3. Something to reach it *from*. A relay link with no device on the
+        //    other end is a working connection to nobody — and it looks
+        //    completely healthy from here, which is the problem. This check
+        //    exists because diagnosing exactly that state took a request log
+        //    and a hand-written SQL query, when the count that explains it was
+        //    already sitting in the runner's own store.
+        // `unwrap_or(0)` here would be a lie with a fix attached: a daemon on an
+        // older build does not send this field at all, and reading absent as
+        // zero told a machine with two registered devices that it had none —
+        // and offered a fix for a problem it did not have. Missing and zero are
+        // different answers, so an absent field reports nothing.
+        let devices = status.get("devices").and_then(|v| v.as_i64());
+        if status.get("relay").and_then(|v| v.as_str()).is_some()
+            && let Some(devices) = devices
+        {
+            if devices == 0 {
+                problems += 1;
+                bad(
+                    "devices",
+                    "none registered — nothing can reach this machine yet",
+                );
+                fix("open the app and sign in on the phone or browser you want to use");
+            } else {
+                good(
+                    "devices",
+                    &match devices {
+                        1 => "1 may reach this machine".to_owned(),
+                        n => format!("{n} may reach this machine"),
+                    },
+                );
+            }
+        }
+
+        // 4. The gateway. Without it agent tasks cannot run at all.
         let credential_error = status
             .get("credential_error")
             .and_then(|v| v.as_str())
@@ -1895,7 +1928,7 @@ fn doctor(flags: &Flags) -> Fallible {
             fix("farhelm auth   (or --api-key <key>), then restart the runner");
         }
 
-        // 4. Hooks. The check the daemon cannot do for itself: these live in
+        // 5. Hooks. The check the daemon cannot do for itself: these live in
         //    the *user's* files, and their absence is silent by construction —
         //    an agent with no hooks simply never calls.
         use farhelm_runner::setup::HookScope;
@@ -1913,7 +1946,7 @@ fn doctor(flags: &Flags) -> Fallible {
             }
         }
 
-        // 5. Something to supervise.
+        // 6. Something to supervise.
         let agents: Vec<&str> = status
             .get("agents")
             .and_then(|v| v.as_array())
@@ -1927,7 +1960,7 @@ fn doctor(flags: &Flags) -> Fallible {
             good("agents", &agents.join(", "));
         }
 
-        // 6. Has anything ever arrived? A setup that looks right and has never
+        // 7. Has anything ever arrived? A setup that looks right and has never
         //    seen a session usually means hooks in a file the agent does not
         //    read.
         let sessions = status.get("sessions").and_then(|v| v.as_i64()).unwrap_or(0);
