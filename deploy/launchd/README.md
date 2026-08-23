@@ -15,8 +15,8 @@ today.
 
 ```sh
 mkdir -p ~/.farhelm/{bin,logs}
-cargo build --release -p farhelm-cloud -p farhelm-relay -p farhelm-runner
-cp target/release/{farhelm-cloud,farhelm-relay,farhelm-runner} ~/.farhelm/bin/
+cargo build --release -p farhelm-runner    # one binary: serve, cloud, relay
+cp target/release/farhelm ~/.farhelm/bin/
 pnpm --filter @farhelm/web build && cp -r web/dist ~/.farhelm/web
 
 cp deploy/launchd/plist/*.plist ~/Library/LaunchAgents/
@@ -91,7 +91,7 @@ that is invisible from outside.
 Verify a restart survives without waiting for a reboot:
 
 ```sh
-pkill -9 -f 'farhelm-cloud|farhelm-relay|farhelm-runner|cloudflared'
+pkill -9 -f 'farhelm|cloudflared'
 sleep 30 && launchctl list | grep farhelm   # new PIDs
 curl -s https://farhelm.aurovie.com/v1/health
 ```

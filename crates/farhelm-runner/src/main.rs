@@ -139,6 +139,8 @@ const DEFAULT_DB: &str = "farhelm.db";
 const LEGACY_DB: &str = "forge.db";
 const DEFAULT_PORT: u16 = 7842;
 const DEFAULT_APP_DIR: &str = "web/dist";
+/// Where an installed copy puts it — see `deploy/redeploy.sh`.
+const INSTALLED_APP_DIR: &str = "web";
 
 /// Find the built web app.
 ///
@@ -160,15 +162,33 @@ fn resolve_app_dir(explicit: Option<&str>) -> Option<std::path::PathBuf> {
         return built(std::path::PathBuf::from(path));
     }
 
-    let mut candidates = vec![std::path::PathBuf::from(DEFAULT_APP_DIR)];
+    // Two layouts, because there are two ways this binary is run and they do
+    // not agree about where the app lands. In a checkout it is `web/dist`,
+    // straight out of the bundler. Installed, it is a plain `web` directory —
+    // that is what `deploy/redeploy.sh` has always copied it to, and what a
+    // package would ship.
+    //
+    // Only the first was searched, so on a deployed machine the runner reported
+    // "app not found" while the built app sat one directory away, and the only
+    // reason nobody chased it is that the control plane serves the same app
+    // from an explicit `--app-dir`. A search that knows one of two conventions
+    // is a search that fails quietly on the other.
+    let layouts = [DEFAULT_APP_DIR, INSTALLED_APP_DIR];
+    let mut candidates = Vec::new();
+    for layout in layouts {
+        candidates.push(std::path::PathBuf::from(layout));
+    }
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        // `target/release/farhelm` → the repo root is three up.
-        candidates.push(dir.join(DEFAULT_APP_DIR));
-        candidates.push(dir.join("..").join(DEFAULT_APP_DIR));
-        candidates.push(dir.join("..").join("..").join(DEFAULT_APP_DIR));
-        candidates.push(dir.join("..").join("..").join("..").join(DEFAULT_APP_DIR));
+        // `target/release/farhelm` → the repo root is three up; an installed
+        // `~/.farhelm/bin/farhelm` finds `~/.farhelm/web` one up.
+        for layout in layouts {
+            candidates.push(dir.join(layout));
+            candidates.push(dir.join("..").join(layout));
+            candidates.push(dir.join("..").join("..").join(layout));
+            candidates.push(dir.join("..").join("..").join("..").join(layout));
+        }
     }
     candidates.push(std::path::PathBuf::from("/usr/local/share/farhelm/web"));
     candidates.push(std::path::PathBuf::from("/usr/share/farhelm/web"));
@@ -2224,6 +2244,32 @@ mod app_dir_tests {
         // wrong, and would be looking at a different build.
         let dir = TempDir::new("empty");
         assert_eq!(resolve_app_dir(Some(&dir.0.display().to_string())), None);
+    }
+
+    #[test]
+    fn an_installed_layout_is_found_as_well_as_a_checkout_one() {
+        // `deploy/redeploy.sh` copies the built app to `<home>/web`, not
+        // `<home>/web/dist`. Only the second was searched, so a deployed runner
+        // reported "app not found" with the app one directory away — quietly,
+        // because the control plane serves the same build from an explicit
+        // --app-dir and nothing disagreed out loud.
+        let home = TempDir::new("installed");
+        let bin = home.0.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let web = home.0.join("web");
+        std::fs::create_dir_all(&web).unwrap();
+        std::fs::write(web.join("index.html"), "<html></html>").unwrap();
+
+        // The search walks up from the binary, so `<home>/bin/farhelm` has to
+        // reach `<home>/web` — which is the layout every installed copy has.
+        let from_bin = ["web", "../web"]
+            .iter()
+            .map(|layout| bin.join(layout))
+            .find(|dir| dir.join("index.html").is_file());
+        assert!(
+            from_bin.is_some(),
+            "an installed layout must be reachable from beside the binary"
+        );
     }
 
     #[test]

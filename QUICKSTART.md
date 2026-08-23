@@ -1,79 +1,76 @@
-# Fifteen minutes to a supervised agent
+# Getting started
 
-From nothing to an agent on your own box that waits for you before it does
+From nothing to an agent on your own machine that waits for you before it does
 anything, and buzzes your phone when it needs an answer.
 
-Three stages, each useful on its own. Stop after any of them.
+This used to be fifteen minutes of building two binaries, making a directory,
+picking between two routes, exporting a credential and pasting a settings block.
+It is two commands now, because every one of those steps was something the
+program already knew how to do.
 
-1. [Supervise an agent locally](#1-supervise-an-agent-locally) — 5 minutes
-2. [Reach it from your phone](#2-reach-it-from-your-phone) — 5 minutes
-3. [Keep it running](#3-keep-it-running) — 5 minutes
+```sh
+curl -fsSL https://farhelm.aurovie.com/install.sh | bash
+farhelm setup
+```
 
-> If you just want to look at it first, `cargo run -p farhelm-runner -- serve --demo`
-> and open <http://127.0.0.1:7842>. In-memory database, a seeded fleet, nothing
-> written to disk. Come back here when you want it real.
+The first installs Farhelm and asks to join your workspace — you approve it in
+the app, and the machine appears in your fleet. The second walks everything
+still undone, one question at a time, explaining what each one costs to skip.
+
+> **Just want to look first?** `farhelm serve --demo` and open
+> <http://127.0.0.1:7842>. In-memory database, a seeded fleet, nothing written
+> to disk.
 
 ---
 
-## Before you start
+## What `setup` actually does
 
-- **Rust 1.90+.** `rustup` default is fine — SQLite is vendored.
-- **Node 20+ and pnpm**, to build the web app.
-- **An agent.** Claude Code gets the best integration (its hook system blocks
-  until you answer). Codex, OpenCode, Aider, Gemini CLI and Cursor work through
-  their terminal prompts — see [the caveat](#which-agents-actually-work).
-- **tmux is optional.** With it, sessions survive a runner restart. Without it,
-  the runner owns the terminals itself and they end when it does.
+Nothing it does is hidden, and every step has a command of its own if you would
+rather type it. Running `farhelm` on its own shows the same list at any time,
+with whatever is still outstanding:
+
+```
+  farhelm 0.1.0 — supervise your coding agents from anywhere
+
+  ✓ model        a credential is stored
+  ✗ supervision  not installed — an agent's tool calls reach nothing
+  ✓ fleet        enrolled
+  ✗ at login     no — supervision stops at the next reboot
+
+  2 things left. farhelm setup walks them, or do this one:
+    farhelm install-hooks --global
+```
+
+| Step | Command | Skipping it means |
+|---|---|---|
+| A model credential | `farhelm auth` | Agent tasks cannot run at all |
+| Supervision | `farhelm install-hooks --global` | An agent's tool calls reach nothing |
+| Your fleet | `farhelm login --cloud <url>` | Reachable from this browser and nowhere else |
+| Run at login | `farhelm install-service` | Supervision stops at the next reboot |
+
+`setup` is safe to re-run: it does what is missing and skips what is not. Under
+a pipe or a service manager — anywhere there is nobody to ask — it prints the
+commands it would have run rather than guessing on your behalf.
+
+### Building it yourself
 
 ```sh
-git clone <this repo> farhelm && cd farhelm
-cargo build --release -p farhelm-runner -p farhelm-relay
+git clone https://github.com/thisisharshsah/farhelm && cd farhelm
+cargo build --release -p farhelm-runner    # the binary is called `farhelm`
 pnpm install && pnpm --filter @farhelm/web build
 ```
 
-Everything below assumes `target/release` is on your `PATH`, or that you type the
-full path.
+You need **Rust 1.90+** (SQLite is vendored) and **Node 20+ with pnpm** for the
+web app. `tmux` is optional: with it, sessions survive a restart of the daemon;
+without it the daemon owns the terminals and they end when it does.
 
 ---
 
-## 1. Supervise an agent locally
+## Supervising an agent
 
-Pick a directory to keep state in. Everything lives together, so "where is my
-data" and "how do I start over" have one answer.
-
-```sh
-mkdir -p ~/.farhelm && cd ~/.farhelm
-farhelm serve
-```
-
-The banner tells you what it found:
-
-```
-farhelm listening on http://127.0.0.1:7842
-  database   farhelm.db
-  gateway    none (set ANTHROPIC_API_KEY to enable /v1/complete)
-  terminal   tmux · sessions survive a runner restart
-  agents     Claude Code  ·  not installed: Codex CLI, Aider, Gemini CLI, Cursor CLI
-  policy     built-in rules only (`farhelm policy` to add your own)
-  identity   Ff3k…  (farhelm.key)
-```
-
-Open <http://127.0.0.1:7842>. Empty, because nothing is running yet.
-
-### Put the agent under supervision
-
-In **another terminal**, in the repository you want worked on:
-
-```sh
-farhelm install-hooks        # prints a settings block
-```
-
-Paste it into that repo's `.claude/settings.json`. From now on, every tool call
-Claude Code makes in that repo waits for you.
-
-Start the agent as you normally would and ask it to do something. The moment it
-wants to run a command, the browser tab shows an approval card and the agent
-blocks until you answer.
+Once hooks are installed, start your agent as you normally would and ask it to
+do something. The moment it wants to run a command, the app shows an approval
+card and the agent blocks until you answer.
 
 **Try denying one.** The agent gets your refusal as a reason, not a crash.
 
@@ -86,10 +83,10 @@ This is the part worth knowing before you rely on it:
 | You approve | `allow` | |
 | You deny | `deny`, with your reason | |
 | Nobody answers in 15 min | `deny`, recorded as `timeout` | An unanswered request must never become an allow |
-| The runner is down | `defer` | Falls back to Claude Code's own prompt — Farhelm being down degrades to plain Claude Code, not to an unsupervised agent |
+| The daemon is down | `defer` | Falls back to Claude Code's own prompt — Farhelm being down degrades to plain Claude Code, not to an unsupervised agent |
 | The bridge itself errors | `defer` | A bug here must not block your work |
 
-### Add rules for your own stack
+### Rules for your own stack
 
 The built-in destructive list is broad — `rm -rf`, force pushes, `DROP TABLE`,
 `mkfs`, `sudo`, `curl | sh`, `terraform destroy`, `kubectl delete` — but it
@@ -111,182 +108,58 @@ a notification button. Check your rule fires before you rely on it; `policy
 <command>` exists so you don't have to find out by asking an agent to run
 something drastic.
 
-### Turn on the cost gateway (optional)
-
-```sh
-echo 'ANTHROPIC_API_KEY=sk-…' > farhelm.env && chmod 600 farhelm.env
-set -a && . ./farhelm.env && set +a
-farhelm serve
-```
-
-`POST /v1/complete` is now the only path to a model provider, which is what makes
-cost policy enforceable rather than advisory. The cost screen in the app shows
-where the money went.
-
 ---
 
-## 2. Reach it from your phone
+## Reaching it from your phone
 
-The runner never listens on a public port. It dials **out** to a relay, and the
+The daemon never listens on a public port. It dials **out** to a relay, and the
 relay forwards ciphertext it cannot read.
 
-Pick one of the two routes below. **Sign in** is the shorter one and the one to
-use unless you have a reason not to; the relay-only route is what to read if you
-want a single machine and no account anywhere.
+`farhelm login --cloud <url>` — which `setup` runs for you — is the whole of it.
+It prints a short code, waits while you approve it in the app, and stores what
+it is given. Nothing is copied by hand, and it works over SSH on a box whose
+browser belongs to somebody else.
 
-### Route A — sign in (recommended)
+Enrolling does not weaken the encryption. Devices still generate their own keys
+and everything still travels sealed between a device and your machine; what the
+control plane provides is a directory and a permission, not a way in.
 
-Run the control plane and a relay that trusts it:
+> **Running your own?** `farhelm cloud` is the control plane and `farhelm relay`
+> is the fan-out — both subcommands of the same binary. See
+> [deploy/README.md](deploy/README.md).
 
-```sh
-farhelm cloud --app-dir web/dist                  # accounts, plans, the app
-farhelm relay --vapid-key vapid.key --auth-from http://127.0.0.1:7844
-```
+### Without an account at all
 
-Open `http://127.0.0.1:7844` and create an account. Then, **on the machine you
-want supervised** — including one you only have over SSH:
-
-```sh
-farhelm login --cloud http://127.0.0.1:7844
-```
-
-It prints a code and waits:
-
-```
-  Open   http://127.0.0.1:7844/#/connect
-  Code   BKPT-4QW9
-
-  Approve it as "build-server". Waiting…
-```
-
-Open that link anywhere you are already signed in — laptop, phone — type the
-code, and confirm the machine's name. The runner stores what it is given and
-from then on:
-
-```sh
-farhelm serve          # no flags, no environment variables
-```
-
-It appears in your fleet within thirty seconds. On the phone, open the app and
-sign in with the same account — **no pairing code, no QR, and no need to be on
-the runner's network.** Pick the machine if you have more than one.
-
-`farhelm logout` forgets the stored credential on that machine.
-
-> **Why it works this way.** The machine generates a 256-bit secret it never
-> shows anybody, and you get eight characters you can read off a console. The
-> credential is minted only when you approve, and handed only to whoever holds
-> that secret — so nothing usable ever passes through your clipboard, your shell
-> history, or a chat message. It is the same shape as `gh auth login`.
->
-> The older way still works and is the right one for machines you provision from
-> a script: create a key under **Workspace → Add a machine**, then start the
-> runner with `FARHELM_CLOUD_KEY=frg_… FARHELM_CLOUD_URL=… farhelm serve`.
-
-Then turn on notifications, and read the iOS note at the end of Route B: it is
-the single most common reason push appears broken.
-
-To reach it from outside your house, put both processes behind a Cloudflare
-tunnel — [`deploy/README.md`](deploy/README.md) does exactly that for
-`farhelm.aurovie.com`, including the DNS records and the systemd units.
-
-Two things worth knowing before you rely on it:
-
-- Check the relay printed `auth on · control-plane key …` and not `auth OPEN`.
-  `OPEN` means it could not reach the control plane and started ungated, and a
-  relay that is ungated will let anyone who learns a channel id join it.
-- The machine's key is pinned the first time it enrols. Reinstall it and the
-  fleet will say **"this machine's identity changed"** and refuse to connect
-  devices until you confirm. That is not a bug — it is the thing that stops a
-  stolen enrolment key from quietly becoming one of your machines.
+One machine, one phone, no control plane: run a relay, point the daemon at it
+with `--relay`, and pair the phone from a QR code with `farhelm pair`. It is
+more to hold, which is why it is not the default, but nothing about it is
+second-class — the encryption is identical.
 
 ---
 
-### Route B — a relay, and a paired device
-
-### Put a relay somewhere reachable
-
-Any VPS. It holds no keys and keeps nothing across a restart, so it is the
-cheapest box you own.
+## Keeping it running
 
 ```sh
-farhelm relay --vapid-key vapid.key --push-subject mailto:you@example.com
+farhelm install-service
 ```
 
-Put it behind TLS — a reverse proxy is fine — so devices reach it at
-`wss://relay.example.com`. Without TLS, iOS will refuse to connect.
-
-> **Do not delete `vapid.key`.** Every push subscription a browser makes is bound
-> to the public half it saw. A new key silently stops waking every device that
-> ever subscribed.
-
-### Point the runner at it
-
-```sh
-farhelm serve --relay wss://relay.example.com
-```
-
-### Pair your phone
-
-```sh
-farhelm pair          # QR, plus the same payload as text
-```
-
-On the phone, open the app **on your own network** (the runner's LAN address),
-tap **⛓**, and paste the payload. Confirm the runner address is reachable *right
-now* — that claim is the one hop that happens before there is a shared key.
-
-Then tap **Turn on notifications** in the pairing card.
-
-**On iOS you must add the app to your Home Screen first.** Safari resolves the
-permission prompt to "denied" in a browser tab without ever showing it. The app
-detects this and says so, but it is the single most common reason push appears
-broken.
-
-Now walk out of the building. The next approval buzzes your pocket, and the
-notification names the actual command — decrypted on your phone, not by the
-relay.
-
----
-
-## 3. Keep it running
-
-```sh
-cd ~/.farhelm
-farhelm install-service --relay wss://relay.example.com
-```
-
-That prints a systemd unit with **this machine's paths already in it** — binary,
-user, working directory. Save it, then:
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl enable --now farhelm
-journalctl -u farhelm -f
-```
-
-The unit reads your API key from `farhelm.env` rather than inlining it, because a
-key written into a unit file ends up in `systemctl cat`, in journald, and in your
-shell history.
-
-For the relay box, the same command on that machine gives you its unit.
-
-### macOS
-
-Use [the desktop app](desktop/) instead — same runner, in a window, with a tray
-icon. It keeps its own database under `~/Library/Application Support/Farhelm`.
+Writes the definition your machine's own service manager understands — a launchd
+agent on macOS, a systemd unit on Linux — with this machine's paths filled in,
+and prints the one line that loads it. It writes the file but does not start it:
+starting a background service that executes agents is worth typing yourself.
 
 ---
 
 ## Which agents actually work
 
-`farhelm policy` tells you about rules; `GET /v1/agents` tells you about
-agents, and so does the startup banner.
+`farhelm policy` tells you about rules; `GET /v1/agents` tells you about agents,
+and so does the startup banner.
 
 | Agent | How approvals reach it | Confidence |
 |---|---|---|
-| Claude Code | Hook bridge — the agent calls the runner and **blocks** | Verified end to end |
-| Codex, OpenCode, Aider, Gemini, Cursor | The runner reads the question out of the terminal and types the answer | **Unverified** |
+| Farhelm's own agent | Native — the daemon *is* the agent, and hands you a diff | Verified end to end |
+| Claude Code | Hook bridge — the agent calls the daemon and **blocks** | Verified end to end |
+| Codex, OpenCode, Aider, Gemini, Cursor | The daemon reads the question out of the terminal and types the answer | **Unverified** |
 
 The terminal path is pattern matching on output. It is tuned so that an
 unrecognised prompt means a session that **sits there**, never one that proceeds
@@ -301,24 +174,41 @@ If a prompt is missed, the fix is a one-line dialect in
 
 ## When something is wrong
 
-**The app says "cannot reach the runner".** It is served by the runner itself, so
-this means the daemon is down or on another port. `curl 127.0.0.1:7842/v1/health`.
+**Start here:**
+
+```sh
+farhelm doctor
+```
+
+It checks the whole setup and names the command that fixes each problem it
+finds, in the order they block you. `farhelm` on its own answers the different
+question of what was never set up in the first place.
+
+Past that, in rough order of likelihood:
+
+**The app says "cannot reach the daemon".** It is served by the daemon itself,
+so this means it is down or on another port. `curl 127.0.0.1:7842/v1/health`.
 
 **An agent starts and immediately dies.** Usually the binary is not installed —
 the banner's `agents` line says which ones it found. Starting a session for a
 missing agent returns a 503 that names it.
 
-**Approvals never appear.** For Claude Code, the hook block is not in that repo's
-`.claude/settings.json`. For the others, the prompt was not recognised — see
-above.
+**Approvals never appear.** For Claude Code, the hook block is not in that
+repo's `.claude/settings.json` — `farhelm install-hooks --global` covers every
+repo at once. For the others, the prompt was not recognised; see above.
 
 **Push never arrives.** In order of likelihood: the app is not installed to the
 Home Screen (iOS), the relay was started without `--vapid-key`, or the relay is
 not behind TLS. The pairing card reports the first two.
 
-**A paired device stopped working after a restart.** `farhelm.key` was deleted or
-regenerated. Every device is paired against its public half; there is no recovery
-but re-pairing.
+**A paired device stopped working after a restart.** `farhelm.key` was deleted
+or regenerated. Every device is paired against its public half; there is no
+recovery but re-pairing.
+
+**Something says `forge` rather than `farhelm`.** That is the old name, and it
+still works — files, environment variables and settings under either spelling
+are read, and the one being used says so once. `deploy/migrate-to-farhelm.sh`
+moves a deployment across when you want it tidy.
 
 ---
 
@@ -327,13 +217,14 @@ but re-pairing.
 Stated plainly, because a quickstart that oversells is worse than one that
 doesn't exist:
 
-- **No prompt dialect has been checked against a real agent binary.** Claude Code's
-  hook path is verified end to end; the other five are not.
-- **The wrist path has never been timed on real hardware.** Every piece is tested
-  and the whole chain exists, but nobody has actually been woken by this and
-  tapped Approve.
-- **No request has hit a real Anthropic endpoint** from the batch queue. Its wire
-  shapes are exercised against a stand-in that speaks the documented protocol.
+- **No prompt dialect has been checked against a real agent binary.** Claude
+  Code's hook path is verified end to end; the other five are not.
+- **The wrist path has never been timed on real hardware.** Every piece is
+  tested and the whole chain exists, but nobody has actually been woken by this
+  and tapped Approve.
+- **No request has hit a real Anthropic endpoint** from the batch queue. Its
+  wire shapes are exercised against a stand-in that speaks the documented
+  protocol.
 - **tmux is unexercised.** Its argv construction is tested exhaustively but has
   never run against a real tmux. The PTY backend (`--terminal pty`) has.
 
