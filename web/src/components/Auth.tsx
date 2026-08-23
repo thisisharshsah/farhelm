@@ -229,11 +229,11 @@ export function MachinePicker({
       <section className="card" aria-label="No machines yet">
         <div className="chart-title">No machines yet</div>
         <p className="tile-note">
-          A machine joins your workspace by running the daemon with an enrolment
-          key. There is no code to type on either side.
+          One command on the machine you want supervised — it installs Farhelm
+          and asks to join, and you approve it here.
         </p>
         <button className="btn btn-primary" onClick={onAddMachine}>
-          Add a machine
+          Show me the command
         </button>
       </section>
     );
