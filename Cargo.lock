@@ -1109,6 +1109,7 @@ dependencies = [
  "argon2",
  "axum",
  "base64 0.22.1",
+ "farhelm-app",
  "farhelm-crypto",
  "farhelm-mcp",
  "farhelm-proto",

@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+farhelm-app.workspace = true
 farhelm-crypto.workspace = true
 farhelm-mcp.workspace = true
 farhelm-proto.workspace = true

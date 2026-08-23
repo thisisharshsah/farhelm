@@ -17,9 +17,9 @@
 		<string>--port</string>
 		<string>7844</string>
 		<string>--db</string>
-		<string>/Users/harshsah/.farhelm/farhelm-cloud.db</string>
+		<string>/Users/harshsah/.farhelm/forge-cloud.db</string>
 		<string>--key</string>
-		<string>/Users/harshsah/.farhelm/farhelm-cloud.key</string>
+		<string>/Users/harshsah/.farhelm/forge-cloud.key</string>
 		<string>--app-dir</string>
 		<string>/Users/harshsah/.farhelm/web</string>
 		<string>--public-url</string>
