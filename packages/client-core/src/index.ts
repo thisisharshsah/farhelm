@@ -11,6 +11,15 @@ export { CryptoError } from "./errors.ts";
 export { fromBase64Url, toBase64Url } from "./base64.ts";
 export { getMigrating, getMigratingSync, type KeyValueBackend } from "./legacy.ts";
 export {
+  FOLD_AFTER,
+  INSTRUCTION_MARKER,
+  agentName,
+  clockOf,
+  displayText,
+  turnsOf,
+  type Turn,
+} from "./transcript.ts";
+export {
   Identity,
   PAIRING_STORAGE_KEY,
   claimPairing,

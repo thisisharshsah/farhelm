@@ -1,5 +1,5 @@
 /**
- * One session: plan, output tail, instruction box.
+ * One session: plan, transcript, instruction box.
  *
  * The output tail is capped and scrolls, and auto-scroll only engages when the
  * reader is already at the bottom — yanking the view while someone scrolls back
@@ -18,7 +18,12 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import {
+  FOLD_AFTER,
+  agentName,
+  clockOf,
+  displayText,
   statusLabel,
+  turnsOf,
   type PlanStepView,
   type SessionDetail,
   type Transport,
@@ -48,6 +53,7 @@ export function SessionScreen({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [opened, setOpened] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
 
   const outputRef = useRef<ScrollView | null>(null);
@@ -199,27 +205,97 @@ export function SessionScreen({
               if (pinned.current) outputRef.current?.scrollToEnd({ animated: false });
             }}
             style={{
-              maxHeight: 260,
+              /* The transcript is the screen, on the device this product is
+                 for. 260 points made it a letterbox you read a supervision
+                 session through four lines at a time. */
+              maxHeight: 420,
               backgroundColor: palette.surface2,
               borderRadius: 8,
               padding: 8,
             }}
           >
-            {session.output.map((line) => (
-              <Text
-                key={line.seq}
-                style={{
-                  color: line.text.startsWith("›")
-                    ? palette.series1
-                    : palette.textSecondary,
-                  fontFamily: "Menlo",
-                  fontSize: 11,
-                  lineHeight: 16,
-                }}
-              >
-                {line.text || " "}
-              </Text>
-            ))}
+            {turnsOf(session.output).map((turn) => {
+              const key = turn.lines[0]?.seq ?? 0;
+              const mine = turn.kind === "instruction";
+              const folded =
+                !mine && turn.lines.length > FOLD_AFTER && !opened.has(key);
+              const shown = folded ? turn.lines.slice(-FOLD_AFTER) : turn.lines;
+              const hidden = turn.lines.length - shown.length;
+
+              return (
+                <View
+                  key={key}
+                  style={{ marginBottom: 10, alignItems: mine ? "flex-end" : "stretch" }}
+                >
+                  <View
+                    style={{
+                      flexDirection: mine ? "row-reverse" : "row",
+                      alignItems: "baseline",
+                      gap: 6,
+                      marginBottom: 2,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: palette.textSecondary,
+                        fontSize: 10,
+                        letterSpacing: 0.5,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {mine ? "You" : agentName(session.agent)}
+                    </Text>
+                    <Text style={{ color: palette.textMuted, fontSize: 10 }}>
+                      {clockOf(turn.lines[0]?.at_ms)}
+                    </Text>
+                  </View>
+
+                  {folded ? (
+                    <Pressable
+                      onPress={() => setOpened((open) => new Set(open).add(key))}
+                      style={{ paddingVertical: 4, alignSelf: "flex-start" }}
+                    >
+                      <Text style={{ color: palette.textSecondary, fontSize: 11 }}>
+                        Show {hidden} earlier {hidden === 1 ? "line" : "lines"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+
+                  <View
+                    style={
+                      mine
+                        ? {
+                            maxWidth: "85%",
+                            backgroundColor: palette.surface1,
+                            borderWidth: 1,
+                            borderColor: palette.series1,
+                            borderRadius: 8,
+                            paddingHorizontal: 8,
+                            paddingVertical: 5,
+                          }
+                        : undefined
+                    }
+                  >
+                    {shown.map((line) => (
+                      <Text
+                        key={line.seq}
+                        style={{
+                          color: mine ? palette.textPrimary : palette.textSecondary,
+                          /* Your own words are prose and read as prose; the
+                             agent's output is a terminal and stays monospace,
+                             where column alignment carries meaning. */
+                          fontFamily: mine ? undefined : "Menlo",
+                          fontSize: mine ? 13 : 11,
+                          lineHeight: mine ? 18 : 16,
+                        }}
+                      >
+                        {displayText(line.text) || " "}
+                      </Text>
+                    ))}
+                  </View>
+                </View>
+              );
+            })}
           </ScrollView>
         )}
       </Card>

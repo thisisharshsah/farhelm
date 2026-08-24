@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { agentName, displayText, turnsOf } from "./views";
+import { agentName, displayText, turnsOf, type Turn } from "./transcript.ts";
 
 const line = (seq: number, text: string, at_ms = 1_700_000_000_000) => ({ seq, text, at_ms });
 
@@ -40,7 +40,7 @@ describe("grouping lines into turns", () => {
       line(2, "compiling"),
       line(3, "42 passed"),
     ]);
-    expect(turns.map((turn) => turn.kind)).toEqual(["instruction", "agent"]);
+    expect(turns.map((turn: Turn) => turn.kind)).toEqual(["instruction", "agent"]);
     expect(turns[1]!.lines).toHaveLength(2);
   });
 
@@ -52,7 +52,7 @@ describe("grouping lines into turns", () => {
       line(2, "working"),
       line(3, "› second"),
     ]);
-    expect(turns.map((turn) => turn.kind)).toEqual(["instruction", "agent", "instruction"]);
+    expect(turns.map((turn: Turn) => turn.kind)).toEqual(["instruction", "agent", "instruction"]);
   });
 
   it("has nothing to group when nothing has happened", () => {
