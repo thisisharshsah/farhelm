@@ -562,6 +562,31 @@ impl CloudStore {
 
     /* ------------------------------------------------------------ runners */
 
+    /// Every workspace in this deployment.
+    ///
+    /// For the operator's diagnostic and nothing else — the API is always
+    /// scoped to a caller's own org, and there is no request that should ever
+    /// enumerate the deployment. `farhelm cloud doctor` runs on the box, reads
+    /// the database directly, and answers "what is actually in here", which is
+    /// a question that previously had no answer short of opening SQLite.
+    pub fn orgs(&self) -> Result<Vec<Org>> {
+        let conn = self.lock()?;
+        let mut statement = conn
+            .prepare("SELECT id, name, slug, created_at FROM org ORDER BY created_at")
+            .map_err(backend)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(Org {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    slug: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })
+            .map_err(backend)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(backend)
+    }
+
     pub fn runners(&self, org_id: &str) -> Result<Vec<Runner>> {
         let conn = self.lock()?;
         let mut statement = conn
