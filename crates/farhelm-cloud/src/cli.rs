@@ -16,7 +16,7 @@ USAGE:
                   [--relay-url <ws-url>] [--public-url <https-url>]
                   [--app-dir <path>]
 
-Accounts, organisations, roles, plans, and the runner/device registry. Devices
+`doctor` says what is actually in this deployment — workspaces, machines and\nwhether anything can reach them — by reading the database directly, so it\nstill answers when the service will not start.\n\nAccounts, organisations, roles, plans, and the runner/device registry. Devices
 sign in here and get a short-lived token for a relay channel; runners enrol here
 with an enrolment key and appear in the fleet by themselves.
 
@@ -56,11 +56,157 @@ fn defaulted(flag: Option<String>, new: &str, old: &str) -> String {
     }
 }
 
+/// `farhelm cloud doctor` — what is actually in this deployment.
+///
+/// Written the day an outage was diagnosed by opening two SQLite files by hand
+/// and reading a request log. Everything below is a check that investigation
+/// needed, so that the next one is a command.
+///
+/// It reads the database directly rather than asking the API. The operator is
+/// on the box; requiring the service to be healthy in order to ask what is
+/// wrong with it gets the dependency exactly backwards, and the most useful
+/// moment for this is when the control plane will not start.
+fn doctor(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let value_of = |name: &str| {
+        args.iter()
+            .position(|arg| arg == name)
+            .and_then(|index| args.get(index + 1))
+            .cloned()
+    };
+    let db = defaulted(value_of("--db"), "farhelm-cloud.db", "forge-cloud.db");
+    let key_path = defaulted(value_of("--key"), "farhelm-cloud.key", "forge-cloud.key");
+
+    let good = |label: &str, detail: &str| println!("  \u{2713} {label:<13} {detail}");
+    let bad = |label: &str, detail: &str| println!("  \u{2717} {label:<13} {detail}");
+    let note = |label: &str, detail: &str| println!("  \u{b7} {label:<13} {detail}");
+    let fix = |command: &str| println!("                  fix: {command}");
+
+    println!();
+
+    if !std::path::Path::new(&db).exists() {
+        bad("database", &format!("{db} does not exist"));
+        println!();
+        println!("  A control plane started here would create an empty one — no accounts,");
+        println!("  no workspaces, and every machine told its enrolment key is invalid.");
+        println!("  If this deployment has data, it is under another path or another name.");
+        println!();
+        return Ok(());
+    }
+
+    let store = CloudStore::open(&db)?;
+    good(
+        "database",
+        &format!("{db} (schema {})", store.schema_version()?),
+    );
+
+    match std::path::Path::new(&key_path).exists() {
+        true => good("signing key", &key_path),
+        false => {
+            bad("signing key", &format!("{key_path} is missing"));
+            fix("it is minted on first start — but a *new* one signs everyone out");
+        }
+    }
+
+    let now = farhelm_app::time::now_ms();
+    let orgs = store.orgs()?;
+    if orgs.is_empty() {
+        note(
+            "workspaces",
+            "none — nobody has signed up on this deployment",
+        );
+        println!();
+        return Ok(());
+    }
+
+    let mut problems = 0usize;
+    for org in &orgs {
+        println!();
+        println!("  \u{1b}[1m{}\u{1b}[0m  ({})", org.name, org.id);
+
+        let members = store.members(&org.id)?.len();
+        let runners = store.runners(&org.id)?;
+        let devices = store.devices(&org.id)?;
+
+        note("  members", &members.to_string());
+
+        if runners.is_empty() {
+            problems += 1;
+            bad(
+                "  machines",
+                "none enrolled — there is nothing to supervise",
+            );
+            fix("run the install one-liner on the machine you want supervised");
+        }
+
+        for runner in &runners {
+            let online = runner.is_online(now);
+            let age = (now - runner.last_seen_at) / 1000;
+            let detail = match online {
+                true => format!("online \u{b7} v{}", runner.version),
+                false => format!("offline \u{b7} last seen {}", human_age(age)),
+            };
+            if online {
+                good(&format!("  {}", runner.name), &detail);
+            } else {
+                problems += 1;
+                bad(&format!("  {}", runner.name), &detail);
+                fix("check the daemon is running on that machine: farhelm doctor");
+            }
+
+            if runner.pending_public_key.is_some() {
+                problems += 1;
+                bad("    identity", "changed, and nobody has confirmed it");
+                println!("                  Every device is refused until someone approves it in");
+                println!(
+                    "                  the app. This is what a reinstalled machine looks like."
+                );
+            }
+        }
+
+        // The check that would have answered the whole investigation in one
+        // line: machines that nothing can reach are not a working deployment,
+        // however healthy each machine reports itself to be.
+        if devices.is_empty() && !runners.is_empty() {
+            problems += 1;
+            bad(
+                "  devices",
+                "none registered — nothing can reach these machines",
+            );
+            fix("open the app and sign in on the phone or browser you want to use");
+        } else if !devices.is_empty() {
+            good("  devices", &format!("{} registered", devices.len()));
+        }
+    }
+
+    println!();
+    match problems {
+        0 => println!("  \u{2713} nothing to fix."),
+        1 => println!("  1 problem above."),
+        n => println!("  {n} problems above."),
+    }
+    println!();
+    Ok(())
+}
+
+/// "3 minutes", "2 days" — enough to tell "just now" from "since Tuesday".
+fn human_age(seconds: i64) -> String {
+    match seconds {
+        s if s < 90 => format!("{s}s ago"),
+        s if s < 5400 => format!("{} minutes ago", s / 60),
+        s if s < 172_800 => format!("{} hours ago", s / 3600),
+        s => format!("{} days ago", s / 86_400),
+    }
+}
+
 /// Run the control plane from `farhelm cloud`'s arguments.
 pub fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print!("{USAGE}");
         return Ok(());
+    }
+
+    if args.first().map(String::as_str) == Some("doctor") {
+        return doctor(&args[1..]);
     }
 
     let value_of = |name: &str| {
@@ -252,5 +398,34 @@ mod tests {
             db.to_string_lossy(),
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod doctor_tests {
+    use super::*;
+
+    #[test]
+    fn an_age_reads_as_a_person_would_say_it() {
+        // The distinction that matters is "just now" versus "since Tuesday" —
+        // a raw epoch or a seconds count makes the reader do that arithmetic at
+        // the moment they are least inclined to.
+        assert_eq!(human_age(12), "12s ago");
+        assert_eq!(human_age(600), "10 minutes ago");
+        assert_eq!(human_age(7200), "2 hours ago");
+        assert_eq!(human_age(345_600), "4 days ago");
+    }
+
+    #[test]
+    fn the_boundaries_do_not_produce_a_zero() {
+        // "0 minutes ago" and "0 hours ago" are what an off-by-one at a
+        // boundary looks like, and they read as broken rather than as recent.
+        for seconds in [89, 90, 5399, 5400, 172_799, 172_800] {
+            let said = human_age(seconds);
+            assert!(
+                !said.starts_with('0'),
+                "{seconds}s rendered as {said}, which reads as a bug"
+            );
+        }
     }
 }
