@@ -1866,7 +1866,18 @@ fn doctor(flags: &Flags) -> Fallible {
 
         // 2. Reachable from anywhere, or from this machine's browser only.
         match status.get("relay").and_then(|v| v.as_str()) {
-            Some(url) => good("fleet", &format!("connected · {url}")),
+            Some(url) => {
+                good("fleet", &format!("connected · {url}"));
+                // The relay is a `wss://` address nobody opens. What a person
+                // actually needs — and what nothing anywhere told them — is the
+                // address to type on the phone they want to supervise from. The
+                // machine has known it since it enrolled.
+                if let Ok(Some(stored)) =
+                    farhelm_runner::cloud::Credentials::load(Path::new(&flags.cloud_file))
+                {
+                    println!("                  open {} from any network", stored.url);
+                }
+            }
             None => {
                 problems += 1;
                 bad("fleet", "loopback only — no phone can reach this machine");
