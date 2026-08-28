@@ -27,6 +27,7 @@ use farhelm_app::ledger::{Call, Ledger, LedgerError};
 use farhelm_app::store::{BatchStore, LedgerStore, ResponseCache, SessionStore, StoreError};
 use farhelm_app::time::now_ms;
 use farhelm_domain::BudgetRules as _;
+use farhelm_domain::breaker::{Pressure, Restraint, correction, restraint};
 use farhelm_domain::price::{UnknownModel, price_of};
 use farhelm_proto::types::{
     Avoided, BatchItem, BatchStatus, Budget, Dispatch, TaskType, Tier, Usage,
@@ -194,6 +195,12 @@ pub enum GatewayError {
         scope: &'static str,
         budget: Budget,
     },
+    /// Stage 1 hard stop for a session that is failing or looping rather than
+    /// overspending. Separate from the budget stop because the remedy is
+    /// different: there is nothing to raise, and the session has to change.
+    Contained {
+        why: String,
+    },
     Store(StoreError),
     Ledger(LedgerError),
     Dispatch(DispatchError),
@@ -209,6 +216,7 @@ impl std::fmt::Display for GatewayError {
                 budget.spent_usd,
                 budget.cap_usd.unwrap_or(0.0)
             ),
+            GatewayError::Contained { why } => write!(f, "{why}"),
             GatewayError::Store(err) => write!(f, "{err}"),
             GatewayError::Ledger(err) => write!(f, "{err}"),
             GatewayError::Dispatch(err) => write!(f, "{err}"),
@@ -266,6 +274,31 @@ pub struct Gateway<S, C> {
     store: S,
     client: C,
     config: GatewayConfig,
+    /// What each live session has been doing lately, for the circuit breaker.
+    ///
+    /// In memory rather than in the store, and deliberately: these counters
+    /// describe a *run*, not a fact about the session worth surviving a
+    /// restart. A daemon that came back up still holding "six errors in a row"
+    /// would constrain a session whose problem was that the daemon went down.
+    pressure: std::sync::Mutex<std::collections::HashMap<String, SessionPressure>>,
+}
+
+/// One session's recent history, as counters.
+#[derive(Debug, Default, Clone)]
+struct SessionPressure {
+    consecutive_errors: u32,
+    repeated_calls: u32,
+    /// Hash of the last instruction, to notice a request arriving unchanged.
+    /// A hash rather than the text: this map is held for every live session and
+    /// the content is the one thing it does not need to keep.
+    last_instruction: u64,
+}
+
+fn hash_of(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Only for the real client. Deliberately not on [`ModelClient`]: a test double
@@ -285,6 +318,49 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             store,
             client,
             config,
+            pressure: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Record how a call ended, so the breaker has something to read next time.
+    ///
+    /// A success clears the error run outright rather than decrementing it: the
+    /// thing being measured is "stuck", and one call that worked means the
+    /// session is not.
+    fn note_outcome(&self, session_id: &str, instruction: &str, failed: bool) {
+        let Ok(mut all) = self.pressure.lock() else {
+            // A poisoned lock means another thread panicked mid-update. Losing
+            // breaker counters is not a reason to fail the call in front of it.
+            return;
+        };
+        let seen = all.entry(session_id.to_owned()).or_default();
+        let digest = hash_of(instruction);
+
+        seen.repeated_calls = if seen.last_instruction == digest {
+            seen.repeated_calls.saturating_add(1)
+        } else {
+            0
+        };
+        seen.last_instruction = digest;
+        seen.consecutive_errors = match failed {
+            true => seen.consecutive_errors.saturating_add(1),
+            false => 0,
+        };
+    }
+
+    /// What the breaker knows about this session right now.
+    fn pressure_for(&self, session_id: &str, budget: Option<f64>) -> Pressure {
+        let seen = self
+            .pressure
+            .lock()
+            .ok()
+            .and_then(|all| all.get(session_id).cloned())
+            .unwrap_or_default();
+
+        Pressure {
+            budget,
+            consecutive_errors: seen.consecutive_errors,
+            repeated_calls: seen.repeated_calls,
         }
     }
 
@@ -349,11 +425,18 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
 
     pub async fn complete(
         &self,
-        request: CompleteRequest,
+        mut request: CompleteRequest,
     ) -> Result<CompleteResponse, GatewayError> {
         let at_ms = now_ms();
 
-        // ---- stage 1: budget ------------------------------------------------
+        // ---- stage 1: budget, and the rest of the ladder --------------------
+        //
+        // The two hard stops keep their exact shape and their exact threshold:
+        // a session or repo that has spent its cap is refused, as it always
+        // was. What is new is everything *below* the cap. This stage used to be
+        // binary, so 80% — where the wrist already warns — changed nothing
+        // about how the call was served, and the only available intervention
+        // was the one that ends the work.
         let session_budget = self.store.session_budget(&request.session_id)?;
         if session_budget.is_exhausted() {
             return Err(GatewayError::BudgetExhausted {
@@ -372,6 +455,30 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                     budget: repo_budget,
                 });
             }
+        }
+
+        let pressure = self.pressure_for(&request.session_id, session_budget.pct());
+        let restraint = restraint(&pressure);
+        let steer = correction(&pressure);
+
+        match restraint {
+            // Reached by a session that is looping or failing rather than
+            // overspending — the budget stops above have already returned.
+            Restraint::Stop => {
+                self.note_outcome(&request.session_id, &request.instruction, true);
+                return Err(GatewayError::Contained {
+                    why: format!(
+                        "stopped after {} failed calls and {} identical repeats — \
+                         the session is not making progress",
+                        pressure.consecutive_errors, pressure.repeated_calls
+                    ),
+                });
+            }
+            // Cheap and narrow. A session in trouble is the worst possible
+            // place to be paying frontier rates, and this pin is the same lever
+            // compaction already uses.
+            Restraint::Constrain => request.tier_pin = Some(Tier::Small),
+            Restraint::Steer | Restraint::None => {}
         }
 
         // ---- stage 2: deterministic pre-gate --------------------------------
@@ -481,9 +588,17 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
 
         // Only pre-gate *failures* enter the prompt, and they go in the dynamic
         // tail — never ahead of a breakpoint.
+        //
+        // A breaker correction rides in the same place and for the same reason:
+        // it is about this turn, so putting it ahead of a cache breakpoint
+        // would invalidate the stable prefix on every call that carried one.
         let dynamic = match pregate.as_ref().and_then(PreGateReport::digest) {
             Some(digest) => format!("{digest}\n\n{}", request.instruction),
             None => request.instruction.clone(),
+        };
+        let dynamic = match &steer {
+            Some(note) => format!("{note}\n\n{dynamic}"),
+            None => dynamic,
         };
 
         let plan = assemble(&stable, &dynamic, &price);
@@ -614,7 +729,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         let breakpoints = plan.breakpoints();
         let breakpoint_notes = plan.notes.clone();
 
-        let response = self
+        let response = match self
             .client
             .complete(ModelRequest {
                 model: route.model.clone(),
@@ -622,7 +737,20 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 effort: Some(effort_for(route.slot)),
                 plan,
             })
-            .await?;
+            .await
+        {
+            Ok(response) => {
+                // A refusal is not a failure of the session: the model answered,
+                // and answering "no" is a legitimate answer that the breaker
+                // must not read as being stuck.
+                self.note_outcome(&request.session_id, &request.instruction, false);
+                response
+            }
+            Err(err) => {
+                self.note_outcome(&request.session_id, &request.instruction, true);
+                return Err(err.into());
+            }
+        };
 
         // ---- stage 8: ledger ------------------------------------------------
         // Priced against the model that *ran*, not the one requested: a
@@ -807,6 +935,87 @@ mod tests {
             }
         ));
         assert_eq!(gw.client.call_count(), 1, "no second provider call");
+    }
+
+    #[tokio::test]
+    async fn a_looping_session_is_stopped_before_it_is_expensive() {
+        // The reason the breaker takes more than a budget. This session has
+        // spent almost nothing and is uncapped, so every budget check passes —
+        // and it has asked the identical question nine times running.
+        let gw = gateway(store_with(None, None), StubClient::new("same answer"));
+
+        // One more than the threshold: the counter records repeats *after* the
+        // first, so N identical calls leave it at N-1.
+        for _ in 0..=farhelm_domain::breaker::STOP_AFTER_REPEATS {
+            let request = CompleteRequest::new("s1", TaskType::Edit, "run the tests");
+            // Some of these succeed; the loop is the problem, not the failure.
+            let _ = gw.complete(request).await;
+        }
+
+        let err = gw
+            .complete(CompleteRequest::new("s1", TaskType::Edit, "run the tests"))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, GatewayError::Contained { .. }),
+            "a loop with no budget pressure has to be caught by something else"
+        );
+    }
+
+    #[tokio::test]
+    async fn changing_the_request_clears_the_loop() {
+        // The counter measures "stuck", so an agent that tries something else
+        // must not still be carrying the old run. Without this, one bad patch
+        // early in a long session would poison the rest of it.
+        let gw = gateway(store_with(None, None), StubClient::new("ok"));
+
+        for _ in 0..(farhelm_domain::breaker::STOP_AFTER_REPEATS - 1) {
+            let _ = gw
+                .complete(CompleteRequest::new("s1", TaskType::Edit, "same"))
+                .await;
+        }
+        let _ = gw
+            .complete(CompleteRequest::new("s1", TaskType::Edit, "something else"))
+            .await;
+
+        // Back to the original text: this is now the first of a new run, not
+        // the last of the old one.
+        let again = gw
+            .complete(CompleteRequest::new("s1", TaskType::Edit, "same"))
+            .await;
+        assert!(again.is_ok(), "a changed request has to reset the run");
+    }
+
+    #[tokio::test]
+    async fn a_session_near_its_cap_is_served_on_the_cheap_tier() {
+        // The rung that did not exist. Past the warning threshold the call is
+        // still served — but small, rather than at frontier rates right up to
+        // the cliff.
+        // The cap is chosen against the real cost of the first call below, so
+        // that one call lands between the warning threshold and the cap rather
+        // than past it. If pricing moves this fails loudly, which is the right
+        // outcome — the rung being tested only exists between those two lines.
+        let store = store_with(Some(0.022), None);
+        let gw = gateway(store, StubClient::new("answer"));
+
+        let mut first = CompleteRequest::new("s1", TaskType::HardDebug, "one");
+        first.stable = bulky_stable();
+        let spent = gw.complete(first).await.unwrap().cost_usd;
+        assert!(
+            spent > 0.022 * farhelm_domain::budget::WARNING_AT && spent < 0.022,
+            "the first call has to land in the warning band, not past the cap: {spent}"
+        );
+
+        // HardDebug routes to the frontier slot when nothing intervenes.
+        let second = CompleteRequest::new("s1", TaskType::HardDebug, "two");
+        let response = gw.complete(second).await.unwrap();
+
+        assert_eq!(
+            response.tier,
+            Tier::Small,
+            "a session past the warning threshold must stop paying top rates"
+        );
     }
 
     #[tokio::test]

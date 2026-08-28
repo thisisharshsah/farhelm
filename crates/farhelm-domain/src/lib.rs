@@ -33,6 +33,7 @@
 //! field being read.
 
 pub mod agent;
+pub mod breaker;
 pub mod budget;
 pub mod plan;
 pub mod price;
