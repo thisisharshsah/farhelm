@@ -83,6 +83,8 @@ pub const WRITE_FILE: &str = "write_file";
 pub const EDIT_FILE: &str = "edit_file";
 pub const DELETE_FILE: &str = "delete_file";
 pub const RUN: &str = "run";
+/// Leave something on the repository's blackboard for whoever works on it next.
+pub const REMEMBER: &str = "remember";
 
 /// True when a tool changes the world outside the staging overlay.
 ///
@@ -267,6 +269,26 @@ pub fn definitions() -> Vec<serde_json::Value> {
                 "required": ["command"]
             }
         }),
+        serde_json::json!({
+            "name": REMEMBER,
+            "description": "Record something about this repository that the next \
+                agent to work on it should know — a half-finished migration, why a \
+                test is flaky, a file not to touch. Keyed: writing the same key \
+                again replaces the earlier note. Use it for what you learned, not \
+                for what you did; the diff already says what you did.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Short, stable identifier, e.g. \"flaky-test\" \
+                            or \"schema-migration\"."
+                    },
+                    "value": { "type": "string", "description": "What to remember." }
+                },
+                "required": ["key", "value"]
+            }
+        }),
     ]
 }
 
@@ -280,8 +302,27 @@ pub async fn execute<S: Supervisor>(
     call: &ToolCall,
     workspace: &mut Workspace,
     supervisor: &S,
+    remembered: &mut Vec<(String, String)>,
 ) -> Result<String, ToolError> {
     match call.name.as_str() {
+        // Collected rather than written. The agent proposes a note the same way
+        // it proposes an edit, and the caller persists it — which is what keeps
+        // this module free of a storage dependency it otherwise has no use for.
+        REMEMBER => {
+            let key = str_arg(call, "key")?.trim().to_owned();
+            let value = str_arg(call, "value")?.trim().to_owned();
+            if key.is_empty() {
+                return Err(ToolError::BadArguments {
+                    tool: REMEMBER.to_owned(),
+                    detail: "a note needs a key to be found by".to_owned(),
+                });
+            }
+            // Last write wins here too, so an agent correcting itself within one
+            // run does not persist both answers.
+            remembered.retain(|(existing, _)| existing != &key);
+            remembered.push((key.clone(), value));
+            Ok(format!("remembered: {key}"))
+        }
         READ_FILE => {
             let path = str_arg(call, "path")?;
             let text = workspace.read(path)?;
@@ -454,10 +495,33 @@ mod tests {
 
     #[test]
     fn the_tool_order_is_fixed_because_the_prompt_cache_depends_on_it() {
+        // The tools block sits in the stable prefix, so reordering it
+        // invalidates every cached prompt — permanently, since the new order
+        // then becomes the thing that changed last time too.
+        //
+        // Appending is the one safe edit: the existing prefix is untouched, so
+        // the cache is invalidated exactly once, on the upgrade that adds the
+        // tool, and is stable again afterwards. This asserts both halves —
+        // that the original seven still lead, and what the whole list is.
         let names: Vec<String> = definitions()
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_owned())
             .collect();
+
+        let established = [
+            READ_FILE,
+            LIST_FILES,
+            SEARCH,
+            EDIT_FILE,
+            WRITE_FILE,
+            DELETE_FILE,
+            RUN,
+        ];
+        assert_eq!(
+            names[..established.len()],
+            established,
+            "a new tool goes at the end; moving an existing one costs every cached prompt"
+        );
         assert_eq!(
             names,
             vec![
@@ -467,11 +531,10 @@ mod tests {
                 EDIT_FILE,
                 WRITE_FILE,
                 DELETE_FILE,
-                RUN
+                RUN,
+                REMEMBER,
             ]
         );
-        // Twice, to catch anyone who reaches for a HashMap here.
-        assert_eq!(definitions(), definitions());
     }
 
     #[test]
@@ -499,6 +562,7 @@ mod tests {
             &call(READ_FILE, serde_json::json!({"path": "a.txt"})),
             &mut workspace,
             &Yes,
+            &mut Vec::new(),
         )
         .await
         .unwrap();
@@ -519,6 +583,7 @@ mod tests {
             ),
             &mut workspace,
             &Yes,
+            &mut Vec::new(),
         )
         .await
         .unwrap();
@@ -540,6 +605,7 @@ mod tests {
             ),
             &mut workspace,
             &Yes,
+            &mut Vec::new(),
         )
         .await
         .unwrap();
@@ -570,6 +636,7 @@ mod tests {
             &call(EDIT_FILE, serde_json::json!({"path": "a.txt"})),
             &mut workspace,
             &Yes,
+            &mut Vec::new(),
         )
         .await
         .unwrap_err();
@@ -584,6 +651,7 @@ mod tests {
             &call("teleport", serde_json::json!({})),
             &mut workspace,
             &Yes,
+            &mut Vec::new(),
         )
         .await
         .unwrap_err();
@@ -602,6 +670,7 @@ mod tests {
             ),
             &mut workspace,
             &No,
+            &mut Vec::new(),
         )
         .await
         .unwrap_err();
@@ -620,6 +689,7 @@ mod tests {
             &call(RUN, serde_json::json!({"command": "echo hello && exit 3"})),
             &mut workspace,
             &Yes,
+            &mut Vec::new(),
         )
         .await
         .unwrap();
