@@ -499,8 +499,8 @@ pub trait Store:
 /// callers that want four ports name four ports.
 pub mod prelude {
     pub use super::{
-        ApprovalStore, BatchStore, DeviceStore, FleetStore, LedgerStore, PlanStore, ResponseCache,
-        SessionStore, Store, TaskStore, TranscriptStore,
+        ApprovalStore, BatchStore, DeviceStore, FleetStore, HiveStore, LedgerStore, PlanStore,
+        ResponseCache, SessionStore, Store, TaskStore, TranscriptStore,
     };
 }
 

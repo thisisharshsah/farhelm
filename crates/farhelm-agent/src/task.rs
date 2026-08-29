@@ -87,6 +87,12 @@ pub struct TaskSpec {
     /// What the human asked for.
     pub prompt: String,
     pub max_steps: usize,
+    /// What previous sessions left on this repository's blackboard.
+    ///
+    /// Supplied by the caller rather than read here, so this crate keeps no
+    /// storage dependency: the runner knows the repo id, and this crate knows
+    /// what to do with prose.
+    pub memory: Vec<(String, String)>,
     /// Have the frontier model read the finished diff (C10).
     ///
     /// On by default. It is one call on a few kilobytes, and the alternative it
@@ -111,6 +117,7 @@ impl TaskSpec {
             repo_path: repo_path.into(),
             prompt: prompt.into(),
             max_steps: DEFAULT_MAX_STEPS,
+            memory: Vec::new(),
             verify: true,
         }
     }
@@ -165,6 +172,12 @@ pub struct TaskRun {
     pub changes: ChangeSet,
     /// The agent's closing message — the first thing a reviewer reads.
     pub summary: String,
+    /// Notes the agent asked to leave for whoever works on this repo next.
+    ///
+    /// Proposed, not written — the same shape as the change set beside it. The
+    /// caller decides whether they land, which keeps persistence out of a crate
+    /// whose job is running a loop.
+    pub remembered: Vec<(String, String)>,
     /// The full conversation, for the session detail screen.
     pub transcript: Vec<Turn>,
     /// The frontier model's read of the diff (C10). `None` when verification
@@ -173,6 +186,30 @@ pub struct TaskRun {
     /// Everything this task cost, drafting and verification together.
     pub cost_usd: f64,
     pub steps: usize,
+}
+
+/// Conventions, plus whatever previous sessions left on the blackboard.
+///
+/// Kept apart under a heading rather than blended in: what a human wrote in
+/// `CLAUDE.md` and what an agent inferred last Tuesday deserve different levels
+/// of trust, and a reader — model or person — cannot apply that if the two are
+/// interleaved with no seam.
+fn with_memory(conventions: String, memory: &[(String, String)]) -> String {
+    if memory.is_empty() {
+        return conventions;
+    }
+    let mut out = conventions;
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str("## What previous sessions left about this repository\n");
+    out.push_str(
+        "(Written by agents, not by the repository's owner — treat as a lead, not as law.)\n",
+    );
+    for (key, value) in memory {
+        out.push_str(&format!("\n- **{key}**: {value}"));
+    }
+    out
 }
 
 /// Repo conventions, if the repo states any.
@@ -244,6 +281,9 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
             worktree: None,
             changes: ChangeSet::default(),
             summary: String::new(),
+            // A task that never got a worktree never ran a tool, so there is
+            // nothing it could have learned.
+            remembered: Vec::new(),
             transcript: Vec::new(),
             assessment: None,
             cost_usd: 0.0,
@@ -278,7 +318,12 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     let mut stable = StableContext {
         tools: tools::definitions(),
         system: SYSTEM_PROMPT.to_owned(),
-        conventions: conventions(&spec.repo_path),
+        // Memory sits with the conventions, in the stable half: both are
+        // "things that were true before this task started", and both are worth
+        // the cache breakpoint that follows them. An agent that has to be told
+        // the same thing about a repository every session is one nobody keeps
+        // using.
+        conventions: with_memory(conventions(&spec.repo_path), &spec.memory),
         repo_map: String::new(),
         history: Vec::new(),
     };
@@ -286,6 +331,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     let mut pending = spec.prompt.clone();
     let mut cost_usd = 0.0;
     let mut summary = String::new();
+    let mut remembered: Vec<(String, String)> = Vec::new();
     let mut steps = 0;
     let mut outcome = Outcome::StepLimit;
 
@@ -361,13 +407,14 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         let mut results = Vec::with_capacity(response.tool_calls.len());
         for call in &response.tool_calls {
             supervisor.note(&format!("▸ {}", tools::summary(call)));
-            let rendered = match tools::execute(call, &mut workspace, supervisor).await {
-                Ok(body) => render_result(call, &body, false),
-                // A tool error is not a task failure. The model gets told what
-                // went wrong and takes another turn, which is what a person at
-                // a terminal would do with a typo'd filename.
-                Err(err) => render_result(call, &err.to_string(), true),
-            };
+            let rendered =
+                match tools::execute(call, &mut workspace, supervisor, &mut remembered).await {
+                    Ok(body) => render_result(call, &body, false),
+                    // A tool error is not a task failure. The model gets told what
+                    // went wrong and takes another turn, which is what a person at
+                    // a terminal would do with a typo'd filename.
+                    Err(err) => render_result(call, &err.to_string(), true),
+                };
             results.push(rendered);
         }
         pending = results.join("\n\n");
@@ -425,6 +472,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     };
 
     TaskRun {
+        remembered,
         outcome,
         worktree: Some(worktree),
         changes,
@@ -873,6 +921,78 @@ mod tests {
         run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
 
         assert_eq!(client.requests().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn what_previous_sessions_learned_reaches_the_prompt() {
+        // The point of the blackboard. An agent that has to be told the same
+        // thing about a repository every session is one nobody keeps using.
+        let repo = TempRepo::new("memory");
+        repo.write("a.txt", "x\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![ScriptedClient::text("nothing to do")]);
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        let mut spec = TaskSpec::new("s", &repo.0, "x");
+        spec.memory = vec![(
+            "flaky-test".into(),
+            "billing_test is flaky under load".into(),
+        )];
+
+        run(&gateway, &Yes::new(), &spec).await;
+
+        let prefix = client.requests()[0].plan.stable_prefix();
+        assert!(prefix.contains("billing_test is flaky under load"));
+        assert!(
+            prefix.contains("not by the repository's owner"),
+            "a note an agent inferred must not read as something the owner wrote"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repo_with_nothing_remembered_gains_no_heading() {
+        // An empty section is worse than none: it costs tokens on every call
+        // and teaches the model that the heading is usually noise.
+        let repo = TempRepo::new("nomemory");
+        repo.write("a.txt", "x\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![ScriptedClient::text("done")]);
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
+
+        assert!(
+            !client.requests()[0]
+                .plan
+                .stable_prefix()
+                .contains("previous sessions")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_note_the_agent_leaves_comes_back_with_the_run() {
+        // Proposed, not written — the same shape as the change set beside it.
+        let repo = TempRepo::new("remember");
+        repo.write("a.txt", "x\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![
+            ScriptedClient::calls(vec![(
+                crate::tools::REMEMBER,
+                serde_json::json!({"key": "schema", "value": "0010 is half applied"}),
+            )]),
+            ScriptedClient::text("done"),
+        ]);
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        let finished = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
+
+        assert_eq!(
+            finished.remembered,
+            vec![("schema".to_owned(), "0010 is half applied".to_owned())]
+        );
     }
 
     #[tokio::test]

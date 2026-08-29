@@ -469,10 +469,13 @@ async fn the_prompt_sent_to_the_provider_is_cache_shaped() {
     assert_eq!(seen.len(), 2, "expected two turns");
 
     let first = &seen[0];
-    // Tools are sent, and in the order `farhelm_agent::tools::definitions` fixes.
+    // Tools are sent, and in the order `farhelm_agent::tools::definitions`
+    // fixes. A new tool is appended, never inserted — the block sits in the
+    // cached prefix, so reordering it would invalidate every stored prompt.
     let tools = first["tools"].as_array().expect("tools were not sent");
     assert_eq!(tools[0]["name"], "read_file");
-    assert_eq!(tools.last().unwrap()["name"], "run");
+    assert_eq!(tools[6]["name"], "run");
+    assert_eq!(tools.last().unwrap()["name"], "remember");
 
     let system = first["system"].as_array().expect("system was not sent");
     assert!(

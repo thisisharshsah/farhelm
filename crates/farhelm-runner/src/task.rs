@@ -456,6 +456,21 @@ pub fn start(state: &Arc<AppState>, request: StartTask) -> Result<AgentTask, Tas
         if let Some(max_steps) = request.max_steps.filter(|steps| *steps > 0) {
             spec.max_steps = max_steps;
         }
+        // What earlier sessions left about this repository. Read here rather
+        // than in the agent crate, which has no store and is better without
+        // one: the runner is the half that knows the repo id.
+        //
+        // A failure to read is not a failure to start. Working without the
+        // blackboard is how every task worked until now; refusing to run
+        // because a note could not be loaded would trade the whole feature for
+        // a nicety.
+        spec.memory = state
+            .store
+            .notes(&task.repo_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|note| (note.key, note.value))
+            .collect();
         spec
     };
 
@@ -511,6 +526,26 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     let Ok(Some(mut task)) = state.store.get_task(&task_id) else {
         return;
     };
+
+    // Persisted whatever the outcome. A note is what the agent *learned*, and
+    // a task that failed usually learned the most — refusing to keep it because
+    // the diff was rejected would throw away the reason it was rejected.
+    if !outcome.remembered.is_empty() {
+        let now = now_ms();
+        for (key, value) in &outcome.remembered {
+            let note = farhelm_proto::types::Note {
+                repo_id: task.repo_id.clone(),
+                key: key.clone(),
+                value: value.clone(),
+                written_by: task.session_id.clone(),
+                written_at: now,
+            };
+            if let Err(err) = state.store.put_note(&note) {
+                // Logged, never fatal: the work is done and the diff is waiting.
+                eprintln!("hive: could not keep note {key}: {err}");
+            }
+        }
+    }
 
     task.summary = outcome.summary.clone();
     task.cost_usd = outcome.cost_usd;
