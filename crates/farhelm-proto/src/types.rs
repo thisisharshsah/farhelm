@@ -378,6 +378,49 @@ pub struct Device {
     pub paired_at: i64,
 }
 
+/// One agent saying something to another.
+///
+/// The whole of the hive's message layer. Two sessions on the same repository
+/// can leave each other notes; a third with no business in that repository
+/// cannot, which is enforced on the way in rather than on the way out.
+///
+/// # Why there is no router type
+///
+/// The design this borrows from keeps its mailboxes as files in a git
+/// repository, which forces a single-committer router to exist so that two
+/// agents writing at once do not conflict. Here the store is transactional, so
+/// the insert *is* the router: delivery and durability are the same operation,
+/// and there is no second process to be running for a message to arrive.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Message {
+    pub id: String,
+    /// Who it is for.
+    pub session_id: String,
+    /// Who sent it. A session, not a person — anything a *person* says arrives
+    /// as an instruction and is already in the transcript.
+    pub from_session_id: String,
+    pub body: String,
+    pub created_at: i64,
+    /// When the recipient picked it up. `None` while it is still waiting.
+    pub read_at: Option<i64>,
+}
+
+/// A fact left where every agent on a repository can see it.
+///
+/// The blackboard. Messages are for "you specifically, now"; this is for
+/// "whoever works on this next" — the migration is half-done, the flaky test is
+/// flaky for this reason, do not touch that file. Keyed rather than appended so
+/// that a later answer replaces an earlier one instead of both being true.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    pub repo_id: String,
+    pub key: String,
+    pub value: String,
+    /// Which session last wrote it, so a wrong note can be traced.
+    pub written_by: String,
+    pub written_at: i64,
+}
+
 /// One permission request and its outcome. Kept forever: it is both the audit
 /// trail and the training data for auto-approve policy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

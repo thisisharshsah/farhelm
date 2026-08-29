@@ -9,7 +9,7 @@
 
 use farhelm_proto::types::{
     AgentTask, Approval, BatchItem, BatchStatus, Budget, DecidedVia, Decision, Device, Machine,
-    Plan, PlanStep, Repo, Session, TaskStatus, UsageEvent,
+    Message, Note, Plan, PlanStep, Repo, Session, TaskStatus, UsageEvent,
 };
 use farhelm_proto::views::OutputLine;
 
@@ -423,6 +423,48 @@ store_port! {
     }
 }
 
+store_port! {
+    /// The hive: what agents say to each other, and what they leave behind.
+    ///
+    /// Two shapes because agents have two things to say. A [`Message`] is
+    /// addressed and consumed — a handoff, a question, an answer. A [`Note`] is
+    /// left on a repository for whoever works on it next and is consumed by
+    /// nobody.
+    ///
+    /// There is no router here, and that is the interesting part. The design
+    /// this borrows from keeps mailboxes as files in a git repository, which
+    /// forces a single-committer process to exist so two agents writing at once
+    /// cannot conflict. This store is transactional, so the insert *is* the
+    /// delivery: no second process has to be running for a message to arrive,
+    /// and there is no half-written mailbox to reconcile after a crash.
+    HiveStore {
+    /// Deliver a message. Posting and arriving are one operation.
+    fn post_message(&self, message: &Message) -> Result<()>;
+
+    /// What is waiting for this session, oldest first.
+    ///
+    /// Unread only. A session asks this on its own schedule, so returning read
+    /// messages would make every poll re-deliver its entire history.
+    fn inbox(&self, session_id: &str) -> Result<Vec<Message>>;
+
+    /// Mark messages picked up. Returns how many were still unread.
+    ///
+    /// Separate from [`HiveStore::inbox`] rather than folded into it, because a
+    /// read that consumed would lose a handoff to any crash between reading and
+    /// acting on it. The session says when it has actually taken delivery.
+    fn mark_read(&self, ids: &[String], now_ms: i64) -> Result<usize>;
+
+    /// Everything an agent picking up this repository should know.
+    fn notes(&self, repo_id: &str) -> Result<Vec<Note>>;
+
+    /// Write a note, replacing any earlier one under the same key.
+    fn put_note(&self, note: &Note) -> Result<()>;
+
+    /// Remove a note that has stopped being true. Returns whether there was one.
+    fn clear_note(&self, repo_id: &str, key: &str) -> Result<bool>;
+    }
+}
+
 /// Everything, for a caller that genuinely needs everything.
 ///
 /// The runner's `AppState` holds one store and its handlers touch all of it, so
@@ -444,6 +486,7 @@ pub trait Store:
     + ResponseCache
     + DeviceStore
     + TranscriptStore
+    + HiveStore
 {
 }
 
@@ -472,6 +515,7 @@ impl<T> Store for T where
         + ResponseCache
         + DeviceStore
         + TranscriptStore
+        + HiveStore
 {
 }
 
