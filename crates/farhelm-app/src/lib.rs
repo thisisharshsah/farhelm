@@ -51,6 +51,6 @@ pub mod time;
 
 pub use ledger::{Call, Ledger, LedgerError, Summary};
 pub use store::{
-    ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, LedgerStore, PlanStore,
-    ResponseCache, SessionStore, Store, StoreError, TaskOutcome, TaskStore, TimeRange,
+    ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, HiveStore, LedgerStore,
+    PlanStore, ResponseCache, SessionStore, Store, StoreError, TaskOutcome, TaskStore, TimeRange,
 };

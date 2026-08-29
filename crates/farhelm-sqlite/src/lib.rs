@@ -11,14 +11,15 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use farhelm_app::store::{
-    ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, LedgerStore, PlanStore,
-    ResponseCache, Result, SessionStore, StoreError, TaskOutcome, TaskStore, TimeRange,
+    ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, HiveStore, LedgerStore,
+    PlanStore, ResponseCache, Result, SessionStore, StoreError, TaskOutcome, TaskStore, TimeRange,
     TranscriptStore, UsageTotals,
 };
 use farhelm_proto::types::{
     Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
-    Device, DeviceKind, Dispatch, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo,
-    Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
+    Device, DeviceKind, Dispatch, Machine, Message, Note, ParseEnumError, Plan, PlanStep,
+    PlanStepStatus, Repo, Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage,
+    UsageEvent,
 };
 use farhelm_proto::views::OutputLine;
 
@@ -33,6 +34,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0007_dispatch.sql"),
     include_str!("../migrations/0008_task_worktree.sql"),
     include_str!("../migrations/0009_session_output.sql"),
+    include_str!("../migrations/0010_hive.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -1505,6 +1507,143 @@ impl DeviceStore for SqliteStore {
     }
 }
 
+impl HiveStore for SqliteStore {
+    fn post_message(&self, message: &Message) -> Result<()> {
+        let conn = self.lock()?;
+        // `OR IGNORE` on the id: posting is retried by callers that cannot tell
+        // whether the previous attempt landed, and a handoff delivered twice is
+        // worse than one delivered once — the recipient would act on it twice.
+        conn.execute(
+            "INSERT OR IGNORE INTO hive_message
+                 (id, session_id, from_session_id, body, created_at, read_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                message.id,
+                message.session_id,
+                message.from_session_id,
+                message.body,
+                message.created_at,
+                message.read_at,
+            ],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    fn inbox(&self, session_id: &str) -> Result<Vec<Message>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, from_session_id, body, created_at, read_at
+                 FROM hive_message
+                 WHERE session_id = ?1 AND read_at IS NULL
+                 ORDER BY created_at ASC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![session_id], read_message)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
+    fn mark_read(&self, ids: &[String], now_ms: i64) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.lock()?;
+        // One transaction: marking half a batch read would leave the recipient
+        // acting on messages it will be handed again on the next poll.
+        let tx = conn.transaction().map_err(backend)?;
+        let mut marked = 0usize;
+        for id in ids {
+            // `read_at IS NULL` in the predicate, so the count is how many were
+            // *actually* still waiting rather than how many ids were passed.
+            marked += tx
+                .execute(
+                    "UPDATE hive_message SET read_at = ?2
+                     WHERE id = ?1 AND read_at IS NULL",
+                    params![id, now_ms],
+                )
+                .map_err(backend)?;
+        }
+        tx.commit().map_err(backend)?;
+        Ok(marked)
+    }
+
+    fn notes(&self, repo_id: &str) -> Result<Vec<Note>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT repo_id, key, value, written_by, written_at
+                 FROM hive_note WHERE repo_id = ?1 ORDER BY key ASC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![repo_id], read_note)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
+    fn put_note(&self, note: &Note) -> Result<()> {
+        let conn = self.lock()?;
+        // Replacing rather than appending: a blackboard where the old answer
+        // and the new one are both present is a conversation nobody summarised.
+        conn.execute(
+            "INSERT INTO hive_note (repo_id, key, value, written_by, written_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(repo_id, key) DO UPDATE SET
+                 value = excluded.value,
+                 written_by = excluded.written_by,
+                 written_at = excluded.written_at",
+            params![
+                note.repo_id,
+                note.key,
+                note.value,
+                note.written_by,
+                note.written_at,
+            ],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    fn clear_note(&self, repo_id: &str, key: &str) -> Result<bool> {
+        let conn = self.lock()?;
+        let removed = conn
+            .execute(
+                "DELETE FROM hive_note WHERE repo_id = ?1 AND key = ?2",
+                params![repo_id, key],
+            )
+            .map_err(backend)?;
+        Ok(removed > 0)
+    }
+}
+
+fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
+    Ok(Message {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        from_session_id: row.get(2)?,
+        body: row.get(3)?,
+        created_at: row.get(4)?,
+        read_at: row.get(5)?,
+    })
+}
+
+fn read_note(row: &Row<'_>) -> rusqlite::Result<Note> {
+    Ok(Note {
+        repo_id: row.get(0)?,
+        key: row.get(1)?,
+        value: row.get(2)?,
+        written_by: row.get(3)?,
+        written_at: row.get(4)?,
+    })
+}
+
 #[cfg(test)]
 mod migration_tests {
     use super::*;
@@ -2758,5 +2897,190 @@ mod batch_queue_tests {
             .execute("UPDATE batch_item SET status = 'nonsense'", [])
             .unwrap();
         assert!(store.get_batch_item("b1").is_err());
+    }
+}
+
+#[cfg(test)]
+mod hive_tests {
+    use super::*;
+
+    fn store() -> SqliteStore {
+        SqliteStore::open_in_memory().unwrap()
+    }
+
+    fn message(id: &str, to: &str, at: i64) -> Message {
+        Message {
+            id: id.into(),
+            session_id: to.into(),
+            from_session_id: "s-sender".into(),
+            body: "the migration is half applied".into(),
+            created_at: at,
+            read_at: None,
+        }
+    }
+
+    #[test]
+    fn a_message_arrives_by_being_written() {
+        // The property that removes the router: there is no second process
+        // whose job is delivery, so a posted message is a delivered message.
+        let store = store();
+        store.post_message(&message("m1", "s-worker", 100)).unwrap();
+
+        let waiting = store.inbox("s-worker").unwrap();
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].body, "the migration is half applied");
+    }
+
+    #[test]
+    fn an_inbox_holds_only_what_is_addressed_to_it() {
+        let store = store();
+        store.post_message(&message("m1", "s-one", 100)).unwrap();
+        store.post_message(&message("m2", "s-two", 100)).unwrap();
+
+        assert_eq!(store.inbox("s-one").unwrap().len(), 1);
+        assert_eq!(store.inbox("s-two").unwrap().len(), 1);
+        assert!(store.inbox("s-three").unwrap().is_empty());
+    }
+
+    #[test]
+    fn messages_arrive_in_the_order_they_were_sent() {
+        // A handoff read out of order is worse than one read late: "ignore what
+        // I just said" arriving first inverts the instruction.
+        let store = store();
+        store.post_message(&message("m2", "s1", 200)).unwrap();
+        store.post_message(&message("m1", "s1", 100)).unwrap();
+        store.post_message(&message("m3", "s1", 300)).unwrap();
+
+        let ids: Vec<_> = store
+            .inbox("s1")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn posting_the_same_message_twice_delivers_it_once() {
+        // Callers retry when they cannot tell whether the first attempt landed.
+        // A handoff delivered twice is worse than one delivered once, because
+        // the recipient acts on it twice.
+        let store = store();
+        store.post_message(&message("m1", "s1", 100)).unwrap();
+        store.post_message(&message("m1", "s1", 100)).unwrap();
+
+        assert_eq!(store.inbox("s1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reading_does_not_consume_and_marking_does() {
+        // Split deliberately: a read that consumed would lose a handoff to any
+        // crash between reading it and acting on it.
+        let store = store();
+        store.post_message(&message("m1", "s1", 100)).unwrap();
+
+        assert_eq!(store.inbox("s1").unwrap().len(), 1);
+        assert_eq!(store.inbox("s1").unwrap().len(), 1, "reading is not taking");
+
+        assert_eq!(store.mark_read(&["m1".into()], 500).unwrap(), 1);
+        assert!(store.inbox("s1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn marking_twice_reports_the_second_time_as_nothing_to_do() {
+        // The count is how many were still waiting, not how many ids were
+        // passed — otherwise a retried acknowledgement reads as new work done.
+        let store = store();
+        store.post_message(&message("m1", "s1", 100)).unwrap();
+
+        assert_eq!(store.mark_read(&["m1".into()], 500).unwrap(), 1);
+        assert_eq!(store.mark_read(&["m1".into()], 600).unwrap(), 0);
+    }
+
+    #[test]
+    fn marking_nothing_is_not_an_error() {
+        assert_eq!(store().mark_read(&[], 100).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_read_message_is_kept_rather_than_deleted() {
+        // A handoff somebody acted on is exactly what you want to read back
+        // when the result is wrong. Deleting it would leave the transcript
+        // saying an agent did something for no reason.
+        let store = store();
+        store.post_message(&message("m1", "s1", 100)).unwrap();
+        store.mark_read(&["m1".into()], 500).unwrap();
+
+        let conn = store.lock().unwrap();
+        let kept: i64 = conn
+            .query_row("SELECT COUNT(*) FROM hive_message", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(kept, 1);
+    }
+
+    #[test]
+    fn a_note_replaces_the_earlier_answer_rather_than_joining_it() {
+        // An append-only blackboard reads as a conversation nobody summarised,
+        // which is the thing it exists to avoid.
+        let store = store();
+        let mut note = Note {
+            repo_id: "r1".into(),
+            key: "migration".into(),
+            value: "half applied".into(),
+            written_by: "s1".into(),
+            written_at: 100,
+        };
+        store.put_note(&note).unwrap();
+
+        note.value = "finished".into();
+        note.written_by = "s2".into();
+        note.written_at = 200;
+        store.put_note(&note).unwrap();
+
+        let notes = store.notes("r1").unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].value, "finished");
+        assert_eq!(
+            notes[0].written_by, "s2",
+            "a wrong note has to be traceable"
+        );
+    }
+
+    #[test]
+    fn notes_belong_to_one_repository() {
+        let store = store();
+        for repo in ["r1", "r2"] {
+            store
+                .put_note(&Note {
+                    repo_id: repo.into(),
+                    key: "k".into(),
+                    value: repo.into(),
+                    written_by: "s1".into(),
+                    written_at: 100,
+                })
+                .unwrap();
+        }
+
+        assert_eq!(store.notes("r1").unwrap()[0].value, "r1");
+        assert_eq!(store.notes("r2").unwrap()[0].value, "r2");
+        assert!(store.notes("r3").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_note_that_stopped_being_true_can_be_cleared() {
+        let store = store();
+        store
+            .put_note(&Note {
+                repo_id: "r1".into(),
+                key: "k".into(),
+                value: "v".into(),
+                written_by: "s1".into(),
+                written_at: 100,
+            })
+            .unwrap();
+
+        assert!(store.clear_note("r1", "k").unwrap());
+        assert!(!store.clear_note("r1", "k").unwrap(), "already gone");
+        assert!(store.notes("r1").unwrap().is_empty());
     }
 }
