@@ -673,16 +673,16 @@ async fn serve_async(flags: Flags) -> Fallible {
         // which is not always the key this process just loaded.
         Some((_, session)) => {
             let held = session.read().expect("cloud session poisoned");
-            Some(state::RelayInfo {
-                url: held.relay_url.clone(),
-                channel: held.channel.clone(),
-            })
+            Some(state::RelayInfo::new(
+                held.relay_url.clone(),
+                held.channel.clone(),
+                now_ms(),
+            ))
         }
-        None => flags.relay.as_ref().map(|url| state::RelayInfo {
-            url: url.clone(),
+        None => flags.relay.as_ref().map(|url| {
             // The channel is derived from the machine identity so it is stable
             // across restarts and unique per runner.
-            channel: machine_channel(&identity),
+            state::RelayInfo::new(url.clone(), machine_channel(&identity), now_ms())
         }),
     };
 
@@ -1866,6 +1866,18 @@ fn doctor(flags: &Flags) -> Fallible {
 
         // 2. Reachable from anywhere, or from this machine's browser only.
         match status.get("relay").and_then(|v| v.as_str()) {
+            // Configured is not connected. This said "connected" from the URL
+            // alone, so a machine whose link had dropped reported a healthy
+            // fleet while no device could reach it — the one failure this
+            // check exists to catch, reported as its opposite.
+            Some(url) if status.get("relay_linked").and_then(|v| v.as_bool()) == Some(false) => {
+                problems += 1;
+                bad("fleet", &format!("configured but not connected · {url}"));
+                println!(
+                    "                  The machine is not on its relay, so nothing can reach it."
+                );
+                fix("check the relay is up, then restart the daemon");
+            }
             Some(url) => {
                 good("fleet", &format!("connected · {url}"));
                 // The relay is a `wss://` address nobody opens. What a person

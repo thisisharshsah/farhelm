@@ -236,9 +236,12 @@ async fn build_state(settings: &Settings) -> Arc<AppState> {
             .expect("could not load this machine's key"),
     );
 
-    let relay_info = settings.relay.as_ref().map(|url| RelayInfo {
-        url: url.clone(),
-        channel: channel_for(&identity),
+    let relay_info = settings.relay.as_ref().map(|url| {
+        RelayInfo::new(
+            url.clone(),
+            channel_for(&identity),
+            farhelm_app::time::now_ms(),
+        )
     });
 
     // A desktop app is the process you are looking at, so PTYs it owns are the
