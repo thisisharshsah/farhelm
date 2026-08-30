@@ -7,6 +7,7 @@
 
 use farhelm_sqlite::SqliteStore;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use farhelm_app::store::prelude::*;
@@ -18,6 +19,50 @@ use tokio::sync::broadcast;
 pub struct RelayInfo {
     pub url: String,
     pub channel: String,
+    /// Whether the link is up **right now**, as opposed to configured.
+    ///
+    /// These were the same field until a machine spent an afternoon
+    /// unreachable while `doctor` reported `fleet connected`. It was reading
+    /// the URL — which never changes — and calling that a connection. A device
+    /// asking for that machine got its token, dialled the relay, and found
+    /// nobody there, with every check on both sides saying green.
+    ///
+    /// Set by the link task itself, so it cannot drift from the socket: true
+    /// once the dial succeeds, false the moment the loop comes back round.
+    pub linked: Arc<AtomicBool>,
+    /// When `linked` last changed, so "offline" can say for how long.
+    pub changed_at: Arc<AtomicI64>,
+}
+
+impl RelayInfo {
+    pub fn new(url: String, channel: String, now_ms: i64) -> Self {
+        Self {
+            url,
+            channel,
+            // Starts down. The link is dialled a moment later, and claiming a
+            // connection that has not happened yet is the bug this field
+            // exists to fix.
+            linked: Arc::new(AtomicBool::new(false)),
+            changed_at: Arc::new(AtomicI64::new(now_ms)),
+        }
+    }
+
+    /// Record the link coming up or going down. Returns whether it changed.
+    pub fn set_linked(&self, up: bool, now_ms: i64) -> bool {
+        let changed = self.linked.swap(up, Ordering::Relaxed) != up;
+        if changed {
+            self.changed_at.store(now_ms, Ordering::Relaxed);
+        }
+        changed
+    }
+
+    pub fn is_linked(&self) -> bool {
+        self.linked.load(Ordering::Relaxed)
+    }
+
+    pub fn changed_at_ms(&self) -> i64 {
+        self.changed_at.load(Ordering::Relaxed)
+    }
 }
 
 /// The gateway as the runner holds it: the real store, the real provider.
@@ -748,5 +793,45 @@ mod tests {
         state.publish(ServerEvent::SessionUpsert {
             session_id: "s1".into(),
         });
+    }
+}
+
+#[cfg(test)]
+mod relay_liveness_tests {
+    use super::*;
+
+    #[test]
+    fn a_link_starts_down_rather_than_assumed_up() {
+        // The dial happens a moment after this is built. Claiming a connection
+        // that has not been made yet is the bug the field exists to fix.
+        let relay = RelayInfo::new("wss://relay".into(), "forge-abc".into(), 100);
+        assert!(!relay.is_linked());
+    }
+
+    #[test]
+    fn coming_up_and_going_down_are_both_recorded() {
+        let relay = RelayInfo::new("wss://relay".into(), "forge-abc".into(), 100);
+
+        assert!(relay.set_linked(true, 200), "up is a change");
+        assert!(relay.is_linked());
+        assert_eq!(relay.changed_at_ms(), 200);
+
+        assert!(relay.set_linked(false, 300), "down is a change");
+        assert!(!relay.is_linked());
+        assert_eq!(relay.changed_at_ms(), 300);
+    }
+
+    #[test]
+    fn saying_the_same_thing_twice_does_not_restart_the_clock() {
+        // The link loop sets `false` on every cycle, including cycles where it
+        // was already false. If each of those moved the timestamp, "offline for
+        // how long" would always answer "a second" — which is the one thing it
+        // must not say about a machine that has been unreachable all afternoon.
+        let relay = RelayInfo::new("wss://relay".into(), "forge-abc".into(), 100);
+        relay.set_linked(true, 200);
+
+        assert!(relay.set_linked(false, 300));
+        assert!(!relay.set_linked(false, 900), "no change, no new timestamp");
+        assert_eq!(relay.changed_at_ms(), 300, "still down since 300");
     }
 }

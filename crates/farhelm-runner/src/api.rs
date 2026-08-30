@@ -490,8 +490,17 @@ pub struct RunnerStatus {
     /// request needs it, so a runner pointed at one that cannot produce a token
     /// starts cleanly and reports a gateway it cannot use.
     pub credential_error: Option<String>,
-    /// Reachable from a phone, rather than from this machine's browser only.
+    /// The relay this runner is configured to dial. Configured, not connected —
+    /// see `relay_linked`, which is the field that answers "can a phone reach
+    /// this machine right now".
     pub relay: Option<String>,
+    /// Whether the link is up at this moment.
+    ///
+    /// `None` when no relay is configured, so "not applicable" and "configured
+    /// and down" stay distinguishable. They were the same answer until a
+    /// machine sat unreachable for an afternoon with every check reporting a
+    /// healthy fleet, because the only thing being checked was a URL.
+    pub relay_linked: Option<bool>,
     pub machine_id: String,
     /// Agents installed on this machine, by id.
     pub agents: Vec<String>,
@@ -533,6 +542,7 @@ async fn status(State(state): State<Arc<AppState>>) -> ApiResult<RunnerStatus> {
         gateway: state.gateway.is_some(),
         credential_error,
         relay: state.relay.as_ref().map(|relay| relay.url.clone()),
+        relay_linked: state.relay.as_ref().map(|relay| relay.is_linked()),
         machine_id: state.machine_id.clone(),
         agents,
         sessions: state
@@ -752,6 +762,9 @@ async fn pair_offer(State(state): State<Arc<AppState>>) -> ApiResult<farhelm_cry
             // named a channel the runner would never publish on, so a device that
             // somehow kept it would have listened to silence.
             channel: farhelm_proto::channel_for(state.identity.public_key().as_str()),
+            // Not linked, and never will be: there is no relay to link to.
+            linked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            changed_at: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
         });
 
     let offer = state

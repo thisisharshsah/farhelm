@@ -369,10 +369,11 @@ async fn a_configured_relay_channel_is_used_as_is() {
         SqliteStore::open_in_memory().unwrap(),
         |_| None,
         Arc::new(Identity::generate()),
-        Some(farhelm_runner::state::RelayInfo {
-            url: "wss://relay.example".into(),
-            channel: "forge-configured".into(),
-        }),
+        Some(farhelm_runner::state::RelayInfo::new(
+            "wss://relay.example".into(),
+            "forge-configured".into(),
+            0,
+        )),
     );
     let addr = serve(Arc::clone(&state)).await;
 

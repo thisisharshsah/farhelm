@@ -171,10 +171,27 @@ pub fn spawn(state: Arc<AppState>, identity: Arc<Identity>, config: RelayConfig)
     tokio::spawn(async move {
         let mut backoff = MIN_BACKOFF;
         loop {
-            match run_once(&state, &identity, &config).await {
+            let outcome = run_once(&state, &identity, &config).await;
+
+            // Down, whichever way it ended. Recorded before the sleep, because
+            // the sleep is exactly the window in which somebody asks why their
+            // phone cannot see this machine.
+            if let Some(relay) = state.relay.as_ref() {
+                relay.set_linked(false, farhelm_app::time::now_ms());
+            }
+
+            match outcome {
                 Ok(()) => {
                     // A clean close still means reconnecting, just without the
                     // penalty — the relay may simply have been redeployed.
+                    //
+                    // Said out loud, which it was not. This branch is the
+                    // ordinary way the link ends — a relay restart, an idle
+                    // timeout — and logging nothing meant a machine could drop
+                    // off the fleet and reconnect all afternoon with not one
+                    // line anywhere to show it had happened. The failure branch
+                    // below was loud; the common one was silent.
+                    println!("relay link: closed by the relay; reconnecting");
                     backoff = MIN_BACKOFF;
                 }
                 Err(err) => {
@@ -207,6 +224,9 @@ async fn run_once(
         // stderr, and from there to a journal somebody else can read.
         .map_err(|err| format!("could not connect to {base}: {err}"))?;
     println!("relay link: connected to {base}");
+    if let Some(relay) = state.relay.as_ref() {
+        relay.set_linked(true, farhelm_app::time::now_ms());
+    }
 
     let (mut sink, mut stream) = socket.split();
 
