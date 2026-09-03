@@ -1108,3 +1108,96 @@ async fn reviewing_over_the_command_layer_enforces_the_same_rules() {
     }
     assert_eq!(repo.read("a.txt"), "after\n");
 }
+
+/// What one task learned reaches the next one, through the real daemon.
+///
+/// The pieces were unit-tested on both sides — the tool collects, the runner
+/// persists, the spec carries, the prompt renders — and none of that proves the
+/// loop closes. This is the only test that runs a note the whole way: an agent
+/// calls `remember`, the runner writes it against the repo, a *second* task on
+/// the same repo starts, and the note is in the prompt the provider receives.
+///
+/// It is also the test that would have caught the blackboard shipping with no
+/// reader and no writer, which is what it did the first time.
+#[tokio::test]
+async fn a_note_one_task_leaves_reaches_the_next_task_on_that_repo() {
+    let repo = TempRepo::new("memory-loop");
+    repo.write("a.txt", "x\n");
+    repo.commit();
+
+    let provider = Arc::new(Provider {
+        replies: Mutex::new(vec![
+            // First task: learn something and say so.
+            tool_use(
+                "toolu_1",
+                "remember",
+                serde_json::json!({
+                    "key": "flaky-test",
+                    "value": "billing_test fails under load, not on logic"
+                }),
+            ),
+            final_text("Noted the flaky test."),
+            // Second task: nothing to do. What matters is the prompt it got.
+            final_text("Nothing to change."),
+        ]),
+        seen: Mutex::new(Vec::new()),
+    });
+
+    let addr = spawn_provider(Arc::clone(&provider)).await;
+    let state = state_for(addr);
+    let base = spawn_runner(Arc::clone(&state)).await;
+    let http = reqwest::Client::new();
+
+    let start = |prompt: &'static str| {
+        let http = http.clone();
+        let base = base.clone();
+        let path = repo.path();
+        async move {
+            let started: serde_json::Value = http
+                .post(format!("{base}/v1/tasks"))
+                .json(&serde_json::json!({ "repo_path": path, "prompt": prompt }))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            started["id"].as_str().unwrap().to_owned()
+        }
+    };
+
+    let first = start("look around").await;
+    wait_for_status(&http, &base, &first, TaskStatus::NoChanges).await;
+
+    // Persisted against the repository, not the session: the whole point is
+    // that it outlives the task that learned it.
+    let repo_id = state
+        .store
+        .list_tasks(10)
+        .unwrap()
+        .first()
+        .expect("no task was recorded")
+        .repo_id
+        .clone();
+    let stored = state.store.notes(&repo_id).unwrap();
+    assert_eq!(stored.len(), 1, "the note never reached the store");
+    assert_eq!(stored[0].key, "flaky-test");
+
+    let second = start("look again").await;
+    wait_for_status(&http, &base, &second, TaskStatus::NoChanges).await;
+
+    // The prompt the *second* task sent. Everything before this could pass
+    // with a blackboard nothing ever read.
+    let seen = provider.seen.lock().unwrap();
+    let last = seen.last().expect("the second task never called the model");
+    let system = serde_json::to_string(&last["system"]).unwrap();
+
+    assert!(
+        system.contains("billing_test fails under load"),
+        "the note did not reach the next task's prompt: {system}"
+    );
+    assert!(
+        system.contains("not by the repository's owner"),
+        "a note an agent inferred must not read as something the owner wrote"
+    );
+}
