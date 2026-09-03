@@ -469,13 +469,18 @@ async fn the_prompt_sent_to_the_provider_is_cache_shaped() {
     assert_eq!(seen.len(), 2, "expected two turns");
 
     let first = &seen[0];
-    // Tools are sent, and in the order `farhelm_agent::tools::definitions`
-    // fixes. A new tool is appended, never inserted — the block sits in the
-    // cached prefix, so reordering it would invalidate every stored prompt.
+    // Tools are sent, and in the order `farhelm_agent::tools` fixes. A new tool
+    // is appended, never inserted — the block sits in the cached prefix, so
+    // reordering it would invalidate every stored prompt.
+    //
+    // A top-level task is an orchestrator, so it gets the leaf list plus
+    // `delegate` on the end. The leaf list is unchanged and stays a prefix,
+    // which is what keeps a delegated agent's cached prompt valid.
     let tools = first["tools"].as_array().expect("tools were not sent");
     assert_eq!(tools[0]["name"], "read_file");
     assert_eq!(tools[6]["name"], "run");
-    assert_eq!(tools.last().unwrap()["name"], "remember");
+    assert_eq!(tools[7]["name"], "remember");
+    assert_eq!(tools.last().unwrap()["name"], "delegate");
 
     let system = first["system"].as_array().expect("system was not sent");
     assert!(

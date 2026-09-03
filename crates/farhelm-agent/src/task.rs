@@ -236,6 +236,126 @@ fn conventions(root: &Path) -> String {
 }
 
 /// Render the assistant's turn — its prose plus the calls it made — for history.
+/// What a delegated agent is told about its position.
+///
+/// It is not told it is subordinate, because that is not useful information for
+/// doing the work — it is told the two things that actually change: that it
+/// shares a checkout with work already done, and that it has to finish, because
+/// nothing downstream will pick up where it stopped.
+const DELEGATE_PROMPT: &str = "\
+You are working inside a larger task, in a checkout where earlier work has \
+already been staged. Read before you assume: the repository may not look the \
+way the brief implies.\n\n\
+Finish what you are given, or say plainly that you could not and why. You \
+cannot hand work on, and your reply is the only thing the agent that called \
+you will see — so it has to carry the outcome, not a description of your \
+process.";
+
+/// How many steps a delegated agent may take, at most.
+///
+/// A ceiling *and* a share: it never gets more than this, and never more than
+/// the parent has left. Without the second half, one delegate could spend the
+/// whole task and the orchestrator would have no turns in which to react to
+/// what it said.
+const DELEGATE_MAX_STEPS: usize = 12;
+
+/// Run one delegated agent to completion on the caller's workspace.
+///
+/// Three things are deliberately shared, and each is a decision:
+///
+/// **The workspace.** Its edits land in the same staging overlay, so what the
+/// human reviews at the end is one diff rather than N. That is the whole point:
+/// twenty approvals are a captcha, one diff is a decision.
+///
+/// **The supervisor.** A delegated `run` raises a card exactly like any other,
+/// to the same person. The orchestrator approves nothing on anybody's behalf —
+/// it decides who does the work, never whether the work is allowed.
+///
+/// **The session id.** Spend is billed to the task that started it, so a
+/// delegating task costs what it costs in one place rather than fragmenting
+/// across rows nobody joins back up.
+///
+/// What is *not* shared is the tool list: a delegate gets [`tools::definitions`],
+/// which has no `delegate` in it, so the recursion is bounded by construction
+/// rather than by a depth counter somebody has to remember to decrement.
+async fn delegate<S: Store, C: ModelClient, Sup: Supervisor>(
+    gateway: &Gateway<S, C>,
+    supervisor: &Sup,
+    workspace: &mut Workspace,
+    spec: &TaskSpec,
+    instruction: &str,
+    steps_left: usize,
+    remembered: &mut Vec<(String, String)>,
+) -> (String, usize, f64) {
+    let budget = DELEGATE_MAX_STEPS.min(steps_left);
+    if budget == 0 {
+        return (
+            "The task ran out of steps before this could start.".to_owned(),
+            0,
+            0.0,
+        );
+    }
+
+    let mut stable = StableContext {
+        tools: tools::definitions(),
+        system: DELEGATE_PROMPT.to_owned(),
+        conventions: with_memory(conventions(&spec.repo_path), &spec.memory),
+        repo_map: String::new(),
+        history: Vec::new(),
+    };
+
+    let mut pending = instruction.to_owned();
+    let mut used = 0usize;
+    let mut cost = 0.0;
+
+    while used < budget {
+        used += 1;
+
+        let mut request = CompleteRequest::new(&spec.session_id, TaskType::Edit, &pending);
+        request.stable = stable.clone();
+
+        let response = match gateway.complete(request).await {
+            Ok(response) => response,
+            // Reported back rather than propagated. The orchestrator is mid-turn
+            // and can say something useful about a delegate that failed; killing
+            // the whole task would throw away work already staged.
+            Err(err) => return (format!("The delegated work failed: {err}"), used, cost),
+        };
+        cost += response.cost_usd;
+
+        if response.tool_calls.is_empty() {
+            return (response.text, used, cost);
+        }
+
+        stable
+            .history
+            .push(Turn::user(std::mem::take(&mut pending)));
+        stable.history.push(Turn::assistant(render_assistant(
+            &response.text,
+            &response.tool_calls,
+        )));
+
+        let mut results = Vec::with_capacity(response.tool_calls.len());
+        for call in &response.tool_calls {
+            supervisor.note(&format!("  ▸ {}", tools::summary(call)));
+            let rendered = match tools::execute(call, workspace, supervisor, remembered).await {
+                Ok(body) => render_result(call, &body, false),
+                Err(err) => render_result(call, &err.to_string(), true),
+            };
+            results.push(rendered);
+        }
+        pending = results.join("\n\n");
+    }
+
+    (
+        format!(
+            "Stopped after {budget} steps without finishing. Whatever it staged is still here."
+        ),
+        used,
+        cost,
+    )
+}
+
 fn render_assistant(text: &str, calls: &[ToolCall]) -> String {
     let mut out = String::new();
     if !text.trim().is_empty() {
@@ -316,7 +436,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     };
 
     let mut stable = StableContext {
-        tools: tools::definitions(),
+        tools: tools::definitions_with_delegate(),
         system: SYSTEM_PROMPT.to_owned(),
         // Memory sits with the conventions, in the stable half: both are
         // "things that were true before this task started", and both are worth
@@ -407,6 +527,49 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         let mut results = Vec::with_capacity(response.tool_calls.len());
         for call in &response.tool_calls {
             supervisor.note(&format!("▸ {}", tools::summary(call)));
+
+            // Handled here rather than in `tools::execute`, which has a
+            // workspace and a supervisor and no gateway — and should not grow
+            // one for a single caller. Delegation needs to run a whole loop, so
+            // it belongs where the loop already is.
+            if call.name == tools::DELEGATE {
+                let instruction = call
+                    .input
+                    .get("instruction")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+
+                if instruction.trim().is_empty() {
+                    results.push(render_result(
+                        call,
+                        "delegate needs an instruction saying what to do",
+                        true,
+                    ));
+                    continue;
+                }
+
+                let left = spec.max_steps.saturating_sub(steps);
+                let (report, used, spent) = delegate(
+                    gateway,
+                    supervisor,
+                    &mut workspace,
+                    spec,
+                    &instruction,
+                    left,
+                    &mut remembered,
+                )
+                .await;
+
+                // Charged against the parent's budget, because it is the
+                // parent's budget being spent. A delegate that costs nothing to
+                // the caller is a way to run an unbounded task in three hops.
+                steps += used;
+                cost_usd += spent;
+                results.push(render_result(call, &report, false));
+                continue;
+            }
+
             let rendered =
                 match tools::execute(call, &mut workspace, supervisor, &mut remembered).await {
                     Ok(body) => render_result(call, &body, false),
@@ -513,6 +676,22 @@ mod tests {
         fn note(&self, text: &str) {
             self.notes.lock().unwrap().push(text.to_owned());
         }
+    }
+
+    /// Refuses, and remembers being asked. The point of the delegation tests is
+    /// that the gate is *reached*, which a supervisor that only says no cannot
+    /// tell you.
+    #[derive(Default)]
+    struct Asked {
+        seen: Mutex<Vec<String>>,
+    }
+
+    impl Supervisor for Asked {
+        async fn request(&self, tool: &str, payload: &str) -> Verdict {
+            self.seen.lock().unwrap().push(format!("{tool}: {payload}"));
+            Verdict::Denied("not from a train".into())
+        }
+        fn note(&self, _text: &str) {}
     }
 
     struct No;
@@ -921,6 +1100,176 @@ mod tests {
         run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
 
         assert_eq!(client.requests().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_delegated_command_still_asks_the_human() {
+        // The property the whole design rests on. The orchestrator decides *who
+        // does the work*; it never decides whether the work is allowed. A `run`
+        // inside a delegate raises a card to the same person, and a refusal
+        // reaches the delegate as a refusal.
+        //
+        // If this ever passes without the supervisor being consulted,
+        // delegation has become a way to launder an approval — which is the one
+        // failure that would make this feature worse than not having it.
+        let repo = TempRepo::new("delegate-gated");
+        repo.write("a.txt", "x\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![
+            ScriptedClient::calls(vec![(
+                crate::tools::DELEGATE,
+                serde_json::json!({"instruction": "run the tests"}),
+            )]),
+            // Inside the delegate: ask to run something.
+            ScriptedClient::calls(vec![(
+                crate::tools::RUN,
+                serde_json::json!({"command": "rm -rf /"}),
+            )]),
+            ScriptedClient::text("It would not let me."),
+            ScriptedClient::text("The command was refused."),
+        ]);
+
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        // Stands in for a person who said no, and records having been asked.
+        let supervisor = Asked::default();
+        run(&gateway, &supervisor, &TaskSpec::new("s", &repo.0, "x")).await;
+
+        // The gate was reached, from inside the delegate, with the command the
+        // delegate asked for. That is the assertion — not that it was denied,
+        // but that a person was asked at all.
+        let asked = supervisor.seen.lock().unwrap();
+        assert_eq!(asked.len(), 1, "the delegated command bypassed the human");
+        assert!(
+            asked[0].contains("rm -rf /"),
+            "the human was asked about the wrong thing: {}",
+            asked[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_delegate_cannot_delegate() {
+        // The recursion bound, and it is structural rather than a counter: the
+        // sub-agent's tool list simply has no `delegate` in it. A depth limit
+        // somebody has to remember to decrement is a depth limit that will one
+        // day be wrong.
+        let leaf: Vec<String> = crate::tools::definitions()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(!leaf.contains(&crate::tools::DELEGATE.to_owned()));
+
+        let orchestrator: Vec<String> = crate::tools::definitions_with_delegate()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(orchestrator.contains(&crate::tools::DELEGATE.to_owned()));
+    }
+
+    #[tokio::test]
+    async fn a_leaf_agents_prompt_is_unchanged_by_delegation_existing() {
+        // Every task before this feature sent `definitions()`, and every
+        // delegated agent still does. Adding an orchestrator tool must not
+        // invalidate a cached prefix for work that never delegates.
+        let leaf = crate::tools::definitions();
+        let orchestrator = crate::tools::definitions_with_delegate();
+        assert_eq!(
+            orchestrator[..leaf.len()],
+            leaf[..],
+            "the leaf list has to stay a prefix of the orchestrator's"
+        );
+        assert_eq!(orchestrator.len(), leaf.len() + 1);
+    }
+
+    #[tokio::test]
+    async fn delegated_work_lands_in_the_same_diff() {
+        // The whole point. Two agents touched this repository and the human
+        // reviews one change set, not two.
+        let repo = TempRepo::new("delegate-diff");
+        repo.write("a.txt", "one\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![
+            // The orchestrator hands the edit off...
+            ScriptedClient::calls(vec![(
+                crate::tools::DELEGATE,
+                serde_json::json!({"instruction": "change one to two"}),
+            )]),
+            // ...the delegate does it and reports back...
+            ScriptedClient::calls(vec![(
+                crate::tools::EDIT_FILE,
+                serde_json::json!({
+                    "path": "a.txt",
+                    "old_string": "one",
+                    "new_string": "two"
+                }),
+            )]),
+            ScriptedClient::text("Changed one to two."),
+            // ...and the orchestrator closes.
+            ScriptedClient::text("Delegated the edit."),
+        ]);
+
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        let finished = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
+
+        assert_eq!(finished.changes.files.len(), 1, "one diff, not two");
+        assert_eq!(finished.changes.files[0].path, "a.txt");
+        assert_eq!(finished.summary, "Delegated the edit.");
+    }
+
+    #[tokio::test]
+    async fn a_delegates_spend_is_billed_to_the_task_that_started_it() {
+        // A delegate that cost the caller nothing would be a way to run an
+        // unbounded task in three hops.
+        let repo = TempRepo::new("delegate-cost");
+        repo.write("a.txt", "x\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![
+            ScriptedClient::calls(vec![(
+                crate::tools::DELEGATE,
+                serde_json::json!({"instruction": "look around"}),
+            )]),
+            ScriptedClient::text("Nothing to change."),
+            ScriptedClient::text("Asked, and it found nothing."),
+        ]);
+
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        let finished = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
+
+        // Three provider calls happened; all three are on this task's bill.
+        assert_eq!(client.call_count(), 3);
+        assert!(finished.cost_usd > 0.0);
+        assert!(
+            finished.steps >= 3,
+            "a delegate's steps have to come out of the caller's budget: {}",
+            finished.steps
+        );
+    }
+
+    #[tokio::test]
+    async fn a_delegate_asked_for_nothing_is_told_so_rather_than_run() {
+        let repo = TempRepo::new("delegate-empty");
+        repo.write("a.txt", "x\n");
+        repo.commit();
+
+        let client = ScriptedClient::new(vec![
+            ScriptedClient::calls(vec![(
+                crate::tools::DELEGATE,
+                serde_json::json!({"instruction": "   "}),
+            )]),
+            ScriptedClient::text("Understood."),
+        ]);
+
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
+
+        // Two calls: the orchestrator's turn and its next one. No sub-loop ran.
+        assert_eq!(client.call_count(), 2);
     }
 
     #[tokio::test]
