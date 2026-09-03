@@ -70,11 +70,32 @@ export function wakeUpNotification(context: WakeUpContext): Notification {
       };
 
     case "unpaired":
-    case "unreachable":
-      // Nothing was decrypted, so nothing specific can be said truthfully.
+      // No key, so nothing could be decrypted and nothing specific can be said.
+      // "An agent needs you" is the safe guess here: a wake-up was sent, and
+      // wanting a person is the only reason one ever is.
       return {
         title: "Farhelm",
         options: { ...ICONS, body: "An agent needs you.", tag: TAG },
+      };
+
+    case "unreachable":
+      // This used to share the line above, and that stopped being true the day
+      // the control plane started sending a wake-up *because* a machine went
+      // quiet. In that case the fetch fails precisely because there is nothing
+      // there — so "an agent needs you" sends somebody into the app hunting for
+      // an approval that does not exist.
+      //
+      // What this branch actually knows is that it tried and could not get
+      // through, and that is worth saying on its own. Whether the cause is a
+      // tunnel, a sleeping laptop or a relay restart, "could not reach it" is
+      // true, and it is the difference between "go and look" and "wait".
+      return {
+        title: "Farhelm",
+        options: {
+          ...ICONS,
+          body: "Could not reach your machine. Tap to check the fleet.",
+          tag: TAG,
+        },
       };
 
     case "fleet":
