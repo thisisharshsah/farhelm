@@ -85,6 +85,8 @@ pub const DELETE_FILE: &str = "delete_file";
 pub const RUN: &str = "run";
 /// Leave something on the repository's blackboard for whoever works on it next.
 pub const REMEMBER: &str = "remember";
+/// Hand a self-contained piece of the work to a fresh agent on this workspace.
+pub const DELEGATE: &str = "delegate";
 
 /// True when a tool changes the world outside the staging overlay.
 ///
@@ -447,6 +449,39 @@ async fn run_command(command: &str, root: &std::path::Path) -> Result<String, To
         "exit {}\n{text}",
         output.status.code().unwrap_or(-1)
     )))
+}
+
+/// The tool list an orchestrating task gets: everything a leaf has, plus the
+/// ability to hand work to one.
+///
+/// A separate function rather than a flag on [`definitions`], because the two
+/// lists have different cache lifetimes. A sub-agent's prefix is byte-identical
+/// to what every task sent before delegation existed, so nothing anyone has
+/// cached is invalidated by this feature — only the orchestrator, which is a
+/// new thing anyway, pays for the extra tool.
+pub fn definitions_with_delegate() -> Vec<serde_json::Value> {
+    let mut tools = definitions();
+    tools.push(serde_json::json!({
+        "name": DELEGATE,
+        "description": "Hand one self-contained piece of this task to a fresh agent \
+            working in the same checkout. It sees the repository as you have left it, \
+            does the work, and reports back — its edits become part of the single diff \
+            the human reviews at the end. Use it to keep separate concerns in separate \
+            heads, not to parallelise: it runs to completion before you continue. It \
+            cannot delegate further, so give it work it can finish.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "instruction": {
+                    "type": "string",
+                    "description": "The whole brief. The agent does not see this \
+                        conversation, so say what to do and what done looks like."
+                }
+            },
+            "required": ["instruction"]
+        }
+    }));
+    tools
 }
 
 #[cfg(test)]
