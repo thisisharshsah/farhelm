@@ -165,11 +165,23 @@ describe("a wake-up with nothing specific to say", () => {
     expect(actionsOf(shown)).toEqual([]);
   });
 
-  it("is vague but honest when the runner cannot be reached", () => {
-    // Better than silence: something is waiting, we just could not read what.
+  it("says it could not get through, rather than guessing why it was woken", () => {
+    // This shared its wording with `unpaired` — "An agent needs you" — until
+    // the control plane began sending a wake-up *because* a machine went
+    // quiet. Then the fetch fails precisely because nothing is there, and the
+    // old line sent somebody hunting for an approval that does not exist.
     const shown = wakeUpNotification({ kind: "unreachable" });
-    expect(shown.options.body).toBe("An agent needs you.");
+    expect(shown.options.body).toContain("Could not reach your machine");
+    expect(shown.options.body).not.toContain("needs you");
     expect(actionsOf(shown)).toEqual([]);
+  });
+
+  it("still guesses when there is no key, because there is nothing else to say", () => {
+    // `unpaired` genuinely knows nothing: no key, nothing decrypted. A wake-up
+    // is only ever sent because something wants a person, so that guess is the
+    // honest one *here* — the distinction is that `unreachable` knows more.
+    const shown = wakeUpNotification({ kind: "unpaired" });
+    expect(shown.options.body).toBe("An agent needs you.");
   });
 
   it("never offers a decision it could not have read", () => {
