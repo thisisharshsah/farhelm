@@ -82,7 +82,7 @@ minutes and the phone that started it may be in a tunnel by the time it lands.
   prompt ─▶ loop ──▶ cost gateway ──▶ provider
              │  ▲      (budget, routing, cache, ledger)
              ▼  │
-         tools ─┘   read · list · search · edit · write · delete · run
+         tools ─┘   read · list · search · edit · write · delete · run · remember
              │
              ▼
    staging overlay ──▶ unified diff ──▶ you ──▶ applied, or discarded
@@ -92,6 +92,14 @@ minutes and the phone that started it may be in a tunnel by the time it lands.
 a staging overlay, which is what makes the diff renderable *before* anything is
 committed to. Deny it and there is no partial state to clean up, because nothing
 was ever written.
+
+**`remember` is the one tool that outlives the task.** The others act on this
+repository now; `remember` leaves a note on it for whoever works on it next — a
+half-applied migration, why a test is flaky, a file not to touch. Notes are read
+back into the top of every later task's prompt on that repo, under a heading
+saying an agent wrote them rather than you, because those deserve different
+levels of trust. Like an edit, a note is *proposed*: the loop hands it back and
+the runner decides whether it lands, so the agent crate holds no database.
 
 **Only `run` raises a card.** Approving twelve individual edits is a captcha,
 not supervision — the edits are reviewed once, together, as a diff. A command is
@@ -630,7 +638,7 @@ Without this, Farhelm only works while you are already looking at it. Start
 the relay with a VAPID key:
 
 ```sh
-cargo run -p farhelm relay -- --vapid-key vapid.key --push-subject mailto:you@example.com
+cargo run -p farhelm-runner -- relay --vapid-key vapid.key --push-subject mailto:you@example.com
 ```
 
 The key file is created `0600` on first start and reused. **Do not delete it** —
@@ -638,6 +646,24 @@ every subscription a browser made is bound to the public half it saw, so a new
 key silently stops waking every device that ever subscribed.
 
 Then in the app: pair, and turn on notifications from the pairing card.
+
+**A machine going quiet wakes you too.** Every other wake-up starts with
+something happening; this one starts with something stopping, which is why it
+took so long to exist. Absence cannot be reported by the thing that is absent,
+and the relay only ever acts on an envelope arriving — an offline machine sends
+none. So the control plane watches the fleet, and when a machine stops
+reporting it asks the relay to buzz that machine's devices.
+
+It reports the *transition*, once. Restarting the control plane does not
+announce every machine that has been switched off for a month, a machine that
+stays offline does not repeat itself, and one that recovers and drops again is
+worth a second notice — that pattern is a flapping link, and it is exactly what
+you want to see.
+
+The wake-up carries no payload, like every other one. A woken device asks the
+*control plane* what changed, and reads "offline" off the fleet — no session
+content is involved, because none is needed: a machine going quiet is a fact
+about the fleet, not about the work.
 
 **The push carries nothing, and the notification still names the command.**
 Those are not in tension. The relay cannot read the envelope that triggered the
@@ -680,7 +706,7 @@ cost policy enforceable rather than advisory. Eight stages:
 
 | # | Stage | Saves by |
 |---|---|---|
-| 1 | Budget | refusing to spend past a session *or* repo cap (402) |
+| 1 | Budget | refusing to spend past a session *or* repo cap (402), and steering or constraining before that |
 | 2 | Pre-gate | letting a formatter/linter/type-checker/test suite answer instead of a model — a green verify costs $0 |
 | 4 | Router | triage on Haiku, edits on Sonnet, planning on Opus; `PLAN.md` can pin a step down a tier |
 | 5 | Context | line ranges and declaration skeletons under byte caps, not whole files |
@@ -694,6 +720,31 @@ cost policy enforceable rather than advisory. Eight stages:
 Stage 3 runs after 4–6 because an exact-prompt cache key needs the routed model
 and the retrieved context to exist first. Both zero-cost exits still precede any
 spend.
+
+### Stage 1 is a ladder, not a cliff
+
+The budget check could do exactly one thing: refuse, at 100% of the cap.
+Everything below that was full speed — 80%, where the wrist already warns,
+changed nothing about how a call was served — so the only lever available was
+the one that ends the work, and the cheapest moment to intervene was the one
+moment nothing happened.
+
+| Rung | What changes |
+|---|---|
+| Steer | the call is served, with a correction naming what was observed |
+| Constrain | dropped to the small tier — a session in trouble is the worst place to be paying frontier rates |
+| Stop | refused, at exactly the threshold and with exactly the shape it always had |
+
+Cost is not the only input, and it is the slowest. An agent retrying one failing
+command forty times has a problem long before it has an expensive one, so the
+ladder also reads consecutive errors and identical repeats — which is what
+catches a loop in a session with no cap at all. The counters live in memory
+rather than the store: they describe a *run*, not a fact about the session worth
+surviving a restart, and a daemon that came back holding "six errors in a row"
+would constrain a session whose only problem was that the daemon went down.
+
+The policy is a pure function in `farhelm_domain::breaker`, so the thresholds
+are arguable in a test rather than in production.
 
 ### Compacting history (C7)
 
