@@ -283,7 +283,7 @@ fn serve(
         config: config.clone(),
     });
 
-    let mut router = api::router(Arc::clone(&state)).merge(crate::mcp::router(state));
+    let mut router = api::router(Arc::clone(&state)).merge(crate::mcp::router(Arc::clone(&state)));
     if let Some(dir) = app_dir {
         // Unknown paths fall back to index.html so the hash-routed PWA survives
         // a hard refresh. `/v1/*` is matched first and never reaches this.
@@ -299,6 +299,10 @@ fn serve(
         .build()?;
 
     runtime.block_on(async {
+        // Watch the fleet for machines going quiet. Started inside the runtime
+        // because it is a task, and after the state exists because it reads it.
+        crate::watch::spawn(Arc::clone(&state));
+
         let listener = tokio::net::TcpListener::bind((bind, port)).await?;
         let addr = listener.local_addr()?;
 

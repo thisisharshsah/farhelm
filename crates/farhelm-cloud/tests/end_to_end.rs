@@ -342,6 +342,99 @@ async fn a_refusal_says_which_of_the_two_things_is_missing() {
 }
 
 #[tokio::test]
+async fn the_relay_accepts_the_wake_up_the_control_plane_mints() {
+    // The fleet watch tells devices their machine went quiet by asking the
+    // relay to buzz that machine's channel. The relay gates that endpoint
+    // exactly as it gates the socket, so the whole feature rests on a token
+    // minted by the *control plane* — a different caller, a different role —
+    // being accepted for a channel nobody is connected to.
+    //
+    // Every part of that is a claim the two sides have to agree on: audience,
+    // channel, role, expiry. This is the one assertion that fails if any of
+    // them drifts, and nothing else in the suite covers it.
+    let world = spawn().await;
+    let (access, _) = world.sign_up("harsh@example.com").await;
+
+    let key = world.enrollment_key(&access).await;
+    let (_, enrolled) = world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({"name": "mac-studio", "public_key": public_key(), "version": "0.1.0"}),
+        )
+        .await;
+    let channel = enrolled["channel"].as_str().unwrap().to_owned();
+    // The channel token comes from a heartbeat rather than from enrolment, and
+    // is the same shape the fleet watch mints for a wake-up.
+    let (_, beat) = world
+        .post(
+            "/v1/runners/heartbeat",
+            Some(enrolled["runner_token"].as_str().unwrap()),
+            json!({"version": "0.1.0"}),
+        )
+        .await;
+    let token = beat["channel_token"].as_str().unwrap();
+
+    let woken = world
+        .client
+        .post(format!(
+            "{}/v1/push/{channel}?token={token}",
+            world.relay_http
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        woken.status(),
+        200,
+        "the relay refused a wake-up for a channel the control plane vouched for"
+    );
+
+    // No devices have subscribed, so nothing was woken — and that is the
+    // honest answer rather than an error. A machine going offline before
+    // anybody installed the app is not a failure to report it.
+    let body: Value = woken.json().await.unwrap();
+    assert_eq!(body["woken"], 0);
+}
+
+#[tokio::test]
+async fn a_wake_up_for_somebody_elses_channel_is_refused() {
+    // The gate that makes the endpoint safe to expose. Without it, knowing a
+    // channel id would be enough to buzz a stranger's phone indefinitely.
+    let world = spawn().await;
+    let (access, _) = world.sign_up("harsh@example.com").await;
+    let key = world.enrollment_key(&access).await;
+    let (_, enrolled) = world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({"name": "mine", "public_key": public_key(), "version": "0.1.0"}),
+        )
+        .await;
+    let (_, beat) = world
+        .post(
+            "/v1/runners/heartbeat",
+            Some(enrolled["runner_token"].as_str().unwrap()),
+            json!({"version": "0.1.0"}),
+        )
+        .await;
+    let token = beat["channel_token"].as_str().unwrap();
+
+    let refused = world
+        .client
+        .post(format!(
+            "{}/v1/push/forge-somebody-elses-machine?token={token}",
+            world.relay_http
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_ne!(refused.status(), 200, "a token is scoped to one channel");
+}
+
+#[tokio::test]
 async fn one_workspace_cannot_see_or_touch_anothers_machines() {
     // The tenancy boundary, exercised rather than asserted.
     let world = spawn().await;

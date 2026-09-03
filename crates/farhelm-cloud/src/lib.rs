@@ -42,6 +42,7 @@ pub mod model;
 pub mod plan;
 pub mod secret;
 pub mod store;
+pub mod watch;
 
 use farhelm_crypto::token::TokenSigner;
 
