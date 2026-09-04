@@ -11,9 +11,22 @@ use std::time::Duration;
 
 use crate::hook::{self, Decision, HookEvent, RequestKind};
 
-/// Where the daemon listens. Overridable so a second runner on another port
-/// can be driven by its own hook registration.
-fn runner_url() -> String {
+/// Where the daemon listens.
+///
+/// `--url` first, because it is written into the hook registration itself and
+/// therefore travels with it. That matters more than it sounds: the registration
+/// is executed by the *agent*, in whatever environment the agent happens to
+/// have, and a daemon on a non-default port used to be reachable only by an
+/// environment variable that had to be set in a process nobody controls. The
+/// result was a hook that connected to nothing, deferred, and supervised
+/// nothing — without a word anywhere, because deferring is what a healthy hook
+/// does when the daemon is legitimately down.
+fn runner_url_from(args: &[String]) -> String {
+    if let Some(index) = args.iter().position(|arg| arg == "--url")
+        && let Some(url) = args.get(index + 1)
+    {
+        return url.clone();
+    }
     farhelm_app::legacy::env_var("FARHELM_RUNNER_URL")
         .unwrap_or_else(|| "http://127.0.0.1:7842".to_owned())
 }
@@ -27,12 +40,12 @@ fn client_timeout() -> Duration {
 
 /// Read stdin, act, print the reply. Always `Ok` in practice: an error here
 /// would block an agent.
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut raw = String::new();
     std::io::stdin().read_to_string(&mut raw)?;
 
     let reply = match hook::parse(&raw) {
-        Ok(event) => handle(event).await,
+        Ok(event) => handle(event, &runner_url_from(args)).await,
         Err(err) => {
             // Unparseable input is our problem, not the agent's. Say so on
             // stderr (visible in `claude --debug`) and get out of the way.
@@ -45,7 +58,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle(event: HookEvent) -> serde_json::Value {
+async fn handle(event: HookEvent, base: &str) -> serde_json::Value {
     let client = match reqwest::Client::builder().timeout(client_timeout()).build() {
         Ok(client) => client,
         Err(err) => {
@@ -53,8 +66,6 @@ async fn handle(event: HookEvent) -> serde_json::Value {
             return hook::acknowledge();
         }
     };
-    let base = runner_url();
-
     match event {
         HookEvent::ToolRequest {
             kind,
@@ -63,18 +74,7 @@ async fn handle(event: HookEvent) -> serde_json::Value {
             tool_name,
             payload,
             ..
-        } => {
-            tool_request(
-                &client,
-                &base,
-                kind,
-                &session_id,
-                &cwd,
-                &tool_name,
-                &payload,
-            )
-            .await
-        }
+        } => tool_request(&client, base, kind, &session_id, &cwd, &tool_name, &payload).await,
 
         HookEvent::Stopped {
             session_id,
@@ -207,18 +207,18 @@ async fn post_notice(
 }
 
 /// The settings block a user pastes into `.claude/settings.json`.
-pub fn settings_snippet(binary: &str) -> String {
+pub fn settings_snippet(command: &str) -> String {
     let hooks = serde_json::json!({
         "hooks": {
             "PreToolUse": [{
                 "matcher": "*",
-                "hooks": [{ "type": "command", "command": format!("{binary} hook") }]
+                "hooks": [{ "type": "command", "command": command.to_owned() }]
             }],
             "Stop": [{
-                "hooks": [{ "type": "command", "command": format!("{binary} hook") }]
+                "hooks": [{ "type": "command", "command": command.to_owned() }]
             }],
             "Notification": [{
-                "hooks": [{ "type": "command", "command": format!("{binary} hook") }]
+                "hooks": [{ "type": "command", "command": command.to_owned() }]
             }]
         }
     });
@@ -226,17 +226,17 @@ pub fn settings_snippet(binary: &str) -> String {
 }
 
 /// The hook block, as a value rather than as text.
-pub fn hook_block(binary: &str) -> serde_json::Value {
+pub fn hook_block(command: &str) -> serde_json::Value {
     serde_json::json!({
         "PreToolUse": [{
             "matcher": "*",
-            "hooks": [{ "type": "command", "command": format!("{binary} hook") }]
+            "hooks": [{ "type": "command", "command": command.to_owned() }]
         }],
         "Stop": [{
-            "hooks": [{ "type": "command", "command": format!("{binary} hook") }]
+            "hooks": [{ "type": "command", "command": command.to_owned() }]
         }],
         "Notification": [{
-            "hooks": [{ "type": "command", "command": format!("{binary} hook") }]
+            "hooks": [{ "type": "command", "command": command.to_owned() }]
         }]
     })
 }
@@ -349,7 +349,10 @@ mod tests {
     #[test]
     fn installing_into_nothing_creates_the_file() {
         let path = temp("create");
-        assert_eq!(install_into(&path, "/bin/fr").unwrap(), Installed::Created);
+        assert_eq!(
+            install_into(&path, "/bin/fr hook").unwrap(),
+            Installed::Created
+        );
         assert_eq!(
             read(&path)["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
             "/bin/fr hook"
@@ -369,7 +372,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(install_into(&path, "/bin/fr").unwrap(), Installed::Merged);
+        assert_eq!(
+            install_into(&path, "/bin/fr hook").unwrap(),
+            Installed::Merged
+        );
 
         let after = read(&path);
         assert_eq!(after["model"], "opus");
@@ -380,11 +386,11 @@ mod tests {
     #[test]
     fn installing_twice_changes_nothing_the_second_time() {
         let path = temp("idempotent");
-        install_into(&path, "/bin/fr").unwrap();
+        install_into(&path, "/bin/fr hook").unwrap();
         let first = std::fs::read_to_string(&path).unwrap();
 
         assert_eq!(
-            install_into(&path, "/bin/fr").unwrap(),
+            install_into(&path, "/bin/fr hook").unwrap(),
             Installed::AlreadyCurrent
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
@@ -394,7 +400,10 @@ mod tests {
     fn a_moved_binary_is_repointed_rather_than_duplicated() {
         let path = temp("repoint");
         install_into(&path, "/old/fr").unwrap();
-        assert_eq!(install_into(&path, "/new/fr").unwrap(), Installed::Replaced);
+        assert_eq!(
+            install_into(&path, "/new/fr hook").unwrap(),
+            Installed::Replaced
+        );
 
         let after = read(&path);
         assert_eq!(
@@ -414,13 +423,13 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{ not json").unwrap();
 
-        assert!(install_into(&path, "/bin/fr").is_err());
+        assert!(install_into(&path, "/bin/fr hook").is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
     }
 
     #[test]
     fn the_settings_snippet_registers_all_three_events() {
-        let snippet = settings_snippet("/usr/local/bin/farhelm");
+        let snippet = settings_snippet("/usr/local/bin/farhelm hook");
         let parsed: serde_json::Value = serde_json::from_str(&snippet).unwrap();
 
         for event in ["PreToolUse", "Stop", "Notification"] {
@@ -439,7 +448,7 @@ mod tests {
     fn the_runner_url_is_overridable_but_defaults_to_loopback() {
         // Read without mutating the environment: the default must be loopback,
         // because the runner never listens anywhere else.
-        assert!(runner_url().starts_with("http://127.0.0.1:"));
+        assert!(runner_url_from(&[]).starts_with("http://127.0.0.1:"));
     }
 
     #[test]
@@ -447,5 +456,32 @@ mod tests {
         // The daemon waits 15 minutes and then records a `timeout` decision. If
         // this fired first, that record would never be written.
         assert!(client_timeout() > Duration::from_secs(15 * 60));
+    }
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::*;
+
+    #[test]
+    fn the_registration_can_carry_its_own_port() {
+        // The whole reason this flag exists. The hook is executed by the agent,
+        // in an environment nobody here controls, so a daemon on a non-default
+        // port has to be named in the command rather than in a variable.
+        let args = vec!["--url".to_owned(), "http://127.0.0.1:7852".to_owned()];
+        assert_eq!(runner_url_from(&args), "http://127.0.0.1:7852");
+    }
+
+    #[test]
+    fn without_one_it_still_falls_back() {
+        assert!(runner_url_from(&[]).starts_with("http://127.0.0.1:"));
+    }
+
+    #[test]
+    fn a_url_flag_with_nothing_after_it_does_not_panic() {
+        // A truncated registration is a bad day, not a crash — and a crash here
+        // blocks the agent, which is the one thing the bridge must never do.
+        let args = vec!["--url".to_owned()];
+        assert!(runner_url_from(&args).starts_with("http://"));
     }
 }
