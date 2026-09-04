@@ -220,8 +220,8 @@ fn main() -> ExitCode {
         Some("seed") => seed_command(&flags.db),
         Some("status") => status(&flags.db),
         Some("demo") => demo(),
-        Some("hook") => run_hook(),
-        Some("install-hooks") => install_hooks(&args[1..]),
+        Some("hook") => run_hook(&args[1..]),
+        Some("install-hooks") => install_hooks(&args[1..], flags.port),
         Some("pair") => pair(&flags),
         Some("login") => login(&flags),
         Some("logout") => logout(&flags),
@@ -361,11 +361,11 @@ fn seed_command(db_path: &str) -> Fallible {
 
 /// Answer one hook event. Runs on a single-threaded runtime — this process
 /// exists for one blocking round trip and then exits.
-fn run_hook() -> Fallible {
+fn run_hook(args: &[String]) -> Fallible {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(hook_cli::run())
+        .block_on(hook_cli::run(args))
 }
 
 /// Register the hook bridge in the repository you are standing in.
@@ -375,14 +375,34 @@ fn run_hook() -> Fallible {
 /// pasting fails — a stray comma, or the wrong object. It writes the file now,
 /// merging so that nothing else in the settings is disturbed, and `--print`
 /// still gives you the block if you would rather do it yourself.
-fn install_hooks(args: &[String]) -> Fallible {
+fn install_hooks(args: &[String], port: u16) -> Fallible {
+    // `farhelm`, not `farhelm-runner`: the crate kept its name, the binary did
+    // not, and this fallback would have registered a command that does not
+    // exist on a machine where `current_exe` failed.
     let binary = std::env::current_exe()
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "farhelm-runner".to_owned());
+        .unwrap_or_else(|_| "farhelm".to_owned());
+
+    // The registration is run by the *agent*, in an environment nobody here
+    // controls, so a daemon on a non-default port has to be named in the
+    // command itself. Left to an environment variable, the hook connected to
+    // nothing, deferred, and supervised nothing — and deferring is exactly what
+    // a healthy hook does when the daemon is legitimately down, so there was no
+    // symptom to notice.
+    //
+    // Only when it differs from the default: the common case keeps the shorter
+    // command, and a `--url` nobody needs is a thing to wonder about.
+    //
+    // After `hook`, not before it — dispatch matches on the first argument, so
+    // a flag ahead of the subcommand is not a flag, it is an unknown command.
+    let command = match port == DEFAULT_PORT {
+        true => format!("{binary} hook"),
+        false => format!("{binary} hook --url http://127.0.0.1:{port}"),
+    };
 
     if args.iter().any(|arg| arg == "--print") {
         println!("Add this to .claude/settings.json in the repo you want supervised:\n");
-        println!("{}", hook_cli::settings_snippet(&binary));
+        println!("{}", hook_cli::settings_snippet(&command));
         return Ok(());
     }
 
@@ -407,7 +427,7 @@ fn install_hooks(args: &[String]) -> Fallible {
             .join("settings.json")
     };
 
-    match hook_cli::install_into(&settings, &binary)? {
+    match hook_cli::install_into(&settings, &command)? {
         hook_cli::Installed::Created => {
             println!("Wrote {}", settings.display());
         }
@@ -418,7 +438,10 @@ fn install_hooks(args: &[String]) -> Fallible {
             );
         }
         hook_cli::Installed::Replaced => {
-            println!("Repointed the hooks in {} at {binary}.", settings.display());
+            println!(
+                "Repointed the hooks in {} at {command}.",
+                settings.display()
+            );
         }
         hook_cli::Installed::AlreadyCurrent => {
             println!("{} is already set up. Nothing to do.", settings.display());
@@ -1303,7 +1326,7 @@ fn setup_command(flags: &Flags) -> Fallible {
 
         let outcome = match step {
             Step::Credential => auth(flags, &[]),
-            Step::Hooks => install_hooks(&["--global".to_owned()]),
+            Step::Hooks => install_hooks(&["--global".to_owned()], flags.port),
             Step::Fleet => match flags
                 .cloud
                 .clone()
