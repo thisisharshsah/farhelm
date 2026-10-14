@@ -14,6 +14,7 @@ node_modules/
 # key with the same "regenerating it breaks every subscription" property.
 *.key
 *.pem
+farhelm.credential.json
 .env
 .env.*
 !.env.example
