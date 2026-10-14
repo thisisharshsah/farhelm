@@ -755,12 +755,16 @@ async fn serve_async(flags: Flags) -> Fallible {
             })?;
             let config = GatewayConfig::default();
             provider = format!(
-                "anthropic ({}) — small {} / large {} / frontier {}",
+                "{} ({}) — small {} / large {} / frontier {}",
+                client.provider_name(),
                 client.credential_kind(),
                 config.models.small,
                 config.models.large,
                 config.models.frontier
             );
+            if let Some(model) = client.model_override() {
+                provider.push_str(&format!(" · all sent as {model}"));
+            }
             Some(Gateway::new(store, client, config))
         },
         Arc::clone(&identity),

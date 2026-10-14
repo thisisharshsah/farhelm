@@ -17,7 +17,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use farhelm_proto::types::Usage;
+use farhelm_proto::types::{TaskType, Usage};
 use serde::{Deserialize, Serialize};
 
 use crate::prompt::{PromptPlan, approx_tokens};
@@ -61,6 +61,10 @@ pub struct ModelRequest {
     pub max_tokens: u32,
     pub effort: Option<Effort>,
     pub plan: PromptPlan,
+    /// What the call is for, when the caller knows. Only Conscious reads it, to
+    /// tag the request with `X-Conscious-Client: farhelm/<purpose>` so usage
+    /// splits by component; Anthropic is sent nothing extra.
+    pub purpose: Option<TaskType>,
 }
 
 /// A safety-classifier decline. Not an error in the transport sense — the call
@@ -132,6 +136,13 @@ pub trait ModelClient: Send + Sync {
         &self,
         request: ModelRequest,
     ) -> impl std::future::Future<Output = Result<ModelResponse, DispatchError>> + Send;
+
+    /// Whether the provider behind this client has a Batch API. A deferrable
+    /// call to one that does not runs live and says so (`batch_downgraded`),
+    /// rather than sitting in a queue nothing will ever flush.
+    fn supports_batch(&self) -> bool {
+        true
+    }
 }
 
 /// The Messages params for a request, without anything transport-specific.
@@ -330,6 +341,44 @@ pub struct AnthropicClient {
     /// request is fine on Sonnet 5 and refused on Haiku 4.5.
     unsupported:
         std::sync::RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    /// `Some` when the provider is Conscious, the owner's private gateway, rather
+    /// than Anthropic. See [`AnthropicClient::conscious`].
+    conscious: Option<Conscious>,
+}
+
+/// What differs about a call to Conscious. Same Messages API, so the same
+/// client; these are the only differences.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Conscious {
+    /// `CONSCIOUS_MODEL`. `None` sends the requested name, which Conscious maps
+    /// to the project's default model.
+    model: Option<String>,
+}
+
+/// Where a model provider name goes in the banner and in the trace.
+pub const CONSCIOUS_PROVIDER: &str = "conscious";
+
+/// Tag for calls whose purpose the caller did not say.
+pub const CONSCIOUS_DEFAULT_COMPONENT: &str = "dispatch";
+
+/// Conscious's settings, read through `get` so they can be tested without
+/// touching the process environment. `None` unless `CONSCIOUS_API_URL` is set
+/// and not blank — and then nothing about the Anthropic path changes.
+fn conscious_settings(
+    get: impl Fn(&str) -> Option<String>,
+) -> Option<(String, Option<String>, Option<String>)> {
+    let url = usable_key(get("CONSCIOUS_API_URL"))?;
+    Some((
+        url.trim().trim_end_matches('/').to_owned(),
+        usable_key(get("CONSCIOUS_API_KEY")).map(|key| key.trim().to_owned()),
+        usable_key(get("CONSCIOUS_MODEL")).map(|model| model.trim().to_owned()),
+    ))
+}
+
+/// True when Conscious is the configured provider. The batch flusher checks
+/// this so a queue is never sent to Anthropic behind the owner's back.
+pub fn conscious_configured() -> bool {
+    conscious_settings(|name| std::env::var(name).ok()).is_some()
 }
 
 impl AnthropicClient {
@@ -352,6 +401,46 @@ impl AnthropicClient {
                 .expect("reqwest client"),
             fallbacks: true,
             unsupported: std::sync::RwLock::new(std::collections::HashMap::new()),
+            conscious: None,
+        }
+    }
+
+    /// A client for Conscious at `base_url` (`CONSCIOUS_API_URL`, which already
+    /// names the project, e.g. `http://127.0.0.1:8400/p/farhelm`).
+    ///
+    /// Fallbacks are off: they are an Anthropic beta Conscious does not serve,
+    /// and there is no second model to fall back to. A missing key is sent as no
+    /// key, so the first call is a plain 401 from Conscious rather than a silent
+    /// switch to Anthropic billing.
+    pub fn conscious(
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+    ) -> Self {
+        let mut client = Self::new(api_key.unwrap_or_default())
+            .with_base_url(base_url.into().trim_end_matches('/').to_owned())
+            .without_fallbacks();
+        client.conscious = Some(Conscious { model });
+        client
+    }
+
+    /// The `CONSCIOUS_*` half of [`AnthropicClient::from_env`], through `get`.
+    fn conscious_from(get: impl Fn(&str) -> Option<String>) -> Option<Self> {
+        let (url, key, model) = conscious_settings(get)?;
+        Some(Self::conscious(url, key, model))
+    }
+
+    /// The model every call is sent as, when Conscious is told one
+    /// (`CONSCIOUS_MODEL`). `None` means the routed name goes as-is.
+    pub fn model_override(&self) -> Option<&str> {
+        self.conscious.as_ref()?.model.as_deref()
+    }
+
+    /// `"conscious"` or `"anthropic"` — what the banner calls the provider.
+    pub fn provider_name(&self) -> &'static str {
+        match self.conscious {
+            Some(_) => CONSCIOUS_PROVIDER,
+            None => "anthropic",
         }
     }
 
@@ -377,7 +466,14 @@ impl AnthropicClient {
     /// gone to the trouble of configuring a helper, they want the refreshing
     /// one — and a stale `ANTHROPIC_API_KEY` left in a file from a previous
     /// experiment should not quietly win and start billing them per token.
+    ///
+    /// `CONSCIOUS_API_URL` comes before all of it: the owner's private gateway
+    /// (with `CONSCIOUS_API_KEY` and an optional `CONSCIOUS_MODEL`) wins over
+    /// every Anthropic setting. With no `CONSCIOUS_*` set, nothing below changes.
     pub fn from_env() -> Option<Self> {
+        if let Some(client) = Self::conscious_from(|name| std::env::var(name).ok()) {
+            return Some(client);
+        }
         let source = match usable_key(farhelm_app::legacy::env_var("FARHELM_CREDENTIAL_COMMAND")) {
             Some(command) => crate::credential::CredentialSource::command(command),
             None => crate::credential::CredentialSource::Static(
@@ -527,6 +623,8 @@ impl ModelClient for AnthropicClient {
         // Different headers, not two spellings of one: a bearer token sent as
         // `x-api-key` is a 401.
         builder = match &credential {
+            // Conscious with no key configured: send none and let it say 401.
+            Credential::ApiKey(key) if key.is_empty() => builder,
             Credential::ApiKey(key) => builder.header("x-api-key", key),
             Credential::AuthToken(token) => {
                 builder.header("authorization", format!("Bearer {token}"))
@@ -537,7 +635,14 @@ impl ModelClient for AnthropicClient {
             builder = builder.header("anthropic-beta", betas);
         }
 
+        if self.conscious.is_some() {
+            builder = builder.header("x-conscious-client", conscious_client_tag(&request));
+        }
+
         let mut body = self.body(&request);
+        if let Some(Conscious { model: Some(model) }) = &self.conscious {
+            body["model"] = serde_json::Value::String(model.clone());
+        }
         self.strip_unsupported(&request.model, &mut body);
 
         // At most one retry per optional field, so a model that refuses both
@@ -594,7 +699,40 @@ impl ModelClient for AnthropicClient {
 
         let wire: WireResponse =
             serde_json::from_str(&text).map_err(|err| DispatchError::Decode(err.to_string()))?;
-        Ok(wire.into_response(&request.model))
+        let mut response = wire.into_response(&request.model);
+        if self.conscious.is_some() {
+            // Conscious runs locally. The ledger prices `local/…` at zero, and
+            // the name after the prefix is whichever model actually answered —
+            // never an Anthropic price for a call Anthropic did not serve.
+            response.model = conscious_ledger_model(&response.model);
+        }
+        Ok(response)
+    }
+
+    fn supports_batch(&self) -> bool {
+        // Conscious has no `/v1/messages/batches`.
+        self.conscious.is_none()
+    }
+}
+
+/// `farhelm/<purpose>`, or `farhelm/dispatch` when the caller did not say.
+fn conscious_client_tag(request: &ModelRequest) -> String {
+    format!(
+        "farhelm/{}",
+        request
+            .purpose
+            .map_or(CONSCIOUS_DEFAULT_COMPONENT, TaskType::as_str)
+    )
+}
+
+/// The name a Conscious answer is recorded under: zero-priced, and still saying
+/// which model ran.
+fn conscious_ledger_model(model: &str) -> String {
+    let prefix = farhelm_domain::price::LOCAL_MODEL_PREFIX;
+    if model.starts_with(prefix) {
+        model.to_owned()
+    } else {
+        format!("{prefix}{model}")
     }
 }
 
@@ -732,6 +870,7 @@ mod tests {
             model: model.to_owned(),
             max_tokens: DEFAULT_MAX_TOKENS,
             effort: Some(Effort::High),
+            purpose: None,
             plan: assemble(&stable, tail, &price_of("claude-opus-5").unwrap()),
         }
     }
@@ -867,6 +1006,7 @@ mod tests {
             model: "m".into(),
             max_tokens: 16,
             effort: None,
+            purpose: None,
             plan: assemble(
                 &StableContext::default(),
                 "hi",
@@ -935,6 +1075,68 @@ mod tests {
         );
     }
 
+    fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: std::collections::HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |name| map.get(name).cloned()
+    }
+
+    #[test]
+    fn conscious_wins_over_every_anthropic_setting() {
+        let client = AnthropicClient::conscious_from(vars(&[
+            ("CONSCIOUS_API_URL", "http://127.0.0.1:8400/p/farhelm/"),
+            ("CONSCIOUS_API_KEY", "cs-key"),
+            ("CONSCIOUS_MODEL", "gpt-oss-20b"),
+            ("ANTHROPIC_API_KEY", "sk-ant-real"),
+            ("ANTHROPIC_BASE_URL", "https://elsewhere"),
+        ]))
+        .expect("conscious configured");
+
+        assert_eq!(client.provider_name(), "conscious");
+        assert_eq!(client.base_url, "http://127.0.0.1:8400/p/farhelm");
+        assert_eq!(
+            client.source.get().unwrap(),
+            Credential::ApiKey("cs-key".into())
+        );
+        assert_eq!(client.model_override(), Some("gpt-oss-20b"));
+        assert!(!client.supports_batch(), "Conscious has no Batch API");
+        assert!(client.beta_header().is_none(), "no Anthropic betas");
+    }
+
+    #[test]
+    fn with_no_conscious_url_the_anthropic_path_is_untouched() {
+        // A key or model alone, or a blank URL, is not a provider choice.
+        for set in [
+            vec![("ANTHROPIC_API_KEY", "sk-ant-real")],
+            vec![("CONSCIOUS_API_KEY", "cs-key"), ("CONSCIOUS_MODEL", "m")],
+            vec![("CONSCIOUS_API_URL", "   ")],
+        ] {
+            assert!(AnthropicClient::conscious_from(vars(&set)).is_none());
+        }
+        let plain = AnthropicClient::new("sk-ant-real");
+        assert_eq!(plain.provider_name(), "anthropic");
+        assert!(plain.supports_batch());
+        assert_eq!(plain.model_override(), None);
+    }
+
+    #[test]
+    fn the_component_tag_is_the_purpose_or_dispatch() {
+        let mut req = request("claude-opus-5", "hi");
+        assert_eq!(conscious_client_tag(&req), "farhelm/dispatch");
+        req.purpose = Some(TaskType::CommitMsg);
+        assert_eq!(conscious_client_tag(&req), "farhelm/commit_msg");
+    }
+
+    #[test]
+    fn a_conscious_answer_is_recorded_under_a_zero_priced_name() {
+        assert_eq!(conscious_ledger_model("gpt-oss-20b"), "local/gpt-oss-20b");
+        assert_eq!(conscious_ledger_model("local/x"), "local/x");
+        let price = price_of(&conscious_ledger_model("claude-sonnet-5")).unwrap();
+        assert_eq!((price.input_per_mtok, price.output_per_mtok), (0.0, 0.0));
+    }
+
     #[tokio::test]
     async fn the_stub_reports_a_cold_prefix_then_a_warm_one() {
         let client = StubClient::new("ok");
@@ -970,6 +1172,7 @@ mod tests {
             model: "claude-opus-5".into(),
             max_tokens: 16,
             effort: None,
+            purpose: None,
             plan: assemble(&base, "a", &price),
         };
         client.complete(first).await.unwrap();
@@ -983,6 +1186,7 @@ mod tests {
                 model: "claude-opus-5".into(),
                 max_tokens: 16,
                 effort: None,
+                purpose: None,
                 plan: assemble(&grown, "b", &price),
             })
             .await
@@ -1018,6 +1222,7 @@ mod tests {
                 model: "claude-opus-5".into(),
                 max_tokens: 16,
                 effort: None,
+                purpose: None,
                 plan,
             })
             .await

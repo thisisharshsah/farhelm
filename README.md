@@ -805,6 +805,9 @@ vLLM/Ollama shim for the self-hosted small tier, or a test server.
 | `ANTHROPIC_API_KEY` | Enables `/v1/complete` — a Console key, sent as `x-api-key`. Blank counts as unset. |
 | `ANTHROPIC_AUTH_TOKEN` | Same, with a short-lived bearer token instead. Used only when `ANTHROPIC_API_KEY` is unset, and carries the `oauth-2025-04-20` beta the API requires for one. |
 | `ANTHROPIC_BASE_URL` | Redirect to a compatible endpoint |
+| `CONSCIOUS_API_URL` | Use Conscious, the owner's private model gateway, as the provider (`conscious` in the banner), e.g. `http://127.0.0.1:8400/p/farhelm`. Wins over every `ANTHROPIC_*` setting, the credential command and `farhelm auth`; unset or blank leaves all of those exactly as above. Conscious has no Batch API, so deferrable calls run live with `batch_downgraded`, and its answers are recorded as `local/<model>` at $0. |
+| `CONSCIOUS_API_KEY` | The project's Conscious key, sent as `x-api-key`. Each call also carries `X-Conscious-Client: farhelm/<task type>` so usage splits by component. |
+| `CONSCIOUS_MODEL` | Model every Conscious call is sent as (e.g. `gpt-oss-20b`). Unset sends the routed name, which Conscious maps to the project's default. |
 | `FARHELM_RUNNER_URL` | Where `farhelm hook` reaches the daemon (default `127.0.0.1:7842`) |
 | `FARHELM_MACHINE_NAME` | Overrides the hostname used to identify this machine |
 | `FARHELM_TMUX` | Path to the tmux binary |

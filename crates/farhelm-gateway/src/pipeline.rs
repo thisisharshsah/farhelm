@@ -406,6 +406,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 // Low effort: this is condensation, not reasoning.
                 effort: Some(Effort::Low),
                 plan: assembled,
+                purpose: Some(TaskType::Summarize),
             })
             .await?;
 
@@ -538,8 +539,11 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         }
 
         // ---- stage 4: routing -----------------------------------------------
-        let batch_downgraded = request.deferrable && !self.config.batch_enabled;
-        let deferrable = request.deferrable && self.config.batch_enabled;
+        // A provider with no Batch API (Conscious) takes the same downgrade as
+        // batching switched off: dispatched live, and the trace says so.
+        let batching = self.config.batch_enabled && self.client.supports_batch();
+        let batch_downgraded = request.deferrable && !batching;
+        let deferrable = request.deferrable && batching;
         let route = route(
             request.task_type,
             request.tier_pin,
@@ -682,6 +686,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                     max_tokens: self.config.max_tokens,
                     effort: Some(effort_for(route.slot)),
                     plan: plan.clone(),
+                    purpose: Some(request.task_type),
                 })
                 .to_string(),
                 batch_id: None,
@@ -736,6 +741,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 max_tokens: self.config.max_tokens,
                 effort: Some(effort_for(route.slot)),
                 plan,
+                purpose: Some(request.task_type),
             })
             .await
         {
