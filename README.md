@@ -6,6 +6,14 @@ what they cost.
 **New here? [QUICKSTART.md](QUICKSTART.md)** — fifteen minutes from nothing to a
 supervised agent that buzzes your phone.
 
+**Developing Farhelm:** read [AGENTS.md](AGENTS.md) for project instructions and
+[the engineering guide](docs/engineering-stack.md) for stack choices and architecture conventions.
+
+The [local Projects flow](docs/local-projects.md) creates projects, attaches registered
+repositories and starts project-owned agent tasks through review/apply/revert.
+Project content stays on a directly connected runner; shared hosted access remains pending.
+See [account sign-in](docs/account-sign-in.md) for local versus hosted service setup.
+
 The design document is [Relay System Design Claude.md](Relay%20System%20Design%20Claude.md);
 this file is the reference for what exists today.
 
@@ -21,6 +29,7 @@ this file is the reference for what exists today.
 | `crates/farhelm-mcp` | Farhelm as a remote MCP server: the protocol, and the OAuth 2.1 server that guards it |
 | `crates/farhelm-crypto` | End-to-end encryption: identities, envelopes, pairing, capability tokens, the runner keystore |
 | `crates/farhelm-gateway` | The cost gateway: the eight-stage pipeline every model call passes through |
+| `crates/farhelm-process` | Bounded command output, deadlines, and process-group/Windows Job Object cleanup |
 | `crates/farhelm-agent` | **Farhelm's own coding agent**: a tool loop that proposes a diff instead of applying one |
 | `crates/farhelm-runner` | The daemon: SQLite store, cost ledger, budget guard, localhost HTTP API |
 | `crates/farhelm-relay` | Stateless ciphertext fan-out, and WebPush wake-ups it cannot read the content of |
@@ -85,13 +94,14 @@ minutes and the phone that started it may be in a tunnel by the time it lands.
          tools ─┘   read · list · search · edit · write · delete · run · remember
              │
              ▼
-   staging overlay ──▶ unified diff ──▶ you ──▶ applied, or discarded
+   task worktree ──▶ unified diff ──▶ you ──▶ merged, or discarded
 ```
 
-**Nothing touches your working tree until you approve it.** Every edit lands in
-a staging overlay, which is what makes the diff renderable *before* anything is
-committed to. Deny it and there is no partial state to clean up, because nothing
-was ever written.
+**Edits land in the task's own Git worktree.** Tests run against those edits;
+the original checkout receives the reviewed change only after approval. File
+tools use directory capabilities and reject all symlink components, including
+links that point inside the checkout. Commands use the separate approval policy;
+a worktree does not sandbox arbitrary code.
 
 **`remember` is the one tool that outlives the task.** The others act on this
 repository now; `remember` leaves a note on it for whoever works on it next — a
@@ -109,6 +119,18 @@ gated one at a time by the same classifier every other agent goes through, so
 **The change set cannot be approved from a watch either.** A diff you have not
 read is not a diff you reviewed.
 
+**A session can be told to stop asking.** `POST /v1/sessions/{id}/auto-approve`
+with `{"level": "off" | "low" | "medium"}` (or the `set_auto_approve` command
+over the relay) is a standing delegation for that one session: `low` clears
+read-only tools on its own, `medium` clears every command the classifier does
+not call destructive. Nothing clears a destructive command, and the level can
+only be set from a phone or the web app — never from a watch, and never by a
+connector, because a model widening its own permissions is the one thing this
+system exists to prevent. Each command the policy clears is still a row in the
+approval table, with `decided_via = auto_policy`, and reaches clients as a
+decision rather than a card. Raising the level also clears whatever is already
+waiting that the new level covers. Applying a diff is always a person.
+
 | Endpoint | What it does |
 |---|---|
 | `POST /v1/tasks` | Start. Returns a row; the loop runs detached |
@@ -119,8 +141,8 @@ read is not a diff you reviewed.
 
 ### Applying is not a one-way door
 
-The overlay keeps **both** sides of every file it touched, so undoing is the
-same walk with them swapped:
+Git preserves the task's change history. Undo creates a revert commit when the
+current state still permits a safe revert:
 
 ```sh
 curl -XPOST localhost:7842/v1/tasks/<id>/revert
@@ -237,12 +259,21 @@ routing, retrieval, cache-shaped prompts and the ledger all apply to it without
 knowing tasks exist. An agent that could reach the API directly would make every
 guarantee in this repo advisory.
 
-**Retrieval and the pre-gate run on the first step only.** Stage 2 shells out to
-a formatter, a linter and a test suite; stage 5 walks the repo. Both are worth
-doing once and neither is worth doing twelve more times while the agent reads
-files. It is also what makes the loop *cache*: the repo map is carried forward
-verbatim, so the prompt prefix stays byte-identical and every later step reads
-its breakpoints instead of rewriting them.
+**Retrieval reads the task checkout on the first step.** Conventions and context
+come from the same committed snapshot the agent edits. The repo map is carried
+forward verbatim so the prompt prefix stays stable for later calls.
+
+**Automatic prechecks are disabled by default.** Repository build/test tooling
+can execute arbitrary code; a repository path alone does not authorize that.
+Normal agent checks use the supervisor-approved `run` tool. Embeddings may set
+`GatewayConfig::pregate_enabled` only for an explicitly trusted execution
+environment; there is no daemon CLI switch yet. Missing programs are reported
+as skipped and cannot produce a passing verification result.
+
+Commands and trusted prechecks share bounded output capture and deadline cleanup
+through `farhelm-process`. Cancellation requests termination of the Unix process
+group or Windows Job Object. This manages ordinary descendants; hostile code
+still needs a separate isolation boundary.
 
 ```sh
 cargo test -p farhelm-agent                        # 79 tests
@@ -256,7 +287,7 @@ the real approval queue, and the real write to disk.
 ### What has not been proven
 
 **No real model has ever driven this loop.** Every test scripts the provider.
-What is exercised is the wire format, the tool semantics, the staging overlay and
+What is exercised is the wire format, the tool semantics, the task worktree and
 the review path; what is not is whether a real model uses these seven tools well,
 how many steps a real task takes, or what it costs. Treat the first live task as
 the proving run.
@@ -334,6 +365,11 @@ never reach the server. Loading `http://127.0.0.1:7842` makes the desktop app th
 same deployment the browser already uses — no Tauri-specific client code at all.
 If that port is taken (usually by a `farhelm serve`), it falls back to a
 free one rather than refusing to open.
+
+The loopback server serves the frontend embedded by Tauri at compile time,
+independent of the directory the installed app starts in. Rebuild the desktop
+executable after rebuilding web assets; restarting an old executable cannot
+replace its embedded frontend.
 
 Point it at a relay from Settings and the machine becomes reachable from your
 phone. **It is not a remote administration tool**: nothing accepts arbitrary
@@ -707,7 +743,7 @@ cost policy enforceable rather than advisory. Eight stages:
 | # | Stage | Saves by |
 |---|---|---|
 | 1 | Budget | refusing to spend past a session *or* repo cap (402), and steering or constraining before that |
-| 2 | Pre-gate | letting a formatter/linter/type-checker/test suite answer instead of a model — a green verify costs $0 |
+| 2 | Pre-gate | optional trusted-environment checks; disabled by default; only executed passing checks can answer a verify request |
 | 4 | Router | triage on Haiku, edits on Sonnet, planning on Opus; `PLAN.md` can pin a step down a tier |
 | 5 | Context | line ranges and declaration skeletons under byte caps, not whole files |
 | 6 | Assembler | a byte-stable prompt prefix with `cache_control` breakpoints at each stable/volatile border |
@@ -794,14 +830,39 @@ run.
 your subscription, fetching the Anthropic CLI if it is missing, and stores how
 to obtain a token where the daemon reads it — nothing to export and no PATH to
 get right. `--api-key` stores a key instead. The variables below still work and
-still take precedence, for a deployment that already sets them.
+still take precedence over stored credentials, for a deployment that already sets them.
+
+For Ollama, llama.cpp/vLLM Chat Completions, or OpenRouter, use the explicit
+[model provider configuration](docs/model-providers.md). Copy
+[the local example](config/models.local.example.toml), set its installed model
+and output limit, then start the runner with its absolute path:
+
+```sh
+export FARHELM_MODELS_CONFIG="/absolute/path/models.toml"
+cargo run -p farhelm-runner -- serve
+```
+
+The selected configuration takes precedence over all legacy credentials and
+fails startup if invalid. Its `local_only` policy rejects cloud routes; neither
+policy silently falls back to another provider. Local endpoint declarations
+still require a trusted serving runtime; see the operator guide for cloud
+forwarding controls and conformance checks. This increment supports text and
+structured function tools, with deterministic HTTP fixture coverage. Live-model
+certification, multimodal streaming and local compute metering remain pending.
+
+The [model evaluation guide](docs/model-evaluation.md) now includes an opt-in
+synthetic probe with private JSON reports. Its offline fixture tests run in CI;
+live probes use your explicit deployment configuration and never execute model
+requests as filesystem or shell tools.
 
 Without any credential the runner still starts and serves everything else;
-`/v1/complete` returns 503 with a clear message. `ANTHROPIC_BASE_URL` redirects to any compatible endpoint — a local
-vLLM/Ollama shim for the self-hosted small tier, or a test server.
+`/v1/complete` returns 503 with a clear message. `ANTHROPIC_BASE_URL` redirects to
+a Messages-compatible endpoint or test server. Direct Chat Completions servers
+use the configuration file above.
 
 | Variable | Effect |
 |---|---|
+| `FARHELM_MODELS_CONFIG` | Absolute path to the explicit TOML model registry. Wins over legacy providers and stored credentials; malformed configuration is an error. |
 | `ANTHROPIC_API_KEY` | Enables `/v1/complete` — a Console key, sent as `x-api-key`. Blank counts as unset. |
 | `ANTHROPIC_AUTH_TOKEN` | Same, with a short-lived bearer token instead. Used only when `ANTHROPIC_API_KEY` is unset, and carries the `oauth-2025-04-20` beta the API requires for one. |
 | `ANTHROPIC_BASE_URL` | Redirect to a compatible endpoint |
@@ -859,7 +920,7 @@ the model that *ran*, not the one requested.
 | M3 — Relay + phone | done — web app, React Native app, localhost API, relay, E2E crypto, relay link, device pairing, both clients' own crypto, and **WebPush delivery** (VAPID + `aes128gcm`, verified against RFC 8291's worked example). Every read-only screen, the cost dashboard included, now works over the relay |
 | M4 — Watch + budget UX | done in software — budget guard, destructive-command gating, stale-session GC, push wake-ups, and **one-tap Approve/Deny on the notification** (never for destructive commands). A **native watchOS app** is built, with its own paired identity and Swift NaCl implementation — scope the design doc deferred to P2, promoted on request. **The <5s golden path has never been timed**, and nothing has run on a watch (see below) |
 | M5 — Dashboard + hardening | cost dashboard, **batch queue (C6)**, **history compaction (C7)**, **destructive-command policy file**, and the **quickstart + systemd units** done. **Desktop app** (Tauri, any OS) built — scope not in the original plan, added on request. Opt-in beta telemetry outstanding |
-| M6 — Native agent + diff review | done in software — `farhelm-agent`, the staging overlay, the seven tools, unified diffs computed in-repo, `agent_task` table, five endpoints, four relay commands, reject-and-retry, **undo**, a concurrency ceiling, restart reconciliation, push wake-ups for waiting diffs, **draft-then-verify (C10)**, and review screens on web and phone. **No real model has driven the loop, and no screen has been rendered** (see below) |
+| M6 — Native agent + diff review | done in software — `farhelm-agent`, isolated Git worktrees, the seven tools, unified diffs computed in-repo, `agent_task` table, five endpoints, four relay commands, reject-and-retry, **undo**, a concurrency ceiling, restart reconciliation, push wake-ups for waiting diffs, **draft-then-verify (C10)**, and review screens on web and phone. **No real model has driven the loop, and no screen has been rendered** (see below) |
 
 ### Known gap: tmux is unexercised
 

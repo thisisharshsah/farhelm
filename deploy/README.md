@@ -276,3 +276,14 @@ FARHELM_MCP_URL=https://farhelm-<name>.aurovie.com farhelm serve …
 Keep the hostname **first-level** (`farhelm-<name>`, not `<name>.farhelm`) — see
 the Universal SSL note at the top of this file.
 
+
+## Keeping the web app live while you work
+
+When the control plane runs from a checkout with `--app-dir web/dist`, the
+public site serves that directory directly. `./deploy/live-web.sh` watches the
+web and client-core sources and rebuilds on every change. It builds into
+`web/.dist-next` and swaps the result into `web/dist` only when the typecheck,
+the app build and the service-worker build all passed, so a broken edit leaves
+the site as it was. `--once` does a single build and swap. Each swap is
+confirmed against the public URL (`LIVE_URL`, default
+`https://farhelm.aurovie.com`).

@@ -21,6 +21,12 @@ farhelm.credential.json
 
 # Built clients
 web/dist/
+# Staging for deploy/live-web.sh's swap.
+web/.dist-next/
+web/.dist-old/
+# Installer downloads the web app serves (`/dl/<target>/farhelm`): built
+# binaries, never source.
+web/public/dl/
 *.tsbuildinfo
 
 # Swift Package Manager
