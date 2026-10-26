@@ -41,6 +41,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0014_project_workflow.sql"),
     include_str!("../migrations/0015_session_auto_approve.sql"),
     include_str!("../migrations/0016_repo_auto_approve.sql"),
+    include_str!("../migrations/0017_project_chat.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -48,6 +49,7 @@ const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, 
 
 #[cfg(test)]
 mod local_workspace_tests;
+mod project_chat;
 mod project_workflow;
 #[cfg(test)]
 mod workspace_integrity_tests;

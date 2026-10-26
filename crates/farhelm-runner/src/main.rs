@@ -791,6 +791,16 @@ async fn serve_async(flags: Flags) -> Fallible {
              marked failed"
         );
     }
+    // Same for conversation replies: a pending turn belongs to a reply that
+    // will never arrive, and must say so rather than spin forever.
+    match farhelm_runner::project_chat::reconcile_after_restart(&state) {
+        Ok(interrupted) if interrupted > 0 => println!(
+            "  {interrupted} conversation reply(ies) were pending when the runner last \
+             stopped — marked interrupted"
+        ),
+        Ok(_) => {}
+        Err(err) => eprintln!("  could not reconcile conversations: {err}"),
+    }
 
     // Started after the state exists, because reconciling the device list on
     // every beat needs the store.

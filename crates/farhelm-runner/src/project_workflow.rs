@@ -220,7 +220,7 @@ async fn revert_task(
     .map(Json)
 }
 
-async fn operate<T: Send + 'static>(
+pub(crate) async fn operate<T: Send + 'static>(
     state: Arc<AppState>,
     operation: impl FnOnce(Arc<AppState>) -> Result<T, ApiError> + Send + 'static,
 ) -> Result<T, ApiError> {
@@ -267,7 +267,7 @@ fn task_error(error: task::TaskError) -> ApiError {
     }
 }
 
-fn storage_error() -> ApiError {
+pub(crate) fn storage_error() -> ApiError {
     ApiError::new(
         StatusCode::INTERNAL_SERVER_ERROR,
         "project storage is unavailable",

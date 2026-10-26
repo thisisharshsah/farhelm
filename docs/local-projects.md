@@ -2,7 +2,7 @@
 
 Projects now supports creating, listing and opening metadata stored on the active local runner. Open **Projects** while connected directly to that runner, create a name and optional description, and open a project to read its description and timestamps. Use **Load more** for additional pages and **Refresh** to reload the runner's current records.
 
-Open a project to attach registered repositories, start agent tasks and read its task history. Opening a task retains project context for diff review, rejection, retry and guarded revert. Relay connections display an availability explanation instead of invented records. Conversations, documents, project budgets, editing and deletion remain pending. See [ADR 0007](adr/0007-local-project-api.md) for metadata and [ADR 0008](adr/0008-project-agent-workflow.md) for the implemented agent workflow.
+Open a project to attach registered repositories, start agent tasks and read its task history. Opening a task retains project context for diff review, rejection, retry and guarded revert. Relay connections display an availability explanation instead of invented records. Text conversations are available directly on the runner (below); documents, project budgets, editing and deletion remain pending. See [ADR 0007](adr/0007-local-project-api.md) for metadata and [ADR 0008](adr/0008-project-agent-workflow.md) for the implemented agent workflow.
 
 ## Work in a project
 
@@ -15,6 +15,19 @@ Open a project to attach registered repositories, start agent tasks and read its
 One repository may be attached to several projects. Each new run belongs to one explicit project; a rejected run can be retried only within that project and repository. Older tasks stay unassigned. Project ownership is saved with the task and session in one transaction before execution starts. It survives restart, but an interrupted running task is marked failed by existing reconciliation rather than resumed automatically.
 
 Attachment starts no process and preserves its original attachment timestamp when repeated. Task creation has no idempotency key or automatic retry. After a lost response, refresh history before submitting again. The new scoped workflow does not create hosted project membership, project-private repository notes or an execution sandbox.
+
+## Conversations
+
+A project can hold text-only conversations about one attached repository. Each conversation owns a budgeted Farhelm session (default cap 1 USD, settable at creation) and every reply is charged to it through the gateway, so the cap is enforced where the money moves. The assistant answers in prose and cannot edit files or run commands from a conversation; it is told to phrase proposed work as an instruction you can start as a task.
+
+| Request | Result |
+| --- | --- |
+| `GET /v1/projects/{id}/chats?limit=50&after=<cursor>` | Bounded conversation page, newest first. |
+| `POST /v1/projects/{id}/chats` | `{"repo_id","title","budget_usd"?}` → 201 with the conversation detail. The repository must be attached. |
+| `GET /v1/projects/{id}/chats/{chat_id}` | Conversation, messages and the latest reply attempt. |
+| `POST /v1/projects/{id}/chats/{chat_id}/messages` | `{"content","request_id"}` → 200 with the turn `pending`; the reply is composed detached. Read the conversation again to see it settle. |
+
+Sending a message claims a durable turn before any inference runs. A resend with the same `request_id` and text replays the recorded outcome instead of asking twice; the same id with different text is a 409. Only one reply can be pending per conversation. A reply that fails records why (`failed` with an error), and one that was pending when the runner stopped is marked `interrupted` at the next start and never retried on its own: send a new request. History handed to the model contains completed turns only; the transcript keeps everything. A conversation holds at most 100 messages or 256 KiB; start another when it fills. Without a configured model provider every reply fails with that reason rather than hanging.
 
 ## Storage and access
 

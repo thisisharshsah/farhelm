@@ -147,6 +147,7 @@ pub fn router_with_auth(state: Arc<AppState>, auth: LocalAuth) -> Router {
 fn base_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(crate::projects::routes())
+        .merge(crate::project_chat::routes())
         .route("/v1/repos", get(list_repos))
         .route("/v1/fleet", get(fleet))
         .route("/v1/sessions", get(list_sessions).post(start_session))
