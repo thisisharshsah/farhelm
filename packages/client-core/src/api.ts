@@ -1,3 +1,12 @@
+import {
+  parseProject, parseProjectPage, parseProjectRepository,
+  parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskView,
+} from "./projects.ts";
+import {
+  parseChatDetail, parseChatReply, parseProjectChat, parseProjectChatPage,
+  type CreateProjectChatRequest, type SendChatMessageRequest,
+} from "./chat.ts";
+
 /**
  * Client for the runner's HTTP API, and the types every client shares.
  *
@@ -26,6 +35,14 @@ export type Decision = "approved" | "denied" | "timeout";
 export type DecidedVia = "watch" | "phone" | "web" | "auto_policy";
 export type BudgetState = "ok" | "warn" | "stop";
 
+/**
+ * What a session clears without asking. Mirrors `AutoApprove` in Rust.
+ *
+ * The runner enforces the ceiling: a destructive command is never cleared on
+ * its own whatever this says, and only the phone or web app may change it.
+ */
+export type AutoApprove = "off" | "low" | "medium";
+
 export interface BudgetView {
   cap_usd: number | null;
   spent_usd: number;
@@ -52,6 +69,7 @@ export interface SessionView {
   started_at: number;
   ended_at: number | null;
   awaiting_approval_id: string | null;
+  auto_approve: AutoApprove;
 }
 
 export interface PlanStepView {
@@ -215,6 +233,8 @@ export interface AgentView {
   note: string;
 }
 
+export type RepositoryView = ProjectRepository;
+
 export interface SessionDetail extends SessionView {
   steps: PlanStepView[];
   output: OutputLine[];
@@ -287,6 +307,108 @@ export type ServerEvent =
    * the runner seals it to the device that sent the failing command.
    */
   | { type: "command_error"; message: string };
+
+/* ------------------------------------------------- unified workspace (ADR 0002) */
+
+export type EntityKind =
+  | "project"
+  | "conversation"
+  | "task"
+  | "task_run"
+  | "document"
+  | "artifact"
+  | "repo";
+
+export type RelationKind =
+  | "mentions"
+  | "spawns"
+  | "blocks"
+  | "documents"
+  | "produces"
+  | "belongs_to";
+
+export interface Project {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string;
+  budget_cap_usd: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** The runner chooses the local workspace; callers never supply its ID. */
+export interface CreateProjectRequest {
+  name: string;
+  description?: string;
+}
+
+export interface ProjectPage {
+  projects: Project[];
+  next_cursor: string | null;
+}
+
+export interface ProjectListOptions {
+  after?: string;
+  limit?: number;
+}
+
+export interface ProjectRepository {
+  id: string;
+  name: string;
+  path: string;
+}
+
+export interface ProjectRepositoryPage {
+  repositories: ProjectRepository[];
+  next_cursor: string | null;
+}
+
+export interface AttachProjectRepositoryRequest {
+  repo_id: string;
+}
+
+export interface StartProjectTaskRequest {
+  repo_id: string;
+  prompt: string;
+  budget_usd?: number | null;
+  max_steps?: number | null;
+  retry_of?: string | null;
+}
+
+export interface ProjectTaskPage {
+  tasks: TaskView[];
+  next_cursor: string | null;
+}
+
+export interface Conversation {
+  id: string;
+  project_id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Document {
+  id: string;
+  project_id: string;
+  title: string;
+  content: string;
+  content_hash: string;
+  version: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface EntityLink {
+  id: string;
+  source_type: EntityKind;
+  source_id: string;
+  target_type: EntityKind;
+  target_id: string;
+  relation_kind: RelationKind;
+  created_at: number;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -369,9 +491,109 @@ export type RunnerApi = ReturnType<typeof createRunnerApi>;
  */
 export function createRunnerApi(baseUrl = "") {
   const base = baseUrl.replace(/\/$/, "");
+  const projectPath = (id: string) => `/v1/projects/${encodeURIComponent(id)}`;
+  const pageQuery = ({ after, limit }: ProjectListOptions = {}) => {
+    const query = new URLSearchParams();
+    if (after !== undefined) query.set("after", after);
+    if (limit !== undefined) query.set("limit", String(limit));
+    const encoded = query.toString();
+    return encoded ? `?${encoded}` : "";
+  };
   return {
     baseUrl: base,
+    /** Local runner metadata, newest IDs first. */
+    projects: async ({ after, limit }: ProjectListOptions = {}) => {
+      const query = new URLSearchParams();
+      if (after !== undefined) query.set("after", after);
+      if (limit !== undefined) query.set("limit", String(limit));
+      const encodedQuery = query.toString();
+      const suffix = encodedQuery ? `?${encodedQuery}` : "";
+      return parseProjectPage(await request<unknown>(base, `/v1/projects${suffix}`));
+    },
+    project: async (id: string) => {
+      const project = parseProject(await request<unknown>(base, `/v1/projects/${encodeURIComponent(id)}`));
+      if (project.id !== id) throw new Error("The runner returned a different project.");
+      return project;
+    },
+    createProject: async (input: CreateProjectRequest) =>
+      parseProject(await request<unknown>(base, "/v1/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: input.name,
+          ...(input.description !== undefined ? { description: input.description } : {}),
+        }),
+      })),
+    projectConversations: async (id: string, options?: ProjectListOptions) => {
+      const page = parseProjectChatPage(await request<unknown>(base, `${projectPath(id)}/conversations${pageQuery(options)}`));
+      if (page.conversations.some((chat) => chat.project_id !== id)) throw new Error("The runner returned conversations from a different project.");
+      return page;
+    },
+    createProjectConversation: async (id: string, input: CreateProjectChatRequest) => {
+      const chat = parseProjectChat(await request<unknown>(base, `${projectPath(id)}/conversations`, {
+        method: "POST", body: JSON.stringify({ repo_id: input.repo_id, title: input.title,
+          ...(input.budget_usd !== undefined ? { budget_usd: input.budget_usd } : {}) }),
+      }));
+      if (chat.project_id !== id || chat.repo_id !== input.repo_id) throw new Error("The runner returned a conversation for a different project or repository.");
+      return chat;
+    },
+    projectConversation: async (id: string, conversationId: string) => {
+      const detail = parseChatDetail(await request<unknown>(base, `${projectPath(id)}/conversations/${encodeURIComponent(conversationId)}`));
+      if (detail.conversation.project_id !== id || detail.conversation.id !== conversationId) throw new Error("The runner returned a different conversation.");
+      return detail;
+    },
+    sendProjectMessage: async (id: string, conversationId: string, input: SendChatMessageRequest) => {
+      const reply = parseChatReply(await request<unknown>(base, `${projectPath(id)}/conversations/${encodeURIComponent(conversationId)}/messages`, {
+        method: "POST", body: JSON.stringify({ content: input.content, request_id: input.request_id }),
+      }));
+      if (reply.detail.conversation.project_id !== id || reply.detail.conversation.id !== conversationId
+        || reply.turn.request_id !== input.request_id) throw new Error("The runner returned a different conversation or message request.");
+      return reply;
+    },
+    projectRepoCandidates: async (id: string, options?: ProjectListOptions) =>
+      parseProjectRepositoryPage(await request<unknown>(base, `${projectPath(id)}/repo-candidates${pageQuery(options)}`)),
+    projectRepositories: async (id: string, options?: ProjectListOptions) =>
+      parseProjectRepositoryPage(await request<unknown>(base, `${projectPath(id)}/repos${pageQuery(options)}`)),
+    attachProjectRepository: async (id: string, repoId: string) => {
+      const repo = parseProjectRepository(await request<unknown>(base, `${projectPath(id)}/repos`, {
+        method: "POST", body: JSON.stringify({ repo_id: repoId }),
+      }));
+      if (repo.id !== repoId) throw new Error("The runner returned a different repository.");
+      return repo;
+    },
+    projectTasks: async (id: string, options?: ProjectListOptions) =>
+      parseProjectTaskPage(await request<unknown>(base, `${projectPath(id)}/tasks${pageQuery(options)}`)),
+    startProjectTask: async (id: string, input: StartProjectTaskRequest) => {
+      const task = parseTaskView(await request<unknown>(base, `${projectPath(id)}/tasks`, {
+        method: "POST",
+        body: JSON.stringify({ repo_id: input.repo_id, prompt: input.prompt,
+          budget_usd: input.budget_usd ?? null, max_steps: input.max_steps ?? null, retry_of: input.retry_of ?? null }),
+      }));
+      if (task.repo_id !== input.repo_id) throw new Error("The runner returned a task for a different repository.");
+      return task;
+    },
+    projectTask: async (id: string, taskId: string) => {
+      const task = parseTaskDetail(await request<unknown>(base, `${projectPath(id)}/tasks/${encodeURIComponent(taskId)}`));
+      if (task.id !== taskId) throw new Error("The runner returned a different task.");
+      return task;
+    },
+    reviewProjectTask: async (id: string, taskId: string, decision: TaskReview, via: DecidedVia, note?: string) => {
+      const task = parseTaskView(await request<unknown>(base, `${projectPath(id)}/tasks/${encodeURIComponent(taskId)}/review`, {
+        method: "POST", body: JSON.stringify({ decision, via, note: note ?? null }),
+      }));
+      if (task.id !== taskId) throw new Error("The runner returned a different task.");
+      return task;
+    },
+    revertProjectTask: async (id: string, taskId: string, via: DecidedVia) => {
+      const task = parseTaskView(await request<unknown>(base, `${projectPath(id)}/tasks/${encodeURIComponent(taskId)}/revert`, {
+        method: "POST", body: JSON.stringify({ via }),
+      }));
+      if (task.id !== taskId) throw new Error("The runner returned a different task.");
+      return task;
+    },
     fleet: () => request<FleetView>(base, "/v1/fleet"),
+    repositories: async () => parseProjectRepositoryPage({
+      repositories: await request<unknown>(base, "/v1/repos"), next_cursor: null,
+    }).repositories,
     session: (id: string) => request<SessionDetail>(base, `/v1/sessions/${id}`),
     dashboard: (id: string, sinceMs?: number) =>
       request<DashboardView>(
@@ -382,6 +604,11 @@ export function createRunnerApi(baseUrl = "") {
       request<{ delivered: boolean }>(base, `/v1/sessions/${id}/instruction`, {
         method: "POST",
         body: JSON.stringify({ text }),
+      }),
+    setAutoApprove: (id: string, level: AutoApprove) =>
+      request<SessionView>(base, `/v1/sessions/${id}/auto-approve`, {
+        method: "POST",
+        body: JSON.stringify({ level }),
       }),
     planControl: (id: string, action: "pause" | "resume" | "skip") =>
       request<PlanStepView[]>(base, `/v1/sessions/${id}/plan`, {

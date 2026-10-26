@@ -7,13 +7,13 @@
  * relay, a sealed snapshot request, an addressed reply, a decision the runner
  * really records, and a refusal that finds its way back.
  *
- * It **skips itself** when there is no runner on 7842, so CI stays green
- * without pretending to have run. To run it for real:
+ * It is opt-in because pairing and approvals mutate a real runner. Use a
+ * disposable runner/relay and explicitly enable it to run for real:
  *
  * ```sh
  * cargo run -p farhelm-relay &
  * cargo run -p farhelm-runner -- serve --demo --relay ws://127.0.0.1:7843 &
- * cd app && pnpm test
+ * FARHELM_LIVE_TESTS=1 pnpm --filter @farhelm/client-core test
  * ```
  *
  * The destructive-approval assertions need something destructive to be pending,
@@ -50,7 +50,7 @@ const RUNNER = "http://127.0.0.1:7842";
  * is the exact failure mode the header above says to avoid, in the other
  * direction.
  */
-const running = await fetch(`${RUNNER}/v1/health`)
+const running = process.env.FARHELM_LIVE_TESTS === "1" && await fetch(`${RUNNER}/v1/health`)
   .then((response) => response.ok)
   .catch(() => false);
 

@@ -337,17 +337,36 @@ export class CloudError extends ApiError {
   }
 }
 
+/** How long a failed refresh waits before its one retry. Well inside the
+ *  server's grace window for the previous token. */
+const REFRESH_RETRY_MS = 2_000;
+
 export class CloudClient {
   private accessToken: string | null = null;
   private accessExpiresAt = 0;
   /** In flight refresh, so ten parallel calls do not rotate ten times. */
   private refreshing: Promise<void> | null = null;
+  /**
+   * Tokens this client has rotated away from. Persisting a rotation is
+   * asynchronous, so storage can briefly still hold the token just replaced;
+   * adopting it back would be a replay of this client's own old token.
+   */
+  private readonly retired: string[] = [];
 
   constructor(
     readonly baseUrl: string,
     private refreshToken: string | null = null,
     /** Called whenever the refresh token rotates, so it can be persisted. */
     private readonly onRotate: (refreshToken: string) => void = () => {},
+    /**
+     * The refresh token as persisted right now, if the platform can say.
+     *
+     * Read before every refresh. Another tab, or a service worker, sharing
+     * this storage may have rotated the token since this client loaded it;
+     * presenting the stale one is a replay, and the server ends the session
+     * for replays (see `rotate_refresh_token` in farhelm-cloud).
+     */
+    private readonly storedRefreshToken: (() => Promise<string | null>) | null = null,
   ) {}
 
   get isSignedIn(): boolean {
@@ -356,6 +375,35 @@ export class CloudClient {
 
   private url(path: string): string {
     return `${this.baseUrl.replace(/\/$/, "")}${path}`;
+  }
+
+  /** Bound the entire exchange, including a body that stalls after headers. */
+  private async exchange<T>(path: string, init: RequestInit, read: (response: Response) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const response = await fetch(this.url(path), {
+        ...init, signal: controller.signal, redirect: "error", credentials: "omit",
+      });
+      return await read(response);
+    } catch (cause) {
+      if (controller.signal.aborted) {
+        throw new CloudError("The workspace server took too long to respond. Check its address and try again.", 0);
+      }
+      if (cause instanceof CloudError) throw cause;
+      throw new CloudError("Cannot reach the workspace server. Check its address and your connection.", 0);
+    } finally {
+      clearTimeout(deadline);
+    }
+  }
+
+  private async json<T>(response: Response): Promise<T> {
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "application/json" && !contentType?.endsWith("+json")) {
+      throw new CloudError("This address did not return the workspace API. Check the workspace server address.", response.status);
+    }
+    try { return await response.json() as T; }
+    catch { throw new CloudError("The workspace server returned an invalid response. Try again or check the server address.", response.status); }
   }
 
   /**
@@ -380,35 +428,41 @@ export class CloudClient {
       headers.authorization = `Bearer ${this.accessToken}`;
     }
 
-    const response = await fetch(this.url(path), {
+    const result = await this.exchange(path, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+    }, async (response) => {
+      // Return the refusal outside this exchange before attempting a refresh;
+      // otherwise two request deadlines would cover the same token rotation.
+      if (response.status === 401 && auth && retry && this.refreshToken) return { retry: true } as const;
+      if (!response.ok) throw await this.refusal(response, path);
+      return { retry: false, value: response.status === 204 ? undefined as T : await this.json<T>(response) } as const;
     });
 
-    if (response.status === 401 && auth && retry && this.refreshToken) {
+    if (result.retry) {
       this.accessToken = null;
       await this.ensureFresh();
       return this.call<T>(method, path, body, { auth, retry: false });
     }
-
-    if (!response.ok) {
-      throw await this.refusal(response);
-    }
-    if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
+    return result.value;
   }
 
-  private async refusal(response: Response): Promise<CloudError> {
+  private async refusal(response: Response, path = ""): Promise<CloudError> {
     let message = response.statusText || `request failed (${response.status})`;
+    if ([502, 503, 504].includes(response.status)) {
+      message = `The workspace server is unavailable (${response.status}). Check the server address or try again when the service is running.`;
+    } else if (response.status === 404 && path.startsWith("/v1/auth/")) {
+      message = "This server does not provide account sign-in. Check the workspace server address.";
+    }
     let upgradeTo: Plan | null = null;
     try {
       const body = (await response.json()) as {
         error?: string;
         upgrade_to?: Plan | null;
       };
-      if (body.error) message = body.error;
-      if (body.upgrade_to) upgradeTo = body.upgrade_to;
+      if (typeof body?.error === "string" && body.error.length > 0) message = body.error;
+      if (body?.upgrade_to === "free" || body?.upgrade_to === "pro" || body?.upgrade_to === "team") upgradeTo = body.upgrade_to;
     } catch {
       /* a non-JSON error body is still an error */
     }
@@ -432,21 +486,49 @@ export class CloudClient {
   }
 
   private async doRefresh(): Promise<void> {
-    const response = await fetch(this.url("/v1/auth/refresh"), {
+    if (this.storedRefreshToken) {
+      const stored = await this.storedRefreshToken().catch(() => null);
+      if (stored && stored !== this.refreshToken && !this.retired.includes(stored)) {
+        this.refreshToken = stored;
+      }
+    }
+    try {
+      await this.rotate();
+    } catch (cause) {
+      // Unreachable, or the gateway answered for a server it could not reach.
+      // The server may already have rotated the token and lost the reply on
+      // the way back; it accepts the previous token for a short grace window,
+      // so one prompt retry recovers a dropped tunnel connection instead of
+      // leaving it to sign the person out later.
+      if (!(cause instanceof CloudError) || !(cause.status === 0 || cause.status >= 502)) throw cause;
+      await new Promise((resolve) => setTimeout(resolve, REFRESH_RETRY_MS));
+      await this.rotate();
+    }
+  }
+
+  private async rotate(): Promise<void> {
+    if (!this.refreshToken) throw new CloudError("sign in to continue", 401);
+    const body = await this.exchange("/v1/auth/refresh", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ refresh_token: this.refreshToken }),
+    }, async (response) => {
+      if (!response.ok) {
+        // An upstream outage is recoverable. Retain the refresh credential so
+        // a transient 502 cannot silently turn into a forced sign-out.
+        if (response.status === 401 || response.status === 403) {
+          this.refreshToken = null;
+          this.accessToken = null;
+        }
+        throw await this.refusal(response, "/v1/auth/refresh");
+      }
+      return this.json<{ access_token: string; access_expires_at: number; refresh_token: string }>(response);
     });
-    if (!response.ok) {
-      this.refreshToken = null;
-      this.accessToken = null;
-      throw await this.refusal(response);
+    this.validateTokens(body);
+    if (this.refreshToken) {
+      this.retired.push(this.refreshToken);
+      if (this.retired.length > 4) this.retired.shift();
     }
-    const body = (await response.json()) as {
-      access_token: string;
-      access_expires_at: number;
-      refresh_token: string;
-    };
     this.accessToken = body.access_token;
     this.accessExpiresAt = body.access_expires_at;
     this.refreshToken = body.refresh_token;
@@ -454,11 +536,23 @@ export class CloudClient {
   }
 
   private adopt(auth: AuthResponse): Workspace {
+    this.validateTokens(auth);
+    if (!auth.workspace || typeof auth.workspace !== "object") {
+      throw new CloudError("The workspace server returned an invalid sign-in response.", 502);
+    }
     this.accessToken = auth.access_token;
     this.accessExpiresAt = auth.access_expires_at;
     this.refreshToken = auth.refresh_token;
     this.onRotate(auth.refresh_token);
     return auth.workspace;
+  }
+
+  private validateTokens(value: { access_token: string; access_expires_at: number; refresh_token: string }): void {
+    if (!value || typeof value.access_token !== "string" || !value.access_token
+      || typeof value.refresh_token !== "string" || !value.refresh_token
+      || !Number.isSafeInteger(value.access_expires_at) || value.access_expires_at <= Date.now()) {
+      throw new CloudError("The workspace server returned an invalid sign-in response.", 502);
+    }
   }
 
   /* ------------------------------------------------------------------ auth */
@@ -513,11 +607,11 @@ export class CloudClient {
     this.accessToken = null;
     if (!token) return;
     try {
-      await fetch(this.url("/v1/auth/logout"), {
+      await this.exchange("/v1/auth/logout", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ refresh_token: token }),
-      });
+      }, async () => undefined);
     } catch {
       // Already signed out locally, which is the part that matters to the
       // person holding the device. The token expires on its own.

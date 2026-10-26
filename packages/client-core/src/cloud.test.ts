@@ -44,6 +44,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -58,6 +59,67 @@ function authBody(overrides: Record<string, unknown> = {}) {
 }
 
 describe("signing in", () => {
+  it("explains a non-JSON gateway outage without adopting a session", async () => {
+    handler = () => new Response("<h1>Bad Gateway</h1>", { status: 502 });
+    const rotate = vi.fn();
+    const client = new CloudClient("http://127.0.0.1:7844", null, rotate);
+    await expect(client.signIn({ email: "fixture@example.invalid", password: "fixture-password" })).rejects.toThrow("unavailable (502)");
+    expect(client.isSignedIn).toBe(false);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.redirect).toBe("error");
+    expect(calls[0]!.init.credentials).toBe("omit");
+  });
+
+  it("rejects a successful HTML app-shell response from the wrong service", async () => {
+    handler = () => new Response("<!doctype html><h1>App</h1>", { headers: { "content-type": "text/html" } });
+    const client = new CloudClient("http://127.0.0.1:7842");
+    await expect(client.signIn({ email: "fixture@example.invalid", password: "fixture-password" })).rejects.toThrow("workspace server address");
+    expect(client.isSignedIn).toBe(false);
+  });
+
+  it("does not save malformed authentication tokens", async () => {
+    handler = () => json(authBody({ refresh_token: "" }));
+    const rotate = vi.fn();
+    const client = new CloudClient("https://accounts.example.com", null, rotate);
+    await expect(client.signIn({ email: "fixture@example.invalid", password: "fixture-password" })).rejects.toThrow("invalid sign-in response");
+    expect(rotate).not.toHaveBeenCalled();
+    expect(client.isSignedIn).toBe(false);
+  });
+
+  it("ends an unresponsive login and allows another attempt", async () => {
+    vi.useFakeTimers();
+    let aborted = false;
+    handler = (_url, init) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => {
+        aborted = true;
+        reject(new DOMException("aborted", "AbortError"));
+      });
+    });
+    const client = new CloudClient("https://accounts.example.com");
+    const failed = expect(client.signIn({ email: "fixture@example.invalid", password: "fixture-password" })).rejects.toThrow("too long");
+    await vi.advanceTimersByTimeAsync(20_000);
+    await failed;
+    expect(aborted).toBe(true);
+    handler = () => json(authBody());
+    await client.signIn({ email: "fixture@example.invalid", password: "fixture-password" });
+    expect(client.isSignedIn).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds a response whose body stalls after successful headers", async () => {
+    vi.useFakeTimers();
+    handler = (_url, init) => new Response(new ReadableStream({
+      start(controller) {
+        init.signal!.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+      },
+    }), { headers: { "content-type": "application/json" } });
+    const client = new CloudClient("https://accounts.example.com");
+    const failed = expect(client.signIn({ email: "fixture@example.invalid", password: "fixture-password" })).rejects.toThrow("too long");
+    await vi.advanceTimersByTimeAsync(20_000);
+    await failed;
+    expect(client.isSignedIn).toBe(false);
+  });
   it("keeps the tokens and reports the workspace", async () => {
     handler = () => json(authBody());
     const rotated: string[] = [];
@@ -119,6 +181,17 @@ describe("signing in", () => {
 });
 
 describe("token refresh", () => {
+  it("retains a refresh session during an upstream outage and recovers", async () => {
+    handler = () => new Response("Bad Gateway", { status: 502 });
+    const client = new CloudClient("https://accounts.example.com", "refresh-1");
+    await expect(client.runners()).rejects.toThrow("unavailable (502)");
+    expect(client.isSignedIn).toBe(true);
+    handler = (url) => url.endsWith("/v1/auth/refresh") ? json({
+      access_token: "access-2", refresh_token: "refresh-2", access_expires_at: Date.now() + 3_600_000,
+    }) : json([]);
+    await expect(client.runners()).resolves.toEqual([]);
+    expect(client.isSignedIn).toBe(true);
+  });
   it("refreshes an expired access token and retries the call once", async () => {
     let refreshed = 0;
     handler = (url) => {
@@ -143,6 +216,63 @@ describe("token refresh", () => {
     // Rotation is the point: the old refresh token is now dead server-side, so
     // the client must have stored the new one.
     expect(rotated).toEqual(["refresh-2"]);
+  });
+
+  it("presents the token another tab stored instead of replaying its own stale one", async () => {
+    const presented: string[] = [];
+    handler = (url, init) => {
+      if (url.endsWith("/v1/auth/refresh")) {
+        presented.push(JSON.parse(String(init.body)).refresh_token);
+        return json({ access_token: "access-3", access_expires_at: Date.now() + 3_600_000, refresh_token: "refresh-3" });
+      }
+      return json([]);
+    };
+    const client = new CloudClient("https://x", "refresh-1", () => {}, async () => "refresh-2");
+    await client.runners();
+    expect(presented).toEqual(["refresh-2"]);
+  });
+
+  it("does not adopt a stored token it has already rotated away from", async () => {
+    const presented: string[] = [];
+    let next = 2;
+    handler = (url, init) => {
+      if (url.endsWith("/v1/auth/refresh")) {
+        presented.push(JSON.parse(String(init.body)).refresh_token);
+        // Inside the refresh margin, so the next call refreshes again.
+        return json({ access_token: `access-${next}`, access_expires_at: Date.now() + 1_000, refresh_token: `refresh-${next++}` });
+      }
+      return json([]);
+    };
+    // Storage lags behind: it still holds the first token after rotation.
+    const client = new CloudClient("https://x", "refresh-1", () => {}, async () => "refresh-1");
+    await client.runners();
+    await client.runners();
+    expect(presented.slice(0, 2)).toEqual(["refresh-1", "refresh-2"]);
+  });
+
+  it("retries a refresh once when the reply was lost on the way back", async () => {
+    vi.useFakeTimers();
+    try {
+      const presented: string[] = [];
+      handler = (url, init) => {
+        if (url.endsWith("/v1/auth/refresh")) {
+          presented.push(JSON.parse(String(init.body)).refresh_token);
+          if (presented.length === 1) throw new TypeError("network connection was lost");
+          return json({ access_token: "access-2", access_expires_at: Date.now() + 3_600_000, refresh_token: "refresh-2" });
+        }
+        return json([]);
+      };
+      const client = new CloudClient("https://x", "refresh-1");
+      const pending = client.runners();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(pending).resolves.toEqual([]);
+      // The same token both times: the server accepts it again within its
+      // grace window if the first attempt did rotate it.
+      expect(presented).toEqual(["refresh-1", "refresh-1"]);
+      expect(client.isSignedIn).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("collapses concurrent refreshes into one", async () => {

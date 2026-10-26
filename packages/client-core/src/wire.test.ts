@@ -34,10 +34,23 @@ import fixture from "../../../crates/farhelm-proto/tests/fixtures/wire.json";
 import type {
   ApprovalView,
   BudgetView,
+  Conversation,
+  CreateProjectRequest,
   DashboardView,
+  Document,
+  EntityKind,
+  EntityLink,
   FleetView,
   OutputLine,
   PlanProgress,
+  Project,
+  ProjectPage,
+  ProjectRepository,
+  ProjectRepositoryPage,
+  ProjectTaskPage,
+  AttachProjectRepositoryRequest,
+  StartProjectTaskRequest,
+  RelationKind,
   SessionDetail,
   SessionView,
   TaskDetail,
@@ -77,6 +90,7 @@ const SESSION_KEYS = [
   "started_at",
   "ended_at",
   "awaiting_approval_id",
+  "auto_approve",
 ] as const;
 
 const APPROVAL_KEYS = [
@@ -103,6 +117,32 @@ const FLEET_KEYS = [
   "today_usd",
   "cache_hit_ratio",
 ] as const;
+
+const PROJECT_KEYS = [
+  "id", "workspace_id", "name", "description", "budget_cap_usd", "created_at", "updated_at",
+] as const;
+const CONVERSATION_KEYS = ["id", "project_id", "title", "created_at", "updated_at"] as const;
+const DOCUMENT_KEYS = [
+  "id", "project_id", "title", "content", "content_hash", "version", "created_at", "updated_at",
+] as const;
+const ENTITY_LINK_KEYS = [
+  "id", "source_type", "source_id", "target_type", "target_id", "relation_kind", "created_at",
+] as const;
+const ENTITY_KINDS = [
+  "project", "conversation", "task", "task_run", "document", "artifact", "repo",
+] as const;
+const RELATION_KINDS = [
+  "mentions", "spawns", "blocks", "documents", "produces", "belongs_to",
+] as const;
+
+const WORKSPACE_LISTS_ARE_COMPLETE: [
+  Exhaustive<Project, (typeof PROJECT_KEYS)[number]>,
+  Exhaustive<Conversation, (typeof CONVERSATION_KEYS)[number]>,
+  Exhaustive<Document, (typeof DOCUMENT_KEYS)[number]>,
+  Exhaustive<EntityLink, (typeof ENTITY_LINK_KEYS)[number]>,
+  Exhaustive<Record<EntityKind, unknown>, (typeof ENTITY_KINDS)[number]>,
+  Exhaustive<Record<RelationKind, unknown>, (typeof RELATION_KINDS)[number]>,
+] = [true, true, true, true, true, true];
 
 /**
  * The compile-time half, collected so the assertions are *used* — an unread
@@ -237,6 +277,110 @@ describe("the read models Rust sends", () => {
   });
 });
 
+describe("the workspace objects Rust sends", () => {
+  it("preserves local creation input and pagination, including a terminal empty page", () => {
+    const input: CreateProjectRequest = fixture.workspace.create_project;
+    const page: ProjectPage = fixture.workspace.project_page;
+    const empty: ProjectPage = fixture.workspace.empty_project_page;
+    const inputKeys = ["name", "description"] as const;
+    const pageKeys = ["projects", "next_cursor"] as const;
+    const complete: [Exhaustive<CreateProjectRequest, typeof inputKeys[number]>, Exhaustive<ProjectPage, typeof pageKeys[number]>] = [true, true];
+    expect(complete).toEqual([true, true]);
+    hasEveryKey(input as never, inputKeys, "CreateProjectRequest");
+    hasEveryKey(page as never, pageKeys, "ProjectPage");
+    expect(input.name).toBe("Local pilot");
+    expect(input.description).toBe("Synthetic local project metadata");
+    expect(page.projects).toHaveLength(1);
+    expect(page.projects[0]?.budget_cap_usd).toBeNull();
+    expect(page.projects[0]?.workspace_id).toBe("local:0123456789abcdef0123456789abcdef");
+    expect(page.next_cursor).toBe(page.projects[0]?.id);
+    expect(empty).toEqual({ projects: [], next_cursor: null });
+  });
+
+  it("covers every DTO key and enum variant declared by TypeScript", () => {
+    expect(WORKSPACE_LISTS_ARE_COMPLETE).toEqual([true, true, true, true, true, true]);
+    expect(fixture.workspace.entity_kinds).toEqual(ENTITY_KINDS);
+    expect(fixture.workspace.relation_kinds).toEqual(RELATION_KINDS);
+  });
+
+  it("preserves project fields, numeric budgets and explicit null budgets", () => {
+    const project: Project = fixture.workspace.project;
+    const uncapped: Project = fixture.workspace.project_without_budget;
+    hasEveryKey(project as never, PROJECT_KEYS, "Project");
+    hasEveryKey(uncapped as never, PROJECT_KEYS, "Project without a budget");
+    expect(project.workspace_id).toBe("workspace-1");
+    expect(project.budget_cap_usd).toBe(100);
+    expect(uncapped.budget_cap_usd).toBeNull();
+    expect(project.updated_at).toBeGreaterThan(project.created_at);
+  });
+
+  it("preserves conversation identity, project scope and title", () => {
+    const conversation: Conversation = fixture.workspace.conversation;
+    hasEveryKey(conversation as never, CONVERSATION_KEYS, "Conversation");
+    expect(conversation.project_id).toBe(fixture.workspace.project.id);
+    expect(conversation.title).toBe("Discuss retry limits");
+    expect(conversation.updated_at).toBeGreaterThan(conversation.created_at);
+  });
+
+  it("preserves document content, revision and content hash", () => {
+    const document: Document = fixture.workspace.document;
+    hasEveryKey(document as never, DOCUMENT_KEYS, "Document");
+    expect(document.project_id).toBe(fixture.workspace.project.id);
+    expect(document.content).toBe("# Retry policy\nLimit retries to three attempts.");
+    expect(document.content_hash).toBe("sha256:fixture-content-hash");
+    expect(document.version).toBe(2);
+    expect(document.updated_at).toBeGreaterThan(document.created_at);
+  });
+
+  it("preserves typed link endpoints and relation spellings", () => {
+    // JSON imports infer enum fields as strings. Their complete spellings are
+    // checked above; this assignment also checks all remaining field types.
+    const link: Omit<EntityLink, "source_type" | "target_type" | "relation_kind"> =
+      fixture.workspace.entity_link;
+    hasEveryKey(link as never, ENTITY_LINK_KEYS, "EntityLink");
+    expect(link.source_id).toBe(fixture.workspace.conversation.id);
+    expect(link.target_id).toBe(fixture.workspace.document.id);
+    expect(fixture.workspace.entity_link.source_type).toBe("conversation");
+    expect(fixture.workspace.entity_link.target_type).toBe("document");
+    expect(fixture.workspace.entity_link.relation_kind).toBe("documents");
+    expect(link.created_at).toBe(fixture.workspace.document.updated_at);
+  });
+});
+
+describe("project workflow contracts", () => {
+  it("preserves scoped repository and run payloads without changing global tasks", () => {
+    const repo: ProjectRepository = fixture.project_workflow.repository;
+    const page: ProjectRepositoryPage = fixture.project_workflow.repository_page;
+    const attach: AttachProjectRepositoryRequest = fixture.project_workflow.attach_repository;
+    const start: StartProjectTaskRequest = fixture.project_workflow.start_task;
+    const taskPage: Omit<ProjectTaskPage, "tasks"> = fixture.project_workflow.task_page;
+    const repoKeys = ["id", "name", "path"] as const;
+    const pageKeys = ["repositories", "next_cursor"] as const;
+    const attachKeys = ["repo_id"] as const;
+    const startKeys = ["repo_id", "prompt", "budget_usd", "max_steps", "retry_of"] as const;
+    const taskPageKeys = ["tasks", "next_cursor"] as const;
+    const exhaustive: [
+      Exhaustive<ProjectRepository, typeof repoKeys[number]>,
+      Exhaustive<ProjectRepositoryPage, typeof pageKeys[number]>,
+      Exhaustive<AttachProjectRepositoryRequest, typeof attachKeys[number]>,
+      Exhaustive<StartProjectTaskRequest, typeof startKeys[number]>,
+      Exhaustive<ProjectTaskPage, typeof taskPageKeys[number]>,
+    ] = [true, true, true, true, true];
+    expect(exhaustive).toEqual([true, true, true, true, true]);
+    hasEveryKey(repo as never, repoKeys, "ProjectRepository");
+    hasEveryKey(page as never, pageKeys, "ProjectRepositoryPage");
+    hasEveryKey(attach as never, attachKeys, "AttachProjectRepositoryRequest");
+    hasEveryKey(start as never, startKeys, "StartProjectTaskRequest");
+    hasEveryKey(taskPage as never, taskPageKeys, "ProjectTaskPage");
+    expect(page.repositories[0]).toEqual(repo);
+    expect(page.next_cursor).toBe(repo.id);
+    expect(start.repo_id).toBe(repo.id);
+    expect(start).not.toHaveProperty("repo_path");
+    expect(fixture.task_detail).toMatchObject(fixture.project_workflow.task_page.tasks[0]!);
+    expect(fixture.project_workflow.task_page.tasks[0]).not.toHaveProperty("project_id");
+  });
+});
+
 describe("the events and commands", () => {
   /**
    * The tags a client switches on. `command_error` is in this list even though
@@ -279,6 +423,7 @@ describe("the events and commands", () => {
       "task_list",
       "revert_task",
       "snapshot",
+      "set_auto_approve",
     ]);
   });
 

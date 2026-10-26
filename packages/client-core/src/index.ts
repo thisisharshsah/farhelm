@@ -32,6 +32,11 @@ export {
   type PairingStore,
 } from "./crypto.ts";
 export * from "./api.ts";
+export * from "./chat.ts";
+export {
+  isProject, parseProject, parseProjectPage, parseProjectRepository,
+  parseProjectRepositoryPage, parseProjectTaskPage, isTaskView, parseTaskView, parseTaskDetail,
+} from "./projects.ts";
 export {
   CLOUD_SESSION_STORAGE_KEY,
   CloudClient,

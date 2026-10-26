@@ -25,11 +25,21 @@
 
 import type {
   AgentView,
+  AutoApprove,
   DashboardView,
   Decision,
   SessionView,
   FleetView,
   PlanStepView,
+  CreateProjectRequest,
+  Project,
+  ProjectListOptions,
+  ProjectPage,
+  ProjectRepository,
+  ProjectRepositoryPage,
+  ProjectTaskPage,
+  StartProjectTaskRequest,
+  RepositoryView,
   RunnerApi,
   ServerEvent,
   SessionDetail,
@@ -38,6 +48,7 @@ import type {
   TaskView,
 } from "./api.ts";
 import { ApiError } from "./api.ts";
+import type { ChatDetail, ChatReply, CreateProjectChatRequest, ProjectChat, ProjectChatPage, SendChatMessageRequest } from "./chat.ts";
 import { Identity, type Envelope, type Pairing } from "./crypto.ts";
 
 export type ConnectionState = "connecting" | "open" | "closed";
@@ -73,6 +84,27 @@ export interface Transport {
    */
   readonly supportsTaskControl: boolean;
 
+  /** Local project metadata has no relay protocol yet. */
+  readonly supportsProjects?: boolean;
+  projects?(options?: ProjectListOptions): Promise<ProjectPage>;
+  project?(id: string): Promise<Project>;
+  createProject?(input: CreateProjectRequest): Promise<Project>;
+  readonly supportsProjectWorkflow?: boolean;
+  projectRepoCandidates?(id: string, options?: ProjectListOptions): Promise<ProjectRepositoryPage>;
+  projectRepositories?(id: string, options?: ProjectListOptions): Promise<ProjectRepositoryPage>;
+  attachProjectRepository?(id: string, repoId: string): Promise<ProjectRepository>;
+  projectTasks?(id: string, options?: ProjectListOptions): Promise<ProjectTaskPage>;
+  startProjectTask?(id: string, input: StartProjectTaskRequest): Promise<TaskView>;
+  projectTask?(id: string, taskId: string): Promise<TaskDetail>;
+  reviewProjectTask?(id: string, taskId: string, decision: TaskReview, note?: string): Promise<TaskView>;
+  revertProjectTask?(id: string, taskId: string): Promise<TaskView>;
+  /** Persistent text chat is currently available only on direct runner HTTP. */
+  readonly supportsProjectChat?: boolean;
+  projectConversations?(id: string, options?: ProjectListOptions): Promise<ProjectChatPage>;
+  createProjectConversation?(id: string, input: CreateProjectChatRequest): Promise<ProjectChat>;
+  projectConversation?(id: string, conversationId: string): Promise<ChatDetail>;
+  sendProjectMessage?(id: string, conversationId: string, input: SendChatMessageRequest): Promise<ChatReply>;
+
   fleet(): Promise<FleetView>;
   session(id: string): Promise<SessionDetail>;
   agents(): Promise<AgentView[]>;
@@ -81,6 +113,12 @@ export interface Transport {
   /** `sinceMs` bounds the window; omit for everything. */
   dashboard(id: string, sinceMs?: number): Promise<DashboardView>;
   decide(approvalId: string, decision: Decision): Promise<void>;
+  /**
+   * Change what one session clears without asking. Resolves with the session
+   * as the runner now holds it, so a caller never shows a level it only hoped
+   * for. Rejected when the runner refuses, e.g. from a watch or connector.
+   */
+  setAutoApprove(sessionId: string, level: AutoApprove): Promise<SessionView>;
   instruct(sessionId: string, text: string): Promise<void>;
   planControl(
     sessionId: string,
@@ -99,6 +137,8 @@ export interface Transport {
   reviewTask(id: string, decision: TaskReview, note?: string): Promise<void>;
   /** Take an applied change set back off disk. Refuses if anything moved. */
   revertTask(id: string): Promise<void>;
+  /** Discovered local git repositories on this runner. */
+  repositories?(): Promise<RepositoryView[]>;
 
   /** Subscribe to live events. Returns an unsubscribe function. */
   onEvent(listener: (event: ServerEvent) => void): () => void;
@@ -125,6 +165,9 @@ export class HttpTransport implements Transport {
   readonly supportsDashboard = true;
   readonly supportsSessionControl = true;
   readonly supportsTaskControl = true;
+  readonly supportsProjects = true;
+  readonly supportsProjectWorkflow = true;
+  readonly supportsProjectChat = true;
 
   private stop: (() => void) | null = null;
   private readonly eventListeners = new Set<(event: ServerEvent) => void>();
@@ -152,6 +195,23 @@ export class HttpTransport implements Transport {
   }
 
   fleet = () => this.api.fleet();
+  repositories = () => this.api.repositories();
+  projects = (options?: ProjectListOptions) => this.api.projects(options);
+  project = (id: string) => this.api.project(id);
+  createProject = (input: CreateProjectRequest) => this.api.createProject(input);
+  projectConversations = (id: string, options?: ProjectListOptions) => this.api.projectConversations(id, options);
+  createProjectConversation = (id: string, input: CreateProjectChatRequest) => this.api.createProjectConversation(id, input);
+  projectConversation = (id: string, conversationId: string) => this.api.projectConversation(id, conversationId);
+  sendProjectMessage = (id: string, conversationId: string, input: SendChatMessageRequest) => this.api.sendProjectMessage(id, conversationId, input);
+  projectRepoCandidates = (id: string, options?: ProjectListOptions) => this.api.projectRepoCandidates(id, options);
+  projectRepositories = (id: string, options?: ProjectListOptions) => this.api.projectRepositories(id, options);
+  attachProjectRepository = (id: string, repoId: string) => this.api.attachProjectRepository(id, repoId);
+  projectTasks = (id: string, options?: ProjectListOptions) => this.api.projectTasks(id, options);
+  startProjectTask = (id: string, input: StartProjectTaskRequest) => this.api.startProjectTask(id, input);
+  projectTask = (id: string, taskId: string) => this.api.projectTask(id, taskId);
+  reviewProjectTask = (id: string, taskId: string, decision: TaskReview, note?: string) =>
+    this.api.reviewProjectTask(id, taskId, decision, this.via, note);
+  revertProjectTask = (id: string, taskId: string) => this.api.revertProjectTask(id, taskId, this.via);
   session = (id: string) => this.api.session(id);
   dashboard = (id: string, sinceMs?: number) =>
     this.api.dashboard(id, sinceMs);
@@ -164,6 +224,8 @@ export class HttpTransport implements Transport {
   decide = async (approvalId: string, decision: Decision) => {
     await this.api.decide(approvalId, decision, this.via);
   };
+  setAutoApprove = (sessionId: string, level: AutoApprove) =>
+    this.api.setAutoApprove(sessionId, level);
   instruct = async (sessionId: string, text: string) => {
     await this.api.instruct(sessionId, text);
   };
@@ -218,6 +280,7 @@ export type Command =
     }
   | { type: "decide"; approval_id: string; decision: Decision }
   | { type: "instruct"; session_id: string; text: string }
+  | { type: "set_auto_approve"; session_id: string; level: AutoApprove }
   | {
       type: "plan_control";
       session_id: string;
@@ -300,6 +363,9 @@ export class RelayTransport implements Transport {
    */
   readonly supportsSessionControl = true;
   readonly supportsTaskControl = true;
+  readonly supportsProjects = false;
+  readonly supportsProjectWorkflow = false;
+  readonly supportsProjectChat = false;
 
   private socket: WebSocket | null = null;
   private identity: Identity;
@@ -574,6 +640,10 @@ export class RelayTransport implements Transport {
     ).then((reply) => reply.agents);
   }
 
+  repositories(): Promise<RepositoryView[]> {
+    return Promise.resolve([]);
+  }
+
   startSession(repoPath: string, agent: string): Promise<SessionView> {
     return this.request<SessionView>(
       { type: "start_session", repo_path: repoPath, agent: agent || null },
@@ -599,6 +669,22 @@ export class RelayTransport implements Transport {
   async decide(approvalId: string, decision: Decision) {
     if (this.socket?.readyState !== 1 /* OPEN */) await this.whenOpen();
     this.send({ type: "decide", approval_id: approvalId, decision });
+  }
+
+  /**
+   * Awaited, unlike `decide`: the runner answers with the session it changed,
+   * and a delegation the user believes is on but is not is worse than a slow
+   * toggle. A refusal arrives as `command_error`, which ends the wait here as a
+   * timeout rather than a silent success.
+   */
+  setAutoApprove(sessionId: string, level: AutoApprove): Promise<SessionView> {
+    return this.request<SessionView>(
+      { type: "set_auto_approve", session_id: sessionId, level },
+      (value) =>
+        isSessionView(value) &&
+        (value as SessionView).id === sessionId &&
+        (value as SessionView).auto_approve === level,
+    );
   }
 
   async instruct(sessionId: string, text: string) {
