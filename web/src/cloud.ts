@@ -13,18 +13,19 @@ import {
   type CloudSession,
 } from "@farhelm/client-core";
 import { idbBackend } from "./idb.ts";
+import { defaultCloudUrl, preferredCloudUrl } from "./cloud-endpoint.ts";
 
 /**
  * Where the control plane is.
  *
- * Same origin in production — one Cloudflare tunnel serves the app and the API
- * from `farhelm.aurovie.com`, so there is no cross-origin hop and no URL to
- * configure or get wrong. `VITE_CLOUD_URL` overrides it for a dev server running
- * against a control plane on another port.
+ * Hosted clients use the same origin. A locally served runner/dev app uses
+ * the account service on its documented port, not the runner's API. A build
+ * setting or the sign-in page's explicit server choice can select a deployment.
  */
-export const CLOUD_URL: string =
-  (import.meta.env.VITE_CLOUD_URL as string | undefined)?.replace(/\/$/, "") ??
-  location.origin;
+export const CLOUD_URL: string = preferredCloudUrl(defaultCloudUrl(
+  location.origin,
+  import.meta.env.VITE_CLOUD_URL as string | undefined,
+));
 
 /**
  * The session, in IndexedDB.
@@ -54,12 +55,20 @@ export { CLOUD_SESSION_STORAGE_KEY };
  */
 export function cloudClient(session: CloudSession | null): CloudClient {
   const baseUrl = session?.baseUrl ?? CLOUD_URL;
-  return new CloudClient(baseUrl, session?.refreshToken ?? null, (refreshToken) => {
-    void webCloudSessionStore.load().then((current) => {
-      if (!current) return;
-      void webCloudSessionStore.save({ ...current, refreshToken });
-    });
-  });
+  return new CloudClient(
+    baseUrl,
+    session?.refreshToken ?? null,
+    (refreshToken) => {
+      void webCloudSessionStore.load().then((current) => {
+        if (!current) return;
+        void webCloudSessionStore.save({ ...current, refreshToken });
+      });
+    },
+    // Another tab of this app shares the stored session. Reading it before a
+    // refresh means a tab that loaded an older token picks up the newer one
+    // instead of replaying the old one, which the server treats as theft.
+    () => webCloudSessionStore.load().then((current) => current?.refreshToken ?? null),
+  );
 }
 
 /**

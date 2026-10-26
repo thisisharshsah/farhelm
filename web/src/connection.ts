@@ -44,6 +44,7 @@ import {
   deviceName,
   webCloudSessionStore,
 } from "./cloud";
+import { rememberCloudUrl, validateCloudUrl } from "./cloud-endpoint";
 
 export type Mode = "loading" | "welcome" | "loopback" | "cloud" | "legacy";
 
@@ -76,6 +77,7 @@ export interface Connection {
     email: string;
     password: string;
     name: string;
+    baseUrl?: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
   chooseLoopback: () => void;
@@ -90,6 +92,13 @@ export interface Connection {
    * device id and nothing that would ever fill it in short of signing out.
    */
   claimDeviceSlot: () => Promise<void>;
+  /**
+   * Give this browser the seat another device holds: remove that device, then
+   * register this one. For the common case where the "other device" is this
+   * same computer in another browser or at another address, each of which has
+   * its own storage and so its own key.
+   */
+  replaceDevice: (deviceId: string) => Promise<void>;
   /** Re-read the workspace after a change made elsewhere on screen. */
   refresh: () => void;
 }
@@ -154,7 +163,7 @@ export function useConnection(
         return;
       }
       setMode(
-        localStorage.getItem(LOOPBACK_CHOICE_KEY) === "1" ? "loopback" : "welcome",
+        loopbackAvailable() && localStorage.getItem(LOOPBACK_CHOICE_KEY) === "1" ? "loopback" : "welcome",
       );
     })();
 
@@ -308,8 +317,9 @@ export function useConnection(
   const signIn = useCallback<Connection["signIn"]>(async (input) => {
     // A fresh client with no stored token: signing in as somebody else must not
     // inherit the previous session's refresh token.
+    const baseUrl = validateCloudUrl(input.baseUrl ?? CLOUD_URL);
     let latestRefresh = "";
-    const cloud = new CloudClient(CLOUD_URL, null, (token) => {
+    const cloud = new CloudClient(baseUrl, null, (token) => {
       latestRefresh = token;
     });
 
@@ -356,7 +366,7 @@ export function useConnection(
     }
 
     const session: CloudSession = {
-      baseUrl: CLOUD_URL,
+      baseUrl,
       refreshToken: latestRefresh,
       accountId: next.account.id,
       orgId: next.org.id,
@@ -364,6 +374,7 @@ export function useConnection(
       deviceSecret: identity.toSecret(),
     };
     await webCloudSessionStore.save(session);
+    rememberCloudUrl(baseUrl);
 
     sessionRef.current = session;
     // Re-created so its rotation callback writes to the session that now
@@ -397,6 +408,13 @@ export function useConnection(
     // that the missing seat had been suppressing.
     refresh();
   }, [refresh]);
+
+  const replaceDevice = useCallback(async (deviceId: string) => {
+    const cloud = cloudRef.current;
+    if (!cloud) return;
+    await cloud.forgetDevice(deviceId);
+    await claimDeviceSlot();
+  }, [claimDeviceSlot]);
 
   // Note this clears the *session* and not the device key: the key identifies
   // this browser to the seat it already holds, and destroying it on sign-out is
@@ -444,6 +462,7 @@ export function useConnection(
     deviceProblem,
     deviceId: sessionRef.current?.deviceId || null,
     claimDeviceSlot,
+    replaceDevice,
     signIn,
     signOut,
     chooseLoopback,
@@ -455,7 +474,8 @@ export function useConnection(
 
 /** Whether this page is being served by a runner, and so has a loopback API. */
 export function loopbackAvailable(): boolean {
-  // The runner serves the app from its own origin on port 7842. A page loaded
-  // from the tunnel is not on a runner and should not offer the option.
-  return location.port === "7842" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  // This controls an explicit local-use choice, not automatic authentication.
+  // The account service on 7844 has no runner APIs, even on localhost.
+  const localHost = location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.hostname === "[::1]";
+  return location.port !== "7844" && (localHost || typeof (window as unknown as { __TAURI__?: unknown }).__TAURI__ !== "undefined");
 }

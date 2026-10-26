@@ -6,257 +6,18 @@ import {
   displayText,
   pct,
   since,
-  statusLabel,
-  statusToken,
   turnsOf,
   usd,
-  type ApprovalView,
   type DashboardView,
-  type Decision,
-  type FleetView,
   type OutputLine,
   type PlanStepView,
   type SessionDetail as SessionDetailData,
-  type SessionView,
   type Transport,
 } from "@farhelm/client-core";
 import { BudgetMeter, Sparkline, StatTile, TierBars, ValuesTable } from "./charts";
 import { Icon } from "./Icon";
-
-/* ------------------------------------------------------------ approval card */
-
-export function ApprovalCard({
-  approval,
-  onDecided,
-  transport,
-  showRepo = false,
-}: {
-  approval: ApprovalView;
-  onDecided: () => void;
-  transport: Transport | null;
-  showRepo?: boolean;
-}) {
-  const [busy, setBusy] = useState<Decision | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const decide = async (decision: Decision) => {
-    setBusy(decision);
-    setError(null);
-    try {
-      if (!transport) throw new Error("not connected");
-      await transport.decide(approval.id, decision);
-      onDecided();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      setBusy(null);
-    }
-  };
-
-  return (
-    <section className="approval" data-risk={approval.risk} aria-label="Approval request">
-      <div className="session-head">
-        <span className="session-name">
-          {showRepo ? approval.repo_name : "Needs approval"}
-        </span>
-        <span className="session-machine">{since(approval.requested_at)}</span>
-      </div>
-      <div className="tile-note">wants to run {approval.tool}</div>
-      <code>{approval.payload}</code>
-
-      {/* The moment of approval is the moment of spend, so the bar lives here. */}
-      <BudgetMeter budget={approval.budget} compact />
-
-      {!approval.allows_watch_decision ? (
-        <p className="notice">
-          <span aria-hidden="true">■</span>
-          <span>
-            Destructive command — deliberate friction. This one cannot be cleared
-            from the watch.
-          </span>
-        </p>
-      ) : null}
-
-      {error ? <p className="notice">{error}</p> : null}
-
-      <div className="approval-actions">
-        <button
-          className="btn btn-approve"
-          disabled={busy !== null}
-          onClick={() => decide("approved")}
-        >
-          {busy === "approved" ? "Approving…" : "Approve"}
-        </button>
-        <button
-          className="btn btn-deny"
-          disabled={busy !== null}
-          onClick={() => decide("denied")}
-        >
-          {busy === "denied" ? "Denying…" : "Deny"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
-/* --------------------------------------------------------------- fleet view */
-
-function SessionRow({
-  session,
-  onOpen,
-}: {
-  session: SessionView;
-  onOpen: () => void;
-}) {
-  const plan = session.plan;
-  return (
-    <button className="session" onClick={onOpen}>
-      <div className="session-head">
-        <span
-          className="dot"
-          data-live={session.is_live}
-          style={{ background: statusToken(session.status) }}
-          aria-hidden="true"
-        />
-        <span className="session-name">{session.repo_name}</span>
-        <span className="session-machine">{session.machine_name}</span>
-      </div>
-
-      <div className="session-line">
-        <span>{statusLabel(session.status)}</span>
-        {plan && plan.total > 0 ? (
-          <>
-            <span className="muted">·</span>
-            <span>
-              Step {plan.current_ordinal ?? plan.settled}/{plan.total}
-              {plan.current_title ? ` · ${plan.current_title}` : ""}
-            </span>
-          </>
-        ) : null}
-        {!session.is_live && session.ended_at ? (
-          <>
-            <span className="muted">·</span>
-            <span className="muted">{since(session.ended_at)}</span>
-          </>
-        ) : null}
-      </div>
-
-      <div style={{ marginTop: "0.5rem" }}>
-        <BudgetMeter budget={session.budget} compact />
-      </div>
-    </button>
-  );
-}
-
-export function FleetScreen({
-  fleet,
-  onOpen,
-  onOpenTask,
-  onChanged,
-  onNewSession,
-  transport,
-}: {
-  fleet: FleetView;
-  onOpen: (id: string) => void;
-  onOpenTask: (id: string) => void;
-  onChanged: () => void;
-  onNewSession: () => void;
-  transport: Transport | null;
-}) {
-  return (
-    <>
-      {fleet.pending_approvals.map((approval) => (
-        <ApprovalCard
-          key={approval.id}
-          approval={approval}
-          onDecided={onChanged}
-          transport={transport}
-          showRepo
-        />
-      ))}
-
-      {/* Below approvals, above sessions. An approval is holding a live process
-          still; a change set is finished work waiting to be read. Both come
-          before anything you have to go looking for. */}
-      {fleet.tasks_awaiting_review.map((task) => (
-        <button
-          key={task.id}
-          type="button"
-          className="approval review-card"
-          onClick={() => onOpenTask(task.id)}
-        >
-          <div className="session-head">
-            <span className="session-name">{task.repo_name}</span>
-            <span className="spacer" />
-            <span className="status-chip" data-token="warning">
-              needs review
-            </span>
-          </div>
-          <div className="task-row-prompt">{task.prompt}</div>
-          <div className="session-line">
-            <span>{task.change_summary}</span>
-            <span>·</span>
-            <span>{usd(task.cost_usd)}</span>
-          </div>
-          <span className="linkish">Review the diff →</span>
-        </button>
-      ))}
-
-      {fleet.sessions.length === 0 ? (
-        // The old copy here said "start one on the runner" — i.e. go open a
-        // terminal, which is the thing this app exists to avoid.
-        <div className="empty-state">
-          <p className="empty-title">Nothing running yet.</p>
-          {transport?.supportsSessionControl ? (
-            <>
-              <p className="tile-note">
-                Point an agent at a repository and it will wait for you before it
-                does anything.
-              </p>
-              <button className="btn btn-approve" onClick={onNewSession}>
-                Start a session
-              </button>
-            </>
-          ) : (
-            <p className="tile-note">
-              Sessions start on the runner's own machine. Once one is running,
-              it shows up here and you can supervise it from anywhere.
-            </p>
-          )}
-        </div>
-      ) : (
-        <>
-          <div className="session-grid">
-            {fleet.sessions.map((session) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                onOpen={() => onOpen(session.id)}
-              />
-            ))}
-            {transport?.supportsSessionControl ? (
-              <button className="session-add" onClick={onNewSession}>
-                <span aria-hidden="true">+</span> Start another session
-              </button>
-            ) : null}
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
-export function CostStrip({ fleet }: { fleet: FleetView }) {
-  return (
-    <footer className="cost-strip">
-      <span>
-        Today <b>{usd(fleet.today_usd)}</b>
-      </span>
-      <span>
-        Cache hit <b>{pct(fleet.cache_hit_ratio)}</b>
-      </span>
-    </footer>
-  );
-}
+import { ApprovalCard, AutoApproveControl } from "./Approvals";
+import { SESSION_STATUS, StatusPill } from "./status";
 
 /* ------------------------------------------------------------- session view */
 
@@ -287,7 +48,7 @@ function PlanList({ steps }: { steps: PlanStepView[] }) {
   );
 }
 
-function OutputTail({ lines, agent }: { lines: OutputLine[]; agent: string }) {
+export function OutputTail({ lines, agent }: { lines: OutputLine[]; agent: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
   const [opened, setOpened] = useState<Set<number>>(() => new Set());
@@ -407,17 +168,13 @@ export function SessionScreen({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  /* The transcript is the part worth more room, and on a phone "more room" has
-     to mean all of it — a taller card inside a scrolling page is still a
-     letterbox. Local state, not a route: enlarging is a way of looking at this
-     screen, not a different screen to come back to. */
-  const [expanded, setExpanded] = useState(false);
   const dictation = useDictation((spoken) =>
     setText((current) => (current ? `${current} ${spoken}` : spoken)),
   );
+  const look = SESSION_STATUS[session.status];
 
   const send = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() || sending) return;
     setSending(true);
     try {
       if (!transport) throw new Error("not connected");
@@ -445,72 +202,18 @@ export function SessionScreen({
   const paused = session.steps.every((step) => step.status !== "active");
 
   return (
-    /*
-     * A column that fills the window, with the transcript taking whatever is
-     * left over.
-     *
-     * The output box was a fixed 15rem in a 900px window, so the screen where
-     * the work actually happens used a fifth of the space and put the composer
-     * adrift in the middle of an empty page. Everything else here — an
-     * approval, the plan, the budget — is a fixed-size fact about the session;
-     * the transcript is the only part that benefits from more room, so it is
-     * the only part that takes it.
-     */
-    <div className="session-view">
-      {session.pending_approval ? (
-        <ApprovalCard
-          approval={session.pending_approval}
-          onDecided={onChanged}
-          transport={transport}
-        />
-      ) : null}
-
-      {session.steps.length > 0 ? (
-        <section className="card">
-          <div className="chart-title">
-            <span>Plan</span>
-            <span className="spacer" />
-            <span className="muted">
-              {session.plan
-                ? `${session.plan.settled}/${session.plan.total} settled`
-                : ""}
-            </span>
+    <div className="thread-layout">
+      <section className="thread" aria-label="Session">
+        <header className="thread-head">
+          <div className="thread-head-title">
+            <span className="thread-crumb">{session.machine_name}</span>
+            <h1>{session.repo_name}</h1>
           </div>
-          <PlanList steps={session.steps} />
-          <div className="row-actions">
-            <button className="btn" onClick={() => control(paused ? "resume" : "pause")}>
-              {paused ? "Resume" : "Pause"}
-            </button>
-            <button className="btn" onClick={() => control("skip")}>
-              Skip step
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      <section
-        className="card transcript-card"
-        data-expanded={expanded ? "yes" : undefined}
-      >
-        <div className="chart-title">
-          <span>Live output</span>
-          {/* What the agent is doing, where you are already looking. A session
-              that is working and silent is indistinguishable from one that has
-              died unless something says so. */}
-          {session.is_live ? (
-            <span className="working" aria-live="polite">
-              <span className="working-dot" aria-hidden="true" />
-              {session.status === "awaiting_approval" ? "waiting on you" : "working"}
-            </span>
-          ) : null}
+          <StatusPill look={look} />
           <span className="spacer" />
-          <button
-            className="btn btn-quiet btn-small"
-            onClick={() => setExpanded((open) => !open)}
-            aria-pressed={expanded}
-          >
-            {expanded ? "Shrink" : "Enlarge"}
-          </button>
+          {transport?.supportsDashboard ? (
+            <button className="btn btn-quiet btn-small" onClick={onCost}>Cost</button>
+          ) : null}
           {/* Stopping is loopback-only for the same reason starting is: it ends
               a process on somebody's machine. Hidden rather than disabled over
               the relay — a button that always refuses teaches nothing. */}
@@ -522,62 +225,124 @@ export function SessionScreen({
                   .stopSession(session.id)
                   .then(onStopped)
                   .catch((cause: unknown) =>
-                    setNotice(
-                      cause instanceof Error ? cause.message : String(cause),
-                    ),
+                    setNotice(cause instanceof Error ? cause.message : String(cause)),
                   );
               }}
             >
               <Icon name="stop" size={14} /> Stop
             </button>
           ) : null}
-          {/* Available over the relay too, now that the dashboard has its own
-              snapshot type. Hidden only when there is no transport at all —
-              which is the loading state, not a capability the user lacks. */}
-          {transport?.supportsDashboard ? (
-            <button className="btn btn-quiet btn-small" onClick={onCost}>
-              Cost
-            </button>
-          ) : null}
-        </div>
-        <OutputTail lines={session.output} agent={agentName(session.agent)} />
+        </header>
 
-        <div className="composer">
-          <input
-            value={text}
-            placeholder="Tell the agent…"
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void send();
-            }}
-            aria-label="Instruction for the agent"
-          />
-          {dictation.supported ? (
-            <button
-              className="icon-button"
-              onClick={dictation.start}
-              aria-label="Dictate an instruction"
-              aria-pressed={dictation.listening}
-            >
-              <Icon name="mic" />
-            </button>
+        <div className="thread-scroll">
+          {session.pending_approval ? (
+            <ApprovalCard
+              approval={session.pending_approval}
+              onDecided={onChanged}
+              transport={transport}
+            />
           ) : null}
-          <button
-            className="icon-button"
-            onClick={() => void send()}
-            disabled={sending || !text.trim()}
-            aria-label="Send instruction"
-          >
-            <Icon name="send" />
-          </button>
+
+          {/* What the agent is doing, where you are already looking. A session
+              that is working and silent is indistinguishable from one that has
+              died unless something says so. */}
+          {session.is_live ? (
+            <p className="working" aria-live="polite">
+              <span className="working-dot" aria-hidden="true" />
+              {session.status === "awaiting_approval" ? "Waiting on you" : "Working"}
+            </p>
+          ) : null}
+
+          <div className="thread-transcript">
+            <OutputTail lines={session.output} agent={agentName(session.agent)} />
+          </div>
         </div>
-        {notice ? <p className="notice">{notice}</p> : null}
+
+        <div className="composer-dock">
+          <div className="composer-box">
+            <textarea
+              value={text}
+              rows={2}
+              placeholder="Tell the agent…"
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              aria-label="Instruction for the agent"
+              disabled={!session.is_live}
+            />
+            <div className="composer-bar">
+              <AutoApproveControl
+                key={session.id}
+                session={session}
+                transport={transport}
+                onChanged={onChanged}
+                compact
+              />
+              <span className="spacer" />
+              {dictation.supported ? (
+                <button
+                  className="icon-button"
+                  onClick={dictation.start}
+                  aria-label="Dictate an instruction"
+                  aria-pressed={dictation.listening}
+                >
+                  <Icon name="mic" />
+                </button>
+              ) : null}
+              <button
+                className="send-button"
+                onClick={() => void send()}
+                disabled={sending || !text.trim() || !session.is_live}
+                aria-label="Send instruction"
+              >
+                <Icon name="send" size={16} />
+              </button>
+            </div>
+          </div>
+          {notice ? <p className="notice" role="alert">{notice}</p> : null}
+        </div>
       </section>
 
-      <section className="card session-budget">
-        <div className="chart-title">Budget</div>
-        <BudgetMeter budget={session.budget} />
-      </section>
+      <aside className="thread-rail" aria-label="Session details">
+        <section className="rail-panel">
+          <h2>Budget</h2>
+          <BudgetMeter budget={session.budget} />
+        </section>
+
+        {session.steps.length > 0 ? (
+          <section className="rail-panel">
+            <h2>
+              Plan
+              <span className="muted">
+                {session.plan ? ` ${session.plan.settled}/${session.plan.total}` : ""}
+              </span>
+            </h2>
+            <PlanList steps={session.steps} />
+            <div className="row-actions">
+              <button className="btn btn-small" onClick={() => void control(paused ? "resume" : "pause")}>
+                {paused ? "Resume" : "Pause"}
+              </button>
+              <button className="btn btn-small" onClick={() => void control("skip")}>
+                Skip step
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="rail-panel">
+          <h2>Session</h2>
+          <dl className="facts">
+            <dt>Agent</dt><dd>{agentName(session.agent)}</dd>
+            <dt>Machine</dt><dd>{session.machine_name}</dd>
+            <dt>Started</dt><dd>{since(session.started_at)}</dd>
+            {session.ended_at ? (<><dt>Ended</dt><dd>{since(session.ended_at)}</dd></>) : null}
+          </dl>
+        </section>
+      </aside>
     </div>
   );
 }

@@ -7,20 +7,20 @@ import { loopbackAvailable, useConnection } from "./connection";
 import { AuthScreen, MachinePicker, WelcomeScreen, readableError } from "./components/Auth";
 import { Connect } from "./components/Connect";
 import { AddMachine } from "./components/AddMachine";
+import { DeviceSlotNotice } from "./components/DeviceSlot";
 import { AccountScreen, BillingScreen } from "./components/Account";
 import { PushSettings } from "./components/PushSettings";
 import { NewSession } from "./components/NewSession";
-import { NewTask, TaskListScreen, TaskReviewScreen } from "./components/Tasks";
-import {
-  CostStrip,
-  DashboardScreen,
-  FleetScreen,
-  SessionScreen,
-  useScrollReset,
-} from "./components/views";
-import { Sidebar } from "./components/Sidebar";
+import { TaskBoard } from "./components/Board";
+import { Overview } from "./components/Overview";
+import { NewTaskComposer, TaskThread } from "./components/TaskThread";
+import { ProjectsList } from "./components/Projects";
+import { ProjectTaskScreen } from "./components/ProjectWorkflow";
+import { DashboardScreen, SessionScreen, useScrollReset } from "./components/views";
+import { Sidebar, sectionOf, type Section } from "./components/Sidebar";
 import { Palette, type Action } from "./components/Palette";
 import { Icon } from "./components/Icon";
+import { CLOUD_URL } from "./cloud";
 
 type Theme = "system" | "light" | "dark";
 
@@ -136,6 +136,7 @@ export default function App() {
 
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const [authServiceUrl, setAuthServiceUrl] = useState(CLOUD_URL);
   const [authOpen, setAuthOpen] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
 
@@ -143,8 +144,8 @@ export default function App() {
     (input: Parameters<typeof connection.signIn>[0]) => {
       setAuthBusy(true);
       setAuthError(null);
-      connection
-        .signIn(input)
+      return connection
+        .signIn({ ...input, baseUrl: authServiceUrl })
         .then(() => {
           setAuthOpen(false);
           navigate("/");
@@ -152,7 +153,7 @@ export default function App() {
         .catch((cause: unknown) => setAuthError(readableError(cause)))
         .finally(() => setAuthBusy(false));
     },
-    [connection, navigate],
+    [connection, navigate, authServiceUrl],
   );
 
   /**
@@ -167,11 +168,13 @@ export default function App() {
   const fleet = useResource(
     () => transport?.fleet() ?? idle<never>(),
     [transport, ...deps],
+    [transport],
   );
   const sessionId = sessionIdOf(route);
   const session = useResource(
     () => (sessionId && transport ? transport.session(sessionId) : Promise.resolve(null)),
     [sessionId, transport, ...deps],
+    [transport, sessionId],
   );
   const dashboard = useResource(
     () =>
@@ -179,17 +182,21 @@ export default function App() {
         ? transport.dashboard(route.id)
         : Promise.resolve(null),
     [route.view === "cost" ? route.id : null, transport, ...deps],
+    [transport, route.view === "cost" ? route.id : null],
   );
 
   const taskId = route.view === "task" ? route.id : null;
+  // Always loaded once there is a runner: the sidebar lists tasks under their
+  // repositories on every screen, not only on the board.
   const tasks = useResource(
-    () =>
-      route.view === "tasks" && transport ? transport.tasks() : Promise.resolve(null),
-    [route.view === "tasks", transport, ...deps],
+    () => (transport ? transport.tasks() : Promise.resolve(null)),
+    [transport, ...deps],
+    [transport],
   );
   const task = useResource(
     () => (taskId && transport ? transport.task(taskId) : Promise.resolve(null)),
     [taskId, transport, ...deps],
+    [transport, taskId],
   );
 
   const billing = useResource(
@@ -198,9 +205,10 @@ export default function App() {
         ? connection.cloud.billing()
         : Promise.resolve(null),
     [route.view === "billing", connection.cloud, revision],
+    [connection.cloud, route.view === "billing"],
   );
 
-  useScrollReset(`${route.view}:${sessionId ?? taskId ?? ""}`);
+  useScrollReset(`${route.view}:${sessionId ?? taskId ?? (route.view === "project" || route.view === "project-task" ? route.id : "")}`);
 
   /**
    * What ⌘K can reach.
@@ -211,10 +219,12 @@ export default function App() {
    */
   const actions = useMemo<Action[]>(() => {
     const list: Action[] = [
-      { id: "go-fleet", group: "Go to", icon: "fleet", label: "Fleet",
-        hint: "Running sessions and approvals", run: () => navigate("/") },
-      { id: "go-tasks", group: "Go to", icon: "tasks", label: "Tasks",
-        hint: "Proposed change sets", run: () => navigate("/t") },
+      { id: "go-home", group: "Go to", icon: "fleet", label: "Home",
+        hint: "Approvals, reviews and live sessions", run: () => navigate("/") },
+      { id: "go-board", group: "Go to", icon: "board", label: "Board",
+        hint: "Every task, grouped by status", run: () => navigate("/t") },
+      { id: "go-projects", group: "Go to", icon: "folder", label: "Projects",
+        run: () => navigate("/p") },
       { id: "go-account", group: "Go to", icon: "account", label: "Workspace",
         hint: "Machines, devices, people", run: () => navigate("/account") },
       { id: "go-billing", group: "Go to", icon: "billing", label: "Plan and billing",
@@ -290,6 +300,17 @@ export default function App() {
     };
   }, [session.data, liveOutput]);
 
+  // The task thread gets the same streamed tail as a session, keyed by the
+  // session the task runs in.
+  const mergedTask = useMemo(() => {
+    if (!task.data) return null;
+    const streamed = liveOutput[task.data.session_id] ?? [];
+    if (streamed.length === 0) return task.data;
+    const bySeq = new Map<number, OutputLine>();
+    for (const line of [...task.data.output, ...streamed]) bySeq.set(line.seq, line);
+    return { ...task.data, output: [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-200) };
+  }, [task.data, liveOutput]);
+
   const activeRunner =
     connection.workspace?.runners.find(
       (runner) => runner.id === connection.activeRunnerId,
@@ -297,20 +318,24 @@ export default function App() {
 
   const title =
     route.view === "fleet"
-      ? (activeRunner?.name ?? "Farhelm")
-      : route.view === "tasks"
-        ? "Tasks"
-        : route.view === "new-task"
-          ? "New task"
-          : route.view === "new-session"
-            ? "New session"
-            : route.view === "account"
-              ? "Workspace"
-              : route.view === "billing"
-                ? "Plan"
-                : route.view === "task"
-                  ? (task.data?.repo_name ?? "Task")
-                  : (mergedSession?.repo_name ?? "Session");
+      ? "Home"
+      : route.view === "projects" || route.view === "project" || route.view === "project-task"
+        ? "Projects"
+        : route.view === "tasks"
+          ? "Board"
+          : route.view === "new-task"
+            ? "New task"
+            : route.view === "new-session"
+              ? "New session"
+              : route.view === "account"
+                ? "Settings"
+                : route.view === "billing"
+                  ? "Plan"
+                  : route.view === "connect"
+                    ? "Connect a machine"
+                    : route.view === "task"
+                      ? (task.data?.repo_name ?? "Task")
+                      : (mergedSession?.repo_name ?? "Session");
 
   /** Where "← Back" goes from here. */
   const backTo =
@@ -318,9 +343,16 @@ export default function App() {
       ? `/s/${route.id}`
       : route.view === "task" || route.view === "new-task"
         ? "/t"
-        : route.view === "billing"
-          ? "/account"
-          : "/";
+        : route.view === "project-task"
+          ? `/p/${encodeURIComponent(route.projectId)}`
+        : route.view === "project"
+          ? "/p"
+          : route.view === "billing"
+            ? "/account"
+            : "/";
+  const topLevel = route.view === "fleet" || route.view === "tasks" || route.view === "projects" || route.view === "account";
+  const section: Section = sectionOf(route);
+  const needsYou = (fleet.data?.pending_approvals.length ?? 0) + (fleet.data?.tasks_awaiting_review.length ?? 0);
 
   const staleClass = (stale: boolean) => (stale ? "stale" : undefined);
 
@@ -350,6 +382,9 @@ export default function App() {
               onCancel={() => setAuthOpen(false)}
               busy={authBusy}
               error={authError}
+              serviceUrl={authServiceUrl}
+              onServiceUrlChange={setAuthServiceUrl}
+              onModeChange={() => setAuthError(null)}
             />
           ) : (
             <WelcomeScreen
@@ -369,81 +404,80 @@ export default function App() {
 
   const needsMachine = connection.mode === "cloud" && !activeRunner;
 
+  const tab = (key: Section, to: string, icon: "fleet" | "board" | "folder" | "account", label: string) => (
+    <button
+      className={`tab${section === key ? " is-current" : ""}`}
+      onClick={() => navigate(to)}
+      aria-current={section === key ? "page" : undefined}
+    >
+      <Icon name={icon} size={20} />
+      <span>{label}</span>
+      {key === "home" && needsYou > 0 ? <span className="side-badge">{needsYou}</span> : null}
+    </button>
+  );
+
   return (
-    <div className="shell">
+    <div className="app">
       {paletteOpen ? (
         <Palette actions={actions} onClose={() => setPaletteOpen(false)} />
       ) : null}
 
-      {connection.mode === "cloud" ? (
-        <Sidebar
-          workspace={connection.workspace}
-          route={route}
-          activeRunnerId={connection.activeRunnerId}
-          connectionState={connection.state}
-          theme={theme}
-          onNavigate={navigate}
-          onPickRunner={connection.pickRunner}
-          onCycleTheme={cycleTheme}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onSignOut={() => void connection.signOut()}
-        />
-      ) : null}
+      <Sidebar
+        workspace={connection.workspace}
+        route={route}
+        activeRunnerId={connection.activeRunnerId}
+        connectionState={connection.state}
+        transportKind={transport?.kind ?? null}
+        theme={theme}
+        tasks={tasks.data}
+        sessions={fleet.data?.sessions ?? []}
+        needsYou={needsYou}
+        canStartTask={transport?.supportsTaskControl === true}
+        onNavigate={navigate}
+        onPickRunner={connection.pickRunner}
+        onCycleTheme={cycleTheme}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onSignOut={() => {
+          if (connection.mode === "cloud") void connection.signOut();
+          else connection.chooseCloud();
+        }}
+      />
 
-      <header className="topbar">
-        {route.view !== "fleet" ? (
-          <button className="back" onClick={() => navigate(backTo)}>
-            ← Back
-          </button>
+      <div className="app-main">
+      {/* Narrow screens only: the sidebar's job, folded into a bar. */}
+      <header className="mobile-bar">
+        {!topLevel ? (
+          <button className="back" onClick={() => navigate(backTo)}>← Back</button>
         ) : null}
-        <h1>{title}</h1>
-        {route.view === "session" && mergedSession ? (
-          <span className="session-machine">{mergedSession.machine_name}</span>
-        ) : null}
+        {/* Top-level pages carry their own heading; repeating it here read
+            "Home Home" on a phone. */}
+        {!topLevel ? <h1>{title}</h1> : null}
         <span className="spacer" />
-        {route.view === "fleet" ? (
-          <button
-            className="icon-button rail-duplicate"
-            onClick={() => navigate("/t")}
-            aria-label="Tasks"
-            title="Tasks — the agent's proposed changes"
-          >
-            <Icon name="tasks" />
-          </button>
-        ) : null}
         {connection.state !== "open" && !needsMachine ? (
-          <span className="reconnecting rail-duplicate">reconnecting…</span>
+          <span className="reconnecting">reconnecting…</span>
         ) : null}
-        {connection.mode === "cloud" ? (
-          <button
-            className="icon-button rail-duplicate"
-            onClick={() => navigate("/account")}
-            aria-label="Workspace, machines and plan"
-            title={connection.workspace?.org.name ?? "Workspace"}
-          >
-            <Icon name="account" />
-          </button>
-        ) : (
+        <button className="icon-button" onClick={() => setPaletteOpen(true)} aria-label="Search and commands">
+          <Icon name="search" />
+        </button>
+        {connection.mode !== "cloud" ? (
           <button
             className="icon-button"
             onClick={connection.chooseCloud}
             aria-label="Sign in to reach this machine from anywhere"
-            title="Sign in"
           >
             <Icon name="link" />
           </button>
-        )}
+        ) : null}
         <button
-          className="icon-button rail-duplicate"
+          className="icon-button"
           onClick={cycleTheme}
           aria-label={`Theme: ${theme}. Tap to change.`}
-          title={`Theme: ${theme}`}
         >
           <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"} />
         </button>
       </header>
 
-      <main>
+      <main className="app-content" data-view={route.view}>
         {refusal ? (
           <div className="card error" role="alert">
             <b>The runner refused that.</b>
@@ -457,33 +491,13 @@ export default function App() {
         {/* Signed in, but this surface holds no device seat. Actionable rather
             than fatal: the workspace screen is exactly where a seat is freed. */}
         {connection.deviceProblem ? (
-          <div className="card notice-card" role="status">
-            <b>This browser has no device slot.</b>
-            {/* Punctuated here rather than trusting the server's wording to
-                end in a full stop — it does not, and the two sentences ran
-                together into "…Pro allows more You are signed in and…". */}
-            <p className="tile-note">
-              {connection.deviceProblem.replace(/[.\s]*$/, "")}. You are signed in
-              and can manage the workspace — but until a slot frees up, this
-              browser cannot open an encrypted link to a machine.
-            </p>
-            <div className="approval-actions">
-              <button className="btn btn-primary" onClick={() => navigate("/account")}>
-                Remove a device
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  void connection.claimDeviceSlot();
-                }}
-              >
-                Try again
-              </button>
-              <button className="btn" onClick={() => navigate("/billing")}>
-                See plans
-              </button>
-            </div>
-          </div>
+          <DeviceSlotNotice
+            problem={connection.deviceProblem}
+            devices={connection.workspace?.devices ?? []}
+            onReplace={connection.replaceDevice}
+            onRetry={connection.claimDeviceSlot}
+            onPlans={() => navigate("/billing")}
+          />
         ) : null}
 
         {connection.error ? (
@@ -611,13 +625,13 @@ export default function App() {
             </div>
           ) : fleet.data ? (
             <div className={staleClass(fleet.stale)}>
-              <FleetScreen
+              <Overview
                 fleet={fleet.data}
-                onOpen={(id) => navigate(`/s/${id}`)}
-                onOpenTask={(id) => navigate(`/t/${id}`)}
-                onChanged={bump}
-                onNewSession={() => navigate("/new")}
+                tasks={tasks.data}
                 transport={transport}
+                machineName={activeRunner?.name ?? (transport?.kind === "loopback" ? "Local runner" : null)}
+                onNavigate={navigate}
+                onChanged={bump}
               />
             </div>
           ) : null
@@ -632,6 +646,18 @@ export default function App() {
           />
         ) : null}
 
+        {route.view === "projects" || route.view === "project" ? (
+          <ProjectsList
+            transport={transport}
+            projectId={route.view === "project" ? route.id : null}
+            onNavigate={navigate}
+          />
+        ) : null}
+
+        {route.view === "project-task" ? (
+          <ProjectTaskScreen transport={transport} projectId={route.projectId} taskId={route.id} onNavigate={navigate} />
+        ) : null}
+
         {route.view === "tasks" ? (
           tasks.error ? (
             <div className="card error">
@@ -640,7 +666,7 @@ export default function App() {
             </div>
           ) : tasks.data ? (
             <div className={staleClass(tasks.stale)}>
-              <TaskListScreen
+              <TaskBoard
                 tasks={tasks.data}
                 onOpen={(id) => navigate(`/t/${id}`)}
                 onNewTask={() => navigate("/t/new")}
@@ -653,10 +679,10 @@ export default function App() {
         ) : null}
 
         {route.view === "new-task" ? (
-          <NewTask
+          <NewTaskComposer
             transport={transport}
+            tasks={tasks.data}
             onStarted={(id) => navigate(`/t/${id}`)}
-            onCancel={() => navigate("/t")}
           />
         ) : null}
 
@@ -666,12 +692,13 @@ export default function App() {
               <b>Task unavailable.</b>
               <p className="tile-note">{task.error}</p>
             </div>
-          ) : task.data ? (
-            <div className={staleClass(task.stale)}>
-              <TaskReviewScreen
-                task={task.data}
+          ) : mergedTask ? (
+            <div className={`thread-pane ${staleClass(task.stale) ?? ""}`}>
+              <TaskThread
+                task={mergedTask}
+                fleet={fleet.data}
                 transport={transport}
-                onReviewed={bump}
+                onChanged={bump}
                 onOpenTask={(id) => navigate(`/t/${id}`)}
               />
             </div>
@@ -687,10 +714,10 @@ export default function App() {
               <p className="tile-note">{session.error}</p>
             </div>
           ) : mergedSession ? (
-            // `session-pane` is not decoration: the refetch wrapper sits
+            // `thread-pane` is not decoration: the refetch wrapper sits
             // between `main` and the screen, and a plain block there stops the
             // full-height column reaching the flex parent that sizes it.
-            <div className={`session-pane ${staleClass(session.stale) ?? ""}`}>
+            <div className={`thread-pane ${staleClass(session.stale) ?? ""}`}>
               <SessionScreen
                 session={mergedSession}
                 onChanged={bump}
@@ -724,8 +751,14 @@ export default function App() {
           <LegacyPairing onUnpair={() => void webPairingStore.forget().then(() => location.reload())} />
         ) : null}
       </main>
+      </div>
 
-      {fleet.data ? <CostStrip fleet={fleet.data} /> : null}
+      <nav className="tabbar" aria-label="Main">
+        {tab("home", "/", "fleet", "Home")}
+        {tab("board", "/t", "board", "Board")}
+        {tab("projects", "/p", "folder", "Projects")}
+        {tab("account", "/account", "account", "Settings")}
+      </nav>
     </div>
   );
 }

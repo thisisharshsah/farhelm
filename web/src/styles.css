@@ -14,22 +14,25 @@
 :root {
   color-scheme: light;
 
-  --page: #f9f9f7;
-  --surface-1: #fcfcfb;
-  --surface-2: #f0efec;
+  /* Neutral graphite, cooler than the old warm paper: the work (diffs,
+     status, code) carries the colour, and the chrome stays out of its way. */
+  --page: #f7f7f8;
+  --surface-1: #ffffff;
+  --surface-2: #f1f1f3;
+  --sidebar: #f3f3f5;
 
-  --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
+  --text-primary: #111113;
+  --text-secondary: #4b4b52;
   /* Darkened from #898781, which measured ~3.4:1 on --surface-1 and so failed
      the 4.5 floor for text at this size. This clears it while staying clearly
      third in the hierarchy behind primary and secondary. */
-  --text-muted: #6b6a64;
+  --text-muted: #63636b;
 
-  --gridline: #e1e0d9;
-  --baseline: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.1);
+  --gridline: #e4e4e8;
+  --baseline: #c8c8cf;
+  --border: rgba(17, 17, 19, 0.09);
 
-  --series-1: #2a78d6;
+  --series-1: #2563eb;
 
   /* Ordinal ramp — light→dark, single hue, validated with --ordinal. */
   --tier-small: #86b6ef;
@@ -42,6 +45,18 @@
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
   --success-text: #006300;
+
+  /* Status fills, for pills and segments that carry their word in white.
+     Each clears 4.5:1 against white text and 3:1 against both page colours,
+     so they are not themed. Red and green fail colour-blind separation as a
+     pair; every use pairs them with the status word, and the overview's
+     status bar orders segments so they never touch. */
+  --fill-working: #0f62d6;
+  --fill-review: #b35c00;
+  --fill-done: #037f4c;
+  --fill-stuck: #c4314b;
+  --fill-paused: #8a46d6;
+  --fill-idle: #676879;
 
   /* Spacing. A 4px grid, named by step rather than by size, so a change of
      mind about density is one edit here instead of two hundred in the file.
@@ -62,8 +77,8 @@
      control inside one must be tighter or the corners fight. */
   --r-sm: 8px;
   --r-md: 10px;
-  --r-lg: 14px;
-  --r-xl: 18px;
+  --r-lg: 12px;
+  --r-xl: 14px;
   --r-full: 999px;
   /* Kept: rules across this file already reach for it, and a card radius is
      what they meant. */
@@ -137,16 +152,17 @@
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --page: #0d0d0d;
-    --surface-1: #1a1a19;
-    --surface-2: #242422;
-    --text-primary: #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted: #898781;
-    --gridline: #2c2c2a;
-    --baseline: #383835;
-    --border: rgba(255, 255, 255, 0.1);
-    --series-1: #3987e5;
+    --page: #0f0f10;
+    --surface-1: #161618;
+    --surface-2: #1e1e21;
+    --sidebar: #121214;
+    --text-primary: #ededef;
+    --text-secondary: #b4b4bb;
+    --text-muted: #8b8b93;
+    --gridline: #26262a;
+    --baseline: #34343a;
+    --border: rgba(255, 255, 255, 0.08);
+    --series-1: #4f8cff;
     --tier-small: #9ec5f4;
     --tier-large: #3987e5;
     --tier-batch: #184f95;
@@ -156,16 +172,17 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0d0d0d;
-  --surface-1: #1a1a19;
-  --surface-2: #242422;
-  --text-primary: #ffffff;
-  --text-secondary: #c3c2b7;
-  --text-muted: #898781;
-  --gridline: #2c2c2a;
-  --baseline: #383835;
-  --border: rgba(255, 255, 255, 0.1);
-  --series-1: #3987e5;
+  --page: #0f0f10;
+  --surface-1: #161618;
+  --surface-2: #1e1e21;
+  --sidebar: #121214;
+  --text-primary: #ededef;
+  --text-secondary: #b4b4bb;
+  --text-muted: #8b8b93;
+  --gridline: #26262a;
+  --baseline: #34343a;
+  --border: rgba(255, 255, 255, 0.08);
+  --series-1: #4f8cff;
   --tier-small: #9ec5f4;
   --tier-large: #3987e5;
   --tier-batch: #184f95;
@@ -228,150 +245,15 @@ button {
 /* ------------------------------------------------------------------ shell */
 
 /*
- * One layout that is a phone app narrow and a desktop app wide.
- *
- * Narrow, this is what it always was: a single column with a sticky top bar and
- * a back button. That was never the problem — it is a good phone app, and it is
- * installed on phones.
- *
- * Wide, a navigation rail takes over and the top bar keeps only what is about
- * *this page*. The reading column stays bounded at `--measure` rather than
- * growing with the window: a 1600px-wide line of prose is unreadable, and the
- * apps this is measured against all bound it too. The rest of the width becomes
- * margin, which is what makes a dense tool feel calm instead of cramped.
+ * The front door (loading, welcome, sign-in) keeps the phone-width column it
+ * always had. The signed-in app shell lives in `app.css`.
  */
-:root {
-  --rail: 15.5rem;
-  /* Comfortable for prose and wide enough for a two-column diff. */
-  --measure: 62rem;
-  /*
-   * The top bar's height, so other sticky things can sit below it.
-   *
-   * Stated rather than measured because CSS cannot read one element's height
-   * into another's offset, and a sticky file header that sticks to viewport
-   * zero parks itself *behind* the bar — the path scrolls out of sight while
-   * appearing to be pinned, which is worse than not pinning it at all.
-   *
-   * Padding, plus the tallest thing in the bar: a 44px tap target on a phone,
-   * a 36px one under a pointer.
-   */
-  --topbar-h: 4.25rem;
-}
-
 .shell {
   max-width: 34rem;
   margin: 0 auto;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  /* Room for the fixed cost strip plus the home indicator. */
-  padding-bottom: calc(3.5rem + env(safe-area-inset-bottom));
-}
-
-.rail,
-.rail-toggle {
-  display: none;
-}
-
-@media (min-width: 52rem) {
-  /*
-   * Scoped to shells that actually have a rail.
-   *
-   * Unscoped, the sign-in screen and loopback mode — neither of which renders
-   * one — still got a 15.5rem first column, and every one of them sat with a
-   * band of dead space down the left.
-   *
-   * A browser without `:has` keeps the 34rem column, which is the layout that
-   * shipped for a year. That is the right way for this to fail.
-   */
-  .shell:has(.rail) {
-    max-width: none;
-    display: grid;
-    /* The rail is a fixed column; the content takes the rest and centres its
-       own measure inside it, so the column does not drift as the rail changes
-       width on a future breakpoint. */
-    grid-template-columns: var(--rail) minmax(0, 1fr);
-    /*
-     * Both rows named explicitly, and this is load-bearing.
-     *
-     * The rail spans the full height with `grid-row: 1 / -1`, and -1 counts
-     * back from the end of the *explicit* grid. With no rows declared here the
-     * explicit grid has one line, so -1 resolved to line 1, `1 / 1` collapsed
-     * to a single-row span, and the rail's 100dvh stretched row one to the
-     * whole viewport — putting every page a full screen below the fold with
-     * only the rail visible.
-     */
-    grid-template-rows: auto 1fr;
-    padding-bottom: 0;
-  }
-
-  .rail {
-    grid-row: 1 / -1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    position: sticky;
-    top: 0;
-    height: 100dvh;
-    padding: 0.9rem 0.7rem;
-    border-right: 1px solid var(--border);
-    background: var(--surface-2);
-    overflow-y: auto;
-  }
-
-  .topbar {
-    grid-column: 2;
-    padding: 0.9rem 1.5rem;
-  }
-
-  :root,
-  .shell {
-    --topbar-h: 4.05rem;
-  }
-
-  /* The rail replaces it: every destination is already visible, so a back
-     button would only undo a click nobody needed to make. */
-  .topbar .back {
-    display: none;
-  }
-
-  /* Controls the rail already carries. Scoped with `:has` so they survive in
-     loopback and legacy mode, where no rail is rendered and the top bar is
-     still the only way to reach them. */
-  .shell:has(.rail) .topbar .rail-duplicate {
-    display: none;
-  }
-
-  /*
-   * Scoped through `.shell` for specificity, not for scoping.
-   *
-   * The base `main` rule is declared several hundred lines further down. Two
-   * bare element selectors of equal specificity are resolved by order, so the
-   * later one won and this block's padding never applied — leaving the
-   * bottom-most card tucked under the fixed cost strip. A media query adds no
-   * specificity of its own, so the class here is what settles it.
-   */
-  .shell main {
-    grid-column: 2;
-    width: 100%;
-    max-width: var(--measure);
-    margin: 0 auto;
-    padding: 1.25rem 1.5rem 4rem;
-  }
-
-  /* Sized for a pointer rather than a thumb. A 44px minimum is right on a
-     phone and looks inflated next to a mouse cursor. */
-  .icon-button {
-    min-width: 2.25rem;
-    min-height: 2.25rem;
-  }
-
-  /* A page title carries more weight once it is not competing with a back
-     button and four glyphs for a 34rem bar. At 1rem it read as a label. */
-  .topbar h1 {
-    font-size: 1.35rem;
-    letter-spacing: -0.02em;
-  }
 }
 
 /* --------------------------------------------------------------- skeleton */
@@ -434,23 +316,7 @@ button {
   }
 }
 
-/* ------------------------------------------------------------------- rail */
-
-.rail-org {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: 0.35rem 0.5rem 0.75rem;
-  min-width: 0;
-}
-
-.rail-org-name {
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ------------------------------------------------------------- indicators */
 
 .plan-chip {
   flex: none;
@@ -463,98 +329,6 @@ button {
   background: var(--surface-1);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-}
-
-.rail-search {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  width: 100%;
-  padding: 0.45rem 0.6rem;
-  margin-bottom: var(--s-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface-1);
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  text-align: left;
-  transition: background var(--quick) var(--ease);
-}
-
-.rail-search span {
-  flex: 1;
-}
-
-.rail-search:hover {
-  background: var(--page);
-  color: var(--text-secondary);
-}
-
-kbd {
-  font: 500 0.7rem/1 var(--font);
-  padding: 0.2rem 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--page);
-  color: var(--text-muted);
-}
-
-.rail-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  padding-bottom: 0.6rem;
-}
-
-.rail-heading {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin: var(--s-2) 0 var(--s-1);
-  padding: 0 0.6rem;
-}
-
-.rail-link,
-.rail-machine {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  width: 100%;
-  padding: 0.45rem 0.6rem;
-  border: none;
-  border-radius: var(--r-sm);
-  background: none;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  text-align: left;
-  transition:
-    background var(--quick) var(--ease),
-    color var(--quick) var(--ease);
-}
-
-.rail-link:hover,
-.rail-machine:hover {
-  background: var(--surface-1);
-  color: var(--text-primary);
-}
-
-/* The current destination is marked by weight and a solid surface as well as
-   colour, so it survives being read without colour vision. */
-.rail-link.is-current,
-.rail-machine.is-current {
-  background: var(--surface-1);
-  color: var(--text-primary);
-  font-weight: 600;
-  box-shadow: var(--lift-1);
-}
-
-.rail-machine-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .dot {
@@ -575,27 +349,6 @@ kbd {
 
 .dot.is-offline {
   background: var(--baseline);
-}
-
-.rail-foot {
-  margin-top: auto;
-  padding-top: 0.6rem;
-  border-top: 1px solid var(--border);
-}
-
-.rail-status {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: 0.4rem 0.6rem;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.rail-foot-actions {
-  display: flex;
-  gap: 0.3rem;
-  padding-top: 0.2rem;
 }
 
 /* ---------------------------------------------------------------- palette */
@@ -713,53 +466,6 @@ kbd {
   }
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
-  padding-top: calc(0.75rem + env(safe-area-inset-top));
-  background: color-mix(in srgb, var(--page) 88%, transparent);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-}
-
-.topbar h1 {
-  font-size: 1rem;
-  font-weight: 650;
-  margin: 0;
-  letter-spacing: -0.01em;
-  /* One line, always. A long machine name wrapped to two and grew the bar,
-     which also put it out of step with `--topbar-h` — the offset every sticky
-     thing below is positioned against. */
-  min-width: 0;
-  max-width: 50%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  /* Does not shrink. Sharing the squeeze evenly cut "live" down to "li…" while
-     the machine name beside it kept its full width — the wrong one gave way.
-     Which session you are in matters more than which machine it is on, and the
-     machine is repeated in the rail anyway. */
-  flex: 0 0 auto;
-}
-
-/* Yields first, and truncates rather than wrapping. */
-.topbar .session-machine {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.topbar .spacer {
-  flex: 1;
-}
-
 .icon-button {
   min-width: var(--tap);
   min-height: var(--tap);
@@ -773,15 +479,6 @@ kbd {
 
 .icon-button:hover {
   background: var(--surface-2);
-}
-
-.back {
-  border: none;
-  background: none;
-  padding: var(--s-1) var(--s-2) var(--s-1) 0;
-  min-height: var(--tap);
-  color: var(--text-secondary);
-  font-size: 0.95rem;
 }
 
 main {
@@ -909,8 +606,13 @@ main {
   border-radius: var(--r-sm);
   padding: 0.6rem 0.7rem;
   margin: var(--s-2) 0;
-  overflow-x: auto;
-  white-space: pre;
+  /* A payload can be a whole script. It scrolls inside its own box so the
+     Approve and Deny buttons below it stay reachable, which is the one thing
+     an approval card must never lose. */
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .approval-actions {
@@ -1116,39 +818,6 @@ main {
   color: var(--text-secondary);
 }
 
-.composer {
-  display: flex;
-  gap: var(--s-2);
-  margin-top: var(--s-3);
-}
-
-.composer input {
-  flex: 1;
-  min-height: var(--tap);
-  padding: 0 var(--s-3);
-  font: inherit;
-  font-size: var(--t-md);
-  color: var(--text-primary);
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  transition:
-    border-color var(--quick) var(--ease),
-    box-shadow var(--quick) var(--ease);
-}
-
-.composer input:hover:not(:focus) {
-  border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
-}
-
-.composer input::placeholder {
-  color: var(--text-muted);
-}
-
-.composer input:focus-visible {
-  outline: 2px solid var(--series-1);
-  outline-offset: 1px;
-}
 
 /* ---------------------------------------------------------------- pairing */
 
@@ -1215,30 +884,6 @@ input.pair-input {
   display: flex;
   gap: var(--s-2);
   margin-top: var(--s-3);
-}
-
-/* ------------------------------------------------------------- cost strip */
-
-.cost-strip {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 6;
-  display: flex;
-  justify-content: center;
-  gap: var(--s-4);
-  padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom));
-  font-size: 0.82rem;
-  background: color-mix(in srgb, var(--page) 92%, transparent);
-  backdrop-filter: blur(12px);
-  border-top: 1px solid var(--border);
-  color: var(--text-secondary);
-}
-
-.cost-strip b {
-  color: var(--text-primary);
-  font-weight: 650;
 }
 
 /* ------------------------------------------------------------------ charts */
@@ -1784,64 +1429,6 @@ textarea.task-input {
   min-height: 70dvh;
 }
 
-.hero {
-  text-align: center;
-  padding: var(--s-4) var(--s-1);
-}
-
-.hero-mark {
-  font-size: 2.5rem;
-  line-height: 1;
-  color: var(--series-1);
-  margin-bottom: var(--s-4);
-  /* Rises once on load. A front door is the one place a moment of motion buys
-     something: it tells you the app is alive before any data has arrived. */
-  animation: rise 420ms var(--ease) both;
-}
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.hero-title {
-  margin: 0 0 var(--s-2);
-  font-size: 1.4rem;
-  font-weight: 650;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
-}
-
-.hero-sub {
-  margin: 0 auto var(--s-6);
-  max-width: 26rem;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
-.hero-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  max-width: 20rem;
-  margin: 0 auto;
-}
-
-.hero-note {
-  margin: var(--s-6) auto 0;
-  max-width: 24rem;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
 /* --------------------------------------------------------------- buttons */
 
 .btn {
@@ -1920,48 +1507,6 @@ textarea.task-input {
   padding: 0 0.7rem;
   font-size: 0.8rem;
   font-weight: 550;
-}
-
-/* ------------------------------------------------------------------ auth */
-
-.auth {
-  max-width: 24rem;
-  margin: 0 auto;
-  box-shadow: var(--lift-2);
-}
-
-/* Email and names are words, not key material — the monospace face that makes
-   a pasted key legible makes an address look like a config value. */
-.auth .pair-input {
-  font-family: var(--font);
-  font-size: 0.95rem;
-}
-
-.auth-switch {
-  display: flex;
-  gap: var(--s-1);
-  padding: var(--s-1);
-  background: var(--surface-2);
-  border-radius: var(--r-md);
-  margin-bottom: var(--s-2);
-}
-
-.auth-tab {
-  flex: 1;
-  min-height: 36px;
-  border: none;
-  background: none;
-  border-radius: var(--r-sm);
-  font-size: 0.88rem;
-  font-weight: 550;
-  color: var(--text-secondary);
-  transition: background var(--quick) var(--ease);
-}
-
-.auth-tab.is-active {
-  background: var(--surface-1);
-  color: var(--text-primary);
-  box-shadow: var(--lift-1);
 }
 
 /* -------------------------------------------------------------- machines */
@@ -2366,13 +1911,8 @@ textarea.task-input {
  * approves a change to the wrong file. The header is the answer to "what am I
  * looking at", so it should never be the thing that scrolls away.
  */
-.diff-file-head {
-  position: sticky;
-  /* Below the top bar, never behind it. */
-  top: calc(var(--topbar-h) + env(safe-area-inset-top));
-  /* Under the top bar's 5, above the diff body it is pinned over. */
-  z-index: 2;
-}
+/* File boxes clip their contents; a sticky top-bar offset can cover a short
+   hunk. Keep headers in normal flow in every review surface. */
 
 /*
  * The words that actually changed.
@@ -2480,16 +2020,6 @@ textarea.task-input {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  /*
-   * The cost strip starts where the content does.
-   *
-   * Fixed to `left: 0`, it ran the full width of the window and sat on top of
-   * the rail's own footer — the theme and sign-out buttons were half-covered by
-   * a bar reporting today's spend, which is not what either is for.
-   */
-  .shell:has(.rail) .cost-strip {
-    left: var(--rail);
-  }
 }
 
 /*
@@ -2543,153 +2073,200 @@ textarea.task-input {
     0 0 0 1px color-mix(in srgb, var(--status-critical) 35%, transparent);
 }
 
-/* --------------------------------------------------- session, second pass */
+/* -------------------------------------------------------- projects ui (ADR 0002) */
 
-/*
- * The transcript takes the room, because it is the only part that can use it.
- *
- * `main` already has a definite height — it sits in the shell grid's `1fr` row
- * — so a flex column inside it can hand the leftover space to one child. The
- * output box was pinned at 15rem regardless of the window, which on a laptop
- * meant a fifth of the screen for the live log and the composer stranded in the
- * middle of an empty page.
- */
-/*
- * The wrapper that holds the last render during a refetch.
- *
- * It has to pass the height through rather than absorb it. `display: contents`
- * would be the tidier answer and is wrong here — the wrapper's whole job is to
- * carry an opacity, and an element with no box cannot.
- */
-.session-pane {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-.session-view {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  flex: 1;
-  /* Without this a flex child refuses to shrink below its content, the column
-     overflows instead of scrolling, and the composer leaves the screen. */
-  min-height: 0;
-}
-
-.transcript-card {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-.session-view .output {
-  flex: 1;
-  min-height: 8rem;
-  max-height: none;
-}
-
-/*
- * An empty transcript holds the same space a full one would.
- *
- * `OutputTail` renders a paragraph rather than the log box when there is
- * nothing to show, so without this the card collapsed to the height of one
- * line of text — and the composer jumped down the page the moment the first
- * line of output arrived. Reserving the space keeps it still.
- */
-.transcript-card > .empty {
-  flex: 1;
+.projects-grid {
   display: grid;
-  place-items: center;
-  min-height: 8rem;
-  margin: 0;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: var(--s-3);
+  margin-top: var(--s-3);
 }
 
-/* Fixed-size facts about the session: they state themselves and stop. */
-.session-view .approval,
-.session-view .session-budget {
-  flex: none;
-}
-
-/*
- * Stop is a button, not a link.
- *
- * It ends a process on somebody's machine, and it sat as underlined 12px text
- * beside "Cost" — the same weight as navigating to a chart. The two are not
- * the same kind of act and should not look like it.
- */
-.btn-small {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-height: 1.9rem;
-  padding: 0 0.6rem;
-  font-size: 0.8rem;
-}
-
-.transcript-card .chart-title .btn-small:hover {
-  border-color: var(--baseline);
-}
-
-/* ------------------------------------------------- enlarged transcript */
-
-/*
- * Enlarging the transcript, because it is the only part of this screen that can
- * use the room and the one you actually read.
- *
- * Fixed to the viewport rather than merely taller: inside a scrolling page a
- * taller card is still a letterbox, and on a phone it is a letterbox you have
- * to scroll the page to see the bottom of.
- */
-.transcript-card[data-expanded] {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  margin: 0;
-  border-radius: 0;
+.project-card {
   display: flex;
   flex-direction: column;
-  /* The notch and the home indicator, on the phone this is mostly used from. */
-  padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem
-    max(0.75rem, env(safe-area-inset-bottom));
+  padding: var(--s-4);
   background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--lift-1);
+  transition: border-color var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
 }
 
-.transcript-card[data-expanded] .output {
-  flex: 1;
-  max-height: none;
+.project-card:hover {
+  border-color: var(--baseline);
+  box-shadow: var(--lift-2);
 }
 
-/* What the agent is doing, said where you are already looking. */
-.working {
-  display: inline-flex;
+.project-card-header {
+  display: flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.72rem;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+
+.project-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--series-1);
+}
+
+.project-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-name {
+  font-size: var(--t-md);
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-workspace-label {
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+}
+
+.project-description {
+  font-size: var(--t-sm);
   color: var(--text-secondary);
-  font-weight: 400;
+  margin: var(--s-2) 0 var(--s-4);
+  line-height: 1.4;
+  flex: 1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.working-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: var(--series-1);
-  animation: working-pulse 1.6s ease-in-out infinite;
+.project-create {
+  margin-top: var(--s-4);
 }
 
-/*
- * A pulse rather than a spinner. A spinner claims progress it cannot know
- * about, and a session waiting on *you* is not making any — the label says
- * which, and the dot only says "still here".
- */
-@keyframes working-pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+.project-create form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .working-dot { animation: none; opacity: 0.8; }
+.project-create form .btn {
+  align-self: flex-start;
+}
+
+.projects-more {
+  margin-top: var(--s-3);
+}
+
+.project-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  font-size: var(--t-sm);
+}
+
+.project-dates dt {
+  color: var(--text-muted);
+}
+
+.project-dates dd {
+  margin: 0;
+}
+
+.project-meta {
+  display: flex;
+  gap: var(--s-4);
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--gridline);
+  border-bottom: 1px solid var(--gridline);
+  margin-bottom: var(--s-3);
+}
+
+.project-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.project-meta-label {
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+}
+
+.project-meta-val {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.project-card-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.project-workflow {
+  display: grid;
+  gap: var(--s-4);
+  margin-top: var(--s-4);
+}
+
+.project-workflow .chart-title h2 {
+  font: inherit;
+  margin: 0;
+  flex: 1;
+}
+
+.project-workflow-form,
+.project-workflow-form fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.project-workflow-form fieldset,
+.project-review-content {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.project-workflow-form h3 {
+  font-size: var(--t-base);
+  margin: var(--s-4) 0 0;
+}
+
+.project-workflow-form select.pair-input {
+  min-height: var(--tap);
+  font-family: var(--font);
+}
+
+.project-repositories {
+  padding: 0;
+  list-style: none;
+}
+
+.project-repositories li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin-bottom: var(--s-3);
+  overflow-wrap: anywhere;
+}
+
+.project-repositories li span {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--text-secondary);
+}
+
+.project-task-review .project-review-content > .card {
+  margin-bottom: var(--s-4);
 }

@@ -1,23 +1,40 @@
-/**
- * Sign in, and the screen that comes before it.
- *
- * This replaces the pairing screen as the app's front door, and the difference
- * is the whole point of the change: pairing asked you to run a command on
- * another machine, read a QR, and paste two hundred characters of JSON — while
- * standing on the same network. This asks for an email and a password.
- *
- * # Why "use this machine" is still here
- *
- * A control plane is one deployment shape, not the only one. Opening the app on
- * the runner's own machine should work with no account at all, and hiding that
- * behind a sign-up wall would make the simplest case the hardest. So the choice
- * is offered once, on first run, and remembered.
- */
+/** Account access and the local-only entry point share the same front door. */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CloudError } from "@farhelm/client-core";
+import "./Auth.css";
 
 export type Mode = "sign-in" | "sign-up";
+
+function AuthIntroduction({ welcome = false }: { welcome?: boolean }) {
+  return (
+    <div className="auth-introduction">
+      <div className="auth-brand">
+        <span aria-hidden="true">◈</span> Farhelm
+      </div>
+      <p className="auth-eyebrow">AI work, under your control</p>
+      <h1>{welcome ? "Build with AI. Keep control." : "Your workspace, wherever you work."}</h1>
+      <p className="auth-description">
+        Bring your projects and AI agents together. Work on your own machine,
+        approve consequential actions, and review the changes.
+      </p>
+      <ol className="auth-workflow" aria-label="How Farhelm works">
+        <li>
+          <span aria-hidden="true">01</span>
+          <div><strong>Give the work direction</strong><p>Start with a project and a clear task.</p></div>
+        </li>
+        <li>
+          <span aria-hidden="true">02</span>
+          <div><strong>Stay in the loop</strong><p>Approve commands before they run.</p></div>
+        </li>
+        <li>
+          <span aria-hidden="true">03</span>
+          <div><strong>Review what changed</strong><p>Inspect the tests, cost and diff.</p></div>
+        </li>
+      </ol>
+    </div>
+  );
+}
 
 export function WelcomeScreen({
   onChoose,
@@ -28,31 +45,27 @@ export function WelcomeScreen({
   loopbackAvailable: boolean;
 }) {
   return (
-    <section className="hero" aria-label="Welcome">
-      <div className="hero-mark" aria-hidden="true">
-        ◈
-      </div>
-      <h2 className="hero-title">Supervise your agents from anywhere</h2>
-      <p className="hero-sub">
-        Approve a command from your phone, review a diff on the train, and see
-        what it all cost — while the work keeps running on your own machine.
-      </p>
-
-      <div className="hero-actions">
-        <button className="btn btn-primary btn-lg" onClick={() => onChoose("cloud")}>
-          Sign in
+    <section className="auth-layout" aria-label="Welcome">
+      <AuthIntroduction welcome />
+      <div className="card auth-panel auth-welcome-panel">
+        <p className="auth-eyebrow">Get started</p>
+        <h2>Choose how to connect</h2>
+        <p className="auth-panel-description">{loopbackAvailable ? "Use an account to connect your devices, or stay on this machine." : "Use your account to connect your devices and supervise your work."}</p>
+        <button className="btn btn-primary btn-lg auth-primary" onClick={() => onChoose("cloud")}>
+          Sign in to your workspace <span aria-hidden="true">→</span>
         </button>
+        <p className="auth-caption">New here? You can create an account on the next screen.</p>
         {loopbackAvailable ? (
-          <button className="btn btn-lg" onClick={() => onChoose("loopback")}>
-            Use this machine only
-          </button>
+          <div className="auth-local-option">
+            <div className="auth-divider"><span>On this computer</span></div>
+            <button className="btn btn-lg auth-primary" onClick={() => onChoose("loopback")}>
+              Use this machine only
+            </button>
+            <p className="auth-caption">Connect to your local runner. No account required.</p>
+          </div>
         ) : null}
+        <p className="auth-privacy">Your runner executes the work. Remote access uses an encrypted connection between your devices.</p>
       </div>
-
-      <p className="hero-note">
-        Signing in never gives us your code. Your machine and your devices
-        exchange keys directly; we route the ciphertext and cannot read it.
-      </p>
     </section>
   );
 }
@@ -63,6 +76,9 @@ export function AuthScreen({
   onCancel,
   busy,
   error,
+  onModeChange,
+  serviceUrl,
+  onServiceUrlChange,
 }: {
   initialMode?: Mode;
   onSubmit: (input: {
@@ -70,132 +86,193 @@ export function AuthScreen({
     email: string;
     password: string;
     name: string;
-  }) => void;
+  }) => Promise<void> | void;
   onCancel: (() => void) | null;
   busy: boolean;
   error: string | null;
+  onModeChange?: () => void;
+  serviceUrl?: string;
+  onServiceUrlChange?: (url: string) => void;
 }) {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const submitted = useRef(false);
 
   const signingUp = mode === "sign-up";
   // Mirrors `farhelm_cloud::secret::MIN_PASSWORD_LEN`. Checked here so the length
   // rule is visible while typing rather than as a rejection after submitting.
-  const tooShort = signingUp && password.length > 0 && password.length < 10;
+  const passwordLength = [...password].length;
+  const tooShort = signingUp && passwordLength > 0 && passwordLength < 10;
+  const pending = busy || submitting;
   const ready =
     email.trim().length > 0 &&
     password.length > 0 &&
     !tooShort &&
     (!signingUp || name.trim().length > 0);
 
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!ready || busy) return;
-    onSubmit({ mode, email: email.trim(), password, name: name.trim() });
+    if (!ready || pending || submitted.current || !event.currentTarget.checkValidity()) return;
+    submitted.current = true;
+    setSubmitting(true);
+    setLocalError(null);
+    try {
+      await onSubmit({ mode, email: email.trim(), password, name: name.trim() });
+    } catch (cause) {
+      setLocalError(readableError(cause));
+    } finally {
+      submitted.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  const changeMode = (next: Mode) => {
+    if (pending || next === mode) return;
+    setMode(next);
+    setPassword("");
+    setShowPassword(false);
+    setLocalError(null);
+    onModeChange?.();
   };
 
   return (
-    <section className="card auth" aria-label={signingUp ? "Create an account" : "Sign in"}>
-      <div className="auth-switch" role="tablist">
-        <button
-          role="tab"
-          aria-selected={!signingUp}
-          className={!signingUp ? "auth-tab is-active" : "auth-tab"}
-          onClick={() => setMode("sign-in")}
-          type="button"
-        >
-          Sign in
-        </button>
-        <button
-          role="tab"
-          aria-selected={signingUp}
-          className={signingUp ? "auth-tab is-active" : "auth-tab"}
-          onClick={() => setMode("sign-up")}
-          type="button"
-        >
-          Create account
-        </button>
-      </div>
-
-      <form onSubmit={submit}>
-        {signingUp ? (
-          <>
-            <label className="tile-label" htmlFor="auth-name">
-              Your name
-            </label>
-            <input
-              id="auth-name"
-              className="pair-input"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              autoComplete="name"
-              placeholder="Harsh"
-            />
-          </>
-        ) : null}
-
-        <label className="tile-label" htmlFor="auth-email">
-          Email
-        </label>
-        <input
-          id="auth-email"
-          className="pair-input"
-          type="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          autoComplete="email"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder="you@example.com"
-        />
-
-        <label className="tile-label" htmlFor="auth-password">
-          Password
-        </label>
-        <input
-          id="auth-password"
-          className="pair-input"
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          autoComplete={signingUp ? "new-password" : "current-password"}
-          placeholder={signingUp ? "At least 10 characters" : ""}
-        />
-        {tooShort ? (
-          <p className="tile-note">
-            {10 - password.length} more character
-            {10 - password.length === 1 ? "" : "s"} — length is what actually
-            makes a password hard to guess.
-          </p>
-        ) : null}
-
-        {error ? (
-          <p className="notice error-text" role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        <div className="approval-actions">
-          {onCancel ? (
-            <button className="btn" type="button" onClick={onCancel} disabled={busy}>
-              Back
-            </button>
-          ) : null}
-          <button className="btn btn-primary" type="submit" disabled={!ready || busy}>
-            {busy ? "…" : signingUp ? "Create account" : "Sign in"}
+    <section className="auth-layout" aria-label={signingUp ? "Create an account" : "Sign in"}>
+      <AuthIntroduction />
+      <div className="card auth-panel">
+        <div className="auth-mode-switch" role="group" aria-label="Account access">
+          <button
+            aria-pressed={!signingUp}
+            className={!signingUp ? "auth-mode is-active" : "auth-mode"}
+            onClick={() => changeMode("sign-in")}
+            type="button"
+            disabled={pending}
+          >
+            Sign in
+          </button>
+          <button
+            aria-pressed={signingUp}
+            className={signingUp ? "auth-mode is-active" : "auth-mode"}
+            onClick={() => changeMode("sign-up")}
+            type="button"
+            disabled={pending}
+          >
+            Create account
           </button>
         </div>
-      </form>
+        <h2>{signingUp ? "Create your workspace" : "Welcome back"}</h2>
+        <p className="auth-panel-description">{signingUp ? "Start with your account. Connect a machine when you’re ready." : "Sign in to connect your machines and review their work."}</p>
+        <form onSubmit={submit} aria-busy={pending}>
+          <fieldset className="auth-fields" disabled={pending}>
+            {signingUp ? (
+              <>
+                <label htmlFor="auth-name">
+                  Your name
+                </label>
+                <input
+                  id="auth-name"
+                  className="pair-input"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  autoComplete="name"
+                  name="name"
+                  placeholder="Your name"
+                  required
+                />
+              </>
+            ) : null}
 
-      {signingUp ? (
-        <p className="tile-note">
-          You get a workspace of your own. Add a machine to it in one step
-          afterwards — there is nothing to pair.
-        </p>
-      ) : null}
+            <label htmlFor="auth-email">
+              Email
+            </label>
+            <input
+              id="auth-email"
+              className="pair-input"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              autoComplete="email"
+              name="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="you@example.com"
+              required
+            />
+
+            <label htmlFor="auth-password">
+              Password
+            </label>
+            <div className="auth-password">
+              <input
+                id="auth-password"
+                className="pair-input"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={signingUp ? "new-password" : "current-password"}
+                name="password"
+                aria-describedby={signingUp ? "auth-password-hint" : undefined}
+                aria-invalid={tooShort || undefined}
+                required
+              />
+              <button
+                type="button"
+                className="auth-password-toggle"
+                aria-controls="auth-password"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((value) => !value)}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+            {signingUp ? (
+              <p className="auth-caption" id="auth-password-hint">
+                {tooShort ? `Use at least 10 characters (${10 - passwordLength} more needed).` : "Use at least 10 characters."}
+              </p>
+            ) : null}
+            {serviceUrl !== undefined ? (
+              <details className="auth-server">
+                <summary>Workspace server</summary>
+                <label htmlFor="auth-server-url">Server address</label>
+                <input
+                  id="auth-server-url"
+                  className="pair-input"
+                  type="url"
+                  name="server"
+                  value={serviceUrl}
+                  onChange={(event) => onServiceUrlChange?.(event.target.value)}
+                  readOnly={!onServiceUrlChange}
+                  spellCheck={false}
+                  autoCapitalize="none"
+                  autoComplete="url"
+                />
+                <p className="auth-caption">Your email and password are sent to this server.</p>
+              </details>
+            ) : null}
+          </fieldset>
+          {error || localError ? (
+            <p className="auth-error" role="alert">
+              {error || localError}
+            </p>
+          ) : null}
+          <button className="btn btn-primary btn-lg auth-primary" type="submit" disabled={!ready || pending}>
+            {pending ? (signingUp ? "Creating account…" : "Signing in…") : signingUp ? "Create account" : "Sign in"}
+            {!pending ? <span aria-hidden="true">→</span> : null}
+          </button>
+          {pending ? <p className="auth-caption" role="status">{signingUp ? "Creating your account. Please wait." : "Connecting to your workspace. Please wait."}</p> : null}
+          {onCancel ? (
+            <button className="btn btn-quiet auth-back" type="button" onClick={onCancel} disabled={pending}>
+              <span aria-hidden="true">←</span> Back to connection options
+            </button>
+          ) : null}
+        </form>
+      </div>
     </section>
   );
 }

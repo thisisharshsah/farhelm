@@ -37,7 +37,10 @@ export type IconName =
   | "mic"
   | "send"
   | "stop"
-  | "link";
+  | "link"
+  | "list"
+  | "board"
+  | "folder";
 
 /** Path data only — the wrapper below supplies every shared attribute. */
 const PATHS: Record<IconName, string> = {
@@ -62,6 +65,9 @@ const PATHS: Record<IconName, string> = {
   send: "M12 20V5M6 11l6-6 6 6",
   stop: "M8.5 8.5h7v7h-7z",
   link: "M10 14a4 4 0 0 0 6 .5l2-2a4 4 0 0 0-6-6l-1 1M14 10a4 4 0 0 0-6-.5l-2 2a4 4 0 0 0 6 6l1-1",
+  list: "M8 6h12M8 12h12M8 18h12M4 6.01L4 6M4 12.01L4 12M4 18.01L4 18",
+  board: "M4 5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zm6 0a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1zm6 0a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1z",
+  folder: "M3 7v13h18V9h-9l-2-2H3z",
 };
 
 export function Icon({

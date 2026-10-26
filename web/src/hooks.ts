@@ -11,6 +11,9 @@ export type Route =
   | { view: "tasks" }
   | { view: "task"; id: string }
   | { view: "new-task" }
+  | { view: "projects" }
+  | { view: "project"; id: string }
+  | { view: "project-task"; projectId: string; id: string }
   /** The workspace: machines, devices, people, enrolment keys. */
   | { view: "account" }
   /**
@@ -32,6 +35,14 @@ function parseHash(hash: string): Route {
     if (parts[1] === "new") return { view: "new-task" };
     if (parts[1]) return { view: "task", id: parts[1] };
     return { view: "tasks" };
+  }
+  if (parts[0] === "p") {
+    const decode = (part: string) => {
+      try { return decodeURIComponent(part); } catch { return part; }
+    };
+    if (parts[1] && parts[2] === "t" && parts[3]) return { view: "project-task", projectId: decode(parts[1]), id: decode(parts[3]) };
+    if (parts[1]) return { view: "project", id: decode(parts[1]) };
+    return { view: "projects" };
   }
   if (parts[0] === "new") return { view: "new-session" };
   if (parts[0] === "account") return { view: "account" };
@@ -146,30 +157,33 @@ export interface Resource<T> {
 export function useResource<T>(
   load: () => Promise<T>,
   deps: readonly unknown[],
+  identity: readonly unknown[] = deps,
 ): Resource<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(true);
+  const [resource, setResource] = useState<{
+    owner: readonly unknown[]; data: T | null; error: string | null; pending: boolean;
+  }>(() => ({ owner: identity, data: null, error: null, pending: true }));
   const [nonce, setNonce] = useState(0);
   const loader = useRef(load);
   loader.current = load;
+  const owner = useRef(identity);
+  owner.current = identity;
 
   useEffect(() => {
     let cancelled = false;
-    setPending(true);
+    const requestedOwner = owner.current;
+    setResource((current) => ({ owner: requestedOwner,
+      data: sameIdentity(current.owner, requestedOwner) ? current.data : null,
+      error: null, pending: true }));
     loader
       .current()
       .then((next) => {
         if (cancelled) return;
-        setData(next);
-        setError(null);
+        setResource({ owner: requestedOwner, data: next, error: null, pending: false });
       })
       .catch((cause: unknown) => {
         if (cancelled) return;
-        setError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        if (!cancelled) setPending(false);
+        setResource((current) => ({ ...current, owner: requestedOwner,
+          error: cause instanceof Error ? cause.message : String(cause), pending: false }));
       });
 
     return () => {
@@ -180,11 +194,20 @@ export function useResource<T>(
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
+  // Hide an old runner/account/resource synchronously, before effect cleanup.
+  // Refreshes within the same identity may retain their explicitly stale data.
+  const current = sameIdentity(resource.owner, identity);
+  const data = current ? resource.data : null;
+  const pending = !current || resource.pending;
   return {
     data,
-    error,
+    error: current ? resource.error : null,
     loading: pending && data === null,
     stale: pending && data !== null,
     reload,
   };
+}
+
+function sameIdentity(left: readonly unknown[], right: readonly unknown[]): boolean {
+  return left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
 }

@@ -19,8 +19,8 @@
  * confident lie about where in the file you are looking.
  */
 
-import { getMigratingSync } from "@farhelm/client-core";
 import { useState } from "react";
+import { StatusPill, TASK_STATUS } from "./status";
 import {
   canRevert,
   changeMark,
@@ -36,31 +36,9 @@ import {
   type Hunk,
   type Segment,
   type TaskDetail,
-  type TaskStatus,
   type TaskView,
   type Transport,
 } from "@farhelm/client-core";
-
-const STATUS_LABEL: Record<TaskStatus, string> = {
-  running: "working",
-  awaiting_review: "needs review",
-  applied: "applied",
-  rejected: "rejected",
-  no_changes: "no changes",
-  failed: "failed",
-  reverted: "undone",
-};
-
-/** Maps to the same status tokens the session rows use, so colour is consistent. */
-const STATUS_TOKEN: Record<TaskStatus, string> = {
-  running: "good",
-  awaiting_review: "warning",
-  applied: "good",
-  rejected: "muted",
-  no_changes: "muted",
-  failed: "critical",
-  reverted: "muted",
-};
 
 /* --------------------------------------------------------------- diff view */
 
@@ -226,7 +204,7 @@ export function DiffView({ changes }: { changes: ChangeSet }) {
  * and a card that blurred them would be actively misleading — the one place in
  * this UI where being silent is the honest option.
  */
-function SecondOpinion({ task }: { task: TaskDetail }) {
+export function SecondOpinion({ task }: { task: TaskDetail }) {
   if (!task.verify_grade) return null;
 
   const label =
@@ -256,13 +234,15 @@ function SecondOpinion({ task }: { task: TaskDetail }) {
 
 /* ------------------------------------------------------------- review screen */
 
-function Verdict({
+type TaskActionTransport = Pick<Transport, "supportsTaskControl" | "startTask" | "reviewTask" | "revertTask">;
+
+export function Verdict({
   task,
   transport,
   onReviewed,
 }: {
   task: TaskDetail;
-  transport: Transport | null;
+  transport: TaskActionTransport | null;
   onReviewed: () => void;
 }) {
   const [note, setNote] = useState("");
@@ -345,13 +325,13 @@ function Verdict({
  * on the button matters: without it, "Try again" reads like "do the identical
  * thing and hope", and nobody would press it twice.
  */
-function RetryButton({
+export function RetryButton({
   task,
   transport,
   onStarted,
 }: {
   task: TaskDetail;
-  transport: Transport | null;
+  transport: TaskActionTransport | null;
   onStarted: (id: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -413,13 +393,13 @@ function RetryButton({
  * offered plainly rather than buried, and it says what it will do — the runner
  * refuses if anything has moved since, so the promise is real.
  */
-function UndoButton({
+export function UndoButton({
   task,
   transport,
   onUndone,
 }: {
   task: TaskDetail;
-  transport: Transport | null;
+  transport: TaskActionTransport | null;
   onUndone: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -465,7 +445,7 @@ export function TaskReviewScreen({
   onOpenTask,
 }: {
   task: TaskDetail;
-  transport: Transport | null;
+  transport: TaskActionTransport | null;
   onReviewed: () => void;
   onOpenTask: (id: string) => void;
 }) {
@@ -477,9 +457,7 @@ export function TaskReviewScreen({
         <div className="chart-title">
           <span>{task.repo_name}</span>
           <span className="spacer" />
-          <span className="status-chip" data-token={STATUS_TOKEN[task.status]}>
-            {STATUS_LABEL[task.status]}
-          </span>
+          <StatusPill look={TASK_STATUS[task.status]} />
         </div>
 
         <p className="task-prompt">{task.prompt}</p>
@@ -562,9 +540,7 @@ export function TaskRow({
       <div className="session-head">
         <span className="session-name">{task.repo_name}</span>
         <span className="spacer" />
-        <span className="status-chip" data-token={STATUS_TOKEN[task.status]}>
-          {STATUS_LABEL[task.status]}
-        </span>
+        <StatusPill look={TASK_STATUS[task.status]} />
       </div>
       <div className="task-row-prompt">{task.prompt}</div>
       <div className="session-line">
@@ -575,223 +551,5 @@ export function TaskRow({
         <span>{since(task.updated_at)}</span>
       </div>
     </button>
-  );
-}
-
-export function TaskListScreen({
-  tasks,
-  onOpen,
-  onNewTask,
-  transport,
-}: {
-  tasks: TaskView[];
-  onOpen: (id: string) => void;
-  onNewTask: () => void;
-  transport: Transport | null;
-}) {
-  const waiting = tasks.filter((task) => task.status === "awaiting_review");
-
-  return (
-    <>
-      {waiting.length > 0 ? (
-        <p className="tile-note">
-          {waiting.length} change set{waiting.length === 1 ? "" : "s"} waiting on
-          you.
-        </p>
-      ) : null}
-
-      {tasks.length === 0 ? (
-        <div className="empty-state">
-          <p className="empty-title">No tasks yet.</p>
-          {transport?.supportsTaskControl ? (
-            <>
-              <p className="tile-note">
-                Describe a change and Farhelm works on it here, then hands you
-                a diff to approve. Nothing reaches your files until you say so.
-              </p>
-              <button className="btn btn-approve" onClick={onNewTask}>
-                New task
-              </button>
-            </>
-          ) : (
-            <p className="tile-note">
-              Tasks start on the runner's own machine. Once one is running you
-              can review its diff from anywhere.
-            </p>
-          )}
-        </div>
-      ) : (
-        <>
-          {transport?.supportsTaskControl ? (
-            <div className="row-actions">
-              <button className="btn btn-approve" onClick={onNewTask}>
-                New task
-              </button>
-            </div>
-          ) : null}
-          {tasks.map((task) => (
-            <TaskRow key={task.id} task={task} onOpen={() => onOpen(task.id)} />
-          ))}
-        </>
-      )}
-    </>
-  );
-}
-
-/* ---------------------------------------------------------------- new task */
-
-const RECENT_KEY = "farhelm-recent-repos";
-const LEGACY_RECENT_KEY = "forge-recent-repos";
-
-function recentRepos(): string[] {
-  try {
-    const raw = JSON.parse(getMigratingSync(RECENT_KEY, LEGACY_RECENT_KEY) ?? "[]") as unknown;
-    return Array.isArray(raw)
-      ? raw.filter((value): value is string => typeof value === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberRepo(path: string) {
-  const next = [path, ...recentRepos().filter((p) => p !== path)].slice(0, 8);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(next));
-}
-
-export function NewTask({
-  transport,
-  onStarted,
-  onCancel,
-}: {
-  transport: Transport | null;
-  onStarted: (taskId: string) => void;
-  onCancel: () => void;
-}) {
-  const [repo, setRepo] = useState(() => recentRepos()[0] ?? "");
-  const [prompt, setPrompt] = useState("");
-  const [budget, setBudget] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!transport?.supportsTaskControl) {
-    return (
-      <section className="card" aria-label="New task">
-        <div className="chart-title">New task</div>
-        <p className="tile-note">
-          Only from the machine the agent will run on. A paired device reviews
-          the diff — which is the decision worth making from a phone — but
-          pointing an agent at a directory is a different kind of permission.
-        </p>
-        <div className="approval-actions">
-          <button className="btn" onClick={onCancel}>
-            Close
-          </button>
-        </div>
-      </section>
-    );
-  }
-
-  const submit = async () => {
-    const path = repo.trim();
-    const text = prompt.trim();
-    if (!path || !text) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const parsed = Number.parseFloat(budget);
-      const task = await transport.startTask(
-        path,
-        text,
-        Number.isFinite(parsed) && parsed > 0 ? parsed : undefined,
-      );
-      rememberRepo(path);
-      onStarted(task.id);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="card" aria-label="New task">
-      <div className="chart-title">New task</div>
-
-      <label className="tile-label" htmlFor="new-task-repo">
-        Repository
-      </label>
-      <input
-        id="new-task-repo"
-        className="pair-input"
-        value={repo}
-        onChange={(event) => setRepo(event.target.value)}
-        placeholder="/Users/you/code/payments-api"
-        list="farhelm-known-repos"
-        spellCheck={false}
-        autoCapitalize="none"
-        autoCorrect="off"
-      />
-      <datalist id="farhelm-known-repos">
-        {recentRepos().map((path) => (
-          <option key={path} value={path} />
-        ))}
-      </datalist>
-
-      <label
-        className="tile-label"
-        htmlFor="new-task-prompt"
-        style={{ marginTop: "0.75rem" }}
-      >
-        What should it do?
-      </label>
-      <textarea
-        id="new-task-prompt"
-        className="pair-input task-input"
-        value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
-        placeholder="Bound the webhook retry backoff at 30 seconds and add a test for it."
-        rows={4}
-      />
-      <p className="tile-note">
-        The agent reads the repo, proposes edits, and stops. Nothing is written
-        until you approve the diff.
-      </p>
-
-      <label
-        className="tile-label"
-        htmlFor="new-task-budget"
-        style={{ marginTop: "0.75rem" }}
-      >
-        Cap (optional)
-      </label>
-      <input
-        id="new-task-budget"
-        className="pair-input"
-        value={budget}
-        onChange={(event) => setBudget(event.target.value)}
-        placeholder="1.00"
-        inputMode="decimal"
-      />
-      <p className="tile-note">
-        Dollars. The task stops at the cap and hands you whatever it had — the
-        repo's own cap still applies on top.
-      </p>
-
-      {error ? <p className="notice error-text">{error}</p> : null}
-
-      <div className="approval-actions">
-        <button className="btn" onClick={onCancel} disabled={busy}>
-          Cancel
-        </button>
-        <button
-          className="btn btn-approve"
-          onClick={() => void submit()}
-          disabled={busy || !repo.trim() || !prompt.trim()}
-        >
-          {busy ? "Starting…" : "Start"}
-        </button>
-      </div>
-    </section>
   );
 }
