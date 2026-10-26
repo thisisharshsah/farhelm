@@ -244,6 +244,12 @@ pub use farhelm_proto::commands::Review;
 pub struct RunnerSupervisor {
     state: Arc<AppState>,
     session_id: String,
+    /// The task whose ledger this supervisor writes. `None` for a supervisor
+    /// that only clears commands (nothing durable to keep).
+    task_id: Option<String>,
+    /// The ordinal of the step opened by the last `tool_started` and not yet
+    /// settled. Tools run one at a time within a run, so one slot is enough.
+    open_step: std::sync::Mutex<Option<i64>>,
 }
 
 impl RunnerSupervisor {
@@ -251,6 +257,20 @@ impl RunnerSupervisor {
         Self {
             state,
             session_id: session_id.into(),
+            task_id: None,
+            open_step: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// A supervisor that also keeps the task's step ledger and branch.
+    pub fn for_task(
+        state: Arc<AppState>,
+        session_id: impl Into<String>,
+        task_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            task_id: Some(task_id.into()),
+            ..Self::new(state, session_id)
         }
     }
 }
@@ -309,6 +329,73 @@ impl farhelm_agent::Supervisor for RunnerSupervisor {
     fn note(&self, text: &str) {
         self.state.push_output(&self.session_id, text, now_ms());
     }
+
+    /// Write the branch down before the first model call. If this row cannot
+    /// be written the run still proceeds: the final outcome records the
+    /// worktree again, and a task that cannot start because a bookkeeping
+    /// write failed helps nobody.
+    fn started(&self, worktree: &farhelm_agent::Worktree) {
+        let Some(task_id) = &self.task_id else {
+            return;
+        };
+        let Ok(json) = serde_json::to_string(worktree) else {
+            return;
+        };
+        if let Ok(Some(mut task)) = self.state.store.get_task(task_id) {
+            task.worktree_json = json;
+            task.updated_at = now_ms();
+            if let Err(err) = self.state.store.upsert_task(&task) {
+                eprintln!("task {task_id}: could not record its branch up front: {err}");
+            }
+        }
+    }
+
+    fn tool_started(&self, tool: &str, input: &str) {
+        let Some(task_id) = &self.task_id else {
+            return;
+        };
+        match self
+            .state
+            .store
+            .begin_task_step(task_id, tool, &bounded(input), now_ms())
+        {
+            Ok(ordinal) => *self.open_step.lock().expect("step ordinal poisoned") = Some(ordinal),
+            Err(err) => eprintln!("task {task_id}: could not record a step: {err}"),
+        }
+    }
+
+    fn tool_finished(&self, _tool: &str, output: &str, is_error: bool) {
+        let Some(task_id) = &self.task_id else {
+            return;
+        };
+        let Some(ordinal) = self.open_step.lock().expect("step ordinal poisoned").take() else {
+            return;
+        };
+        if let Err(err) = self.state.store.finish_task_step(
+            task_id,
+            ordinal,
+            &bounded(output),
+            is_error,
+            now_ms(),
+        ) {
+            eprintln!("task {task_id}: could not settle step {ordinal}: {err}");
+        }
+    }
+}
+
+/// How much of a tool payload the ledger keeps. Enough to see what was asked
+/// and what came back; not a second copy of every file the agent read.
+const STEP_PAYLOAD_BYTES: usize = 16 * 1024;
+
+fn bounded(text: &str) -> String {
+    if text.len() <= STEP_PAYLOAD_BYTES {
+        return text.to_owned();
+    }
+    let mut end = STEP_PAYLOAD_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}… [{} more bytes]", &text[..end], text.len() - end)
 }
 
 /* ------------------------------------------------------------------ start */
@@ -598,9 +685,17 @@ fn launch(
 /// "working…" forever, holding a place in the fleet view and — once the cap
 /// existed — potentially a slot it can never give back.
 ///
-/// Marked `failed` rather than retried: the work was interrupted at an unknown
-/// point, whatever it had staged is gone with the process, and re-running it
-/// automatically would spend money nobody asked for at startup.
+/// Never retried: the work was interrupted at an unknown point, and re-running
+/// it automatically would spend money nobody asked for at startup. But not
+/// thrown away either. The branch was written down before the first model
+/// call, so if its checkout is still on disk with edits on it, those edits
+/// become a change set awaiting review — interrupted work the reviewer can
+/// read, apply or discard, exactly like finished work. Only a task with no
+/// checkout or no edits is marked failed.
+///
+/// The step ledger says how far it got: any step still open is settled as
+/// interrupted so the record does not claim a tool is running in a process
+/// that no longer exists.
 pub fn reconcile_after_restart(state: &Arc<AppState>) -> usize {
     let Ok(tasks) = state.store.list_tasks(500) else {
         return 0;
@@ -611,9 +706,51 @@ pub fn reconcile_after_restart(state: &Arc<AppState>) -> usize {
         if task.status != TaskStatus::Running {
             continue;
         }
-        task.status = TaskStatus::Failed;
-        task.error = Some("the runner stopped while this task was working".into());
-        task.updated_at = now_ms();
+        let now = now_ms();
+
+        let steps = state.store.list_task_steps(&task.id).unwrap_or_default();
+        for step in steps.iter().filter(|step| step.finished_at.is_none()) {
+            let _ = state.store.finish_task_step(
+                &task.id,
+                step.ordinal,
+                "interrupted: the runner stopped while this tool was running",
+                true,
+                now,
+            );
+        }
+        if task.steps < steps.len() as i64 {
+            task.steps = steps.len() as i64;
+        }
+
+        match surviving_changes(&task) {
+            Some(changes) if !changes.is_empty() => {
+                task.diff_json = serde_json::to_string(&changes).unwrap_or_default();
+                task.files_changed = changes.files.len() as i64;
+                task.lines_added = changes.added() as i64;
+                task.lines_removed = changes.removed() as i64;
+                task.summary = format!(
+                    "Interrupted by a runner restart after {} recorded step{}. The change set \
+                     as it stood is preserved for review; it was not verified.",
+                    steps.len(),
+                    if steps.len() == 1 { "" } else { "s" }
+                );
+                task.status = TaskStatus::AwaitingReview;
+                task.error = None;
+            }
+            _ => {
+                task.status = TaskStatus::Failed;
+                task.error = Some("the runner stopped while this task was working".into());
+            }
+        }
+        task.updated_at = now;
+
+        if let Ok(Some(mut session)) = state.store.get_session(&task.session_id)
+            && session.ended_at.is_none()
+        {
+            session.status = SessionStatus::Done;
+            session.ended_at = Some(now);
+            let _ = state.store.upsert_session(&session);
+        }
         if state.store.upsert_task(&task).is_ok() {
             settled += 1;
             publish(state, &task);
@@ -622,12 +759,27 @@ pub fn reconcile_after_restart(state: &Arc<AppState>) -> usize {
     settled
 }
 
+/// The edits an interrupted task left on its branch, if the checkout survived.
+///
+/// `None` when the task never recorded a branch, the checkout is gone, or git
+/// cannot be asked — every case where the honest answer is "nothing to show".
+fn surviving_changes(task: &AgentTask) -> Option<farhelm_proto::ChangeSet> {
+    if task.worktree_json.trim().is_empty() {
+        return None;
+    }
+    let worktree: Worktree = serde_json::from_str(&task.worktree_json).ok()?;
+    if !worktree.is_present() {
+        return None;
+    }
+    worktree.change_set().ok()
+}
+
 /// Run the loop and record what it produced.
 async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     let Some(gateway) = state.gateway.as_ref() else {
         return;
     };
-    let supervisor = RunnerSupervisor::new(Arc::clone(&state), &spec.session_id);
+    let supervisor = RunnerSupervisor::for_task(Arc::clone(&state), &spec.session_id, &task_id);
     let outcome = farhelm_agent::run(gateway, &supervisor, &spec).await;
 
     let Ok(Some(mut task)) = state.store.get_task(&task_id) else {

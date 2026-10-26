@@ -62,7 +62,7 @@ pub use types::{
     DeviceKind, Dispatch, Document, EntityKind, EntityLink, Machine, ParseEnumError, Plan,
     PlanStep, PlanStepStatus, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage,
     RelationKind, Repo, Risk, Session, SessionStatus, StartProjectTaskRequest, TaskStatus,
-    TaskType, Tier, Usage, UsageEvent,
+    TaskStep, TaskType, Tier, Usage, UsageEvent,
 };
 pub use views::{
     AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, OutputLine,

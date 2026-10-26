@@ -163,6 +163,7 @@ fn base_router(state: Arc<AppState>) -> Router {
         .route("/v1/approvals/{id}/decision", post(decide))
         .route("/v1/tasks", get(list_tasks).post(start_task))
         .route("/v1/tasks/{id}", get(task_detail))
+        .route("/v1/tasks/{id}/steps", get(task_steps))
         .route("/v1/tasks/{id}/review", post(review_task))
         .route("/v1/tasks/{id}/revert", post(revert_task))
         .route("/v1/complete", post(complete))
@@ -419,6 +420,19 @@ async fn task_detail(
     Path(id): Path<String>,
 ) -> ApiResult<TaskDetail> {
     Ok(Json(build_task_detail(&state, &id)?))
+}
+
+/// `GET /v1/tasks/{id}/steps` — the step ledger: every tool exchange the task
+/// recorded, in order, including one still open if the task was interrupted.
+async fn task_steps(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<Vec<farhelm_proto::types::TaskStep>> {
+    state
+        .store
+        .get_task(&id)?
+        .ok_or_else(|| ApiError::not_found(format!("task {id}")))?;
+    Ok(Json(state.store.list_task_steps(&id)?))
 }
 
 #[derive(Debug, Deserialize)]

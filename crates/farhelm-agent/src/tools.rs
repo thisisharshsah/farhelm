@@ -153,6 +153,23 @@ pub trait Supervisor: Send + Sync {
 
     /// Narrate. Reaches the session tail and, through it, every open client.
     fn note(&self, text: &str);
+
+    /// The checkout exists and the loop is about to start in it.
+    ///
+    /// Called once, before any model call, so a caller can write the branch
+    /// down while there is still nothing on it. A run that dies later leaves
+    /// a checkout that can be found again rather than an orphan under `.git`.
+    /// Default: nothing, for callers with no durable record to keep.
+    fn started(&self, _worktree: &crate::git::Worktree) {}
+
+    /// A tool is about to run with this input. The intent, recorded before
+    /// the effect, so an interrupted run shows what it was in the middle of.
+    fn tool_started(&self, _tool: &str, _input: &str) {}
+
+    /// The tool returned `output`, as a result or as the error the model is
+    /// told about. Pairs with the most recent [`Supervisor::tool_started`]:
+    /// tools run one at a time within a run.
+    fn tool_finished(&self, _tool: &str, _output: &str, _is_error: bool) {}
 }
 
 /// Trim a tool result to the context budget, saying so when it does.
@@ -301,6 +318,23 @@ pub fn definitions() -> Vec<serde_json::Value> {
 /// guessed a filename wrong should get told so and try again, which is exactly
 /// what a human would do.
 pub async fn execute<S: Supervisor>(
+    call: &ToolCall,
+    workspace: &mut Workspace,
+    supervisor: &S,
+    remembered: &mut Vec<(String, String)>,
+) -> Result<String, ToolError> {
+    // Intent before effect, result after: the supervisor's ledger sees every
+    // exchange in order, including the ones that error.
+    supervisor.tool_started(&call.name, &call.input.to_string());
+    let result = execute_inner(call, workspace, supervisor, remembered).await;
+    match &result {
+        Ok(body) => supervisor.tool_finished(&call.name, body, false),
+        Err(err) => supervisor.tool_finished(&call.name, &err.to_string(), true),
+    }
+    result
+}
+
+async fn execute_inner<S: Supervisor>(
     call: &ToolCall,
     workspace: &mut Workspace,
     supervisor: &S,

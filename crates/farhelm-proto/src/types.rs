@@ -981,6 +981,28 @@ pub struct Conversation {
     pub updated_at: i64,
 }
 
+/// One tool exchange in a native agent task, written before the tool runs and
+/// settled after it (ADR 0004's step ledger, first form).
+///
+/// `finished_at` is `None` while the tool is running — and stays `None` for a
+/// run the process never finished, which is exactly the row a restart needs
+/// to find. Payloads are bounded by the writer; this is a record of what was
+/// attempted, not a transcript.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskStep {
+    pub task_id: String,
+    /// 1-based, in execution order within the task.
+    pub ordinal: i64,
+    pub tool: String,
+    /// The tool's input as the model gave it, truncated if large.
+    pub input: String,
+    /// The result handed back to the model, or the error it was told about.
+    pub output: Option<String>,
+    pub is_error: bool,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+}
+
 /// A specification, architecture record, or documentation file linked to a project (ADR 0002).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {

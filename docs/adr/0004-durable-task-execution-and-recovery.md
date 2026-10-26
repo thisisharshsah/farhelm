@@ -1,6 +1,6 @@
 # 0004: Durable Task Execution, Leased State Machine, and Step-Level Recovery
 
-**Status**: Pure lease/recovery rules implemented; durable execution integration pending. Updated October 24, 2026.  
+**Status**: First form implemented October 26, 2026 — the branch is recorded before the first model call, every tool exchange is a `task_step` row (intent before effect, settled after), and restart recovery turns surviving edits into a change set awaiting review instead of a bare failure. Leases, fencing, Git checkpoint-per-step and automatic resumption remain pending; nothing is re-executed on restart.  
 **Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../platform-review-2026-10-22.md)
 
 ---

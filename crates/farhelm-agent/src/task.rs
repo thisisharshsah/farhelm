@@ -450,6 +450,11 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         return failed(error.to_string());
     }
 
+    // The branch is cut and usable: say so before the first model call, so a
+    // caller that keeps records has the checkout's identity even if nothing
+    // after this line ever reports back.
+    supervisor.started(&worktree);
+
     let mut stable = StableContext {
         tools: tools::definitions_with_delegate(),
         system: SYSTEM_PROMPT.to_owned(),
@@ -582,6 +587,10 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
                 }
 
                 let left = spec.max_steps.saturating_sub(steps);
+                // A delegation is a tool exchange like any other to the ledger:
+                // the instruction goes in, the report comes out, and the tools
+                // the delegate runs are recorded in between on their own rows.
+                supervisor.tool_started(tools::DELEGATE, &instruction);
                 let (report, used, spent) = delegate(
                     gateway,
                     supervisor,
@@ -592,6 +601,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
                     &mut remembered,
                 )
                 .await;
+                supervisor.tool_finished(tools::DELEGATE, &report, false);
 
                 // Charged against the parent's budget, because it is the
                 // parent's budget being spent. A delegate that costs nothing to

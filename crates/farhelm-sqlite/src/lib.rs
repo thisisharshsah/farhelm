@@ -19,7 +19,7 @@ use farhelm_proto::types::{
     Agent, AgentTask, Approval, AutoApprove, Avoided, BatchItem, BatchStatus, Budget, Conversation,
     DecidedVia, Decision, Device, DeviceKind, Dispatch, Document, EntityKind, EntityLink, Machine,
     Message, Note, ParseEnumError, Plan, PlanStep, PlanStepStatus, Project, RelationKind, Repo,
-    Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
+    Risk, Session, SessionStatus, TaskStatus, TaskStep, TaskType, Tier, Usage, UsageEvent,
 };
 use farhelm_proto::views::OutputLine;
 
@@ -42,6 +42,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0015_session_auto_approve.sql"),
     include_str!("../migrations/0016_repo_auto_approve.sql"),
     include_str!("../migrations/0017_project_chat.sql"),
+    include_str!("../migrations/0018_task_step.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -1397,6 +1398,75 @@ impl BatchStore for SqliteStore {
 }
 
 impl TaskStore for SqliteStore {
+    fn begin_task_step(&self, task_id: &str, tool: &str, input: &str, at_ms: i64) -> Result<i64> {
+        let mut conn = self.lock()?;
+        // Immediate, so the ordinal read and the insert cannot interleave with
+        // another writer's.
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(backend)?;
+        let ordinal: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM task_step WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        tx.execute(
+            "INSERT INTO task_step (task_id, ordinal, tool, input, output, is_error, started_at, finished_at)
+             VALUES (?1, ?2, ?3, ?4, NULL, 0, ?5, NULL)",
+            params![task_id, ordinal, tool, input, at_ms],
+        )
+        .map_err(backend)?;
+        tx.commit().map_err(backend)?;
+        Ok(ordinal)
+    }
+
+    fn finish_task_step(
+        &self,
+        task_id: &str,
+        ordinal: i64,
+        output: &str,
+        is_error: bool,
+        at_ms: i64,
+    ) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE task_step SET output = ?3, is_error = ?4, finished_at = ?5
+             WHERE task_id = ?1 AND ordinal = ?2 AND finished_at IS NULL",
+            params![task_id, ordinal, output, is_error, at_ms],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    fn list_task_steps(&self, task_id: &str) -> Result<Vec<TaskStep>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT task_id, ordinal, tool, input, output, is_error, started_at, finished_at
+                 FROM task_step WHERE task_id = ?1 ORDER BY ordinal",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![task_id], |row| {
+                Ok(TaskStep {
+                    task_id: row.get(0)?,
+                    ordinal: row.get(1)?,
+                    tool: row.get(2)?,
+                    input: row.get(3)?,
+                    output: row.get(4)?,
+                    is_error: row.get(5)?,
+                    started_at: row.get(6)?,
+                    finished_at: row.get(7)?,
+                })
+            })
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
     fn upsert_task(&self, task: &AgentTask) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(

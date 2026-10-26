@@ -119,6 +119,15 @@ gated one at a time by the same classifier every other agent goes through, so
 **The change set cannot be approved from a watch either.** A diff you have not
 read is not a diff you reviewed.
 
+**A restart does not throw the work away.** The task's branch is written
+down before its first model call, and every tool exchange is a row in a step
+ledger (`GET /v1/tasks/{id}/steps`) — intent recorded before the tool runs,
+result after. If the runner stops mid-task, the next start finds the checkout:
+edits on it become a change set awaiting review, marked as interrupted and
+unverified, and a step that was still running is settled as interrupted. A
+task with no edits to show is marked failed, as before. Nothing is re-run
+automatically; that would spend money nobody asked for at startup.
+
 **A session can be told to stop asking.** `POST /v1/sessions/{id}/auto-approve`
 with `{"level": "off" | "low" | "medium"}` (or the `set_auto_approve` command
 over the relay) is a standing delegation for that one session: `low` clears

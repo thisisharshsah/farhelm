@@ -10,7 +10,7 @@
 use farhelm_proto::types::{
     AgentTask, Approval, AutoApprove, BatchItem, BatchStatus, Budget, Conversation, DecidedVia,
     Decision, Device, Document, EntityKind, EntityLink, Machine, Message, Note, Plan, PlanStep,
-    Project, Repo, Session, TaskStatus, UsageEvent,
+    Project, Repo, Session, TaskStatus, TaskStep, UsageEvent,
 };
 use farhelm_proto::views::OutputLine;
 
@@ -385,6 +385,17 @@ store_port! {
     /// counterpart of [`Store::list_pending_approvals`], and read by the same
     /// push trigger.
     fn list_tasks_awaiting_review(&self) -> Result<Vec<AgentTask>>;
+
+    /// Record that a tool is about to run. Returns the step's ordinal, which
+    /// the store assigns so two writers cannot pick the same one.
+    fn begin_task_step(&self, task_id: &str, tool: &str, input: &str, at_ms: i64) -> Result<i64>;
+
+    /// Settle the step that `begin_task_step` opened. A step already settled
+    /// is left as it was.
+    fn finish_task_step(&self, task_id: &str, ordinal: i64, output: &str, is_error: bool, at_ms: i64) -> Result<()>;
+
+    /// Every recorded step of a task, in order.
+    fn list_task_steps(&self, task_id: &str) -> Result<Vec<TaskStep>>;
 
     /// Settle a task, resolving the race between two devices reviewing the same
     /// diff. Returns what was stored, and whether this caller's decision is the
