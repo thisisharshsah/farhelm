@@ -91,6 +91,8 @@ const SESSION_KEYS = [
   "ended_at",
   "awaiting_approval_id",
   "auto_approve",
+  "repo_auto_approve",
+  "repo_id",
 ] as const;
 
 const APPROVAL_KEYS = [
@@ -424,6 +426,7 @@ describe("the events and commands", () => {
       "revert_task",
       "snapshot",
       "set_auto_approve",
+      "set_repo_auto_approve",
     ]);
   });
 

@@ -490,7 +490,8 @@ async fn handle_envelope(
         Ok(commands::Outcome::Decided { .. })
         | Ok(commands::Outcome::Instructed { .. })
         | Ok(commands::Outcome::PlanChanged { .. })
-        | Ok(commands::Outcome::TaskReviewed { .. }) => None,
+        | Ok(commands::Outcome::TaskReviewed { .. })
+        | Ok(commands::Outcome::RepoPolicyChanged { .. }) => None,
         // A refusal has to travel back. Over loopback the client sees an HTTP
         // status; here a rejected instruction would otherwise just evaporate,
         // and "I tapped it and nothing happened" is the worst failure a remote

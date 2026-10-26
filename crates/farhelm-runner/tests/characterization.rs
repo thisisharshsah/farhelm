@@ -383,6 +383,8 @@ async fn fleet_view_shape_is_stable() {
             "is_live",
             "machine_name",
             "plan",
+            "repo_auto_approve",
+            "repo_id",
             "repo_name",
             "started_at",
             "status",

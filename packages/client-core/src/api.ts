@@ -59,6 +59,8 @@ export interface PlanProgress {
 
 export interface SessionView {
   id: string;
+  /** Addresses repository-wide settings such as `setRepoAutoApprove`. */
+  repo_id: string;
   repo_name: string;
   machine_name: string;
   agent: string;
@@ -69,7 +71,10 @@ export interface SessionView {
   started_at: number;
   ended_at: number | null;
   awaiting_approval_id: string | null;
+  /** The level in force, from the session itself or its repository. */
   auto_approve: AutoApprove;
+  /** The repository's default, so the UI can say where the level came from. */
+  repo_auto_approve: AutoApprove;
 }
 
 export interface PlanStepView {
@@ -610,6 +615,13 @@ export function createRunnerApi(baseUrl = "") {
         method: "POST",
         body: JSON.stringify({ level }),
       }),
+    /** The default every new session in a repository starts with. */
+    setRepoAutoApprove: (repoId: string, level: AutoApprove) =>
+      request<{ repo_id: string; auto_approve: AutoApprove }>(
+        base,
+        `/v1/repos/${repoId}/auto-approve`,
+        { method: "POST", body: JSON.stringify({ level }) },
+      ),
     planControl: (id: string, action: "pause" | "resume" | "skip") =>
       request<PlanStepView[]>(base, `/v1/sessions/${id}/plan`, {
         method: "POST",

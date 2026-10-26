@@ -105,6 +105,9 @@ pub struct PlanProgress {
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionView {
     pub id: String,
+    /// The repository's id, so a client can address repository-wide settings
+    /// such as [`crate::commands::Command::SetRepoAutoApprove`].
+    pub repo_id: String,
     pub repo_name: String,
     pub machine_name: String,
     pub agent: String,
@@ -116,8 +119,12 @@ pub struct SessionView {
     pub started_at: i64,
     pub ended_at: Option<i64>,
     pub awaiting_approval_id: Option<String>,
-    /// What this session clears without asking. See [`AutoApprove`].
+    /// What this session clears without asking: the level in force, whether
+    /// it came from the session itself or its repository. See [`AutoApprove`].
     pub auto_approve: AutoApprove,
+    /// The repository's default, so a client can say where the level came
+    /// from and offer to change it for every session in the repository.
+    pub repo_auto_approve: AutoApprove,
 }
 
 #[derive(Debug, Clone, Serialize)]

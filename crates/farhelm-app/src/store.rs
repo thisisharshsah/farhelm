@@ -211,14 +211,21 @@ store_port! {
     /// on every tool call.
     fn find_session_by_agent_id(&self, agent_session_id: &str) -> Result<Option<Session>>;
 
-    /// What this session clears without asking. `Off` for a session nobody has
-    /// delegated anything for, including every session that predates the
-    /// setting — the absence of a row is the conservative answer.
+    /// What this session clears without asking: its own level when one was
+    /// set, else its repository's default, else `Off`. The absence of both
+    /// rows is the conservative answer, and covers every session that
+    /// predates the setting.
     fn auto_approve(&self, session_id: &str) -> Result<AutoApprove>;
 
     /// Record a standing delegation for one session. Overwrites; the audit
     /// trail of what it cleared is the approval table, not this row.
     fn set_auto_approve(&self, session_id: &str, level: AutoApprove, at_ms: i64) -> Result<()>;
+
+    /// The default a session in this repository starts with. `Off` by absence.
+    fn repo_auto_approve(&self, repo_id: &str) -> Result<AutoApprove>;
+
+    /// Record the repository default. Sessions with their own row keep it.
+    fn set_repo_auto_approve(&self, repo_id: &str, level: AutoApprove, at_ms: i64) -> Result<()>;
     }
 }
 

@@ -113,6 +113,12 @@ pub enum Outcome {
     AgentList {
         agents: Vec<farhelm_proto::views::AgentView>,
     },
+    /// The answer to [`Command::SetRepoAutoApprove`]. Each session the change
+    /// reached is announced separately as a `session_upsert`.
+    RepoPolicyChanged {
+        repo_id: String,
+        level: farhelm_proto::types::AutoApprove,
+    },
 }
 
 /// Run a device command. `via` records which surface it arrived from.
@@ -225,6 +231,55 @@ pub async fn execute(
             let view = crate::views::view_of(state, &lookups, &session)
                 .map_err(|err| CommandError::Internal(err.to_string()))?;
             Ok(Outcome::SessionChanged(Box::new(view)))
+        }
+        Command::SetRepoAutoApprove { repo_id, level } => {
+            if !farhelm_domain::may_set_auto_approve(via) {
+                return Err(CommandError::Forbidden(
+                    "auto-approve can only be changed from the phone or the web app".into(),
+                ));
+            }
+            state
+                .store
+                .get_repo(&repo_id)?
+                .ok_or_else(|| CommandError::NotFound(format!("repository {repo_id}")))?;
+            state
+                .store
+                .set_repo_auto_approve(&repo_id, level, now_ms())?;
+
+            // Every session in the repository that now reads a wider level —
+            // which excludes any with its own row — gets the same sweep a
+            // session-level change does, and is announced so clients re-read.
+            let sessions: Vec<String> = state
+                .store
+                .list_sessions()?
+                .into_iter()
+                .filter(|session| session.repo_id == repo_id)
+                .map(|session| session.id)
+                .collect();
+            let pending = state.store.list_pending_approvals()?;
+            for session_id in sessions {
+                let effective = state.store.auto_approve(&session_id)?;
+                let covered: Vec<&str> = pending
+                    .iter()
+                    .filter(|approval| {
+                        approval.session_id == session_id
+                            && farhelm_domain::auto_approves(effective, approval.risk)
+                    })
+                    .map(|approval| approval.id.as_str())
+                    .collect();
+                for approval_id in covered {
+                    decide(
+                        state,
+                        approval_id,
+                        Decision::Approved,
+                        DecidedVia::AutoPolicy,
+                    )
+                    .await?;
+                }
+                state.publish(ServerEvent::SessionUpsert { session_id });
+            }
+
+            Ok(Outcome::RepoPolicyChanged { repo_id, level })
         }
         Command::StartTask {
             repo_path,
@@ -759,6 +814,133 @@ mod tests {
             })
             .unwrap();
         assert!(matches!(raised, crate::state::Raised::Pending(_)));
+    }
+
+    #[tokio::test]
+    async fn a_repository_default_reaches_its_sessions_unless_one_chose_for_itself() {
+        let state = fixture();
+        // A second session in the same repository, with its own explicit `off`.
+        state
+            .store
+            .upsert_session(&Session {
+                id: "s2".into(),
+                repo_id: "r1".into(),
+                agent: Agent::ClaudeCode,
+                tmux_target: None,
+                status: SessionStatus::Running,
+                plan_id: None,
+                budget_usd: None,
+                spent_usd: 0.0,
+                started_at: NOW,
+                ended_at: None,
+                agent_session_id: None,
+            })
+            .unwrap();
+        state
+            .store
+            .set_auto_approve("s2", farhelm_proto::types::AutoApprove::Off, NOW)
+            .unwrap();
+        approval(&state, "s1-cmd", Risk::Medium);
+        state
+            .store
+            .create_approval(&Approval {
+                id: "s2-cmd".into(),
+                session_id: "s2".into(),
+                tool: "Bash".into(),
+                payload: "whatever".into(),
+                risk: Risk::Medium,
+                decision: None,
+                decided_via: None,
+                requested_at: NOW,
+                decided_at: None,
+            })
+            .unwrap();
+
+        let outcome = execute(
+            &state,
+            Command::SetRepoAutoApprove {
+                repo_id: "r1".into(),
+                level: farhelm_proto::types::AutoApprove::Medium,
+            },
+            DecidedVia::Web,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, Outcome::RepoPolicyChanged { .. }));
+
+        // s1 inherits the repository default; its waiting card was cleared.
+        assert_eq!(
+            state.store.auto_approve("s1").unwrap(),
+            farhelm_proto::types::AutoApprove::Medium
+        );
+        assert_eq!(
+            state
+                .store
+                .get_approval("s1-cmd")
+                .unwrap()
+                .unwrap()
+                .decided_via,
+            Some(DecidedVia::AutoPolicy)
+        );
+        // s2 said `off` for itself and is left alone.
+        assert_eq!(
+            state.store.auto_approve("s2").unwrap(),
+            farhelm_proto::types::AutoApprove::Off
+        );
+        assert!(
+            state
+                .store
+                .get_approval("s2-cmd")
+                .unwrap()
+                .unwrap()
+                .is_pending()
+        );
+
+        // A session started later in the repository starts at the default.
+        state
+            .store
+            .upsert_session(&Session {
+                id: "s3".into(),
+                repo_id: "r1".into(),
+                agent: Agent::ClaudeCode,
+                tmux_target: None,
+                status: SessionStatus::Running,
+                plan_id: None,
+                budget_usd: None,
+                spent_usd: 0.0,
+                started_at: NOW,
+                ended_at: None,
+                agent_session_id: None,
+            })
+            .unwrap();
+        assert_eq!(
+            state.store.auto_approve("s3").unwrap(),
+            farhelm_proto::types::AutoApprove::Medium
+        );
+
+        // The surfaces that cannot delegate for one session cannot for a repository.
+        let err = execute(
+            &state,
+            Command::SetRepoAutoApprove {
+                repo_id: "r1".into(),
+                level: farhelm_proto::types::AutoApprove::Off,
+            },
+            DecidedVia::Connector,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, CommandError::Forbidden(_)));
+        let err = execute(
+            &state,
+            Command::SetRepoAutoApprove {
+                repo_id: "nope".into(),
+                level: farhelm_proto::types::AutoApprove::Off,
+            },
+            DecidedVia::Web,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, CommandError::NotFound(_)));
     }
 
     /// Bill one call to the fixture's session so the dashboard has numbers.

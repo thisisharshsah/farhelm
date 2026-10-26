@@ -71,6 +71,17 @@ impl SessionStore for FakeStore {
     fn set_auto_approve(&self, _session_id: &str, _level: AutoApprove, _at_ms: i64) -> Result<()> {
         unimplemented!()
     }
+    fn repo_auto_approve(&self, _repo_id: &str) -> Result<AutoApprove> {
+        Ok(AutoApprove::Off)
+    }
+    fn set_repo_auto_approve(
+        &self,
+        _repo_id: &str,
+        _level: AutoApprove,
+        _at_ms: i64,
+    ) -> Result<()> {
+        unimplemented!()
+    }
 }
 
 impl LedgerStore for FakeStore {

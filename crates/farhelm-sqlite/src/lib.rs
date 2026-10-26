@@ -40,6 +40,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0013_local_workspace.sql"),
     include_str!("../migrations/0014_project_workflow.sql"),
     include_str!("../migrations/0015_session_auto_approve.sql"),
+    include_str!("../migrations/0016_repo_auto_approve.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -782,9 +783,16 @@ impl SessionStore for SqliteStore {
 
     fn auto_approve(&self, session_id: &str) -> Result<AutoApprove> {
         let conn = self.lock()?;
+        // The session's own row wins; the repository's default stands in when
+        // there is none; a session nobody delegated anything for is `off`. One
+        // query, so the three cannot be read at different moments.
         let stored: Option<String> = conn
             .query_row(
-                "SELECT auto_approve FROM session_policy WHERE session_id = ?1",
+                "SELECT COALESCE(sp.auto_approve, rp.auto_approve, 'off')
+                 FROM session s
+                 LEFT JOIN session_policy sp ON sp.session_id = s.id
+                 LEFT JOIN repo_policy rp ON rp.repo_id = s.repo_id
+                 WHERE s.id = ?1",
                 params![session_id],
                 |row| row.get(0),
             )
@@ -794,6 +802,36 @@ impl SessionStore for SqliteStore {
             .map(|value| parse_enum::<AutoApprove>(&value))
             .transpose()
             .map(|level| level.unwrap_or(AutoApprove::Off))
+    }
+
+    fn repo_auto_approve(&self, repo_id: &str) -> Result<AutoApprove> {
+        let conn = self.lock()?;
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT auto_approve FROM repo_policy WHERE repo_id = ?1",
+                params![repo_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(backend)?;
+        stored
+            .map(|value| parse_enum::<AutoApprove>(&value))
+            .transpose()
+            .map(|level| level.unwrap_or(AutoApprove::Off))
+    }
+
+    fn set_repo_auto_approve(&self, repo_id: &str, level: AutoApprove, at_ms: i64) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO repo_policy (repo_id, auto_approve, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(repo_id) DO UPDATE SET
+                 auto_approve = excluded.auto_approve,
+                 updated_at = excluded.updated_at",
+            params![repo_id, level.as_str(), at_ms],
+        )
+        .map_err(backend)?;
+        Ok(())
     }
 
     fn set_auto_approve(&self, session_id: &str, level: AutoApprove, at_ms: i64) -> Result<()> {

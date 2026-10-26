@@ -155,6 +155,7 @@ fn base_router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/instruction", post(send_instruction))
         .route("/v1/sessions/{id}/plan", post(plan_control))
         .route("/v1/sessions/{id}/auto-approve", post(set_auto_approve))
+        .route("/v1/repos/{id}/auto-approve", post(set_repo_auto_approve))
         .route("/v1/sessions/{id}/usage", get(session_usage))
         .route("/v1/sessions/{id}/dashboard", get(session_dashboard))
         .route("/v1/approvals", get(list_approvals))
@@ -708,6 +709,34 @@ async fn set_auto_approve(
     .await?
     {
         commands::Outcome::SessionChanged(session) => Ok(Json(*session)),
+        other => Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("unexpected outcome: {other:?}"),
+        }),
+    }
+}
+
+/// `POST /v1/repos/{id}/auto-approve` — the default for every session in a
+/// repository. Same fixed surface and same shared rule as the session form.
+async fn set_repo_auto_approve(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<AutoApproveBody>,
+) -> ApiResult<serde_json::Value> {
+    match commands::execute(
+        &state,
+        commands::Command::SetRepoAutoApprove {
+            repo_id: id,
+            level: body.level,
+        },
+        DecidedVia::Web,
+    )
+    .await?
+    {
+        commands::Outcome::RepoPolicyChanged { repo_id, level } => Ok(Json(serde_json::json!({
+            "repo_id": repo_id,
+            "auto_approve": level,
+        }))),
         other => Err(ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: format!("unexpected outcome: {other:?}"),

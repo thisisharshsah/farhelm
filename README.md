@@ -131,6 +131,11 @@ approval table, with `decided_via = auto_policy`, and reaches clients as a
 decision rather than a card. Raising the level also clears whatever is already
 waiting that the new level covers. Applying a diff is always a person.
 
+`POST /v1/repos/{id}/auto-approve` (or `set_repo_auto_approve`) sets the level
+every *new* session in a repository starts with, so a repository you trust stops
+asking without each session being told. A session given its own level keeps it;
+the session view reports both the level in force and the repository default.
+
 | Endpoint | What it does |
 |---|---|
 | `POST /v1/tasks` | Start. Returns a row; the loop runs detached |

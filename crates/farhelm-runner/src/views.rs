@@ -188,6 +188,7 @@ pub fn view_of<S: Store>(
 
     Ok(SessionView {
         id: session.id.clone(),
+        repo_id: session.repo_id.clone(),
         repo_name: repo.name,
         machine_name: machine.map(|m| m.name).unwrap_or_else(|| "unknown".into()),
         agent: session.agent.to_string(),
@@ -202,6 +203,7 @@ pub fn view_of<S: Store>(
         ended_at: session.ended_at,
         awaiting_approval_id: lookups.awaiting_approval_id(&session.id),
         auto_approve: lookups.store.auto_approve(&session.id)?,
+        repo_auto_approve: lookups.store.repo_auto_approve(&session.repo_id)?,
     })
 }
 

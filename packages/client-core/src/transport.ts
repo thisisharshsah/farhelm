@@ -119,6 +119,12 @@ export interface Transport {
    * for. Rejected when the runner refuses, e.g. from a watch or connector.
    */
   setAutoApprove(sessionId: string, level: AutoApprove): Promise<SessionView>;
+  /**
+   * The default every new session in a repository starts with. Sessions
+   * given their own level keep it. Resolves once the runner has recorded it;
+   * the sessions it reached arrive as `session_upsert` events.
+   */
+  setRepoAutoApprove(repoId: string, level: AutoApprove): Promise<void>;
   instruct(sessionId: string, text: string): Promise<void>;
   planControl(
     sessionId: string,
@@ -226,6 +232,9 @@ export class HttpTransport implements Transport {
   };
   setAutoApprove = (sessionId: string, level: AutoApprove) =>
     this.api.setAutoApprove(sessionId, level);
+  setRepoAutoApprove = async (repoId: string, level: AutoApprove) => {
+    await this.api.setRepoAutoApprove(repoId, level);
+  };
   instruct = async (sessionId: string, text: string) => {
     await this.api.instruct(sessionId, text);
   };
@@ -281,6 +290,7 @@ export type Command =
   | { type: "decide"; approval_id: string; decision: Decision }
   | { type: "instruct"; session_id: string; text: string }
   | { type: "set_auto_approve"; session_id: string; level: AutoApprove }
+  | { type: "set_repo_auto_approve"; repo_id: string; level: AutoApprove }
   | {
       type: "plan_control";
       session_id: string;
@@ -685,6 +695,16 @@ export class RelayTransport implements Transport {
         (value as SessionView).id === sessionId &&
         (value as SessionView).auto_approve === level,
     );
+  }
+
+  /**
+   * Fire-and-forget like `decide`: the runner sends no reply for this one,
+   * and the change shows up as a `session_upsert` for every session it
+   * reached. A refusal still comes back as `command_error`.
+   */
+  async setRepoAutoApprove(repoId: string, level: AutoApprove) {
+    if (this.socket?.readyState !== 1 /* OPEN */) await this.whenOpen();
+    this.send({ type: "set_repo_auto_approve", repo_id: repoId, level });
   }
 
   async instruct(sessionId: string, text: string) {

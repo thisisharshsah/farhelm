@@ -68,6 +68,11 @@
       "level": "low",
       "session_id": "session-1",
       "type": "set_auto_approve"
+    },
+    {
+      "level": "medium",
+      "repo_id": "repo-1",
+      "type": "set_repo_auto_approve"
     }
   ],
   "dashboard_view": {
@@ -106,7 +111,7 @@
       "at_ms": 1785369600000,
       "seq": 7,
       "session_id": "session-1",
-      "text": "compiling…",
+      "text": "compiling\u2026",
       "type": "output_chunk"
     },
     {
@@ -138,7 +143,7 @@
     {
       "session_id": "session-1",
       "status": "awaiting_review",
-      "summary": "3 files, +42 −17",
+      "summary": "3 files, +42 \u221217",
       "task_id": "task-1",
       "type": "task_upsert"
     }
@@ -187,6 +192,8 @@
           "settled": 2,
           "total": 5
         },
+        "repo_auto_approve": "off",
+        "repo_id": "repo-1",
         "repo_name": "payments-api",
         "started_at": 1785369600000,
         "status": "awaiting_approval"
@@ -194,7 +201,7 @@
     ],
     "tasks_awaiting_review": [
       {
-        "change_summary": "3 files, +42 −17",
+        "change_summary": "3 files, +42 \u221217",
         "cost_usd": 0.42,
         "created_at": 1785369600000,
         "decided_at": 1785369602000,
@@ -251,7 +258,7 @@
       "next_cursor": "task-1",
       "tasks": [
         {
-          "change_summary": "3 files, +42 −17",
+          "change_summary": "3 files, +42 \u221217",
           "cost_usd": 0.42,
           "created_at": 1785369600000,
           "decided_at": 1785369602000,
@@ -296,7 +303,7 @@
       {
         "at_ms": 1785369600000,
         "seq": 7,
-        "text": "compiling…"
+        "text": "compiling\u2026"
       }
     ],
     "pending_approval": {
@@ -324,6 +331,8 @@
       "settled": 2,
       "total": 5
     },
+    "repo_auto_approve": "off",
+    "repo_id": "repo-1",
     "repo_name": "payments-api",
     "started_at": 1785369600000,
     "status": "awaiting_approval",
@@ -337,7 +346,7 @@
     ]
   },
   "task_detail": {
-    "change_summary": "3 files, +42 −17",
+    "change_summary": "3 files, +42 \u221217",
     "changes": {
       "files": [
         {
@@ -384,7 +393,7 @@
       {
         "at_ms": 1785369600000,
         "seq": 7,
-        "text": "compiling…"
+        "text": "compiling\u2026"
       }
     ],
     "patch": "--- a/src/retry.rs\n+++ b/src/retry.rs\n@@ -10,3 +10,4 @@\n fn retry() {\n-    loop {}\n+    for _ in 0..3 {}\n",

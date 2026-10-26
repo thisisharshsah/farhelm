@@ -65,6 +65,7 @@ fn build() -> serde_json::Value {
 
     let session = SessionView {
         id: "session-1".into(),
+        repo_id: "repo-1".into(),
         repo_name: "payments-api".into(),
         machine_name: "hetzner-1".into(),
         agent: Agent::ClaudeCode.as_str().to_owned(),
@@ -81,6 +82,7 @@ fn build() -> serde_json::Value {
         ended_at: Some(AT + 60_000),
         awaiting_approval_id: Some("approval-1".into()),
         auto_approve: farhelm_proto::types::AutoApprove::Off,
+        repo_auto_approve: farhelm_proto::types::AutoApprove::Off,
     };
 
     let task = TaskView {
@@ -196,6 +198,10 @@ fn build() -> serde_json::Value {
             Command::SetAutoApprove {
                 session_id: "session-1".into(),
                 level: farhelm_proto::types::AutoApprove::Low,
+            },
+            Command::SetRepoAutoApprove {
+                repo_id: "repo-1".into(),
+                level: farhelm_proto::types::AutoApprove::Medium,
             },
         ],
         "fleet_view": FleetView {
@@ -402,6 +408,7 @@ fn the_fixture_covers_every_variant() {
             "revert_task",
             "snapshot",
             "set_auto_approve",
+            "set_repo_auto_approve",
         ],
         "every Command variant must be in the fixture"
     );

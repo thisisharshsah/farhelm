@@ -135,6 +135,14 @@ pub enum Command {
         session_id: String,
         level: crate::types::AutoApprove,
     },
+    /// Change the default every session in a repository starts with.
+    ///
+    /// Same surfaces as [`Command::SetAutoApprove`], same ceiling. A session
+    /// that was given its own level keeps it.
+    SetRepoAutoApprove {
+        repo_id: String,
+        level: crate::types::AutoApprove,
+    },
     /// Point the native agent at a task. Returns immediately; the loop runs
     /// detached, because a task takes minutes and the phone that started it may
     /// be in a tunnel by the time it lands.
