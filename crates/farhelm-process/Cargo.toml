@@ -1,0 +1,20 @@
+[package]
+name = "farhelm-process"
+description = "Bounded subprocess capture and managed command lifetimes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+process-wrap = { version = "10.0.1", default-features = false, features = ["tokio1", "kill-on-drop", "process-group", "job-object"] }
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

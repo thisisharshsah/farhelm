@@ -16,7 +16,7 @@ use farhelm_app::ledger::{Call, Ledger};
 use farhelm_app::store::{TimeRange, prelude::*};
 use farhelm_app::time::now_ms;
 use farhelm_domain::BudgetRules as _;
-use farhelm_gateway::{AnthropicClient, Gateway, GatewayConfig};
+use farhelm_gateway::{AnthropicClient, Gateway, GatewayConfig, ProviderClient};
 use farhelm_proto::types::{
     Agent, Approval, Avoided, Machine, Repo, Risk, Session, SessionStatus, TaskType, Tier, Usage,
 };
@@ -730,6 +730,9 @@ async fn serve_async(flags: Flags) -> Fallible {
     let (policy_added, policy_retired) = policy.rule_count();
 
     let credential_file = flags.credential_file.clone();
+    // An explicitly selected registry is authoritative. Invalid configuration
+    // must fail startup rather than quietly selecting a stored cloud credential.
+    let model_client = ProviderClient::from_env()?;
     let state = AppState::build_with_policy(
         store,
         |store| {
@@ -737,12 +740,14 @@ async fn serve_async(flags: Flags) -> Fallible {
             // credential keeps working and is not overridden by a file left
             // behind by an experiment. Then what `farhelm auth` stored,
             // which is the path that needs nothing exported by anybody.
-            let client = AnthropicClient::from_env().or_else(|| {
+            let client = model_client.or_else(|| {
                 let path = Path::new(&credential_file);
                 match farhelm_runner::cloud::ModelCredential::load(path) {
-                    Ok(Some(stored)) => Some(AnthropicClient::with_source(
-                        farhelm_gateway::credential::CredentialSource::command(stored.command),
-                    )),
+                    Ok(Some(stored)) => {
+                        Some(ProviderClient::from_legacy(AnthropicClient::with_source(
+                            farhelm_gateway::credential::CredentialSource::command(stored.command),
+                        )))
+                    }
                     Ok(None) => None,
                     Err(err) => {
                         // Loud: a credential file that exists and cannot be
@@ -753,7 +758,10 @@ async fn serve_async(flags: Flags) -> Fallible {
                     }
                 }
             })?;
-            let config = GatewayConfig::default();
+            let mut config = GatewayConfig::default();
+            if let Some(models) = client.models() {
+                config.models = models;
+            }
             provider = format!(
                 "{} ({}) — small {} / large {} / frontier {}",
                 client.provider_name(),
@@ -937,6 +945,16 @@ async fn shutdown_signal() {
 fn spawn_batch_flusher(state: Arc<AppState>) {
     const FLUSH_EVERY: Duration = Duration::from_secs(60);
     const COLLECT_EVERY: Duration = Duration::from_secs(300);
+
+    // Do not submit even old queued Anthropic work while a local-only registry
+    // or a local Messages provider is selected.
+    if !state
+        .gateway
+        .as_ref()
+        .is_some_and(|gateway| gateway.supports_batch())
+    {
+        return;
+    }
 
     let Some(client) = farhelm_gateway::batch::AnthropicBatchClient::from_env() else {
         // No API key: nothing can be submitted, so the loop would spin for

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use farhelm_app::store::{
     BatchStore, LedgerStore, ResponseCache, Result, SessionStore, TimeRange, UsageTotals,
 };
-use farhelm_proto::types::{BatchItem, BatchStatus, Budget, Session, UsageEvent};
+use farhelm_proto::types::{AutoApprove, BatchItem, BatchStatus, Budget, Session, UsageEvent};
 
 /// Everything the cost pipeline can reach, and nothing else.
 struct FakeStore {
@@ -64,6 +64,12 @@ impl SessionStore for FakeStore {
     }
     fn find_session_by_agent_id(&self, _agent_session_id: &str) -> Result<Option<Session>> {
         Ok(None)
+    }
+    fn auto_approve(&self, _session_id: &str) -> Result<AutoApprove> {
+        Ok(AutoApprove::Off)
+    }
+    fn set_auto_approve(&self, _session_id: &str, _level: AutoApprove, _at_ms: i64) -> Result<()> {
+        unimplemented!()
     }
 }
 

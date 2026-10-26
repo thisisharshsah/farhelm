@@ -13,13 +13,13 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use farhelm_app::store::{
     ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, HiveStore, LedgerStore,
     PlanStore, ResponseCache, Result, SessionStore, StoreError, TaskOutcome, TaskStore, TimeRange,
-    TranscriptStore, UsageTotals,
+    TranscriptStore, UsageTotals, WorkspaceStore,
 };
 use farhelm_proto::types::{
-    Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
-    Device, DeviceKind, Dispatch, Machine, Message, Note, ParseEnumError, Plan, PlanStep,
-    PlanStepStatus, Repo, Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage,
-    UsageEvent,
+    Agent, AgentTask, Approval, AutoApprove, Avoided, BatchItem, BatchStatus, Budget, Conversation,
+    DecidedVia, Decision, Device, DeviceKind, Dispatch, Document, EntityKind, EntityLink, Machine,
+    Message, Note, ParseEnumError, Plan, PlanStep, PlanStepStatus, Project, RelationKind, Repo,
+    Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
 };
 use farhelm_proto::views::OutputLine;
 
@@ -35,10 +35,21 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0008_task_worktree.sql"),
     include_str!("../migrations/0009_session_output.sql"),
     include_str!("../migrations/0010_hive.sql"),
+    include_str!("../migrations/0011_workspace.sql"),
+    include_str!("../migrations/0012_workspace_integrity.sql"),
+    include_str!("../migrations/0013_local_workspace.sql"),
+    include_str!("../migrations/0014_project_workflow.sql"),
+    include_str!("../migrations/0015_session_auto_approve.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
      batch_id, status, response_text, error, queued_at, submitted_at, settled_at";
+
+#[cfg(test)]
+mod local_workspace_tests;
+mod project_workflow;
+#[cfg(test)]
+mod workspace_integrity_tests;
 
 /// Ordered to match the `?1..?19` in `upsert_task` and the indices in
 /// [`read_task`]. Three lists that have to agree, so they sit together.
@@ -255,13 +266,54 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
         // DDL and the version bump go in one transaction, so a crash mid-migration
         // leaves the database on the previous version rather than half-applied.
-        conn.execute_batch(&format!(
+        if let Err(cause) = conn.execute_batch(&format!(
             "BEGIN;\n{sql}\nPRAGMA user_version = {target};\nCOMMIT;"
-        ))
-        .map_err(backend)?;
+        )) {
+            let rollback_error = if conn.is_autocommit() {
+                None
+            } else {
+                conn.execute_batch("ROLLBACK;").err()
+            };
+            return Err(StoreError::Backend(Box::new(MigrationFailure {
+                target,
+                cause,
+                rollback_error,
+            })));
+        }
         version = target;
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct MigrationFailure {
+    target: i64,
+    cause: rusqlite::Error,
+    rollback_error: Option<rusqlite::Error>,
+}
+
+impl std::fmt::Display for MigrationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "migration {} failed: {}", self.target, self.cause)?;
+        if let Some(error) = &self.rollback_error {
+            write!(f, "; rollback failed: {error}")
+        } else {
+            write!(f, "; upgrade rolled back and existing data retained")?;
+            if self.target == 12 {
+                write!(
+                    f,
+                    "; back up the database and repair invalid workspace parents/links before retrying"
+                )?;
+            }
+            Ok(())
+        }
+    }
+}
+
+impl std::error::Error for MigrationFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
 }
 
 fn backend(err: rusqlite::Error) -> StoreError {
@@ -604,6 +656,31 @@ impl FleetStore for SqliteStore {
         .map_err(backend)
     }
 
+    fn list_repos(&self, machine_id: &str) -> Result<Vec<Repo>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, machine_id, path, name, budget_usd FROM repo
+                 WHERE machine_id = ?1
+                 ORDER BY name ASC, id ASC LIMIT 100",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![machine_id], |row| {
+                Ok(Repo {
+                    id: row.get(0)?,
+                    machine_id: row.get(1)?,
+                    path: row.get(2)?,
+                    name: row.get(3)?,
+                    budget_usd: row.get(4)?,
+                })
+            })
+            .map_err(backend)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
     fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>> {
         let conn = self.lock()?;
         conn.query_row(
@@ -701,6 +778,36 @@ impl SessionStore for SqliteStore {
             .optional()
             .map_err(backend)?;
         raw.map(Session::try_from).transpose()
+    }
+
+    fn auto_approve(&self, session_id: &str) -> Result<AutoApprove> {
+        let conn = self.lock()?;
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT auto_approve FROM session_policy WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(backend)?;
+        stored
+            .map(|value| parse_enum::<AutoApprove>(&value))
+            .transpose()
+            .map(|level| level.unwrap_or(AutoApprove::Off))
+    }
+
+    fn set_auto_approve(&self, session_id: &str, level: AutoApprove, at_ms: i64) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO session_policy (session_id, auto_approve, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(session_id) DO UPDATE SET
+                 auto_approve = excluded.auto_approve,
+                 updated_at = excluded.updated_at",
+            params![session_id, level.as_str(), at_ms],
+        )
+        .map_err(backend)?;
+        Ok(())
     }
 }
 
@@ -1644,6 +1751,377 @@ fn read_note(row: &Row<'_>) -> rusqlite::Result<Note> {
     })
 }
 
+impl WorkspaceStore for SqliteStore {
+    fn local_workspace_id(&self) -> Result<String> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT workspace_id FROM local_workspace WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(backend)
+    }
+
+    fn insert_project(&self, project: &Project) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO project (id, workspace_id, name, description, budget_cap_usd, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                project.id,
+                project.workspace_id,
+                project.name,
+                project.description,
+                project.budget_cap_usd,
+                project.created_at,
+                project.updated_at,
+            ],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    fn get_project_in_workspace(&self, workspace_id: &str, id: &str) -> Result<Option<Project>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT id, workspace_id, name, description, budget_cap_usd, created_at, updated_at
+             FROM project WHERE workspace_id = ?1 AND id = ?2",
+            params![workspace_id, id],
+            read_project,
+        )
+        .optional()
+        .map_err(backend)
+    }
+
+    fn list_project_page(
+        &self,
+        workspace_id: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Project>> {
+        let limit = i64::try_from(limit).map_err(|error| StoreError::Backend(Box::new(error)))?;
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, name, description, budget_cap_usd, created_at, updated_at
+                 FROM project WHERE workspace_id = ?1 AND (?2 IS NULL OR id < ?2)
+                 ORDER BY id DESC LIMIT ?3",
+            )
+            .map_err(backend)?;
+        stmt.query_map(params![workspace_id, after, limit], read_project)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)
+    }
+
+    fn put_project(&self, project: &Project) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO project (id, workspace_id, name, description, budget_cap_usd, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                 workspace_id = excluded.workspace_id,
+                 name = excluded.name,
+                 description = excluded.description,
+                 budget_cap_usd = excluded.budget_cap_usd,
+                 updated_at = excluded.updated_at",
+            params![
+                project.id,
+                project.workspace_id,
+                project.name,
+                project.description,
+                project.budget_cap_usd,
+                project.created_at,
+                project.updated_at,
+            ],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    fn get_project(&self, id: &str) -> Result<Option<Project>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, name, description, budget_cap_usd, created_at, updated_at
+                 FROM project WHERE id = ?1",
+            )
+            .map_err(backend)?;
+        let project = stmt
+            .query_row(params![id], read_project)
+            .optional()
+            .map_err(backend)?;
+        Ok(project)
+    }
+
+    fn list_projects(&self, workspace_id: &str) -> Result<Vec<Project>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, name, description, budget_cap_usd, created_at, updated_at
+                 FROM project WHERE workspace_id = ?1
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![workspace_id], read_project)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
+    fn put_conversation(&self, conversation: &Conversation) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO conversation (id, project_id, title, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                 project_id = excluded.project_id,
+                 title = excluded.title,
+                 updated_at = excluded.updated_at",
+            params![
+                conversation.id,
+                conversation.project_id,
+                conversation.title,
+                conversation.created_at,
+                conversation.updated_at,
+            ],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    fn get_conversation(&self, id: &str) -> Result<Option<Conversation>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, title, created_at, updated_at
+                 FROM conversation WHERE id = ?1",
+            )
+            .map_err(backend)?;
+        let conv = stmt
+            .query_row(params![id], read_conversation)
+            .optional()
+            .map_err(backend)?;
+        Ok(conv)
+    }
+
+    fn list_conversations(&self, project_id: &str) -> Result<Vec<Conversation>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, title, created_at, updated_at
+                 FROM conversation WHERE project_id = ?1
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![project_id], read_conversation)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
+    fn put_document(&self, document: &Document) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO document (id, project_id, title, content, content_hash, version, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                 project_id = excluded.project_id,
+                 title = excluded.title,
+                 content = excluded.content,
+                 content_hash = excluded.content_hash,
+                 version = excluded.version,
+                 updated_at = excluded.updated_at",
+            params![
+                document.id,
+                document.project_id,
+                document.title,
+                document.content,
+                document.content_hash,
+                document.version,
+                document.created_at,
+                document.updated_at,
+            ],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    fn get_document(&self, id: &str) -> Result<Option<Document>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, title, content, content_hash, version, created_at, updated_at
+                 FROM document WHERE id = ?1",
+            )
+            .map_err(backend)?;
+        let doc = stmt
+            .query_row(params![id], read_document)
+            .optional()
+            .map_err(backend)?;
+        Ok(doc)
+    }
+
+    fn list_documents(&self, project_id: &str) -> Result<Vec<Document>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, title, content, content_hash, version, created_at, updated_at
+                 FROM document WHERE project_id = ?1
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![project_id], read_document)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
+    fn put_entity_link(&self, link: &EntityLink) -> Result<EntityLink> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "INSERT INTO entity_link (id, source_type, source_id, target_type, target_id, relation_kind, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(source_type, source_id, target_type, target_id, relation_kind) DO UPDATE SET
+                 id = entity_link.id
+             RETURNING id, source_type, source_id, target_type, target_id, relation_kind, created_at",
+            params![
+                link.id,
+                link.source_type.as_str(),
+                link.source_id,
+                link.target_type.as_str(),
+                link.target_id,
+                link.relation_kind.as_str(),
+                link.created_at,
+            ],
+            read_entity_link,
+        )
+        .map_err(backend)?
+    }
+
+    fn list_links_from(&self, source_type: EntityKind, source_id: &str) -> Result<Vec<EntityLink>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, source_type, source_id, target_type, target_id, relation_kind, created_at
+                 FROM entity_link
+                 WHERE source_type = ?1 AND source_id = ?2
+                 ORDER BY created_at ASC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![source_type.as_str(), source_id], read_entity_link)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn list_links_to(&self, target_type: EntityKind, target_id: &str) -> Result<Vec<EntityLink>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, source_type, source_id, target_type, target_id, relation_kind, created_at
+                 FROM entity_link
+                 WHERE target_type = ?1 AND target_id = ?2
+                 ORDER BY created_at ASC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![target_type.as_str(), target_id], read_entity_link)
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn remove_entity_link(&self, link_id: &str) -> Result<bool> {
+        let conn = self.lock()?;
+        let removed = conn
+            .execute("DELETE FROM entity_link WHERE id = ?1", params![link_id])
+            .map_err(backend)?;
+        Ok(removed > 0)
+    }
+}
+
+fn read_project(row: &Row<'_>) -> rusqlite::Result<Project> {
+    Ok(Project {
+        id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        name: row.get(2)?,
+        description: row.get(3)?,
+        budget_cap_usd: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+fn read_conversation(row: &Row<'_>) -> rusqlite::Result<Conversation> {
+    Ok(Conversation {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        title: row.get(2)?,
+        created_at: row.get(3)?,
+        updated_at: row.get(4)?,
+    })
+}
+
+fn read_document(row: &Row<'_>) -> rusqlite::Result<Document> {
+    Ok(Document {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        title: row.get(2)?,
+        content: row.get(3)?,
+        content_hash: row.get(4)?,
+        version: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+fn read_entity_link(row: &Row<'_>) -> rusqlite::Result<Result<EntityLink>> {
+    let id: String = row.get(0)?;
+    let source_type_str: String = row.get(1)?;
+    let source_id: String = row.get(2)?;
+    let target_type_str: String = row.get(3)?;
+    let target_id: String = row.get(4)?;
+    let relation_kind_str: String = row.get(5)?;
+    let created_at: i64 = row.get(6)?;
+
+    let source_type = match parse_enum::<EntityKind>(&source_type_str) {
+        Ok(k) => k,
+        Err(e) => return Ok(Err(e)),
+    };
+    let target_type = match parse_enum::<EntityKind>(&target_type_str) {
+        Ok(k) => k,
+        Err(e) => return Ok(Err(e)),
+    };
+    let relation_kind = match parse_enum::<RelationKind>(&relation_kind_str) {
+        Ok(k) => k,
+        Err(e) => return Ok(Err(e)),
+    };
+
+    Ok(Ok(EntityLink {
+        id,
+        source_type,
+        source_id,
+        target_type,
+        target_id,
+        relation_kind,
+        created_at,
+    }))
+}
+
 #[cfg(test)]
 mod migration_tests {
     use super::*;
@@ -1939,6 +2417,32 @@ mod tests {
         store.upsert_session(&session("s1", None)).unwrap();
         store.append_output("s1", &[]).unwrap();
         assert!(store.output_tail("s1", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn auto_approve_is_off_by_absence_and_overwritten_in_place() {
+        let store = seeded();
+        store.upsert_session(&session("s1", None)).unwrap();
+
+        // No row yet — including every session that predates the setting.
+        assert_eq!(store.auto_approve("s1").unwrap(), AutoApprove::Off);
+
+        store
+            .set_auto_approve("s1", AutoApprove::Medium, NOW_MS)
+            .unwrap();
+        assert_eq!(store.auto_approve("s1").unwrap(), AutoApprove::Medium);
+
+        // Lowering it again is the same write, not a second row.
+        store
+            .set_auto_approve("s1", AutoApprove::Off, NOW_MS + 1)
+            .unwrap();
+        assert_eq!(store.auto_approve("s1").unwrap(), AutoApprove::Off);
+        let rows: i64 = store
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM session_policy", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
     }
 
     fn session(id: &str, budget_usd: Option<f64>) -> Session {
@@ -3082,5 +3586,166 @@ mod hive_tests {
         assert!(store.clear_note("r1", "k").unwrap());
         assert!(!store.clear_note("r1", "k").unwrap(), "already gone");
         assert!(store.notes("r1").unwrap().is_empty());
+    }
+
+    mod workspace_tests {
+        use super::*;
+
+        #[test]
+        fn projects_round_trip_and_list_by_workspace() {
+            let store = store();
+            let p1 = Project {
+                id: "p1".into(),
+                workspace_id: "ws1".into(),
+                name: "Alpha".into(),
+                description: "First project".into(),
+                budget_cap_usd: Some(50.0),
+                created_at: 100,
+                updated_at: 100,
+            };
+            store.put_project(&p1).unwrap();
+
+            let fetched = store.get_project("p1").unwrap().expect("p1 exists");
+            assert_eq!(fetched, p1);
+
+            let p2 = Project {
+                id: "p2".into(),
+                workspace_id: "ws1".into(),
+                name: "Beta".into(),
+                description: "Second project".into(),
+                budget_cap_usd: None,
+                created_at: 100,
+                updated_at: 200,
+            };
+            store.put_project(&p2).unwrap();
+
+            let list = store.list_projects("ws1").unwrap();
+            assert_eq!(list.len(), 2);
+            assert_eq!(list[0].id, "p2", "newest updated leads");
+            assert_eq!(list[1].id, "p1");
+
+            // Update p1
+            let mut p1_updated = p1.clone();
+            p1_updated.name = "Alpha Prime".into();
+            p1_updated.updated_at = 300;
+            store.put_project(&p1_updated).unwrap();
+
+            let list = store.list_projects("ws1").unwrap();
+            assert_eq!(list[0].id, "p1", "now p1 is newest updated");
+            assert_eq!(list[0].name, "Alpha Prime");
+        }
+
+        #[test]
+        fn conversations_and_documents_round_trip() {
+            let store = store();
+            let p1 = Project {
+                id: "p1".into(),
+                workspace_id: "ws1".into(),
+                name: "Alpha".into(),
+                description: "First project".into(),
+                budget_cap_usd: Some(50.0),
+                created_at: 100,
+                updated_at: 100,
+            };
+            store.put_project(&p1).unwrap();
+
+            let conv = Conversation {
+                id: "c1".into(),
+                project_id: "p1".into(),
+                title: "Planning".into(),
+                created_at: 100,
+                updated_at: 150,
+            };
+            store.put_conversation(&conv).unwrap();
+            let fetched_conv = store.get_conversation("c1").unwrap().unwrap();
+            assert_eq!(fetched_conv, conv);
+
+            let convs = store.list_conversations("p1").unwrap();
+            assert_eq!(convs.len(), 1);
+
+            let doc = Document {
+                id: "d1".into(),
+                project_id: "p1".into(),
+                title: "Spec".into(),
+                content: "# Spec\nDraft".into(),
+                content_hash: "hash1".into(),
+                version: 1,
+                created_at: 100,
+                updated_at: 100,
+            };
+            store.put_document(&doc).unwrap();
+            let fetched_doc = store.get_document("d1").unwrap().unwrap();
+            assert_eq!(fetched_doc, doc);
+
+            let docs = store.list_documents("p1").unwrap();
+            assert_eq!(docs.len(), 1);
+            assert_eq!(docs[0].id, "d1");
+        }
+
+        #[test]
+        fn entity_links_track_relations_and_support_bidirectional_lookup() {
+            let store = store();
+            let p1 = Project {
+                id: "p1".into(),
+                workspace_id: "ws1".into(),
+                name: "Alpha".into(),
+                description: "First project".into(),
+                budget_cap_usd: Some(50.0),
+                created_at: 100,
+                updated_at: 100,
+            };
+            store.put_project(&p1).unwrap();
+
+            let conv = Conversation {
+                id: "c1".into(),
+                project_id: "p1".into(),
+                title: "Planning".into(),
+                created_at: 100,
+                updated_at: 150,
+            };
+            store.put_conversation(&conv).unwrap();
+
+            let doc = Document {
+                id: "d1".into(),
+                project_id: "p1".into(),
+                title: "Spec".into(),
+                content: "# Spec\nDraft".into(),
+                content_hash: "hash1".into(),
+                version: 1,
+                created_at: 100,
+                updated_at: 100,
+            };
+            store.put_document(&doc).unwrap();
+
+            let link = EntityLink {
+                id: "l1".into(),
+                source_type: EntityKind::Conversation,
+                source_id: "c1".into(),
+                target_type: EntityKind::Document,
+                target_id: "d1".into(),
+                relation_kind: RelationKind::Documents,
+                created_at: 100,
+            };
+            store.put_entity_link(&link).unwrap();
+
+            let from_links = store
+                .list_links_from(EntityKind::Conversation, "c1")
+                .unwrap();
+            assert_eq!(from_links.len(), 1);
+            assert_eq!(from_links[0].target_id, "d1");
+
+            let to_links = store.list_links_to(EntityKind::Document, "d1").unwrap();
+            assert_eq!(to_links.len(), 1);
+            assert_eq!(to_links[0].source_id, "c1");
+
+            assert!(store.remove_entity_link("l1").unwrap());
+            assert!(!store.remove_entity_link("l1").unwrap());
+            assert!(
+                store
+                    .list_links_from(EntityKind::Conversation, "c1")
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 }

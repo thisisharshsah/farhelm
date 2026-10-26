@@ -10,7 +10,7 @@ use std::fmt;
 use crate::id::new_id;
 use crate::store::{LedgerStore, StoreError, TimeRange};
 use crate::time::now_ms;
-use farhelm_domain::price::{CacheTtl, QuoteContext, UnknownModel, quote};
+use farhelm_domain::price::{CacheTtl, QuoteContext, TokenRates, UnknownModel, quote};
 use farhelm_proto::types::{Avoided, Dispatch, TaskType, Tier, Usage, UsageEvent};
 
 #[derive(Debug)]
@@ -67,6 +67,9 @@ pub struct Call<'a> {
     /// what "saved by pre-gate: 41 calls" counts.
     pub avoided: Option<Avoided>,
     pub cache_ttl: CacheTtl,
+    /// A provider registry's validated rate snapshot for this call. `None`
+    /// preserves the legacy model table, including its cache/batch semantics.
+    pub rates: Option<TokenRates>,
 }
 
 impl<'a> Call<'a> {
@@ -87,6 +90,7 @@ impl<'a> Call<'a> {
             usage,
             avoided: None,
             cache_ttl: CacheTtl::FiveMinutes,
+            rates: None,
         }
     }
 
@@ -114,6 +118,10 @@ impl<'a> Call<'a> {
             dispatch: Dispatch::Batch,
             ..self
         }
+    }
+
+    pub fn with_rates(self, rates: Option<TokenRates>) -> Self {
+        Self { rates, ..self }
     }
 }
 
@@ -149,7 +157,10 @@ impl<S: LedgerStore> Ledger<S> {
         let (usage, cost_usd) = match call.avoided {
             Some(_) => (Usage::default(), 0.0),
             None => {
-                let quote = quote(call.model, &call.usage, ctx)?;
+                let quote = match call.rates {
+                    Some(rates) => rates.quote(&call.usage),
+                    None => quote(call.model, &call.usage, ctx)?,
+                };
                 (call.usage, quote.total_usd())
             }
         };
@@ -490,6 +501,45 @@ mod tests {
             ledger.summarize("session-1", TimeRange::ALL).unwrap().calls,
             0
         );
+    }
+
+    #[test]
+    fn configured_provider_rates_are_frozen_in_recorded_cost() {
+        let ledger = ledger();
+        let call = || {
+            Call::new(
+                "session-1",
+                "router/vendor/model-snapshot",
+                Tier::Large,
+                TaskType::Edit,
+                Usage {
+                    input_tokens: 1_000_000,
+                    output_tokens: 1_000_000,
+                    cache_read_tokens: 1_000_000,
+                    ..Usage::default()
+                },
+            )
+        };
+        let first = ledger
+            .record_at(
+                call().with_rates(Some(TokenRates::new(1.0, 4.0, 1.0, 0.5).unwrap())),
+                NOW_MS,
+            )
+            .unwrap();
+        let second = ledger
+            .record_at(
+                call().with_rates(Some(TokenRates::new(2.0, 8.0, 2.0, 1.0).unwrap())),
+                NOW_MS + 1,
+            )
+            .unwrap();
+        assert_eq!(first.model, "router/vendor/model-snapshot");
+        assert_eq!(first.cost_usd, 5.5);
+        assert_eq!(second.cost_usd, 11.0);
+        let recorded = ledger
+            .store()
+            .list_usage("session-1", TimeRange::ALL)
+            .unwrap();
+        assert_eq!(recorded[0].cost_usd, 5.5);
     }
 
     #[test]

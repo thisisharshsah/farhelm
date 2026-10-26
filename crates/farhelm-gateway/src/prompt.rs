@@ -26,6 +26,8 @@ use std::fmt::Write as _;
 use farhelm_domain::price::ModelPrice;
 use serde::{Deserialize, Serialize};
 
+use crate::dispatch::ToolCall;
+
 /// The API's ceiling. Four is plenty for this layout, which uses three.
 pub const MAX_BREAKPOINTS: usize = 4;
 
@@ -40,6 +42,18 @@ pub enum Role {
 pub struct Turn {
     pub role: Role,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_results: Vec<ToolResult>,
+}
+
+/// An executed tool response, paired with the model call that authorized it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub tool_use_id: String,
+    pub content: String,
+    pub is_error: bool,
 }
 
 impl Turn {
@@ -47,6 +61,8 @@ impl Turn {
         Self {
             role: Role::User,
             text: text.into(),
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
         }
     }
 
@@ -54,7 +70,27 @@ impl Turn {
         Self {
             role: Role::Assistant,
             text: text.into(),
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
         }
+    }
+
+    pub fn assistant_with_tools(text: impl Into<String>, calls: Vec<ToolCall>) -> Self {
+        Self {
+            tool_calls: calls,
+            ..Self::assistant(text)
+        }
+    }
+
+    pub fn user_with_results(text: impl Into<String>, results: Vec<ToolResult>) -> Self {
+        Self {
+            tool_results: results,
+            ..Self::user(text)
+        }
+    }
+
+    pub fn has_tools(&self) -> bool {
+        !self.tool_calls.is_empty() || !self.tool_results.is_empty()
     }
 }
 
@@ -106,10 +142,117 @@ impl TextBlock {
     }
 }
 
+/// Provider-neutral message blocks. Adapters translate these into their native
+/// protocol; the serde representation retains the existing Messages wire shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum ContentBlock {
+    Text(TextBlock),
+    ToolUse(ToolUseBlock),
+    ToolResult(ToolResultBlock),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolUseBlock {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    #[serde(flatten)]
+    pub call: ToolCall,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolResultBlock {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    #[serde(flatten)]
+    pub result: ToolResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
+}
+
+impl ContentBlock {
+    pub fn cache_control(&self) -> Option<&CacheControl> {
+        match self {
+            Self::Text(block) => block.cache_control.as_ref(),
+            Self::ToolUse(block) => block.cache_control.as_ref(),
+            Self::ToolResult(block) => block.cache_control.as_ref(),
+        }
+    }
+
+    fn set_cache_control(&mut self, control: CacheControl) {
+        match self {
+            Self::Text(block) => block.cache_control = Some(control),
+            Self::ToolUse(block) => block.cache_control = Some(control),
+            Self::ToolResult(block) => block.cache_control = Some(control),
+        }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text(block) => Some(&block.text),
+            _ => None,
+        }
+    }
+
+    /// Text prefixes remain byte-for-byte compatible. Structured blocks add
+    /// their complete payload, so calls with different IDs/arguments cannot
+    /// share a simulated prefix or application cache key accidentally.
+    fn append_prefix(&self, out: &mut String) {
+        match self {
+            Self::Text(block) => out.push_str(&block.text),
+            Self::ToolUse(block) => {
+                let _ = write!(
+                    out,
+                    "tool_use:{}",
+                    serde_json::to_string(&block.call).unwrap()
+                );
+            }
+            Self::ToolResult(block) => {
+                let _ = write!(
+                    out,
+                    "tool_result:{}",
+                    serde_json::to_string(&block.result).unwrap()
+                );
+            }
+        }
+        out.push('\n');
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Message {
     pub role: Role,
-    pub content: Vec<TextBlock>,
+    pub content: Vec<ContentBlock>,
+}
+
+impl From<&Turn> for Message {
+    fn from(turn: &Turn) -> Self {
+        let mut content = Vec::new();
+        // Results must precede any user prose in an Anthropic continuation.
+        content.extend(turn.tool_results.iter().cloned().map(|result| {
+            ContentBlock::ToolResult(ToolResultBlock {
+                kind: "tool_result",
+                result,
+                cache_control: None,
+            })
+        }));
+        if !turn.text.is_empty() || !turn.has_tools() {
+            content.push(ContentBlock::Text(TextBlock::new(turn.text.clone())));
+        }
+        content.extend(turn.tool_calls.iter().cloned().map(|call| {
+            ContentBlock::ToolUse(ToolUseBlock {
+                kind: "tool_use",
+                call,
+                cache_control: None,
+            })
+        }));
+        Self {
+            role: turn.role,
+            content,
+        }
+    }
 }
 
 /// Why a breakpoint was or was not placed. Surfaced so a disappointing
@@ -132,6 +275,15 @@ pub struct PromptPlan {
 }
 
 impl PromptPlan {
+    pub fn has_tool_history(&self) -> bool {
+        self.messages.iter().any(|message| {
+            message
+                .content
+                .iter()
+                .any(|block| !matches!(block, ContentBlock::Text(_)))
+        })
+    }
+
     pub fn breakpoints(&self) -> usize {
         self.system
             .iter()
@@ -141,7 +293,7 @@ impl PromptPlan {
                 .messages
                 .iter()
                 .flat_map(|message| &message.content)
-                .filter(|block| block.cache_control.is_some())
+                .filter(|block| block.cache_control().is_some())
                 .count()
     }
 
@@ -162,8 +314,7 @@ impl PromptPlan {
         // Every message except the last, which is the dynamic tail.
         for message in self.messages.iter().rev().skip(1).rev() {
             for block in &message.content {
-                out.push_str(&block.text);
-                out.push('\n');
+                block.append_prefix(&mut out);
             }
         }
         out
@@ -192,9 +343,8 @@ impl PromptPlan {
         }
         for message in &self.messages {
             for block in &message.content {
-                running.push_str(&block.text);
-                running.push('\n');
-                if block.cache_control.is_some() {
+                block.append_prefix(&mut running);
+                if block.cache_control().is_some() {
                     prefixes.push(running.clone());
                 }
             }
@@ -206,8 +356,19 @@ impl PromptPlan {
     pub fn dynamic_tail(&self) -> &str {
         self.messages
             .last()
-            .and_then(|message| message.content.last())
-            .map(|block| block.text.as_str())
+            .and_then(|message| {
+                message
+                    .content
+                    .iter()
+                    .rev()
+                    .find_map(ContentBlock::text)
+                    .or_else(|| {
+                        message.content.iter().find_map(|block| match block {
+                            ContentBlock::ToolResult(block) => Some(block.result.content.as_str()),
+                            _ => None,
+                        })
+                    })
+            })
             .unwrap_or_default()
     }
 }
@@ -225,6 +386,17 @@ pub fn approx_tokens(text: &str) -> usize {
 /// `dynamic` is everything that changes this turn: the new instruction, the
 /// pre-gate digest, tool results. It is appended last and never cached.
 pub fn assemble(stable: &StableContext, dynamic: &str, price: &ModelPrice) -> PromptPlan {
+    assemble_with_results(stable, dynamic, &[], price)
+}
+
+/// Assemble an ordinary instruction or a continuation containing matched tool
+/// results. Tool results are never reconstructed from the instruction's prose.
+pub fn assemble_with_results(
+    stable: &StableContext,
+    dynamic: &str,
+    results: &[ToolResult],
+    price: &ModelPrice,
+) -> PromptPlan {
     let mut notes = Vec::new();
     let minimum = price.min_cacheable_tokens as usize;
 
@@ -288,24 +460,28 @@ pub fn assemble(stable: &StableContext, dynamic: &str, price: &ModelPrice) -> Pr
     }
 
     // --- compacted history -------------------------------------------------
-    let mut messages: Vec<Message> = stable
-        .history
-        .iter()
-        .map(|turn| Message {
-            role: turn.role,
-            content: vec![TextBlock::new(turn.text.clone())],
-        })
-        .collect();
+    let mut messages: Vec<Message> = stable.history.iter().map(Message::from).collect();
 
     if let Some(last) = messages.last_mut() {
         running += stable
             .history
             .iter()
-            .map(|turn| approx_tokens(&turn.text))
+            .map(|turn| {
+                if turn.has_tools() {
+                    let message = Message::from(turn);
+                    let mut prefix = String::new();
+                    for block in &message.content {
+                        block.append_prefix(&mut prefix);
+                    }
+                    approx_tokens(&prefix)
+                } else {
+                    approx_tokens(&turn.text)
+                }
+            })
             .sum::<usize>();
         let placed = running >= minimum;
         if placed && let Some(block) = last.content.last_mut() {
-            block.cache_control = Some(CacheControl::EPHEMERAL);
+            block.set_cache_control(CacheControl::EPHEMERAL);
         }
         notes.push(BreakpointNote {
             segment: "compacted history",
@@ -320,10 +496,10 @@ pub fn assemble(stable: &StableContext, dynamic: &str, price: &ModelPrice) -> Pr
     }
 
     // --- dynamic tail: never cached ---------------------------------------
-    messages.push(Message {
-        role: Role::User,
-        content: vec![TextBlock::new(dynamic.to_owned())],
-    });
+    messages.push(Message::from(&Turn::user_with_results(
+        dynamic,
+        results.to_vec(),
+    )));
 
     let plan = PromptPlan {
         tools: stable.tools.clone(),
@@ -394,7 +570,7 @@ mod tests {
         assert!(
             last.content
                 .iter()
-                .all(|block| block.cache_control.is_none()),
+                .all(|block| block.cache_control().is_none()),
             "a breakpoint on the tail would cache a value that changes every turn"
         );
     }
@@ -506,6 +682,112 @@ mod tests {
         let tail = &plan.messages.last().unwrap().content[0];
         let json = serde_json::to_value(tail).unwrap();
         assert!(json.get("cache_control").is_none());
+    }
+
+    #[test]
+    fn legacy_text_turns_keep_their_serialized_shape() {
+        let wire = serde_json::json!({"role": "user", "text": "Inspect a.rs\n"});
+        let turn: Turn = serde_json::from_value(wire.clone()).unwrap();
+        assert!(!turn.has_tools());
+        assert_eq!(serde_json::to_value(turn).unwrap(), wire);
+    }
+
+    #[test]
+    fn text_only_prefixes_keep_the_original_bytes() {
+        let context = stable();
+        let plan = assemble(&context, "tail", &opus());
+        let mut expected = String::new();
+        for tool in &context.tools {
+            let _ = writeln!(expected, "{tool}");
+        }
+        for block in &plan.system {
+            let _ = writeln!(expected, "{}", block.text);
+        }
+        for turn in &context.history {
+            let _ = writeln!(expected, "{}", turn.text);
+        }
+        assert_eq!(plan.stable_prefix(), expected);
+    }
+
+    #[test]
+    fn structured_history_and_continuation_keep_call_ids_and_arguments() {
+        let context = StableContext {
+            history: vec![
+                Turn::user("Read a.rs"),
+                Turn::assistant_with_tools(
+                    "Inspecting.",
+                    vec![ToolCall {
+                        id: "read-17".into(),
+                        name: "read_file".into(),
+                        input: serde_json::json!({"path": "a.rs"}),
+                    }],
+                ),
+            ],
+            ..StableContext::default()
+        };
+        let result = ToolResult {
+            tool_use_id: "read-17".into(),
+            content: "file is unavailable".into(),
+            is_error: true,
+        };
+        let plan = assemble_with_results(&context, "Try another path.", &[result], &opus());
+        let request = crate::dispatch::ModelRequest {
+            model: "claude-opus-5".into(),
+            max_tokens: 100,
+            effort: None,
+            purpose: None,
+            plan,
+        };
+        let body = crate::dispatch::messages_params(&request);
+        assert_eq!(body["messages"][1]["role"], "assistant");
+        assert_eq!(body["messages"][1]["content"][0]["text"], "Inspecting.");
+        assert_eq!(
+            body["messages"][1]["content"][1],
+            serde_json::json!({
+                "type": "tool_use", "id": "read-17", "name": "read_file", "input": {"path": "a.rs"},
+            })
+        );
+        assert_eq!(body["messages"][2]["role"], "user");
+        assert_eq!(
+            body["messages"][2]["content"][0],
+            serde_json::json!({
+                "type": "tool_result", "tool_use_id": "read-17", "content": "file is unavailable", "is_error": true,
+            })
+        );
+        assert_eq!(
+            body["messages"][2]["content"][1]["text"],
+            "Try another path."
+        );
+    }
+
+    #[test]
+    fn structured_prefix_identity_includes_call_arguments_and_result_status() {
+        let call = ToolCall {
+            id: "read-17".into(),
+            name: "read_file".into(),
+            input: serde_json::json!({"path": "a.rs"}),
+        };
+        let mut context = StableContext {
+            history: vec![Turn::assistant_with_tools("", vec![call])],
+            ..StableContext::default()
+        };
+        let original = assemble(&context, "tail", &opus()).stable_prefix();
+        context.history[0].tool_calls[0].input = serde_json::json!({"path": "b.rs"});
+        assert_ne!(
+            original,
+            assemble(&context, "tail", &opus()).stable_prefix()
+        );
+        context.history.push(Turn::user_with_results(
+            "",
+            vec![ToolResult {
+                tool_use_id: "read-17".into(),
+                content: "empty".into(),
+                is_error: false,
+            }],
+        ));
+        let success = assemble(&context, "tail", &opus()).stable_prefix();
+        context.history[1].tool_results[0].is_error = true;
+        assert_ne!(success, assemble(&context, "tail", &opus()).stable_prefix());
     }
 
     #[test]

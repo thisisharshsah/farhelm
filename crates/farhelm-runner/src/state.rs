@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use farhelm_app::store::prelude::*;
-use farhelm_gateway::{AnthropicClient, Gateway};
+use farhelm_gateway::{Gateway, ProviderClient};
 use tokio::sync::broadcast;
 
 /// Where this runner is reachable, once a relay is configured.
@@ -70,7 +70,7 @@ impl RelayInfo {
 /// `Option` because the runner must start and serve the read-only API with no
 /// API key configured — a fresh clone should show you the UI before it asks for
 /// a credential.
-pub type RunnerGateway = Gateway<Arc<SqliteStore>, AnthropicClient>;
+pub type RunnerGateway = Gateway<Arc<SqliteStore>, ProviderClient>;
 
 /// Lines retained per session. A phone showing more than this would need to
 /// scroll past what a glance can use anyway.
@@ -147,6 +147,23 @@ const EVENT_BUFFER: usize = 256;
 pub use farhelm_proto::events::ServerEvent;
 pub use farhelm_proto::views::OutputLine;
 
+/// What became of a freshly raised approval. See [`AppState::raise_approval`].
+#[derive(Debug, Clone)]
+pub enum Raised {
+    /// Waiting on a person. The session should be marked as blocked on it.
+    Pending(farhelm_proto::types::Approval),
+    /// Cleared by the session's auto-approve level; the row is already decided.
+    AutoApproved(farhelm_proto::types::Approval),
+}
+
+impl Raised {
+    pub fn approval(&self) -> &farhelm_proto::types::Approval {
+        match self {
+            Raised::Pending(approval) | Raised::AutoApproved(approval) => approval,
+        }
+    }
+}
+
 struct OutputBuffer {
     next_seq: u64,
     lines: VecDeque<OutputLine>,
@@ -192,6 +209,8 @@ pub struct AppState {
     /// left behind by one are reconciled at startup — see
     /// [`crate::task::reconcile_after_restart`].
     pub running_tasks: std::sync::atomic::AtomicUsize,
+    /// Bound local metadata work before it reaches Tokio's blocking pool.
+    pub(crate) project_requests: Arc<tokio::sync::Semaphore>,
     output: Mutex<HashMap<String, OutputBuffer>>,
     /// Lines written since each session's transcript was last trimmed.
     since_prune: Mutex<HashMap<String, u32>>,
@@ -306,10 +325,73 @@ impl AppState {
                 ))
             }),
             running_tasks: std::sync::atomic::AtomicUsize::new(0),
+            project_requests: Arc::new(tokio::sync::Semaphore::new(4)),
             output: Mutex::new(HashMap::new()),
             since_prune: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Record a new approval, clearing it on the spot when the session's
+    /// standing delegation covers its risk.
+    ///
+    /// One entry point for the three places an approval is born — the hook
+    /// bridge, the terminal watcher and the native agent's `run` tool — so
+    /// auto-approve cannot be honoured on one path and forgotten on another.
+    /// The ceiling is in `farhelm_domain::auto_approves`: a destructive command
+    /// is recorded as pending whatever the level says.
+    ///
+    /// An auto-cleared approval is still a row, with `decided_via = auto_policy`,
+    /// because the audit trail answers "what ran without a person" as much as
+    /// "who said yes". Clients hear about it as a decision, never as a request,
+    /// so no card is raised for it.
+    pub fn raise_approval(
+        &self,
+        mut approval: farhelm_proto::types::Approval,
+    ) -> Result<Raised, farhelm_app::store::StoreError> {
+        use farhelm_proto::types::{DecidedVia, Decision};
+
+        let level = self.store.auto_approve(&approval.session_id)?;
+        let cleared = farhelm_domain::auto_approves(level, approval.risk);
+        if cleared {
+            approval.decision = Some(Decision::Approved);
+            approval.decided_via = Some(DecidedVia::AutoPolicy);
+            approval.decided_at = Some(approval.requested_at);
+        }
+        self.store.create_approval(&approval)?;
+
+        if cleared {
+            self.push_output(
+                &approval.session_id,
+                format!(
+                    "• auto-approved ({} risk) — {} {}",
+                    approval.risk, approval.tool, approval.payload
+                ),
+                approval.requested_at,
+            );
+            self.publish(ServerEvent::ApprovalDecision {
+                approval_id: approval.id.clone(),
+                session_id: approval.session_id.clone(),
+                decision: Decision::Approved,
+            });
+            Ok(Raised::AutoApproved(approval))
+        } else {
+            self.push_output(
+                &approval.session_id,
+                format!(
+                    "⏳ awaiting approval — {} {}",
+                    approval.tool, approval.payload
+                ),
+                approval.requested_at,
+            );
+            self.publish(ServerEvent::ApprovalRequest {
+                approval: approval.clone(),
+            });
+            self.publish(ServerEvent::SessionUpsert {
+                session_id: approval.session_id.clone(),
+            });
+            Ok(Raised::Pending(approval))
+        }
     }
 
     /// Publish an event. A send with no subscribers is not an error — the

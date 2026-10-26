@@ -62,6 +62,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+mod frontend;
 mod settings;
 use settings::Settings;
 
@@ -147,6 +148,16 @@ fn desktop_routes(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+fn desktop_app(state: Arc<AppState>, assets: frontend::FrontendAssets) -> Router {
+    api::router(Arc::clone(&state))
+        .merge(desktop_routes(state))
+        .fallback_service(frontend::router(assets))
+}
+
+fn desktop_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 fn main() {
     let settings = Settings::load();
 
@@ -155,7 +166,9 @@ fn main() {
         .build()
         .expect("tokio runtime");
 
-    let state = runtime.block_on(build_state(&settings));
+    let state = runtime
+        .block_on(build_state(&settings))
+        .expect("could not configure model providers");
 
     // Bound *before* the window exists, so the page cannot load against a port
     // nothing is listening on yet — and so the URL can name the port we actually
@@ -165,14 +178,15 @@ fn main() {
         .expect("could not listen on loopback");
     let addr = listener.local_addr().expect("listener has an address");
 
+    // Share the generated asset provider with the HTTP server. The window uses
+    // that server's origin, so Tauri's asset protocol never serves its files.
+    let mut context = desktop_context();
+    let assets = frontend::FrontendAssets::new(context.assets);
+    context.assets = Box::new(assets.clone());
+
     let served = Arc::clone(&state);
     runtime.spawn(async move {
-        let app_dir = std::path::PathBuf::from("web/dist");
-        let app_dir = app_dir.join("index.html").is_file().then_some(app_dir);
-        let router = api::router_with_app(Arc::clone(&served), app_dir)
-            .merge(desktop_routes(Arc::clone(&served)));
-
-        if let Err(err) = axum::serve(listener, router).await {
+        if let Err(err) = axum::serve(listener, desktop_app(served, assets)).await {
             eprintln!("the local API stopped: {err}");
         }
     });
@@ -203,7 +217,7 @@ fn main() {
             build_tray(app.handle())?;
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("failed to start Farhelm");
 }
 
@@ -227,7 +241,10 @@ async fn bind() -> std::io::Result<tokio::net::TcpListener> {
     }
 }
 
-async fn build_state(settings: &Settings) -> Arc<AppState> {
+async fn build_state(
+    settings: &Settings,
+) -> Result<Arc<AppState>, farhelm_gateway::providers::ConfigError> {
+    let model_client = farhelm_gateway::ProviderClient::from_env()?;
     let store = farhelm_sqlite::SqliteStore::open(settings.database_path())
         .expect("could not open the Farhelm database");
 
@@ -251,12 +268,12 @@ async fn build_state(settings: &Settings) -> Arc<AppState> {
     let state = AppState::build_with_terminal(
         store,
         |store| {
-            let client = farhelm_gateway::dispatch::AnthropicClient::from_env()?;
-            Some(farhelm_gateway::Gateway::new(
-                store,
-                client,
-                farhelm_gateway::GatewayConfig::default(),
-            ))
+            let client = model_client?;
+            let mut config = farhelm_gateway::GatewayConfig::default();
+            if let Some(models) = client.models() {
+                config.models = models;
+            }
+            Some(farhelm_gateway::Gateway::new(store, client, config))
         },
         Arc::clone(&identity),
         relay_info.clone(),
@@ -284,7 +301,7 @@ async fn build_state(settings: &Settings) -> Arc<AppState> {
         Arc::clone(&terminal),
     ));
 
-    state
+    Ok(state)
 }
 
 /// The relay channel this machine publishes on.
@@ -410,8 +427,10 @@ mod tests {
             Arc::new(farhelm_crypto::Identity::generate()),
             None,
         );
-        let router = api::router_with_app(Arc::clone(&state), None)
-            .merge(desktop_routes(Arc::clone(&state)));
+        let router = desktop_app(
+            state,
+            frontend::FrontendAssets::new(desktop_context().assets),
+        );
 
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await

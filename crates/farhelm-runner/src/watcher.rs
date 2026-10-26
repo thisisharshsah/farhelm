@@ -106,10 +106,15 @@ pub async fn scan_session<T: Terminal>(
         return Ok(None);
     }
 
-    let approval = raise(state, session, &prompt)?;
-    let id = approval.id.clone();
+    let raised = raise(state, session, &prompt)?;
+    let id = raised.approval().id.clone();
 
-    let _ = terminal; // The answer is typed on decision, not here.
+    // A pending approval is answered on decision, not here. One the session's
+    // policy already cleared has nobody left to wait for, so the key is typed
+    // now — the same path a person's tap takes.
+    if let crate::state::Raised::AutoApproved(_) = raised {
+        answer(state, terminal, seen, session, Decision::Approved).await?;
+    }
     Ok(Some(id))
 }
 
@@ -127,7 +132,7 @@ fn raise(
     state: &Arc<AppState>,
     session: &Session,
     prompt: &DetectedPrompt,
-) -> Result<Approval, ManagerError> {
+) -> Result<crate::state::Raised, ManagerError> {
     // The same classifier the hook path uses. A `rm -rf` read off a terminal is
     // exactly as destructive as one announced through a hook, and gets the same
     // phone-only treatment.
@@ -144,25 +149,18 @@ fn raise(
         requested_at: now_ms(),
         decided_at: None,
     };
-    state.store.create_approval(&approval)?;
+    let raised = state.raise_approval(approval)?;
 
-    let mut waiting = session.clone();
-    waiting.status = SessionStatus::AwaitingApproval;
-    state.store.upsert_session(&waiting)?;
+    if let crate::state::Raised::Pending(_) = raised {
+        let mut waiting = session.clone();
+        waiting.status = SessionStatus::AwaitingApproval;
+        state.store.upsert_session(&waiting)?;
+        state.publish(ServerEvent::SessionUpsert {
+            session_id: session.id.clone(),
+        });
+    }
 
-    state.push_output(
-        &session.id,
-        format!("⏳ awaiting approval — {}", prompt.payload),
-        now_ms(),
-    );
-    state.publish(ServerEvent::ApprovalRequest {
-        approval: approval.clone(),
-    });
-    state.publish(ServerEvent::SessionUpsert {
-        session_id: session.id.clone(),
-    });
-
-    Ok(approval)
+    Ok(raised)
 }
 
 /// Type a decision into the agent's terminal.
@@ -258,6 +256,58 @@ mod tests {
     const WAITING: &str = "\
 $ rm -rf ./build
 Proceed? (y/n)";
+
+    const SAFE_WAITING: &str = "\
+$ cargo test
+Proceed? (y/n)";
+
+    #[tokio::test]
+    async fn a_covered_prompt_is_answered_without_waiting_for_anyone() {
+        let (state, session, terminal, seen) = fixture(Agent::OpenCode);
+        // A shell command is medium risk by the classifier's rules — `low` is
+        // the band for read-only tools — so this is the level that covers it.
+        state
+            .store
+            .set_auto_approve("s1", farhelm_proto::types::AutoApprove::Medium, NOW)
+            .unwrap();
+
+        let id = scan_session(&state, &terminal, &seen, &session, SAFE_WAITING)
+            .await
+            .unwrap()
+            .expect("the prompt should have been seen");
+
+        // Recorded as decided by the policy, and the key was typed into the pane
+        // the way a person's tap would have been.
+        let approval = state.store.get_approval(&id).unwrap().unwrap();
+        assert_eq!(approval.decision, Some(Decision::Approved));
+        assert_eq!(approval.decided_via, Some(DecidedVia::AutoPolicy));
+        assert_eq!(terminal.sent().len(), 1);
+        // The session never looked blocked.
+        assert_eq!(
+            state.store.get_session("s1").unwrap().unwrap().status,
+            SessionStatus::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn a_destructive_prompt_still_waits_under_any_level() {
+        let (state, session, terminal, seen) = fixture(Agent::OpenCode);
+        state
+            .store
+            .set_auto_approve("s1", farhelm_proto::types::AutoApprove::Medium, NOW)
+            .unwrap();
+
+        let id = scan_session(&state, &terminal, &seen, &session, WAITING)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(state.store.get_approval(&id).unwrap().unwrap().is_pending());
+        assert!(terminal.sent().is_empty());
+        assert_eq!(
+            state.store.get_session("s1").unwrap().unwrap().status,
+            SessionStatus::AwaitingApproval
+        );
+    }
 
     #[tokio::test]
     async fn a_terminal_prompt_becomes_an_ordinary_approval() {

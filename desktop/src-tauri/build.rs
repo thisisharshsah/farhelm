@@ -18,21 +18,14 @@ const SENTINEL: &str = ".not-built";
 /// Make `frontendDist` exist, because `tauri::generate_context!` panics if it
 /// does not.
 ///
-/// That directory is produced by `pnpm --filter @farhelm/web build`, which
-/// cargo knows nothing about. So on a clean checkout `cargo build --workspace`,
-/// `cargo test --workspace` and `cargo clippy --workspace --all-targets` all
-/// failed here — and `check.sh` could not pass at all, because it lints twelve
-/// steps before it builds the web app. A Rust build that depends on a
-/// JavaScript build with nothing declaring the order is a build that works only
-/// for people who happen to run the steps in the right sequence.
+/// Cargo does not run `pnpm --filter @farhelm/web build`. A placeholder keeps
+/// Rust compilation available on a clean checkout and explains what is missing
+/// if that executable is launched. Full verification and release builds must
+/// build the web app first; desktop asset tests deliberately reject this page.
+/// A real desktop embeds its assets, so replacing this page on disk also needs
+/// a desktop rebuild before the new frontend can be served.
 ///
-/// So if the directory is missing, write a placeholder into it. The placeholder
-/// is not a stub to satisfy a check: it is the page saying the web app has not
-/// been built yet, which is what the runner now serves at `/` instead of the
-/// bare empty 404 it used to.
-///
-/// An existing directory is never touched — this only ever creates what is not
-/// there, and never overwrites a real build.
+/// An existing index is never overwritten.
 fn ensure_frontend_dist() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let Some(dist) = frontend_dist(&manifest) else {
@@ -102,8 +95,10 @@ const PLACEHOLDER: &str = r#"<!doctype html>
      is the built front end it serves at this address.</p>
   <pre>pnpm install
 pnpm --filter @farhelm/web build</pre>
-  <p>Then restart the runner. If the app is built somewhere else, point at it
-     with <code>--app-dir &lt;path&gt;</code>.</p>
+  <p>For the desktop app, rebuild and restart it with
+     <code>cargo run -p farhelm-desktop</code> so it embeds the frontend.</p>
+  <p>For the CLI runner, restart it. If the app is built somewhere else, point
+     the runner at it with <code>--app-dir &lt;path&gt;</code>.</p>
   <p class="muted">This page is a placeholder written by the desktop crate's
      build script. A real build replaces it.</p>
 </body>

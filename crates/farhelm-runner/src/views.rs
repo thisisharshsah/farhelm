@@ -201,6 +201,7 @@ pub fn view_of<S: Store>(
         started_at: session.started_at,
         ended_at: session.ended_at,
         awaiting_approval_id: lookups.awaiting_approval_id(&session.id),
+        auto_approve: lookups.store.auto_approve(&session.id)?,
     })
 }
 
@@ -430,6 +431,15 @@ pub fn build_task_detail(state: &Arc<AppState>, id: &str) -> Result<TaskDetail, 
         .get_task(id)?
         .ok_or_else(|| ViewError::not_found(format!("task {id}")))?;
 
+    detail_for_task(state, task)
+}
+
+/// Assemble the existing review payload after a caller has resolved its own
+/// resource scope. Avoid a second unscoped task lookup on nested project routes.
+pub(crate) fn detail_for_task(
+    state: &Arc<AppState>,
+    task: farhelm_proto::types::AgentTask,
+) -> Result<TaskDetail, ViewError> {
     // A change set that will not parse is reported as an empty one rather than
     // a 500: the rest of the row — what it cost, what went wrong, the output
     // tail — is exactly what somebody debugging that would want to see.

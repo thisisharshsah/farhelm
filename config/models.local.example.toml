@@ -1,0 +1,45 @@
+# Copy to a private operator configuration and set FARHELM_MODELS_CONFIG to its
+# absolute path. This file does not start a runtime or download model weights.
+version = 1
+policy = "local_only"
+
+[routes]
+small = "local-code"
+large = "local-code"
+frontier = "local-code"
+
+[providers.ollama]
+kind = "openai_compatible"
+base_url = "http://127.0.0.1:11434/v1"
+data_location = "local"
+# api_key_env = "LOCAL_MODEL_API_KEY" # Only if your local server requires it.
+
+[models.local-code]
+provider = "ollama"
+model = "qwen3-coder:30b" # Must already exist on your runtime; pin in deployment.
+tools = true # Enable only after testing this model/runtime/template combination.
+max_output_tokens = 4096
+
+# Optional cloud route: deliberately absent from the default configuration.
+# To enable, change policy to "cloud_allowed", uncomment this provider/model,
+# set OPENROUTER_API_KEY in the runner environment and choose a route alias.
+# Replace the placeholder model and sample rates using your provider's prices.
+# Zero rates are allowed only when explicitly declared for an authorized free tier.
+#
+# [providers.openrouter]
+# kind = "openrouter"
+# base_url = "https://openrouter.ai/api/v1"
+# data_location = "cloud"
+# api_key_env = "OPENROUTER_API_KEY"
+#
+# [models.cloud-review]
+# provider = "openrouter"
+# model = "organization/model-id"
+# tools = true
+# max_output_tokens = 4096
+#
+# [models.cloud-review.pricing]
+# input_per_mtok = 1.0 # Illustrative dollars per million tokens, not a current quote.
+# output_per_mtok = 4.0
+# cache_write_per_mtok = 1.0
+# cache_read_per_mtok = 1.0

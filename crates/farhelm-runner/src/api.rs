@@ -146,12 +146,15 @@ pub fn router_with_auth(state: Arc<AppState>, auth: LocalAuth) -> Router {
 
 fn base_router(state: Arc<AppState>) -> Router {
     Router::new()
+        .merge(crate::projects::routes())
+        .route("/v1/repos", get(list_repos))
         .route("/v1/fleet", get(fleet))
         .route("/v1/sessions", get(list_sessions).post(start_session))
         .route("/v1/sessions/{id}/stop", post(stop_session))
         .route("/v1/sessions/{id}", get(session_detail))
         .route("/v1/sessions/{id}/instruction", post(send_instruction))
         .route("/v1/sessions/{id}/plan", post(plan_control))
+        .route("/v1/sessions/{id}/auto-approve", post(set_auto_approve))
         .route("/v1/sessions/{id}/usage", get(session_usage))
         .route("/v1/sessions/{id}/dashboard", get(session_dashboard))
         .route("/v1/approvals", get(list_approvals))
@@ -342,6 +345,50 @@ async fn batch_queue(State(state): State<Arc<AppState>>) -> ApiResult<BatchQueue
         in_flight: in_flight.len(),
         items,
     }))
+}
+
+/* --------------------------------------------------- local repositories */
+
+/// `GET /v1/repos` — bounded registered repositories on this runner.
+/// Reading a list does not scan the host or silently register nearby directories.
+async fn list_repos(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Vec<farhelm_proto::ProjectRepository>> {
+    let permit = Arc::clone(&state.project_requests)
+        .try_acquire_owned()
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "repository requests are busy; try again",
+            )
+        })?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let repos = state.store.list_repos(&state.machine_id).map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "repository storage is unavailable",
+            )
+        })?;
+
+        Ok(Json(
+            repos
+                .into_iter()
+                .map(|repo| farhelm_proto::ProjectRepository {
+                    id: repo.id,
+                    name: repo.name,
+                    path: repo.path,
+                })
+                .collect(),
+        ))
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "repository operation could not complete",
+        )
+    })?
 }
 
 /* --------------------------------------------------- native agent tasks */
@@ -628,6 +675,39 @@ async fn plan_control(
         commands::Outcome::PlanChanged { steps, .. } => {
             Ok(Json(steps.iter().map(PlanStepView::from).collect()))
         }
+        other => Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("unexpected outcome: {other:?}"),
+        }),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AutoApproveBody {
+    pub level: farhelm_proto::types::AutoApprove,
+}
+
+/// `POST /v1/sessions/{id}/auto-approve` — a standing delegation for one session.
+///
+/// The surface is the web app, so `via` is fixed rather than taken from the
+/// body: a caller must not be able to claim a more trusted surface than the one
+/// it is on. The rule itself lives in `commands`, shared with the relay.
+async fn set_auto_approve(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<AutoApproveBody>,
+) -> ApiResult<farhelm_proto::views::SessionView> {
+    match commands::execute(
+        &state,
+        commands::Command::SetAutoApprove {
+            session_id: id,
+            level: body.level,
+        },
+        DecidedVia::Web,
+    )
+    .await?
+    {
+        commands::Outcome::SessionChanged(session) => Ok(Json(*session)),
         other => Err(ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: format!("unexpected outcome: {other:?}"),
@@ -990,20 +1070,24 @@ async fn hook_tool_request(
         requested_at: now_ms(),
         decided_at: None,
     };
-    state.store.create_approval(&approval)?;
+    let approval = match state.raise_approval(approval)? {
+        // The session's standing delegation covered it. Nothing blocks, the
+        // session never leaves `Running`, and the hook gets its answer now.
+        crate::state::Raised::AutoApproved(approval) => {
+            return Ok(Json(ToolRequestView {
+                decision: Decision::Approved,
+                reason: format!("auto-approved: {} risk, by the session's policy", risk),
+                approval_id: approval.id,
+                session_id: session.id,
+                risk,
+            }));
+        }
+        crate::state::Raised::Pending(approval) => approval,
+    };
 
     let mut waiting = session.clone();
     waiting.status = SessionStatus::AwaitingApproval;
     state.store.upsert_session(&waiting)?;
-
-    state.push_output(
-        &session.id,
-        format!("⏳ awaiting approval — {} {}", body.tool, body.payload),
-        now_ms(),
-    );
-    state.publish(ServerEvent::ApprovalRequest {
-        approval: approval.clone(),
-    });
     state.publish(ServerEvent::SessionUpsert {
         session_id: session.id.clone(),
     });

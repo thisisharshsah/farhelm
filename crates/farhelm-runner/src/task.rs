@@ -33,10 +33,12 @@ use std::time::Duration;
 
 use farhelm_agent::{Merge, Outcome, TaskSpec, Verdict, Worktree};
 use farhelm_app::id::new_id;
+use farhelm_app::project_workflow::{ProjectWorkflow, ProjectWorkflowError, validate_start_task};
 use farhelm_app::store::{TaskOutcome, prelude::*};
 use farhelm_app::time::now_ms;
 use farhelm_proto::types::{
-    Agent, AgentTask, Approval, DecidedVia, Decision, Repo, Session, SessionStatus, TaskStatus,
+    Agent, AgentTask, Approval, DecidedVia, Decision, Repo, Session, SessionStatus,
+    StartProjectTaskRequest, TaskStatus,
 };
 use serde::Deserialize;
 
@@ -140,8 +142,8 @@ impl std::fmt::Display for TaskError {
             ),
             TaskError::Conflict(why) => f.write_str(why),
             TaskError::NoProvider => f.write_str(
-                "no model provider configured — set ANTHROPIC_API_KEY or \
-                 ANTHROPIC_AUTH_TOKEN to run agent tasks",
+                "no model provider configured — configure FARHELM_MODELS_CONFIG or \
+                 an authorized provider credential to run agent tasks",
             ),
             TaskError::Apply(why) => write!(f, "could not apply the change set: {why}"),
             TaskError::Store(err) => write!(f, "{err}"),
@@ -271,20 +273,18 @@ impl farhelm_agent::Supervisor for RunnerSupervisor {
             decided_at: None,
         };
 
-        if let Err(err) = self.state.store.create_approval(&approval) {
+        let approval = match self.state.raise_approval(approval) {
             // The queue is how a human says yes. If it cannot be written to,
             // the answer is no — an unrecordable approval must never become an
             // approval.
-            return Verdict::Denied(format!("the approval could not be recorded: {err}"));
-        }
-
-        self.note(&format!("⏳ awaiting approval — {payload}"));
-        self.state.publish(ServerEvent::ApprovalRequest {
-            approval: approval.clone(),
-        });
-        self.state.publish(ServerEvent::SessionUpsert {
-            session_id: self.session_id.clone(),
-        });
+            Err(err) => {
+                return Verdict::Denied(format!("the approval could not be recorded: {err}"));
+            }
+            // Cleared by the session's standing delegation; the row is already
+            // decided and the transcript already says so.
+            Ok(crate::state::Raised::AutoApproved(_)) => return Verdict::Approved,
+            Ok(crate::state::Raised::Pending(approval)) => approval,
+        };
 
         let settled =
             match crate::api::await_decision(&self.state, &approval.id, RUN_APPROVAL_WAIT).await {
@@ -339,8 +339,15 @@ fn resolve_repo(state: &AppState, repo_path: &str) -> Result<Repo, TaskError> {
 /// A fresh task row and the session it bills to.
 fn create_rows(state: &AppState, request: &StartTask) -> Result<(AgentTask, Session), TaskError> {
     let repo = resolve_repo(state, &request.repo_path)?;
-    let now = now_ms();
+    let (task, session) = new_rows(&repo, &request.prompt, request.budget_usd, now_ms());
+    state.store.upsert_session(&session)?;
+    state.store.upsert_task(&task)?;
+    Ok((task, session))
+}
 
+/// Build both identities before persisting them, so project starts can commit
+/// the session, task and ownership link in one storage transaction.
+fn new_rows(repo: &Repo, prompt: &str, budget_usd: Option<f64>, now: i64) -> (AgentTask, Session) {
     let session = Session {
         id: new_id(),
         repo_id: repo.id.clone(),
@@ -348,19 +355,18 @@ fn create_rows(state: &AppState, request: &StartTask) -> Result<(AgentTask, Sess
         tmux_target: None,
         status: SessionStatus::Running,
         plan_id: None,
-        budget_usd: request.budget_usd,
+        budget_usd,
         spent_usd: 0.0,
         started_at: now,
         ended_at: None,
         agent_session_id: None,
     };
-    state.store.upsert_session(&session)?;
 
     let task = AgentTask {
         id: new_id(),
         session_id: session.id.clone(),
-        repo_id: repo.id,
-        prompt: request.prompt.clone(),
+        repo_id: repo.id.clone(),
+        prompt: prompt.to_owned(),
         status: TaskStatus::Running,
         summary: String::new(),
         diff_json: String::new(),
@@ -380,8 +386,7 @@ fn create_rows(state: &AppState, request: &StartTask) -> Result<(AgentTask, Sess
         updated_at: now,
         decided_at: None,
     };
-    state.store.upsert_task(&task)?;
-    Ok((task, session))
+    (task, session)
 }
 
 /// What the agent is actually asked, which is not always what the row stores.
@@ -394,10 +399,26 @@ fn resolve_instruction(state: &AppState, request: &StartTask) -> Result<String, 
         return Ok(request.prompt.clone());
     };
 
+    // Project context is deliberately available only through its scoped route.
+    // Do this before loading the previous prompt or patch.
+    if state.store.project_for_task(id)?.is_some() {
+        return Err(TaskError::Conflict(
+            "retry this task from its project".into(),
+        ));
+    }
     let previous = state
         .store
         .get_task(id)?
         .ok_or_else(|| TaskError::NotFound(format!("task {id}")))?;
+
+    let repo = state
+        .store
+        .find_repo_by_path(&state.machine_id, &request.repo_path)?;
+    if repo.as_ref().is_none_or(|repo| repo.id != previous.repo_id) {
+        return Err(TaskError::Conflict(
+            "a retry must use the original repository".into(),
+        ));
+    }
 
     // Only a *rejected* task. Retrying one that is still awaiting review would
     // put two agents on the same change set before anybody had decided about
@@ -431,6 +452,92 @@ pub fn start(state: &Arc<AppState>, request: StartTask) -> Result<AgentTask, Tas
 
     let instruction = resolve_instruction(state, &request)?;
     let (task, session) = create_rows(state, &request)?;
+    launch(
+        state,
+        request,
+        instruction,
+        task,
+        session,
+        slot,
+        &tokio::runtime::Handle::current(),
+    )
+}
+
+/// Startup failures retain their application/storage origin for HTTP mapping.
+#[derive(Debug)]
+pub(crate) enum ProjectTaskError {
+    Workflow(ProjectWorkflowError),
+    Task(TaskError),
+}
+
+impl From<ProjectWorkflowError> for ProjectTaskError {
+    fn from(error: ProjectWorkflowError) -> Self {
+        Self::Workflow(error)
+    }
+}
+impl From<TaskError> for ProjectTaskError {
+    fn from(error: TaskError) -> Self {
+        Self::Task(error)
+    }
+}
+
+/// Called on a bounded blocking worker. Once the atomic insert commits, the
+/// captured runtime schedules the loop before this callback returns, including
+/// when the HTTP client has already cancelled its await.
+pub(crate) fn start_project(
+    state: &Arc<AppState>,
+    project_id: &str,
+    request: StartProjectTaskRequest,
+    runtime: &tokio::runtime::Handle,
+) -> Result<AgentTask, ProjectTaskError> {
+    validate_start_task(&request)?;
+    let workflow = ProjectWorkflow::new(Arc::clone(&state.store), &state.machine_id)?;
+    let (repo, previous) =
+        workflow.prepare(project_id, &request.repo_id, request.retry_of.as_deref())?;
+    if state.gateway.is_none() {
+        return Err(TaskError::NoProvider.into());
+    }
+    if !Path::new(&repo.path).is_dir() {
+        return Err(TaskError::NotADirectory(repo.path).into());
+    }
+    let slot = TaskSlot::claim(state).ok_or(TaskError::TooBusy(MAX_CONCURRENT_TASKS))?;
+    let instruction = previous
+        .as_ref()
+        .map(retry_prompt)
+        .unwrap_or_else(|| request.prompt.clone());
+    let prompt = previous
+        .as_ref()
+        .map(|previous| previous.prompt.clone())
+        .unwrap_or_else(|| request.prompt.clone());
+    let (task, session) = new_rows(&repo, &prompt, request.budget_usd, now_ms());
+    workflow.insert_task(project_id, &session, &task, request.retry_of.as_deref())?;
+    launch(
+        state,
+        StartTask {
+            repo_path: repo.path,
+            prompt,
+            budget_usd: request.budget_usd,
+            max_steps: request.max_steps,
+            retry_of: request.retry_of,
+        },
+        instruction,
+        task,
+        session,
+        slot,
+        runtime,
+    )
+    .map_err(Into::into)
+}
+
+fn launch(
+    state: &Arc<AppState>,
+    request: StartTask,
+    instruction: String,
+    task: AgentTask,
+    session: Session,
+    slot: TaskSlot,
+    runtime: &tokio::runtime::Handle,
+) -> Result<AgentTask, TaskError> {
     state.push_output(&session.id, format!("▶ {}", request.prompt), now_ms());
     if request.retry_of.is_some() {
         state.push_output(
@@ -474,7 +581,7 @@ pub fn start(state: &Arc<AppState>, request: StartTask) -> Result<AgentTask, Tas
         spec
     };
 
-    tokio::spawn(async move {
+    runtime.spawn(async move {
         // The slot moves in here and is released when this future ends, however
         // it ends.
         let _slot = slot;

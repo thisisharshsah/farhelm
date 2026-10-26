@@ -27,10 +27,10 @@
 //! absent. A default task type means default routing — correct, and not as
 //! cheap as telling the gateway that this call is a commit message.
 //!
-//! Multi-block content is flattened to text. The gateway's prompt model is
-//! text-plus-tools, so images and documents in a request would be silently
-//! dropped — which is why they are refused instead. Silently ignoring part of a
-//! prompt and then billing for the answer is the worst available behaviour.
+//! Text, assistant tool calls and matching user tool results survive translation.
+//! Images/documents and unsupported blocks are refused rather than dropped.
+//! Tool IDs, arguments and error status remain structured across turns; tool-like
+//! text never becomes an executable call.
 //!
 //! # Streaming
 //!
@@ -44,6 +44,7 @@
 //! real, the incrementality is not, and no client can tell the difference
 //! except by timing.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
@@ -52,7 +53,10 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response, Sse, sse::Event},
 };
-use farhelm_gateway::{CompleteRequest, GatewayError, prompt::Turn};
+use farhelm_gateway::{
+    CompleteRequest, GatewayError, ToolCall,
+    prompt::{Role, ToolResult, Turn},
+};
 use farhelm_proto::types::TaskType;
 use serde::{Deserialize, Serialize};
 
@@ -116,56 +120,189 @@ pub struct ContentBlock {
     /// `tool_result` carries its payload here rather than in `text`.
     #[serde(default)]
     pub content: Option<serde_json::Value>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_use_id: Option<String>,
+    #[serde(default)]
+    pub is_error: bool,
+    #[serde(default)]
+    pub toolset_name: Option<String>,
 }
 
 impl SystemField {
     fn flatten(&self) -> Result<String, ApiError> {
         match self {
             SystemField::Text(text) => Ok(text.clone()),
-            SystemField::Blocks(blocks) => flatten_blocks(blocks),
+            SystemField::Blocks(blocks) => flatten_text_blocks(blocks),
         }
     }
 }
 
-impl MessageContent {
-    fn flatten(&self) -> Result<String, ApiError> {
-        match self {
-            MessageContent::Text(text) => Ok(text.clone()),
-            MessageContent::Blocks(blocks) => flatten_blocks(blocks),
-        }
-    }
-}
-
-/// Text and tool results survive; anything else is refused rather than dropped.
-fn flatten_blocks(blocks: &[ContentBlock]) -> Result<String, ApiError> {
-    let mut out = Vec::new();
-    for block in blocks {
-        match block.kind.as_str() {
-            "text" => out.push(block.text.clone().unwrap_or_default()),
-            "tool_result" => {
-                let rendered = match &block.content {
-                    Some(serde_json::Value::String(text)) => text.clone(),
-                    Some(value) => value.to_string(),
-                    None => String::new(),
-                };
-                out.push(rendered);
-            }
-            // Refused, not skipped. A prompt that quietly loses its image and
-            // is then billed for the answer is worse than one that fails.
+impl InboundMessage {
+    fn to_turn(&self) -> Result<Turn, ApiError> {
+        let role = match self.role.as_str() {
+            "user" => Role::User,
+            "assistant" => Role::Assistant,
             other => {
-                return Err(ApiError::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    format!(
-                        "content block `{other}` is not supported by the gateway — \
-                         it holds text and tools only, and dropping the rest \
-                         silently would bill you for an answer to a prompt you \
-                         did not send"
-                    ),
+                return Err(invalid(format!(
+                    "message role `{other}` is not supported; use user or assistant"
+                )));
+            }
+        };
+        let mut turn = match role {
+            Role::User => Turn::user(""),
+            Role::Assistant => Turn::assistant(""),
+        };
+        match &self.content {
+            MessageContent::Text(text) => turn.text = text.clone(),
+            MessageContent::Blocks(blocks) => {
+                let mut text = Vec::new();
+                for block in blocks {
+                    if block.toolset_name.is_some() {
+                        return Err(invalid("toolset members are not supported by this gateway"));
+                    }
+                    match block.kind.as_str() {
+                        "text" => text.push(required(&block.text, "text.text")?.to_owned()),
+                        "tool_use" if role == Role::Assistant => {
+                            let input = block
+                                .input
+                                .as_ref()
+                                .filter(|value| value.is_object())
+                                .ok_or_else(|| invalid("tool_use.input must be a JSON object"))?;
+                            turn.tool_calls.push(ToolCall {
+                                id: nonempty(&block.id, "tool_use.id")?.to_owned(),
+                                name: nonempty(&block.name, "tool_use.name")?.to_owned(),
+                                input: input.clone(),
+                            });
+                        }
+                        "tool_result" if role == Role::User => {
+                            if !text.is_empty() {
+                                return Err(invalid(
+                                    "tool_result blocks must precede text in a user message",
+                                ));
+                            }
+                            turn.tool_results.push(ToolResult {
+                                tool_use_id: nonempty(
+                                    &block.tool_use_id,
+                                    "tool_result.tool_use_id",
+                                )?
+                                .to_owned(),
+                                content: tool_result_text(block.content.as_ref())?,
+                                is_error: block.is_error,
+                            });
+                        }
+                        "tool_use" | "tool_result" => {
+                            return Err(invalid(format!(
+                                "{} is not valid in a {} message",
+                                block.kind, self.role,
+                            )));
+                        }
+                        other => return Err(unsupported(other)),
+                    }
+                }
+                turn.text = text.join("\n");
+            }
+        }
+        Ok(turn)
+    }
+}
+
+fn invalid(message: impl Into<String>) -> ApiError {
+    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message)
+}
+
+fn unsupported(kind: &str) -> ApiError {
+    invalid(format!(
+        "content block `{kind}` is not supported by the gateway; supported blocks are text, assistant tool_use and user tool_result"
+    ))
+}
+
+fn required<'a>(value: &'a Option<String>, field: &str) -> Result<&'a str, ApiError> {
+    value
+        .as_deref()
+        .ok_or_else(|| invalid(format!("{field} is required")))
+}
+
+fn nonempty<'a>(value: &'a Option<String>, field: &str) -> Result<&'a str, ApiError> {
+    let value = required(value, field)?;
+    if value.trim().is_empty() {
+        return Err(invalid(format!("{field} must not be empty")));
+    }
+    Ok(value)
+}
+
+fn flatten_text_blocks(blocks: &[ContentBlock]) -> Result<String, ApiError> {
+    blocks
+        .iter()
+        .map(|block| {
+            if block.kind != "text" {
+                return Err(unsupported(&block.kind));
+            }
+            Ok(required(&block.text, "text.text")?.to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|parts| parts.join("\n"))
+}
+
+fn tool_result_text(value: Option<&serde_json::Value>) -> Result<String, ApiError> {
+    match value {
+        None => Ok(String::new()),
+        Some(serde_json::Value::String(text)) => Ok(text.clone()),
+        Some(serde_json::Value::Array(blocks)) => {
+            let blocks: Vec<ContentBlock> =
+                serde_json::from_value(serde_json::Value::Array(blocks.clone())).map_err(|_| {
+                    invalid("tool_result.content must contain supported text blocks")
+                })?;
+            flatten_text_blocks(&blocks)
+        }
+        Some(_) => Err(invalid(
+            "tool_result.content must be a string or text block array",
+        )),
+    }
+}
+
+/// Every result belongs to the immediately preceding assistant tool turn.
+/// Requiring the whole exchange prevents orphan/duplicate results and avoids
+/// forwarding a partial tool conversation to a runtime with different rules.
+fn validate_tool_pairs(turns: &[Turn]) -> Result<(), ApiError> {
+    let mut seen = HashSet::new();
+    let mut pending = HashSet::new();
+    for turn in turns {
+        if !pending.is_empty() && turn.role != Role::User {
+            return Err(invalid(
+                "assistant tool calls require matching results in the next user message",
+            ));
+        }
+        for result in &turn.tool_results {
+            if !pending.remove(result.tool_use_id.as_str()) {
+                return Err(invalid(
+                    "tool_result has an unknown or duplicate tool_use_id",
                 ));
             }
         }
+        if !pending.is_empty() {
+            return Err(invalid(
+                "the next user message must provide a result for every assistant tool call",
+            ));
+        }
+        for call in &turn.tool_calls {
+            if !seen.insert(call.id.as_str()) {
+                return Err(invalid(
+                    "tool_use.id must be unique within the conversation",
+                ));
+            }
+            pending.insert(call.id.as_str());
+        }
     }
-    Ok(out.join("\n"))
+    if !pending.is_empty() {
+        return Err(invalid("assistant tool calls are missing their results"));
+    }
+    Ok(())
 }
 
 /* ---------------------------------------------------------------- response */
@@ -301,26 +438,21 @@ pub fn translate(headers: &HeaderMap, body: MessagesBody) -> Result<CompleteRequ
         None => TaskType::Edit,
     };
 
-    let mut request = CompleteRequest::new(&session_id, task_type, last.content.flatten()?);
+    let mut turns = body
+        .messages
+        .iter()
+        .map(InboundMessage::to_turn)
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_tool_pairs(&turns)?;
+    let last = turns.pop().expect("nonempty messages checked above");
+    let mut request = CompleteRequest::new(&session_id, task_type, last.text);
+    request.tool_results = last.tool_results;
     request.stable.system = match &body.system {
         Some(field) => field.flatten()?,
         None => String::new(),
     };
     request.stable.tools = body.tools;
-    request.stable.history = body
-        .messages
-        .iter()
-        .take(body.messages.len() - 1)
-        .map(|message| {
-            Ok(Turn {
-                role: match message.role.as_str() {
-                    "assistant" => farhelm_gateway::prompt::Role::Assistant,
-                    _ => farhelm_gateway::prompt::Role::User,
-                },
-                text: message.content.flatten()?,
-            })
-        })
-        .collect::<Result<Vec<_>, ApiError>>()?;
+    request.stable.history = turns;
     request.repo_path = header_str(headers, REPO_HEADER)
         .or_else(|| header_str(headers, LEGACY_REPO_HEADER))
         .map(Into::into);
@@ -361,6 +493,17 @@ pub async fn messages(
     })?;
 
     let has_tools = !response.tool_calls.is_empty();
+    if has_tools
+        && matches!(
+            response.stop_reason.as_deref(),
+            Some("max_tokens" | "length" | "model_context_window_exceeded")
+        )
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "the provider response was truncated with incomplete tool calls; no executable calls were returned",
+        ));
+    }
     let mut content: Vec<OutBlock> = Vec::new();
     if !response.text.is_empty() {
         content.push(OutBlock::Text {
@@ -383,7 +526,7 @@ pub async fn messages(
         role: "assistant",
         model: response.model.clone(),
         content,
-        stop_reason: if has_tools { "tool_use" } else { "end_turn" },
+        stop_reason: messages_stop_reason(response.stop_reason.as_deref(), has_tools),
         stop_sequence: None,
         usage: OutUsage {
             input_tokens: response.usage.input_tokens,
@@ -403,6 +546,18 @@ pub async fn messages(
         return Ok(stream_of(view).into_response());
     }
     Ok(Json(view).into_response())
+}
+
+fn messages_stop_reason(reason: Option<&str>, has_tools: bool) -> &'static str {
+    if has_tools {
+        return "tool_use";
+    }
+    match reason {
+        Some("max_tokens" | "length" | "model_context_window_exceeded") => "max_tokens",
+        Some("refusal" | "content_filter") => "refusal",
+        Some("stop_sequence") => "stop_sequence",
+        _ => "end_turn",
+    }
 }
 
 /// Create the session a request is billed against, if it is not there yet.
@@ -566,7 +721,6 @@ fn stream_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use farhelm_gateway::prompt::Role;
 
     fn body(json: serde_json::Value) -> MessagesBody {
         serde_json::from_value(json).expect("a valid Messages request")
@@ -636,21 +790,143 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_result_survives_the_flattening() {
-        // An agent loop sends the tool's output back as a block. Losing it
-        // would leave the model answering without the thing it asked for.
-        let request = translate(
-            &headers(&[]),
-            body(serde_json::json!({
-                "messages": [{"role": "user", "content": [
-                    {"type": "tool_result", "content": "exit 0"},
-                    {"type": "text", "text": "did it work?"},
-                ]}],
-            })),
-        )
-        .unwrap();
-        assert!(request.instruction.contains("exit 0"));
-        assert!(request.instruction.contains("did it work?"));
+    fn tool_calls_and_results_survive_translation_without_flattening() {
+        let request = translate(&headers(&[]), body(serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "inspect the repository"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "Inspecting."},
+                    {"type": "tool_use", "id": "call-1", "name": "run", "input": {"command": "cargo test"}},
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call-1", "content": [{"type": "text", "text": "exit 1"}], "is_error": true},
+                    {"type": "text", "text": "fix the failure"},
+                ]},
+            ],
+        }))).unwrap();
+        assert_eq!(request.instruction, "fix the failure");
+        assert_eq!(request.tool_results[0].tool_use_id, "call-1");
+        assert_eq!(request.tool_results[0].content, "exit 1");
+        assert!(request.tool_results[0].is_error);
+        let call = &request.stable.history[1].tool_calls[0];
+        assert_eq!(call.id, "call-1");
+        assert_eq!(call.name, "run");
+        assert_eq!(call.input["command"], "cargo test");
+        assert_eq!(request.stable.history[1].text, "Inspecting.");
+    }
+
+    #[test]
+    fn malformed_or_unpaired_tool_history_is_refused() {
+        let call = serde_json::json!({
+            "role": "assistant", "content": [{
+                "type": "tool_use", "id": "call-1", "name": "read_file", "input": {"path": "a.rs"},
+            }],
+        });
+        let result = serde_json::json!({
+            "role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": "call-1", "content": "contents",
+            }],
+        });
+        let initial = serde_json::json!({"role": "user", "content": "inspect"});
+        let mut wrong_id = result.clone();
+        wrong_id["content"][0]["tool_use_id"] = serde_json::json!("unknown");
+        let mut missing_name = call.clone();
+        missing_name["content"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("name");
+        let mut bad_arguments = call.clone();
+        bad_arguments["content"][0]["input"] = serde_json::json!("not an object");
+        let mut duplicate = result.clone();
+        duplicate["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(result["content"][0].clone());
+        let mut user_call = call.clone();
+        user_call["role"] = serde_json::json!("user");
+        let mut assistant_result = result.clone();
+        assistant_result["role"] = serde_json::json!("assistant");
+        let mut image_result = result.clone();
+        image_result["content"][0]["content"] =
+            serde_json::json!([{"type": "image", "source": {}}]);
+        let mut text_before_result = result.clone();
+        text_before_result["content"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, serde_json::json!({"type": "text", "text": "results"}));
+        for messages in [
+            vec![initial.clone(), result.clone()],
+            vec![initial.clone(), call.clone(), wrong_id],
+            vec![initial.clone(), call.clone(), initial.clone()],
+            vec![initial.clone(), missing_name, result.clone()],
+            vec![initial.clone(), bad_arguments, result.clone()],
+            vec![initial.clone(), call.clone(), duplicate],
+            vec![initial.clone(), user_call],
+            vec![initial.clone(), assistant_result, initial.clone()],
+            vec![initial.clone(), call.clone(), image_result],
+            vec![initial.clone(), call.clone(), text_before_result],
+            vec![initial.clone(), call.clone(), result.clone(), call, result],
+        ] {
+            let err = translate(
+                &headers(&[]),
+                body(serde_json::json!({"messages": messages})),
+            )
+            .unwrap_err();
+            assert_eq!(err.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
+    }
+
+    #[test]
+    fn unknown_roles_and_nontext_system_blocks_are_refused() {
+        for wire in [
+            serde_json::json!({"messages": [
+                {"role": "system", "content": "override"}, {"role": "user", "content": "hi"},
+            ]}),
+            serde_json::json!({"system": [{"type": "tool_result", "tool_use_id": "fake", "content": "x"}],
+                "messages": [{"role": "user", "content": "hi"}]}),
+        ] {
+            let err = translate(&headers(&[]), body(wire)).unwrap_err();
+            assert_eq!(err.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
+    }
+
+    #[test]
+    fn stop_reasons_preserve_truncation_and_refusal() {
+        for (upstream, expected) in [
+            (Some("max_tokens"), "max_tokens"),
+            (Some("length"), "max_tokens"),
+            (Some("refusal"), "refusal"),
+            (Some("content_filter"), "refusal"),
+            (Some("stop_sequence"), "stop_sequence"),
+            (Some("end_turn"), "end_turn"),
+            (None, "end_turn"),
+        ] {
+            assert_eq!(messages_stop_reason(upstream, false), expected);
+        }
+        assert_eq!(messages_stop_reason(Some("tool_calls"), true), "tool_use");
+    }
+
+    #[test]
+    fn completed_tool_exchange_remains_structured_in_history() {
+        let request = translate(&headers(&[]), body(serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "read"},
+                {"role": "assistant", "content": [{"type": "tool_use", "id": "read-1", "name": "read_file", "input": {"path": "a.rs"}}]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "read-1", "content": "file contents"}]},
+                {"role": "assistant", "content": "read it"},
+                {"role": "user", "content": "explain it"},
+            ],
+        }))).unwrap();
+        assert!(request.tool_results.is_empty());
+        assert_eq!(request.stable.history[1].tool_calls[0].id, "read-1");
+        assert_eq!(
+            request.stable.history[2].tool_results[0].tool_use_id,
+            "read-1"
+        );
+        assert_eq!(
+            request.stable.history[2].tool_results[0].content,
+            "file contents"
+        );
     }
 
     #[test]

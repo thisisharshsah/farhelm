@@ -125,6 +125,16 @@ pub enum Command {
     },
     /// End a session and its pane.
     StopSession { session_id: String },
+    /// Change what one session clears without asking.
+    ///
+    /// Accepted from a phone or the web app only. A watch is barred for the
+    /// same reason it cannot clear a destructive command, and a connector
+    /// because a model widening its own permissions is the one thing this
+    /// system exists to prevent. Enforced server-side in `commands::execute`.
+    SetAutoApprove {
+        session_id: String,
+        level: crate::types::AutoApprove,
+    },
     /// Point the native agent at a task. Returns immediately; the loop runs
     /// detached, because a task takes minutes and the phone that started it may
     /// be in a tunnel by the time it lands.

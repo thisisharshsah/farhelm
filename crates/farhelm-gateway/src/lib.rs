@@ -28,9 +28,11 @@ pub mod compaction;
 pub mod context;
 pub mod credential;
 pub mod dispatch;
+pub mod openai;
 pub mod pipeline;
 pub mod pregate;
 pub mod prompt;
+pub mod providers;
 pub mod router;
 
 pub use dispatch::{
@@ -41,4 +43,5 @@ pub use pipeline::{
     StageTrace,
 };
 pub use prompt::{StableContext, Turn};
+pub use providers::ProviderClient;
 pub use router::{Models, Route};

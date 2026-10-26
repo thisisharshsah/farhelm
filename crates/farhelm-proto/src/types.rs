@@ -199,6 +199,22 @@ text_enum! {
 }
 
 text_enum! {
+    /// How much of the approval queue a session's supervisor has delegated to
+    /// the runner's policy engine.
+    ///
+    /// Chosen by a person at a full screen (phone or web) for one session, and
+    /// bounded by [`Risk`]: `Low` clears low-risk commands on its own, `Medium`
+    /// clears low and medium, and nothing ever clears a destructive one — that
+    /// rule has no setting, because a setting is what somebody reaches for at
+    /// 2am and never puts back.
+    AutoApprove {
+        Off => "off",
+        Low => "low",
+        Medium => "medium",
+    }
+}
+
+text_enum! {
     Decision {
         Approved => "approved",
         Denied => "denied",
@@ -611,6 +627,7 @@ mod wire_format_tests {
         assert_wire_agrees!(SessionStatus);
         assert_wire_agrees!(PlanStepStatus);
         assert_wire_agrees!(Risk);
+        assert_wire_agrees!(AutoApprove);
         assert_wire_agrees!(Decision);
         assert_wire_agrees!(DecidedVia);
         assert_wire_agrees!(Tier);
@@ -618,6 +635,8 @@ mod wire_format_tests {
         assert_wire_agrees!(DeviceKind);
         assert_wire_agrees!(TaskStatus);
         assert_wire_agrees!(BatchStatus);
+        assert_wire_agrees!(EntityKind);
+        assert_wire_agrees!(RelationKind);
     }
 
     #[test]
@@ -634,6 +653,60 @@ mod wire_format_tests {
             let parsed: Body = serde_json::from_str(&body).unwrap();
             assert_eq!(parsed.agent, *variant);
         }
+    }
+
+    #[test]
+    fn unified_workspace_entities_round_trip() {
+        let project = Project {
+            id: "prj_1".into(),
+            workspace_id: "ws_default".into(),
+            name: "Core Infrastructure".into(),
+            description: "Platform core services".into(),
+            budget_cap_usd: Some(100.0),
+            created_at: 1_700_000_000,
+            updated_at: 1_700_001_000,
+        };
+        let project_json = serde_json::to_string(&project).unwrap();
+        let parsed_project: Project = serde_json::from_str(&project_json).unwrap();
+        assert_eq!(parsed_project, project);
+
+        let conv = Conversation {
+            id: "conv_1".into(),
+            project_id: "prj_1".into(),
+            title: "Discussion on ADR 0002".into(),
+            created_at: 1_700_000_000,
+            updated_at: 1_700_002_000,
+        };
+        let conv_json = serde_json::to_string(&conv).unwrap();
+        let parsed_conv: Conversation = serde_json::from_str(&conv_json).unwrap();
+        assert_eq!(parsed_conv, conv);
+
+        let doc = Document {
+            id: "doc_1".into(),
+            project_id: "prj_1".into(),
+            title: "Architecture Specification".into(),
+            content: "# Architecture".into(),
+            content_hash: "sha256:abc123".into(),
+            version: 1,
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_000,
+        };
+        let doc_json = serde_json::to_string(&doc).unwrap();
+        let parsed_doc: Document = serde_json::from_str(&doc_json).unwrap();
+        assert_eq!(parsed_doc, doc);
+
+        let link = EntityLink {
+            id: "link_1".into(),
+            source_type: EntityKind::Conversation,
+            source_id: "conv_1".into(),
+            target_type: EntityKind::Document,
+            target_id: "doc_1".into(),
+            relation_kind: RelationKind::Documents,
+            created_at: 1_700_002_000,
+        };
+        let link_json = serde_json::to_string(&link).unwrap();
+        let parsed_link: EntityLink = serde_json::from_str(&link_json).unwrap();
+        assert_eq!(parsed_link, link);
     }
 }
 
@@ -807,4 +880,128 @@ pub struct BatchItem {
     pub queued_at: i64,
     pub submitted_at: Option<i64>,
     pub settled_at: Option<i64>,
+}
+
+text_enum! {
+    /// Supported entity kinds for cross-entity linking and references (ADR 0002).
+    EntityKind {
+        Project => "project",
+        Conversation => "conversation",
+        Task => "task",
+        TaskRun => "task_run",
+        Document => "document",
+        Artifact => "artifact",
+        Repo => "repo",
+    }
+}
+
+text_enum! {
+    /// Semantic nature of relationship between two workspace entities (ADR 0002).
+    RelationKind {
+        Mentions => "mentions",
+        Spawns => "spawns",
+        Blocks => "blocks",
+        Documents => "documents",
+        Produces => "produces",
+        BelongsTo => "belongs_to",
+    }
+}
+
+/// A project container grouping repositories, tasks, conversations and documents (ADR 0002).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Project {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub description: String,
+    pub budget_cap_usd: Option<f64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Local project creation. Identity, workspace and budget policy are owned by
+/// the server; callers cannot assign them through this request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateProjectRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Bounded projects in descending server-generated ID order. Pass the cursor
+/// back unchanged to continue; it does not grant access to another workspace.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectPage {
+    pub projects: Vec<Project>,
+    pub next_cursor: Option<String>,
+}
+
+/// Registered repository metadata exposed only by direct project HTTP routes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectRepository {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectRepositoryPage {
+    pub repositories: Vec<ProjectRepository>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttachProjectRepositoryRequest {
+    pub repo_id: String,
+}
+
+/// Project context comes from the route, repository paths from registered IDs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartProjectTaskRequest {
+    pub repo_id: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub budget_usd: Option<f64>,
+    #[serde(default)]
+    pub max_steps: Option<usize>,
+    #[serde(default)]
+    pub retry_of: Option<String>,
+}
+
+/// A multi-turn conversation or chat session within a project (ADR 0002).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Conversation {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// A specification, architecture record, or documentation file linked to a project (ADR 0002).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Document {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub content: String,
+    pub content_hash: String,
+    pub version: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// A typed cross-entity relationship link (ADR 0002).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntityLink {
+    pub id: String,
+    pub source_type: EntityKind,
+    pub source_id: String,
+    pub target_type: EntityKind,
+    pub target_id: String,
+    pub relation_kind: RelationKind,
+    pub created_at: i64,
 }

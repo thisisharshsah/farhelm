@@ -8,8 +8,9 @@
 //! there is nothing to await; async callers wrap these in `spawn_blocking`.
 
 use farhelm_proto::types::{
-    AgentTask, Approval, BatchItem, BatchStatus, Budget, DecidedVia, Decision, Device, Machine,
-    Message, Note, Plan, PlanStep, Repo, Session, TaskStatus, UsageEvent,
+    AgentTask, Approval, AutoApprove, BatchItem, BatchStatus, Budget, Conversation, DecidedVia,
+    Decision, Device, Document, EntityKind, EntityLink, Machine, Message, Note, Plan, PlanStep,
+    Project, Repo, Session, TaskStatus, UsageEvent,
 };
 use farhelm_proto::views::OutputLine;
 
@@ -187,6 +188,9 @@ store_port! {
 
     fn get_repo(&self, id: &str) -> Result<Option<Repo>>;
 
+    /// Up to 100 registered repositories on exactly this machine, by name/ID.
+    fn list_repos(&self, machine_id: &str) -> Result<Vec<Repo>>;
+
     /// Repos are unique per (machine, path), which is how a hook's `cwd`
     /// resolves to the repo it is working in.
     fn find_repo_by_path(&self, machine_id: &str, path: &str) -> Result<Option<Repo>>;
@@ -206,6 +210,15 @@ store_port! {
     /// re-attaches to the session it belongs to instead of creating a new one
     /// on every tool call.
     fn find_session_by_agent_id(&self, agent_session_id: &str) -> Result<Option<Session>>;
+
+    /// What this session clears without asking. `Off` for a session nobody has
+    /// delegated anything for, including every session that predates the
+    /// setting — the absence of a row is the conservative answer.
+    fn auto_approve(&self, session_id: &str) -> Result<AutoApprove>;
+
+    /// Record a standing delegation for one session. Overwrites; the audit
+    /// trail of what it cleared is the approval table, not this row.
+    fn set_auto_approve(&self, session_id: &str, level: AutoApprove, at_ms: i64) -> Result<()>;
     }
 }
 
@@ -465,6 +478,110 @@ store_port! {
     }
 }
 
+store_port! {
+    /// Unified workspace object model and cross-entity link storage (ADR 0002).
+    WorkspaceStore {
+    /// The database's persisted, server-owned local workspace identity.
+    fn local_workspace_id(&self) -> Result<String>;
+
+    /// Insert a new project. An existing identity must fail without changing it.
+    fn insert_project(&self, project: &Project) -> Result<()>;
+
+    /// Retrieve only when the project belongs to the supplied trusted scope.
+    fn get_project_in_workspace(&self, workspace_id: &str, id: &str) -> Result<Option<Project>>;
+
+    /// Descending ID keyset page, exclusive of `after`. Callers bound `limit`.
+    fn list_project_page(&self, workspace_id: &str, after: Option<&str>, limit: usize) -> Result<Vec<Project>>;
+
+    /// Upsert a project.
+    fn put_project(&self, project: &Project) -> Result<()>;
+
+    /// Retrieve a project by its unique ID.
+    fn get_project(&self, id: &str) -> Result<Option<Project>>;
+
+    /// List all projects in a workspace, ordered newest updated first.
+    fn list_projects(&self, workspace_id: &str) -> Result<Vec<Project>>;
+
+    /// Upsert a conversation.
+    fn put_conversation(&self, conversation: &Conversation) -> Result<()>;
+
+    /// Retrieve a conversation by its unique ID.
+    fn get_conversation(&self, id: &str) -> Result<Option<Conversation>>;
+
+    /// List all conversations in a project, ordered newest updated first.
+    fn list_conversations(&self, project_id: &str) -> Result<Vec<Conversation>>;
+
+    /// Upsert a document.
+    fn put_document(&self, document: &Document) -> Result<()>;
+
+    /// Retrieve a document by its unique ID.
+    fn get_document(&self, id: &str) -> Result<Option<Document>>;
+
+    /// List all documents in a project, ordered newest updated first.
+    fn list_documents(&self, project_id: &str) -> Result<Vec<Document>>;
+
+    /// Record a typed cross-entity relationship link.
+    /// Create an edge idempotently by endpoint/relation tuple. Return the
+    /// canonical persisted row, including its original ID and creation time.
+    fn put_entity_link(&self, link: &EntityLink) -> Result<EntityLink>;
+
+    /// List all outbound links from an entity.
+    fn list_links_from(&self, source_type: EntityKind, source_id: &str) -> Result<Vec<EntityLink>>;
+
+    /// List all inbound links to an entity.
+    fn list_links_to(&self, target_type: EntityKind, target_id: &str) -> Result<Vec<EntityLink>>;
+
+    /// Remove a relationship link. Returns true if one was deleted.
+    fn remove_entity_link(&self, link_id: &str) -> Result<bool>;
+    }
+}
+
+/// Trusted scope assembled by the local project use case, never from wire data.
+#[derive(Clone, Copy)]
+pub struct ProjectScope<'a> {
+    pub workspace_id: &'a str,
+    pub machine_id: &'a str,
+    pub project_id: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectTaskInsertOutcome {
+    Inserted,
+    NotFound,
+    RetryNotRejected,
+    InvalidTask,
+}
+
+store_port! {
+    /// Scoped conversation claims and replies. Calls are synchronous and must be
+    /// composed outside async executor hot paths, before/after inference.
+    ChatStore {
+    fn chat_list(&self, scope: ProjectScope<'_>, after: Option<&str>, limit: usize) -> Result<Vec<farhelm_proto::ProjectChat>>;
+    fn chat_detail(&self, scope: ProjectScope<'_>, chat_id: &str) -> Result<Option<farhelm_proto::ChatDetail>>;
+    fn chat_create(&self, scope: ProjectScope<'_>, chat: &farhelm_proto::ProjectChat, session: &Session) -> Result<bool>;
+    fn chat_begin(&self, scope: ProjectScope<'_>, chat_id: &str, request: &farhelm_proto::SendChatMessageRequest, message_id: &str, at_ms: i64) -> Result<crate::chat::ChatStoreBegin>;
+    fn chat_complete(&self, scope: ProjectScope<'_>, chat_id: &str, request_id: &str, message: &farhelm_proto::ChatMessage, at_ms: i64) -> Result<crate::chat::ChatStoreFinish>;
+    fn chat_fail(&self, scope: ProjectScope<'_>, chat_id: &str, request_id: &str, error: &str, at_ms: i64) -> Result<crate::chat::ChatStoreFinish>;
+    fn chat_interrupt_pending(&self, workspace_id: &str, machine_id: &str, at_ms: i64) -> Result<usize>;
+    }
+}
+
+store_port! {
+    /// Direct-only project/repository/run provenance, separate from global tasks.
+    ProjectWorkflowStore {
+    fn project_repository_candidates(&self, scope: ProjectScope<'_>, after: Option<&str>, limit: usize) -> Result<Vec<Repo>>;
+    fn project_repositories(&self, scope: ProjectScope<'_>, after: Option<&str>, limit: usize) -> Result<Vec<Repo>>;
+    fn attach_project_repository(&self, scope: ProjectScope<'_>, repo_id: &str, at_ms: i64) -> Result<Option<Repo>>;
+    fn project_repository(&self, scope: ProjectScope<'_>, repo_id: &str) -> Result<Option<Repo>>;
+    fn project_task(&self, scope: ProjectScope<'_>, task_id: &str, repo_id: Option<&str>) -> Result<Option<AgentTask>>;
+    fn project_tasks(&self, scope: ProjectScope<'_>, after: Option<&str>, limit: usize) -> Result<Vec<AgentTask>>;
+    /// Internal guard against exposing project tasks through legacy surfaces.
+    fn project_for_task(&self, task_id: &str) -> Result<Option<String>>;
+    /// Recheck scope/membership/retry and insert all rows in one transaction.
+    fn insert_project_task(&self, scope: ProjectScope<'_>, session: &Session, task: &AgentTask, retry_of: Option<&str>) -> Result<ProjectTaskInsertOutcome>;
+    }
+}
+
 /// Everything, for a caller that genuinely needs everything.
 ///
 /// The runner's `AppState` holds one store and its handlers touch all of it, so
@@ -487,6 +604,7 @@ pub trait Store:
     + DeviceStore
     + TranscriptStore
     + HiveStore
+    + WorkspaceStore
 {
 }
 
@@ -500,7 +618,8 @@ pub trait Store:
 pub mod prelude {
     pub use super::{
         ApprovalStore, BatchStore, DeviceStore, FleetStore, HiveStore, LedgerStore, PlanStore,
-        ResponseCache, SessionStore, Store, TaskStore, TranscriptStore,
+        ProjectWorkflowStore, ResponseCache, SessionStore, Store, TaskStore, TranscriptStore,
+        WorkspaceStore,
     };
 }
 
@@ -516,6 +635,7 @@ impl<T> Store for T where
         + DeviceStore
         + TranscriptStore
         + HiveStore
+        + WorkspaceStore
 {
 }
 

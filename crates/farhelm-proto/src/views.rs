@@ -29,7 +29,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::diff::ChangeSet;
-use crate::types::{Approval, DecidedVia, PlanStep, PlanStepStatus, SessionStatus, TaskStatus};
+use crate::types::{
+    Approval, AutoApprove, DecidedVia, PlanStep, PlanStepStatus, SessionStatus, TaskStatus,
+};
 
 /// Budget as the UI needs it: the bar, the number, and the traffic light.
 ///
@@ -114,6 +116,8 @@ pub struct SessionView {
     pub started_at: i64,
     pub ended_at: Option<i64>,
     pub awaiting_approval_id: Option<String>,
+    /// What this session clears without asking. See [`AutoApprove`].
+    pub auto_approve: AutoApprove,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -239,6 +243,13 @@ pub struct TaskView {
     pub created_at: i64,
     pub updated_at: i64,
     pub decided_at: Option<i64>,
+}
+
+/// Project-scoped task page, exposed only over direct HTTP.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectTaskPage {
+    pub tasks: Vec<TaskView>,
+    pub next_cursor: Option<String>,
 }
 
 /// One task, with the diff a reviewer decides on.

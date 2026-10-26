@@ -40,6 +40,7 @@
 //! Those are policy. They arrived here with the verbatim move of the type they
 //! hang off and are the next thing out — see `farhelm-domain`.
 
+pub mod chat;
 pub mod commands;
 pub mod diff;
 pub mod events;
@@ -47,19 +48,26 @@ pub mod hello;
 pub mod types;
 pub mod views;
 
+pub use chat::{
+    ChatDetail, ChatMessage, ChatReply, ChatRole, ChatTurn, ChatTurnStatus,
+    CreateProjectChatRequest, ProjectChat, ProjectChatPage, SendChatMessageRequest,
+};
 pub use commands::{Command, DeviceFrame, PlanAction, Review};
 pub use diff::{ChangeKind, ChangeSet, DiffLine, FileDiff, Hunk, Tag};
 pub use events::{CommandRejected, ServerEvent};
 pub use hello::{Capability, Hello, PROTOCOL_VERSION, ProtocolVersion};
 pub use types::{
-    Agent, AgentTask, Approval, Avoided, BatchItem, BatchStatus, Budget, DecidedVia, Decision,
-    Device, DeviceKind, Dispatch, Machine, ParseEnumError, Plan, PlanStep, PlanStepStatus, Repo,
-    Risk, Session, SessionStatus, TaskStatus, TaskType, Tier, Usage, UsageEvent,
+    Agent, AgentTask, Approval, AttachProjectRepositoryRequest, AutoApprove, Avoided, BatchItem,
+    BatchStatus, Budget, Conversation, CreateProjectRequest, DecidedVia, Decision, Device,
+    DeviceKind, Dispatch, Document, EntityKind, EntityLink, Machine, ParseEnumError, Plan,
+    PlanStep, PlanStepStatus, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage,
+    RelationKind, Repo, Risk, Session, SessionStatus, StartProjectTaskRequest, TaskStatus,
+    TaskType, Tier, Usage, UsageEvent,
 };
 pub use views::{
     AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, OutputLine,
-    PlanProgress, PlanStepView, SessionDetail, SessionView, SpendBucket, TaskDetail, TaskView,
-    TierSlice,
+    PlanProgress, PlanStepView, ProjectTaskPage, SessionDetail, SessionView, SpendBucket,
+    TaskDetail, TaskView, TierSlice,
 };
 
 /// The relay channel a runner publishes on, derived from its public key.

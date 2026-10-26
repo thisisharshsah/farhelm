@@ -9,6 +9,7 @@ members = [
   "crates/farhelm-gateway",
   "crates/farhelm-mcp",
   "crates/farhelm-proto",
+  "crates/farhelm-process",
   "crates/farhelm-runner",
   "crates/farhelm-sqlite",
   "crates/farhelm-relay",
@@ -31,6 +32,7 @@ farhelm-domain = { path = "crates/farhelm-domain" }
 farhelm-gateway = { path = "crates/farhelm-gateway" }
 farhelm-mcp = { path = "crates/farhelm-mcp" }
 farhelm-proto = { path = "crates/farhelm-proto" }
+farhelm-process = { path = "crates/farhelm-process" }
 farhelm-sqlite = { path = "crates/farhelm-sqlite" }
 
 [workspace.lints.rust]

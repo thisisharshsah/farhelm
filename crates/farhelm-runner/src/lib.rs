@@ -12,6 +12,8 @@ pub mod hook;
 pub mod hook_cli;
 pub mod mcp;
 pub mod messages;
+mod project_workflow;
+mod projects;
 pub mod pty;
 pub mod relay;
 pub mod seed;

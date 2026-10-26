@@ -6,11 +6,11 @@
 //! rather than a second path to a provider. An agent that could reach the API
 //! directly would make every guarantee in this repo advisory.
 //!
-//! ## Retrieval and the pre-gate run once, on the first step
+//! ## Retrieval runs once, on the first step
 //!
-//! Stage 2 shells out to a formatter, a linter, a type-checker and a test suite;
-//! stage 5 walks the repo. Both are worth doing when a task starts and neither
-//! is worth doing twelve more times while the agent reads files.
+//! Stage 5 walks the task checkout. Automatic prechecks are disabled by default:
+//! repository tooling can execute arbitrary code and needs a trusted execution
+//! policy. The normal `run` tool reaches the supervisor before any command.
 //!
 //! So the first call passes `repo_path` and the rest do not, carrying the repo
 //! map forward verbatim. That is not only cheaper, it is *what makes the loop
@@ -18,23 +18,18 @@
 //! that sit ahead of a `cache_control` breakpoint, and every step after the
 //! first would pay full input rates on the whole prefix.
 //!
-//! ## Tool turns are recorded as text
+//! ## Tool turns retain their provider identities
 //!
-//! The provider is sent real `tools` and answers with real `tool_use` blocks.
-//! What goes back into *history* is a rendered transcript of those calls rather
-//! than structured content blocks.
-//!
-//! The reason is the cache contract. History is assembled by
-//! [`farhelm_gateway::prompt`] as plain [`Turn`]s, and the compaction pass (C7)
-//! summarises them as text. Threading content blocks through both would mean
-//! reworking the most heavily tested code in the repo — the part that turns a
-//! 0% cache-read ratio into a 99% one — to buy fidelity the model does not
-//! appear to need. The trade is written down here rather than discovered later.
+//! Assistant calls and matching tool results remain structured through history
+//! and provider adapters. Tool-like prose never becomes an executable request.
+//! Text-only turns retain the original cache-shaped prompt behavior; tool-bearing
+//! histories are conservatively left uncompacted until an exchange-aware
+//! summarizer can preserve their pairing.
 
 use std::path::{Path, PathBuf};
 
 use farhelm_app::store::prelude::*;
-use farhelm_gateway::prompt::{StableContext, Turn};
+use farhelm_gateway::prompt::{StableContext, ToolResult, Turn};
 use farhelm_gateway::{CompleteRequest, Gateway, GatewayError, ModelClient, ToolCall};
 use farhelm_proto::types::TaskType;
 
@@ -47,7 +42,7 @@ use crate::workspace::Workspace;
 /// repo name would move the first cache breakpoint on every single turn.
 pub const SYSTEM_PROMPT: &str = "\
 You are Farhelm's coding agent. You work in one repository and produce a \
-change set that a human reviews as a diff before anything is written to disk.
+change set that a human reviews before it is applied to the original repository.
 
 How to work:
 - Find out what is really there before changing it. Search and read; do not \
@@ -55,10 +50,11 @@ guess at filenames or APIs.
 - Make the smallest change that does the job, and match the surrounding code's \
 style, naming and comment density.
 - Prefer edit_file over write_file for files that already exist.
-- Your edits are staged, not applied. Nobody sees them until you stop, so leave \
-the change set in a state you would defend.
-- The run tool needs a human to approve each command and executes against the \
-working tree WITHOUT your staged edits, so a test run will not see your work.
+- Your edits are written to an isolated task checkout. Keep the change set in a \
+state you would defend; it will be presented for review before merge.
+- The run tool uses the supervisor's approval policy and executes in that same \
+checkout, including your edits. Run relevant tests before finishing, and report \
+checks you could not run without claiming they passed.
 - When you are done, stop calling tools and reply with a short summary of what \
 you changed and why. That summary is what the reviewer reads first.
 - If the task cannot be done, say so plainly instead of changing something else.";
@@ -235,7 +231,6 @@ fn conventions(root: &Path) -> String {
     String::new()
 }
 
-/// Render the assistant's turn — its prose plus the calls it made — for history.
 /// What a delegated agent is told about its position.
 ///
 /// It is not told it is subordinate, because that is not useful information for
@@ -244,8 +239,9 @@ fn conventions(root: &Path) -> String {
 /// nothing downstream will pick up where it stopped.
 const DELEGATE_PROMPT: &str = "\
 You are working inside a larger task, in a checkout where earlier work has \
-already been staged. Read before you assume: the repository may not look the \
-way the brief implies.\n\n\
+already been written. Read before you assume: the checkout may not look the \
+way the brief implies. Your tools and test commands see those edits. Commands \
+use the same supervisor approval policy as the larger task.\n\n\
 Finish what you are given, or say plainly that you could not and why. You \
 cannot hand work on, and your reply is the only thing the agent that called \
 you will see — so it has to carry the outcome, not a description of your \
@@ -263,7 +259,7 @@ const DELEGATE_MAX_STEPS: usize = 12;
 ///
 /// Three things are deliberately shared, and each is a decision:
 ///
-/// **The workspace.** Its edits land in the same staging overlay, so what the
+/// **The workspace.** Its edits land in the same isolated checkout, so what the
 /// human reviews at the end is one diff rather than N. That is the whole point:
 /// twenty approvals are a captcha, one diff is a decision.
 ///
@@ -299,12 +295,13 @@ async fn delegate<S: Store, C: ModelClient, Sup: Supervisor>(
     let mut stable = StableContext {
         tools: tools::definitions(),
         system: DELEGATE_PROMPT.to_owned(),
-        conventions: with_memory(conventions(&spec.repo_path), &spec.memory),
+        conventions: with_memory(conventions(workspace.root()), &spec.memory),
         repo_map: String::new(),
         history: Vec::new(),
     };
 
     let mut pending = instruction.to_owned();
+    let mut pending_results = Vec::new();
     let mut used = 0usize;
     let mut cost = 0.0;
 
@@ -313,6 +310,7 @@ async fn delegate<S: Store, C: ModelClient, Sup: Supervisor>(
 
         let mut request = CompleteRequest::new(&spec.session_id, TaskType::Edit, &pending);
         request.stable = stable.clone();
+        request.tool_results = pending_results.clone();
 
         let response = match gateway.complete(request).await {
             Ok(response) => response,
@@ -323,62 +321,67 @@ async fn delegate<S: Store, C: ModelClient, Sup: Supervisor>(
         };
         cost += response.cost_usd;
 
+        if let Some(compacted) = response.compacted_history {
+            stable.history = compacted;
+        }
+        if truncated(response.stop_reason.as_deref()) {
+            return (
+                "The delegated model response was truncated at its output limit; the work did not finish. Any incomplete tool calls were not executed.".into(),
+                used,
+                cost,
+            );
+        }
         if response.tool_calls.is_empty() {
+            if response.text.trim().is_empty() {
+                return ("The delegated model returned no usable final response; the work did not finish.".into(), used, cost);
+            }
             return (response.text, used, cost);
         }
 
-        stable
-            .history
-            .push(Turn::user(std::mem::take(&mut pending)));
-        stable.history.push(Turn::assistant(render_assistant(
-            &response.text,
-            &response.tool_calls,
-        )));
+        stable.history.push(Turn::user_with_results(
+            response.submitted_instruction,
+            std::mem::take(&mut pending_results),
+        ));
+        stable.history.push(Turn::assistant_with_tools(
+            response.text,
+            response.tool_calls.clone(),
+        ));
 
         let mut results = Vec::with_capacity(response.tool_calls.len());
         for call in &response.tool_calls {
             supervisor.note(&format!("  ▸ {}", tools::summary(call)));
             let rendered = match tools::execute(call, workspace, supervisor, remembered).await {
-                Ok(body) => render_result(call, &body, false),
-                Err(err) => render_result(call, &err.to_string(), true),
+                Ok(body) => tool_result(call, &body, false),
+                Err(err) => tool_result(call, &err.to_string(), true),
             };
             results.push(rendered);
         }
-        pending = results.join("\n\n");
+        pending.clear();
+        pending_results = results;
     }
 
     (
         format!(
-            "Stopped after {budget} steps without finishing. Whatever it staged is still here."
+            "Stopped after {budget} steps without finishing. Its checkout edits are still here."
         ),
         used,
         cost,
     )
 }
 
-fn render_assistant(text: &str, calls: &[ToolCall]) -> String {
-    let mut out = String::new();
-    if !text.trim().is_empty() {
-        out.push_str(text.trim());
+/// Preserve the call identity and failure status for the next model turn.
+fn tool_result(call: &ToolCall, body: &str, failed: bool) -> ToolResult {
+    ToolResult {
+        tool_use_id: call.id.clone(),
+        content: body.to_owned(),
+        is_error: failed,
     }
-    for call in calls {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&format!(
-            "[tool_use:{}] {} {}",
-            call.id, call.name, call.input
-        ));
-    }
-    out
 }
 
-/// Render one tool result for the next turn's dynamic tail.
-fn render_result(call: &ToolCall, body: &str, failed: bool) -> String {
-    format!(
-        "[tool_{}:{}]\n{body}",
-        if failed { "error" } else { "result" },
-        call.id
+fn truncated(reason: Option<&str>) -> bool {
+    matches!(
+        reason,
+        Some("max_tokens" | "length" | "model_context_window_exceeded")
     )
 }
 
@@ -435,6 +438,18 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         }
     };
 
+    // Git worktrees keep a .git pointer to external metadata. Carry bounded
+    // local ignore policy from the trusted source capability rather than
+    // letting file traversal follow that pointer outside its checkout.
+    if let Some(exclude) = Workspace::open(&spec.repo_path)
+        .ok()
+        .and_then(|source| source.git_exclude())
+        && let Err(error) = workspace.set_git_exclude(&exclude)
+    {
+        let _ = worktree.discard();
+        return failed(error.to_string());
+    }
+
     let mut stable = StableContext {
         tools: tools::definitions_with_delegate(),
         system: SYSTEM_PROMPT.to_owned(),
@@ -443,12 +458,13 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         // the cache breakpoint that follows them. An agent that has to be told
         // the same thing about a repository every session is one nobody keeps
         // using.
-        conventions: with_memory(conventions(&spec.repo_path), &spec.memory),
+        conventions: with_memory(conventions(worktree.path()), &spec.memory),
         repo_map: String::new(),
         history: Vec::new(),
     };
 
     let mut pending = spec.prompt.clone();
+    let mut pending_results = Vec::new();
     let mut cost_usd = 0.0;
     let mut summary = String::new();
     let mut remembered: Vec<(String, String)> = Vec::new();
@@ -460,9 +476,10 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
 
         let mut request = CompleteRequest::new(&spec.session_id, TaskType::Edit, &pending);
         request.stable = stable.clone();
-        // Only the first step pays for retrieval and the pre-gate. See the
+        request.tool_results = pending_results.clone();
+        // Only the first step pays for retrieval and any enabled pre-gate. See the
         // module docs: this is a caching decision as much as a cost one.
-        request.repo_path = (steps == 1).then(|| spec.repo_path.clone());
+        request.repo_path = (steps == 1).then(|| worktree.path().to_path_buf());
 
         let response = match gateway.complete(request).await {
             Ok(response) => response,
@@ -502,7 +519,21 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
             break;
         }
 
+        if truncated(response.stop_reason.as_deref()) {
+            let reason = "The model response was truncated at its token limit; the task did not finish. Any incomplete tool calls were not executed.";
+            outcome = Outcome::Failed(reason.into());
+            summary = reason.into();
+            break;
+        }
+
         if response.tool_calls.is_empty() {
+            if response.text.trim().is_empty() {
+                let reason =
+                    "The model returned no usable final response; the task did not finish.";
+                outcome = Outcome::Failed(reason.into());
+                summary = reason.into();
+                break;
+            }
             summary = response.text.trim().to_owned();
             // Asking git rather than an in-memory map: one `git diff`, once,
             // at the point the model says it is finished.
@@ -516,13 +547,14 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
 
         // History grows by appending, which is what keeps the earlier
         // breakpoints readable on the next turn.
-        stable
-            .history
-            .push(Turn::user(std::mem::take(&mut pending)));
-        stable.history.push(Turn::assistant(render_assistant(
-            &response.text,
-            &response.tool_calls,
-        )));
+        stable.history.push(Turn::user_with_results(
+            response.submitted_instruction,
+            std::mem::take(&mut pending_results),
+        ));
+        stable.history.push(Turn::assistant_with_tools(
+            response.text,
+            response.tool_calls.clone(),
+        ));
 
         let mut results = Vec::with_capacity(response.tool_calls.len());
         for call in &response.tool_calls {
@@ -541,7 +573,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
                     .to_owned();
 
                 if instruction.trim().is_empty() {
-                    results.push(render_result(
+                    results.push(tool_result(
                         call,
                         "delegate needs an instruction saying what to do",
                         true,
@@ -566,21 +598,22 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
                 // the caller is a way to run an unbounded task in three hops.
                 steps += used;
                 cost_usd += spent;
-                results.push(render_result(call, &report, false));
+                results.push(tool_result(call, &report, false));
                 continue;
             }
 
             let rendered =
                 match tools::execute(call, &mut workspace, supervisor, &mut remembered).await {
-                    Ok(body) => render_result(call, &body, false),
+                    Ok(body) => tool_result(call, &body, false),
                     // A tool error is not a task failure. The model gets told what
                     // went wrong and takes another turn, which is what a person at
                     // a terminal would do with a typo'd filename.
-                    Err(err) => render_result(call, &err.to_string(), true),
+                    Err(err) => tool_result(call, &err.to_string(), true),
                 };
             results.push(rendered);
         }
-        pending = results.join("\n\n");
+        pending.clear();
+        pending_results = results;
     }
 
     if outcome == Outcome::StepLimit {
@@ -595,8 +628,10 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     // a denial it is the reason it was given. Dropping it would leave the
     // session detail screen showing a conversation with its last exchange
     // missing, which reads as a bug in the runner rather than the end of a task.
-    if !pending.trim().is_empty() {
-        stable.history.push(Turn::user(pending));
+    if !pending.trim().is_empty() || !pending_results.is_empty() {
+        stable
+            .history
+            .push(Turn::user_with_results(pending, pending_results));
     }
     if !summary.trim().is_empty() {
         stable.history.push(Turn::assistant(summary.clone()));
@@ -656,6 +691,27 @@ mod tests {
     use farhelm_proto::types::{Agent, Machine, Repo, Session, SessionStatus};
     use farhelm_sqlite::SqliteStore;
     use std::sync::Mutex;
+
+    struct TruncatedClient {
+        inner: ScriptedClient,
+        after_call: usize,
+    }
+
+    impl ModelClient for TruncatedClient {
+        async fn complete(
+            &self,
+            request: farhelm_gateway::dispatch::ModelRequest,
+        ) -> Result<
+            farhelm_gateway::dispatch::ModelResponse,
+            farhelm_gateway::dispatch::DispatchError,
+        > {
+            let mut response = self.inner.complete(request).await?;
+            if self.inner.call_count() == self.after_call {
+                response.stop_reason = Some("max_tokens".into());
+            }
+            Ok(response)
+        }
+    }
 
     struct Yes {
         notes: Mutex<Vec<String>>,
@@ -914,7 +970,11 @@ mod tests {
         let transcript = run
             .transcript
             .iter()
-            .map(|turn| turn.text.as_str())
+            .flat_map(|turn| {
+                turn.tool_results
+                    .iter()
+                    .map(|result| result.content.as_str())
+            })
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
@@ -976,8 +1036,206 @@ mod tests {
         assert!(
             run.transcript
                 .iter()
-                .any(|turn| turn.text.contains("does not exist")),
+                .flat_map(|turn| &turn.tool_results)
+                .any(|result| result.is_error && result.content.contains("does not exist")),
             "the error never reached the model"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_next_model_turn_receives_matched_structured_results() {
+        let repo = TempRepo::new("structured-turns");
+        repo.write("a.txt", "trusted file contents\n");
+        repo.commit();
+        let mut calls = ScriptedClient::calls(vec![
+            ("read_file", serde_json::json!({"path": "a.txt"})),
+            ("read_file", serde_json::json!({"path": "missing.txt"})),
+        ]);
+        calls.text = "I will inspect both paths.".into();
+        let expected_calls = calls.calls.clone();
+        let client = ScriptedClient::new(vec![calls, ScriptedClient::text("Inspected.")]);
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        let finished = run(
+            &gateway,
+            &Yes::new(),
+            &TaskSpec::new("s", &repo.0, "inspect"),
+        )
+        .await;
+
+        assert_eq!(finished.outcome, Outcome::NoChanges);
+        let requests = client.requests();
+        assert_eq!(requests.len(), 2);
+        let wire = farhelm_gateway::dispatch::messages_params(&requests[1]);
+        let messages = wire["messages"].as_array().unwrap();
+        let assistant = &messages[messages.len() - 2];
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(
+            assistant["content"][0]["text"],
+            "I will inspect both paths."
+        );
+        for (index, call) in expected_calls.iter().enumerate() {
+            assert_eq!(assistant["content"][index + 1]["type"], "tool_use");
+            assert_eq!(assistant["content"][index + 1]["id"], call.id);
+            assert_eq!(assistant["content"][index + 1]["input"], call.input);
+        }
+        let continuation = &messages[messages.len() - 1];
+        assert_eq!(continuation["role"], "user");
+        assert_eq!(
+            continuation["content"][0]["tool_use_id"],
+            expected_calls[0].id
+        );
+        assert_eq!(continuation["content"][0]["is_error"], false);
+        assert!(
+            continuation["content"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("trusted file contents")
+        );
+        assert_eq!(
+            continuation["content"][1]["tool_use_id"],
+            expected_calls[1].id
+        );
+        assert_eq!(continuation["content"][1]["is_error"], true);
+        assert!(
+            continuation["content"][1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("does not exist")
+        );
+        assert!(
+            finished
+                .transcript
+                .iter()
+                .any(|turn| turn.tool_calls == expected_calls)
+        );
+        assert_eq!(
+            finished
+                .transcript
+                .iter()
+                .flat_map(|turn| &turn.tool_results)
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn a_truncated_response_cannot_execute_its_partial_tool_calls() {
+        let repo = TempRepo::new("truncated-call");
+        repo.write("a.txt", "original\n");
+        repo.commit();
+        let client = TruncatedClient {
+            inner: ScriptedClient::new(vec![ScriptedClient::calls(vec![(
+                "write_file",
+                serde_json::json!({"path": "a.txt", "content": "must not write"}),
+            )])]),
+            after_call: 1,
+        };
+        let store = store(None);
+        let gateway = Gateway::new(&store, client, GatewayConfig::default());
+        let finished = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "edit")).await;
+        assert!(matches!(finished.outcome, Outcome::Failed(_)));
+        assert!(finished.summary.contains("truncated"));
+        assert!(finished.changes.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(finished.worktree.as_ref().unwrap().path().join("a.txt"))
+                .unwrap(),
+            "original\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_final_responses_fail_without_losing_prior_edits_or_charges() {
+        for (index, text) in ["", " \n\t"].into_iter().enumerate() {
+            let repo = TempRepo::new(&format!("empty-final-{index}"));
+            repo.write("a.txt", "original\n");
+            repo.commit();
+            let client = ScriptedClient::new(vec![
+                ScriptedClient::calls(vec![(
+                    "write_file",
+                    serde_json::json!({"path":"a.txt", "content":"edited\n"}),
+                )]),
+                ScriptedClient::text(text),
+            ]);
+            let store = store(None);
+            let gateway = Gateway::new(&store, client, GatewayConfig::default());
+            let finished = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "edit")).await;
+            assert!(matches!(finished.outcome, Outcome::Failed(_)));
+            assert!(finished.summary.contains("no usable final response"));
+            assert_eq!(finished.changes.files.len(), 1);
+            assert!(finished.worktree.is_some());
+            assert!(finished.assessment.is_none());
+            assert!(finished.cost_usd > 0.0);
+            assert_eq!(
+                store
+                    .list_usage("s", farhelm_app::store::TimeRange::ALL)
+                    .unwrap()
+                    .len(),
+                2
+            );
+            assert_eq!(repo.read("a.txt"), "original\n");
+        }
+    }
+
+    #[tokio::test]
+    async fn truncated_final_text_is_failed_and_retains_prior_edits() {
+        let repo = TempRepo::new("truncated-final");
+        repo.write("a.txt", "original\n");
+        repo.commit();
+        let client = TruncatedClient {
+            inner: ScriptedClient::new(vec![
+                ScriptedClient::calls(vec![(
+                    "write_file",
+                    serde_json::json!({"path": "a.txt", "content": "edited\n"}),
+                )]),
+                ScriptedClient::text("The change is complete and"),
+            ]),
+            after_call: 2,
+        };
+        let store = store(None);
+        let gateway = Gateway::new(&store, client, GatewayConfig::default());
+        let finished = run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "edit")).await;
+        assert!(matches!(finished.outcome, Outcome::Failed(_)));
+        assert!(finished.summary.contains("did not finish"));
+        assert_eq!(finished.changes.files.len(), 1);
+        assert!(finished.worktree.is_some());
+        assert_eq!(repo.read("a.txt"), "original\n");
+    }
+
+    #[tokio::test]
+    async fn a_delegates_truncated_tool_call_is_not_executed() {
+        let repo = TempRepo::new("truncated-delegate");
+        repo.write("a.txt", "original\n");
+        repo.commit();
+        let client = TruncatedClient {
+            inner: ScriptedClient::new(vec![
+                ScriptedClient::calls(vec![(
+                    tools::DELEGATE,
+                    serde_json::json!({"instruction": "edit a.txt"}),
+                )]),
+                ScriptedClient::calls(vec![(
+                    "write_file",
+                    serde_json::json!({"path": "a.txt", "content": "must not write"}),
+                )]),
+                ScriptedClient::text("The delegated work did not finish."),
+            ]),
+            after_call: 2,
+        };
+        let store = store(None);
+        let gateway = Gateway::new(&store, client, GatewayConfig::default());
+        let finished = run(
+            &gateway,
+            &Yes::new(),
+            &TaskSpec::new("s", &repo.0, "delegate the edit"),
+        )
+        .await;
+        assert!(finished.changes.is_empty());
+        assert!(
+            finished
+                .transcript
+                .iter()
+                .flat_map(|turn| &turn.tool_results)
+                .any(|result| result.content.contains("truncated"))
         );
     }
 
@@ -1002,7 +1260,8 @@ mod tests {
         assert!(
             run.transcript
                 .iter()
-                .any(|turn| turn.text.contains("not from a train"))
+                .flat_map(|turn| &turn.tool_results)
+                .any(|result| result.is_error && result.content.contains("not from a train"))
         );
     }
 
@@ -1085,7 +1344,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retrieval_and_the_pre_gate_run_on_the_first_step_only() {
+    async fn repository_context_is_reused_after_the_first_step() {
         let repo = TempRepo::new("firststep");
         repo.write("a.txt", "x\n");
         repo.commit();
@@ -1100,6 +1359,65 @@ mod tests {
         run(&gateway, &Yes::new(), &TaskSpec::new("s", &repo.0, "x")).await;
 
         assert_eq!(client.requests().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn file_tools_keep_the_source_repositories_local_excludes() {
+        let repo = TempRepo::new("local-excludes");
+        repo.write("public.txt", "needle public\n");
+        repo.write("local.private", "needle private\n");
+        repo.commit();
+        repo.write(".git/info/exclude", "*.private\n");
+        let client = ScriptedClient::new(vec![
+            ScriptedClient::calls(vec![
+                ("list_files", serde_json::json!({})),
+                ("search", serde_json::json!({"query": "needle"})),
+            ]),
+            ScriptedClient::text("done"),
+        ]);
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        let result = run(
+            &gateway,
+            &Yes::new(),
+            &TaskSpec::new("s", &repo.0, "inspect files"),
+        )
+        .await;
+        assert_eq!(result.outcome, Outcome::NoChanges);
+        let requests = client.requests();
+        let results = requests[1].plan.dynamic_tail();
+        assert!(results.contains("public.txt"));
+        assert!(!results.contains("local.private"));
+    }
+
+    #[tokio::test]
+    async fn retrieval_and_conventions_describe_the_task_checkout() {
+        let repo = TempRepo::new("checkout-context");
+        repo.write("src/lib.rs", "pub fn task_checkout_context() {}\n");
+        repo.write("AGENTS.md", "Use the committed checkout conventions.\n");
+        repo.commit();
+        // The task starts from HEAD; dirty files in the human's checkout must
+        // not become context for files the task cannot actually see.
+        repo.write("src/lib.rs", "pub fn uncommitted_context() {}\n");
+        repo.write("AGENTS.md", "Uncommitted conventions only.\n");
+
+        let client = ScriptedClient::new(vec![ScriptedClient::text("No changes needed.")]);
+        let store = store(None);
+        let gateway = Gateway::new(&store, client.clone(), GatewayConfig::default());
+        let finished = run(
+            &gateway,
+            &Yes::new(),
+            &TaskSpec::new("s", &repo.0, "inspect task_checkout_context"),
+        )
+        .await;
+
+        assert_eq!(finished.outcome, Outcome::NoChanges);
+        let prefix = client.requests()[0].plan.stable_prefix();
+        assert!(prefix.contains("pub fn task_checkout_context"));
+        assert!(prefix.contains("Use the committed checkout conventions."));
+        assert!(!prefix.contains("uncommitted_context"));
+        assert!(!prefix.contains("Uncommitted conventions only."));
+        finished.worktree.unwrap().discard().unwrap();
     }
 
     #[tokio::test]
@@ -1217,6 +1535,21 @@ mod tests {
         assert_eq!(finished.changes.files.len(), 1, "one diff, not two");
         assert_eq!(finished.changes.files[0].path, "a.txt");
         assert_eq!(finished.summary, "Delegated the edit.");
+        let requests = client.requests();
+        let delegated_continuation = farhelm_gateway::dispatch::messages_params(&requests[2]);
+        let messages = delegated_continuation["messages"].as_array().unwrap();
+        assert_eq!(
+            messages[messages.len() - 2]["content"][0]["type"],
+            "tool_use"
+        );
+        assert_eq!(
+            messages[messages.len() - 1]["content"][0]["type"],
+            "tool_result"
+        );
+        assert_eq!(
+            messages[messages.len() - 2]["content"][0]["id"],
+            messages[messages.len() - 1]["content"][0]["tool_use_id"]
+        );
     }
 
     #[tokio::test]
@@ -1401,16 +1734,15 @@ mod tests {
     }
 
     #[test]
-    fn an_assistant_turn_renders_its_prose_and_its_calls() {
-        let rendered = render_assistant(
-            "Looking at the retry path.",
-            &[ToolCall {
-                id: "toolu_1".into(),
-                name: "read_file".into(),
-                input: serde_json::json!({"path": "a.rs"}),
-            }],
-        );
-        assert!(rendered.starts_with("Looking at the retry path."));
-        assert!(rendered.contains("[tool_use:toolu_1] read_file"));
+    fn a_tool_result_retains_its_identity_and_error_status() {
+        let call = ToolCall {
+            id: "toolu_1".into(),
+            name: "read_file".into(),
+            input: serde_json::json!({"path": "a.rs"}),
+        };
+        let result = tool_result(&call, "file does not exist", true);
+        assert_eq!(result.tool_use_id, call.id);
+        assert_eq!(result.content, "file does not exist");
+        assert!(result.is_error);
     }
 }

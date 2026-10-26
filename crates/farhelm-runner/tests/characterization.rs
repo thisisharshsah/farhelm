@@ -375,6 +375,7 @@ async fn fleet_view_shape_is_stable() {
         session_keys,
         [
             "agent",
+            "auto_approve",
             "awaiting_approval_id",
             "budget",
             "ended_at",

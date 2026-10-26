@@ -18,6 +18,18 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # Desktop tests exercise the real embedded app, not the build placeholder.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build embedded frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @farhelm/web build
       - name: Format
         run: cargo fmt --all --check
       # The desktop app needs the webview toolkit to build at all.
@@ -30,6 +42,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Model conformance probe fixtures (no live inference)
+        run: cargo test --locked -p farhelm-gateway --example model_conformance
       - name: Ledger smoke test
         run: cargo run -p farhelm-runner -- demo
       # Milestone 2's exit criteria. Printed as well as asserted so a
@@ -38,6 +52,29 @@ jobs:
         run: |
           cargo test -p farhelm-gateway --test savings -- --nocapture
           cargo test -p farhelm-gateway --test compaction_savings -- --nocapture
+
+  execution-msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90.0"
+      - uses: Swatinem/rust-cache@v2
+      - name: Execution dependencies support the declared minimum Rust version
+        run: cargo check --locked -p farhelm-process -p farhelm-agent
+
+  process-safety:
+    strategy:
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Command lifetime and output regressions
+        run: cargo test --locked -p farhelm-process
 
   clients:
     runs-on: ubuntu-latest

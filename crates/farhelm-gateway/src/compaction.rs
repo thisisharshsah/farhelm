@@ -118,6 +118,12 @@ impl CompactionPlan {
 /// not "would this save money" — it usually would — but "is this history long
 /// enough that summarising it loses less than carrying it costs".
 pub fn plan(history: &[Turn], policy: &CompactionPolicy) -> Option<CompactionPlan> {
+    // Until compaction can preserve complete tool exchanges atomically, keep
+    // their original structure. Summarizing only one side can leave an orphan
+    // result or discard a pending call that still needs its matching result.
+    if history.iter().any(Turn::has_tools) {
+        return None;
+    }
     let total: usize = history.iter().map(|turn| turn.text.len()).sum();
     if total < policy.trigger_bytes {
         return None;
@@ -197,6 +203,31 @@ mod tests {
     #[test]
     fn an_empty_history_is_left_alone() {
         assert_eq!(plan(&[], &CompactionPolicy::default()), None);
+    }
+
+    #[test]
+    fn compaction_cannot_split_or_summarize_a_tool_exchange() {
+        let mut turns = history(20, 4_000);
+        turns.push(Turn::assistant_with_tools(
+            "",
+            vec![crate::dispatch::ToolCall {
+                id: "pending-call".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({"path": "a.rs"}),
+            }],
+        ));
+        // The result will arrive in the dynamic tail. Losing this call would
+        // make that result an orphan even if the kept text turns were valid.
+        assert_eq!(plan(&turns, &CompactionPolicy::default()), None);
+        turns.push(Turn::user_with_results(
+            "",
+            vec![crate::prompt::ToolResult {
+                tool_use_id: "pending-call".into(),
+                content: "contents".into(),
+                is_error: false,
+            }],
+        ));
+        assert_eq!(plan(&turns, &CompactionPolicy::default()), None);
     }
 
     #[test]

@@ -174,6 +174,58 @@ pub async fn execute(
             let session = stop_session(state, &session_id).await?;
             Ok(Outcome::SessionChanged(Box::new(session)))
         }
+        Command::SetAutoApprove { session_id, level } => {
+            // A standing grant, so narrower than a single decision: a watch or
+            // a connector may clear one ordinary command but may not delegate
+            // every future one. Checked here, on every transport.
+            if !farhelm_domain::may_set_auto_approve(via) {
+                return Err(CommandError::Forbidden(
+                    "auto-approve can only be changed from the phone or the web app".into(),
+                ));
+            }
+            state
+                .store
+                .get_session(&session_id)?
+                .ok_or_else(|| CommandError::NotFound(format!("session {session_id}")))?;
+            state.store.set_auto_approve(&session_id, level, now_ms())?;
+
+            // Raising the level answers the question the person was looking
+            // at: a card already waiting that the new level covers is cleared
+            // now, through the ordinary decision path, so the agent blocked on
+            // it moves and the audit row says the policy did it.
+            let covered: Vec<String> = state
+                .store
+                .list_pending_approvals()?
+                .into_iter()
+                .filter(|approval| {
+                    approval.session_id == session_id
+                        && farhelm_domain::auto_approves(level, approval.risk)
+                })
+                .map(|approval| approval.id)
+                .collect();
+            for approval_id in covered {
+                decide(
+                    state,
+                    &approval_id,
+                    Decision::Approved,
+                    DecidedVia::AutoPolicy,
+                )
+                .await?;
+            }
+
+            state.publish(ServerEvent::SessionUpsert {
+                session_id: session_id.clone(),
+            });
+            let lookups = Lookups::new(state.store.as_ref())
+                .map_err(|err| CommandError::Internal(err.to_string()))?;
+            let session = state
+                .store
+                .get_session(&session_id)?
+                .ok_or_else(|| CommandError::NotFound(format!("session {session_id}")))?;
+            let view = crate::views::view_of(state, &lookups, &session)
+                .map_err(|err| CommandError::Internal(err.to_string()))?;
+            Ok(Outcome::SessionChanged(Box::new(view)))
+        }
         Command::StartTask {
             repo_path,
             prompt,
@@ -546,6 +598,167 @@ mod tests {
                 decided_at: None,
             })
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn raising_auto_approve_clears_the_card_already_waiting() {
+        let state = fixture();
+        approval(&state, "low", Risk::Low);
+        approval(&state, "medium", Risk::Medium);
+        approval(&state, "rm", Risk::Destructive);
+
+        let outcome = execute(
+            &state,
+            Command::SetAutoApprove {
+                session_id: "s1".into(),
+                level: farhelm_proto::types::AutoApprove::Low,
+            },
+            DecidedVia::Web,
+        )
+        .await
+        .unwrap();
+        match outcome {
+            Outcome::SessionChanged(view) => {
+                assert_eq!(view.auto_approve, farhelm_proto::types::AutoApprove::Low)
+            }
+            other => panic!("unexpected outcome {other:?}"),
+        }
+
+        // The low-risk one was cleared by the policy, and the audit row says so.
+        let low = state.store.get_approval("low").unwrap().unwrap();
+        assert_eq!(low.decision, Some(Decision::Approved));
+        assert_eq!(low.decided_via, Some(DecidedVia::AutoPolicy));
+        // The others still wait on a person.
+        assert!(
+            state
+                .store
+                .get_approval("medium")
+                .unwrap()
+                .unwrap()
+                .is_pending()
+        );
+        assert!(
+            state
+                .store
+                .get_approval("rm")
+                .unwrap()
+                .unwrap()
+                .is_pending()
+        );
+    }
+
+    #[tokio::test]
+    async fn no_level_clears_a_destructive_command() {
+        let state = fixture();
+        approval(&state, "rm", Risk::Destructive);
+        execute(
+            &state,
+            Command::SetAutoApprove {
+                session_id: "s1".into(),
+                level: farhelm_proto::types::AutoApprove::Medium,
+            },
+            DecidedVia::Phone,
+        )
+        .await
+        .unwrap();
+        assert!(
+            state
+                .store
+                .get_approval("rm")
+                .unwrap()
+                .unwrap()
+                .is_pending()
+        );
+        assert_eq!(
+            state.store.auto_approve("s1").unwrap(),
+            farhelm_proto::types::AutoApprove::Medium
+        );
+    }
+
+    #[tokio::test]
+    async fn a_watch_or_a_connector_cannot_delegate() {
+        let state = fixture();
+        for via in [
+            DecidedVia::Watch,
+            DecidedVia::Connector,
+            DecidedVia::AutoPolicy,
+        ] {
+            let err = execute(
+                &state,
+                Command::SetAutoApprove {
+                    session_id: "s1".into(),
+                    level: farhelm_proto::types::AutoApprove::Low,
+                },
+                via,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(err, CommandError::Forbidden(_)),
+                "{via:?}: {err:?}"
+            );
+        }
+        assert_eq!(
+            state.store.auto_approve("s1").unwrap(),
+            farhelm_proto::types::AutoApprove::Off
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_approval_under_a_standing_level_never_becomes_a_card() {
+        let state = fixture();
+        state
+            .store
+            .set_auto_approve("s1", farhelm_proto::types::AutoApprove::Low, NOW)
+            .unwrap();
+        let mut events = state.events.subscribe();
+
+        let raised = state
+            .raise_approval(Approval {
+                id: "a1".into(),
+                session_id: "s1".into(),
+                tool: "Bash".into(),
+                payload: "cargo test".into(),
+                risk: Risk::Low,
+                decision: None,
+                decided_via: None,
+                requested_at: NOW,
+                decided_at: None,
+            })
+            .unwrap();
+        assert!(matches!(raised, crate::state::Raised::AutoApproved(_)));
+        assert!(state.store.list_pending_approvals().unwrap().is_empty());
+
+        // Clients hear a decision, not a request — nothing to tap.
+        let mut saw_decision = false;
+        while let Ok(event) = events.try_recv() {
+            match event {
+                ServerEvent::ApprovalRequest { .. } => {
+                    panic!("an auto-approved command raised a card")
+                }
+                ServerEvent::ApprovalDecision { approval_id, .. } if approval_id == "a1" => {
+                    saw_decision = true
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_decision);
+
+        // And a destructive one under the same level still waits.
+        let raised = state
+            .raise_approval(Approval {
+                id: "a2".into(),
+                session_id: "s1".into(),
+                tool: "Bash".into(),
+                payload: "rm -rf /".into(),
+                risk: Risk::Destructive,
+                decision: None,
+                decided_via: None,
+                requested_at: NOW,
+                decided_at: None,
+            })
+            .unwrap();
+        assert!(matches!(raised, crate::state::Raised::Pending(_)));
     }
 
     /// Bill one call to the fixture's session so the dashboard has numbers.

@@ -43,13 +43,20 @@
 //! [`id`] stay concrete, and are the two places in this crate that touch
 //! ambient state.
 
+pub mod chat;
 pub mod id;
 pub mod ledger;
 pub mod legacy;
+pub mod project_workflow;
+pub mod projects;
 pub mod store;
 pub mod time;
 
 pub use ledger::{Call, Ledger, LedgerError, Summary};
+pub use project_workflow::{
+    ProjectTaskRows, ProjectWorkflow, ProjectWorkflowError, validate_start_task,
+};
+pub use projects::{ProjectError, Projects};
 pub use store::{
     ApprovalStore, BatchStore, DecisionOutcome, DeviceStore, FleetStore, HiveStore, LedgerStore,
     PlanStore, ResponseCache, SessionStore, Store, StoreError, TaskOutcome, TaskStore, TimeRange,

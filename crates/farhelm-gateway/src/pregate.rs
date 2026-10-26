@@ -3,16 +3,16 @@
 //! The cheapest token is the one never sent. A formatter, a linter, a type
 //! checker and the affected tests all answer questions a model would otherwise
 //! be paid to guess at, and they answer them exactly. So they run first, and
-//! only their *failures* reach the prompt.
+//! failures and checks that could not run reach the prompt.
 //!
 //! Two savings come out of this: a verify-shaped task that comes back all-green
 //! costs nothing at all, and a task that does reach the model carries a short
 //! digest of real failures instead of a whole file.
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
+use farhelm_process::RunError;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
@@ -62,23 +62,56 @@ impl Check {
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         })
     }
+
+    fn succeeded(&self, process_succeeded: bool, stdout: &[u8]) -> bool {
+        // `gofmt -l` exits successfully even when it lists unformatted files.
+        // A nonempty listing is a formatting failure, not a passing check.
+        process_succeeded
+            && !(self.program == "gofmt"
+                && self.args.iter().any(|arg| arg == "-l")
+                && !stdout.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckOutcome {
     pub name: String,
     pub kind: CheckKind,
+    /// Kept for consumers of the existing report shape. A skipped check never
+    /// passes; `skipped` distinguishes unavailable tooling from a failed check.
     pub passed: bool,
-    /// Combined stdout+stderr, truncated. Empty when the check passed.
+    #[serde(default)]
+    pub skipped: bool,
+    /// Combined stdout+stderr or the reason a check could not run, truncated.
+    /// Empty when the check passed.
     pub output: String,
     pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckStatus {
+    Passed,
+    Failed,
+    Skipped,
+}
+
+impl CheckOutcome {
+    pub fn status(&self) -> CheckStatus {
+        if self.skipped {
+            CheckStatus::Skipped
+        } else if self.passed {
+            CheckStatus::Passed
+        } else {
+            CheckStatus::Failed
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreGateReport {
     pub outcomes: Vec<CheckOutcome>,
-    /// True when no check could be run at all — an unknown toolchain. Distinct
-    /// from "everything passed", because it means the gate proved nothing.
+    /// True when no check ran, including disabled execution or unavailable
+    /// tooling. Distinct from "everything passed": the gate proved nothing.
     pub skipped: bool,
 }
 
@@ -94,30 +127,47 @@ impl PreGateReport {
     pub fn all_green(&self) -> bool {
         !self.skipped
             && !self.outcomes.is_empty()
-            && self.outcomes.iter().all(|outcome| outcome.passed)
+            && self
+                .outcomes
+                .iter()
+                .all(|outcome| outcome.status() == CheckStatus::Passed)
     }
 
     pub fn failures(&self) -> impl Iterator<Item = &CheckOutcome> {
-        self.outcomes.iter().filter(|outcome| !outcome.passed)
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.status() == CheckStatus::Failed)
     }
 
-    /// The failures, formatted for the prompt's dynamic tail. Returns `None`
-    /// when there is nothing to tell the model.
+    /// Failures and unavailable checks, formatted for the prompt's dynamic tail.
+    /// Returns `None` when there is nothing to tell the model.
     pub fn digest(&self) -> Option<String> {
+        if self.outcomes.is_empty() && self.skipped {
+            return Some(
+                "Verification was skipped. No checks ran; do not report verification as passing."
+                    .to_owned(),
+            );
+        }
         let mut sections: Vec<String> = Vec::new();
-        for failure in self.failures() {
+        for outcome in &self.outcomes {
+            let status = match outcome.status() {
+                CheckStatus::Passed => continue,
+                CheckStatus::Failed => "failed",
+                CheckStatus::Skipped => "skipped",
+            };
             sections.push(format!(
-                "### {} ({})\n{}",
-                failure.name,
-                failure.kind,
-                failure.output.trim()
+                "### {} ({}; {status})\n{}",
+                outcome.name,
+                outcome.kind,
+                outcome.output.trim()
             ));
         }
         if sections.is_empty() {
             return None;
         }
         Some(format!(
-            "The following checks failed. Fix these; everything else already passes.\n\n{}",
+            "Verification is incomplete. The following checks failed or could not run. \
+             Checks not listed may not have run; do not report them as passing.\n\n{}",
             sections.join("\n\n")
         ))
     }
@@ -224,48 +274,59 @@ fn truncate(mut text: String) -> String {
     if text.len() <= MAX_OUTPUT_BYTES {
         return text;
     }
-    // Keep the tail: compilers and test runners put the summary last.
-    let start = text.len() - MAX_OUTPUT_BYTES;
-    let start = (start..text.len())
-        .find(|index| text.is_char_boundary(*index))
-        .unwrap_or(text.len());
-    text = text.split_off(start);
-    format!("…(truncated)…\n{text}")
+    // Capture retains a bounded prefix. Preserve valid UTF-8 after lossy
+    // decoding, and make the missing output explicit to the model.
+    let mut end = MAX_OUTPUT_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    format!("{text}\n…(truncated)…")
 }
 
 /// Run one check.
 async fn run_check(repo: &Path, check: &Check, timeout: Duration) -> CheckOutcome {
     let started = std::time::Instant::now();
 
-    let spawned = Command::new(&check.program)
-        .args(&check.args)
-        .current_dir(repo)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output();
+    let mut command = Command::new(&check.program);
+    command.args(&check.args).current_dir(repo);
 
-    let (passed, output) = match tokio::time::timeout(timeout, spawned).await {
-        Ok(Ok(result)) => {
-            let mut combined = String::from_utf8_lossy(&result.stdout).into_owned();
-            combined.push_str(&String::from_utf8_lossy(&result.stderr));
-            (result.status.success(), combined)
-        }
-        // A missing tool is not a failing check — it means the gate could not
-        // ask the question, and pretending otherwise would send a bogus
-        // "command not found" into the prompt as if it were a lint error.
-        Ok(Err(err)) if err.kind() == std::io::ErrorKind::NotFound => {
-            (true, format!("skipped: {} is not installed", check.program))
-        }
-        Ok(Err(err)) => (false, format!("could not run {}: {err}", check.program)),
-        Err(_) => (false, format!("timed out after {}s", timeout.as_secs())),
-    };
+    let (passed, skipped, output) =
+        match farhelm_process::run(command, timeout, MAX_OUTPUT_BYTES).await {
+            Ok(result) => {
+                let mut combined = String::from_utf8_lossy(&result.stdout).into_owned();
+                combined.push_str(&String::from_utf8_lossy(&result.stderr));
+                if result.truncated {
+                    combined.push_str("\n…(truncated)…");
+                }
+                (
+                    check.succeeded(result.status.success(), &result.stdout),
+                    false,
+                    combined,
+                )
+            }
+            // Missing tooling proves nothing about the source code. Preserve the
+            // reason as a skip without either a passing result or a bogus lint error.
+            Err(RunError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                (false, true, format!("{} is not installed", check.program))
+            }
+            Err(RunError::Io(err)) => (
+                false,
+                false,
+                format!("could not run {}: {err}", check.program),
+            ),
+            Err(error @ RunError::TimedOut { .. }) => (
+                false,
+                false,
+                format!("timed out after {}s: {error}", timeout.as_secs_f64()),
+            ),
+        };
 
     CheckOutcome {
         name: check.name.clone(),
         kind: check.kind,
         passed,
+        skipped,
         output: if passed {
             String::new()
         } else {
@@ -288,17 +349,17 @@ pub async fn run(repo: &Path, checks: &[Check], timeout: Duration) -> PreGateRep
     let mut outcomes = Vec::new();
     for check in checks {
         let outcome = run_check(repo, check, timeout).await;
-        let failed = !outcome.passed;
+        let failed = outcome.status() == CheckStatus::Failed;
         outcomes.push(outcome);
         if failed {
             break;
         }
     }
 
-    PreGateReport {
-        outcomes,
-        skipped: false,
-    }
+    let skipped = outcomes
+        .iter()
+        .all(|outcome| outcome.status() == CheckStatus::Skipped);
+    PreGateReport { outcomes, skipped }
 }
 
 /// Detect and run in one step. Returns a skipped report for an unknown repo.
@@ -328,6 +389,7 @@ mod tests {
             name: name.into(),
             kind: CheckKind::Lint,
             passed,
+            skipped: false,
             output: output.into(),
             duration_ms: 1,
         }
@@ -337,7 +399,7 @@ mod tests {
     fn a_skipped_report_is_not_green() {
         let report = PreGateReport::skipped();
         assert!(!report.all_green(), "an unknown toolchain proves nothing");
-        assert_eq!(report.digest(), None);
+        assert!(report.digest().unwrap().contains("No checks ran"));
     }
 
     #[test]
@@ -372,12 +434,25 @@ mod tests {
     }
 
     #[test]
-    fn long_output_keeps_the_tail_where_the_summary_lives() {
-        let long = format!("{}\nFAILED 3 tests", "noise\n".repeat(5_000));
+    fn an_existing_outcome_deserializes_without_the_new_skip_field() {
+        let outcome: CheckOutcome = serde_json::from_value(serde_json::json!({
+            "name": "lint",
+            "kind": "lint",
+            "passed": true,
+            "output": "",
+            "duration_ms": 1
+        }))
+        .unwrap();
+        assert_eq!(outcome.status(), CheckStatus::Passed);
+    }
+
+    #[test]
+    fn long_output_is_bounded_and_marks_the_missing_tail() {
+        let long = format!("START\n{}\nFAILED 3 tests", "noise\n".repeat(5_000));
         let truncated = truncate(long);
         assert!(truncated.len() < MAX_OUTPUT_BYTES + 64);
-        assert!(truncated.ends_with("FAILED 3 tests"));
-        assert!(truncated.starts_with("…(truncated)…"));
+        assert!(truncated.starts_with("START"));
+        assert!(truncated.ends_with("…(truncated)…"));
     }
 
     #[test]
@@ -411,6 +486,16 @@ mod tests {
             assert!(!checks.is_empty());
             assert!(checks.iter().all(|check| !check.program.is_empty()));
         }
+    }
+
+    #[test]
+    fn gofmt_listings_are_formatting_failures_even_with_a_zero_exit_code() {
+        let check = checks_for(Toolchain::Go).remove(0);
+        assert!(check.succeeded(true, b""));
+        assert!(!check.succeeded(true, b"main.go\n"));
+        assert!(!check.succeeded(false, b""));
+        let other = shell("tests", CheckKind::Test, "echo success");
+        assert!(other.succeeded(true, b"success\n"));
     }
 
     #[tokio::test]
@@ -456,6 +541,26 @@ mod tests {
         assert!(report.digest().unwrap().contains("to-stderr"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn noisy_checks_keep_bounded_output_and_report_truncation() {
+        let report = run(
+            Path::new("."),
+            &[shell(
+                "noisy",
+                CheckKind::Test,
+                "head -c 100000 /dev/zero; exit 1",
+            )],
+            DEFAULT_TIMEOUT,
+        )
+        .await;
+        let outcome = &report.outcomes[0];
+        assert_eq!(outcome.status(), CheckStatus::Failed);
+        assert!(outcome.output.len() <= MAX_OUTPUT_BYTES + 64);
+        assert!(outcome.output.ends_with("…(truncated)…"));
+        assert_eq!(outcome.output.matches("…(truncated)…").count(), 1);
+    }
+
     #[tokio::test]
     async fn a_missing_tool_does_not_masquerade_as_a_lint_failure() {
         let report = run(
@@ -470,8 +575,47 @@ mod tests {
         )
         .await;
 
-        assert!(report.all_green());
-        assert_eq!(report.digest(), None);
+        assert!(!report.all_green());
+        assert!(report.skipped);
+        assert!(!report.outcomes[0].passed);
+        assert_eq!(report.outcomes[0].status(), CheckStatus::Skipped);
+        assert_eq!(report.failures().count(), 0);
+        let digest = report.digest().unwrap();
+        assert!(digest.contains("skipped"));
+        assert!(digest.contains("is not installed"));
+    }
+
+    #[tokio::test]
+    async fn a_missing_check_does_not_hide_a_later_passing_or_failing_check() {
+        for (script, expected) in [
+            ("exit 0", CheckStatus::Passed),
+            ("echo test-failure; exit 1", CheckStatus::Failed),
+        ] {
+            let report = run(
+                Path::new("."),
+                &[
+                    Check::new(
+                        "missing formatter",
+                        CheckKind::Format,
+                        &["forge-definitely-not-installed"],
+                    )
+                    .unwrap(),
+                    shell("tests", CheckKind::Test, script),
+                ],
+                DEFAULT_TIMEOUT,
+            )
+            .await;
+
+            assert_eq!(report.outcomes.len(), 2);
+            assert_eq!(report.outcomes[0].status(), CheckStatus::Skipped);
+            assert_eq!(report.outcomes[1].status(), expected);
+            assert!(!report.skipped, "the test command did run");
+            assert!(!report.all_green(), "the formatter never ran");
+            assert_eq!(
+                report.failures().count(),
+                usize::from(expected == CheckStatus::Failed)
+            );
+        }
     }
 
     #[tokio::test]

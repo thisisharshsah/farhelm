@@ -414,18 +414,10 @@ async fn run_command(command: &str, root: &std::path::Path) -> Result<String, To
     #[cfg(not(windows))]
     process.arg("-c").arg(command);
 
-    let output = tokio::time::timeout(RUN_TIMEOUT, process.current_dir(root).output()).await;
-
-    let output = match output {
-        Err(_) => {
-            return Err(ToolError::Run(format!(
-                "`{command}` was still running after {}s and was killed",
-                RUN_TIMEOUT.as_secs()
-            )));
-        }
-        Ok(Err(err)) => return Err(ToolError::Run(format!("could not run `{command}`: {err}"))),
-        Ok(Ok(output)) => output,
-    };
+    process.current_dir(root);
+    let output = farhelm_process::run(process, RUN_TIMEOUT, MAX_RESULT_BYTES)
+        .await
+        .map_err(|error| ToolError::Run(format!("`{command}`: {error}")))?;
 
     let mut text = String::new();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -441,6 +433,9 @@ async fn run_command(command: &str, root: &std::path::Path) -> Result<String, To
     }
     if text.is_empty() {
         text.push_str("(no output)");
+    }
+    if output.truncated {
+        text.push_str("\n…(output truncated)…");
     }
 
     // The exit code goes first: a model skimming a truncated result must not

@@ -76,6 +76,75 @@ impl ModelPrice {
     }
 }
 
+/// Explicit API rates for a configured provider, independent of Anthropic's
+/// cache and batch multipliers. Local compute costs belong in a separate meter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TokenRates {
+    input: f64,
+    output: f64,
+    cache_write: f64,
+    cache_read: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidTokenRates;
+
+impl fmt::Display for InvalidTokenRates {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("token rates must be finite, nonnegative dollars per million tokens within the accounting range")
+    }
+}
+
+impl std::error::Error for InvalidTokenRates {}
+
+impl TokenRates {
+    pub fn new(
+        input: f64,
+        output: f64,
+        cache_write: f64,
+        cache_read: f64,
+    ) -> Result<Self, InvalidTokenRates> {
+        if [input, output, cache_write, cache_read].iter().any(|rate| {
+            !rate.is_finite() || *rate < 0.0 || *rate > f64::MAX / (4.0 * f64::from(u32::MAX))
+        }) {
+            return Err(InvalidTokenRates);
+        }
+        Ok(Self {
+            input,
+            output,
+            cache_write,
+            cache_read,
+        })
+    }
+
+    pub const fn zero() -> Self {
+        Self {
+            input: 0.0,
+            output: 0.0,
+            cache_write: 0.0,
+            cache_read: 0.0,
+        }
+    }
+
+    pub const fn input_per_mtok(self) -> f64 {
+        self.input
+    }
+    pub const fn output_per_mtok(self) -> f64 {
+        self.output
+    }
+
+    /// Configured rates are already final per-category rates. Never infer a
+    /// cache discount or batch discount another provider did not promise.
+    pub fn quote(self, usage: &Usage) -> Quote {
+        Quote {
+            input_usd: per_token(self.input, usage.input_tokens),
+            output_usd: per_token(self.output, usage.output_tokens),
+            cache_write_usd: per_token(self.cache_write, usage.cache_write_tokens),
+            cache_read_usd: per_token(self.cache_read, usage.cache_read_tokens),
+        }
+    }
+}
+
 /// 2026-09-01T00:00:00Z — when Claude Sonnet 5's introductory pricing lapses.
 const SONNET_5_PROMO_UNTIL_MS: i64 = 1_788_220_800_000;
 
@@ -292,6 +361,37 @@ mod tests {
             (actual - expected).abs() < 1e-9,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn configured_rates_preserve_each_providers_actual_cache_prices() {
+        let rates = TokenRates::new(2.0, 8.0, 2.0, 1.0).unwrap();
+        let quoted = rates.quote(&Usage {
+            input_tokens: 500_000,
+            output_tokens: 250_000,
+            cache_write_tokens: 100_000,
+            cache_read_tokens: 100_000,
+        });
+        approx(quoted.total_usd(), 3.3);
+        approx(
+            TokenRates::zero()
+                .quote(&Usage {
+                    input_tokens: u32::MAX,
+                    ..Usage::default()
+                })
+                .total_usd(),
+            0.0,
+        );
+    }
+
+    #[test]
+    fn invalid_configured_rates_cannot_enter_the_ledger() {
+        for invalid in [-1.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            assert!(TokenRates::new(invalid, 0.0, 0.0, 0.0).is_err());
+            assert!(TokenRates::new(0.0, invalid, 0.0, 0.0).is_err());
+            assert!(TokenRates::new(0.0, 0.0, invalid, 0.0).is_err());
+            assert!(TokenRates::new(0.0, 0.0, 0.0, invalid).is_err());
+        }
     }
 
     #[test]

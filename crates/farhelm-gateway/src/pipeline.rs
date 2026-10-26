@@ -28,7 +28,7 @@ use farhelm_app::store::{BatchStore, LedgerStore, ResponseCache, SessionStore, S
 use farhelm_app::time::now_ms;
 use farhelm_domain::BudgetRules as _;
 use farhelm_domain::breaker::{Pressure, Restraint, correction, restraint};
-use farhelm_domain::price::{UnknownModel, price_of};
+use farhelm_domain::price::UnknownModel;
 use farhelm_proto::types::{
     Avoided, BatchItem, BatchStatus, Budget, Dispatch, TaskType, Tier, Usage,
 };
@@ -41,7 +41,9 @@ use crate::dispatch::{
     messages_params,
 };
 use crate::pregate::{self, PreGateReport};
-use crate::prompt::{BreakpointNote, StableContext, Turn, assemble};
+use crate::prompt::{
+    BreakpointNote, StableContext, ToolResult, Turn, assemble, assemble_with_results,
+};
 use crate::router::{Models, Route, Slot, route};
 
 #[derive(Debug, Clone)]
@@ -49,6 +51,10 @@ pub struct GatewayConfig {
     pub models: Models,
     pub context: ContextBudget,
     pub max_tokens: u32,
+    /// Execute repository checks before model dispatch. Off by default because
+    /// build scripts, plugins and tests can execute arbitrary repository code.
+    /// Enable only inside an explicitly trusted execution environment.
+    pub pregate_enabled: bool,
     pub pregate_timeout: Duration,
     pub cache_ttl_ms: i64,
     /// The Batch API queue (C6). Until it exists, a deferrable call is dispatched
@@ -66,6 +72,7 @@ impl Default for GatewayConfig {
             models: Models::default(),
             context: ContextBudget::default(),
             max_tokens: DEFAULT_MAX_TOKENS,
+            pregate_enabled: false,
             pregate_timeout: pregate::DEFAULT_TIMEOUT,
             cache_ttl_ms: cache::DEFAULT_TTL_MS,
             batch_enabled: false,
@@ -86,7 +93,11 @@ pub struct CompleteRequest {
     /// The stable half of the prompt. `repo_map` is overwritten by stage 5 when
     /// a repo path is supplied.
     pub stable: StableContext,
-    /// Enables the pre-gate and retrieval. Without it both stages are skipped.
+    /// Structured results for the assistant's pending tool calls. These retain
+    /// their provider identities through every adapter.
+    pub tool_results: Vec<ToolResult>,
+    /// Enables retrieval and, when allowed by gateway configuration, the pre-gate.
+    /// Supplying a repository path alone never authorizes process execution.
     pub repo_path: Option<PathBuf>,
     /// True when the whole point of the call is "is this correct?" — a green
     /// pre-gate answers that for free.
@@ -107,6 +118,7 @@ impl CompleteRequest {
             tier_pin: None,
             instruction: instruction.into(),
             stable: StableContext::default(),
+            tool_results: Vec::new(),
             repo_path: None,
             verify_only: false,
             deferrable: false,
@@ -152,6 +164,10 @@ pub struct StageTrace {
 #[derive(Debug, Clone)]
 pub struct CompleteResponse {
     pub text: String,
+    /// The exact dynamic instruction after gateway diagnostics/corrections.
+    /// Callers retaining history must append this rather than their original
+    /// instruction, or earlier prompt bytes change on the next tool turn.
+    pub submitted_instruction: String,
     /// The model that produced the answer — may differ from the routed one when
     /// a server-side fallback served the turn.
     pub model: String,
@@ -164,6 +180,9 @@ pub struct CompleteResponse {
     pub cost_usd: f64,
     pub avoided: Option<Avoided>,
     pub refusal: Option<Refusal>,
+    /// Provider finish reason. Avoided and queued calls did not finish a model
+    /// response and therefore carry `None`.
+    pub stop_reason: Option<String>,
     /// Tools the model wants run before it will continue. Empty on every
     /// zero-cost exit, because none of them can produce one.
     pub tool_calls: Vec<ToolCall>,
@@ -181,8 +200,8 @@ pub struct CompleteResponse {
 }
 
 impl CompleteResponse {
-    /// True when the provider was actually called — the two zero-cost exits
-    /// both report false.
+    /// True when the primary request reached the provider. A separate history
+    /// summary may still have been billed before a cache hit or queue result.
     pub fn served_live(&self) -> bool {
         self.trace.served == Served::Live
     }
@@ -301,12 +320,47 @@ fn hash_of(text: &str) -> u64 {
     hasher.finish()
 }
 
+/// Tool continuations often have no prose. Detect repeated work from the
+/// operation/result payload, without treating a fresh provider ID as progress.
+fn pressure_instruction(request: &CompleteRequest) -> String {
+    if request.tool_results.is_empty() {
+        return request.instruction.clone();
+    }
+    let calls = request
+        .stable
+        .history
+        .iter()
+        .rev()
+        .find(|turn| !turn.tool_calls.is_empty())
+        .map(|turn| turn.tool_calls.as_slice())
+        .unwrap_or_default();
+    let results: Vec<_> = request
+        .tool_results
+        .iter()
+        .map(|result| {
+            let operation = calls
+                .iter()
+                .find(|call| call.id == result.tool_use_id)
+                .map(|call| (&call.name, &call.input));
+            (operation, &result.content, result.is_error)
+        })
+        .collect();
+    // String/Value serialization is infallible for these in-memory values.
+    serde_json::to_string(&(&request.instruction, results)).expect("JSON tool payloads serialize")
+}
+
 /// Only for the real client. Deliberately not on [`ModelClient`]: a test double
 /// has no credential to be unready, and putting it on the trait would make
 /// every double implement a method describing a problem it cannot have.
 impl<S> Gateway<S, crate::dispatch::AnthropicClient> {
     /// Whether a credential can be obtained right now — see
     /// [`crate::dispatch::AnthropicClient::credential_ready`].
+    pub fn credential_ready(&self) -> Result<(), crate::credential::CredentialError> {
+        self.client.credential_ready()
+    }
+}
+
+impl<S> Gateway<S, crate::providers::ProviderClient> {
     pub fn credential_ready(&self) -> Result<(), crate::credential::CredentialError> {
         self.client.credential_ready()
     }
@@ -368,22 +422,26 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         &self.config
     }
 
+    pub fn supports_batch(&self) -> bool {
+        self.client.supports_batch()
+    }
+
     /// Summarise the turns a compaction plan wants to drop (C7).
     ///
     /// Always on the small tier, never on the routed model. Condensing a
     /// transcript is the cheapest kind of work there is, and paying frontier
     /// rates for it would undo the saving it exists to produce.
     ///
-    /// Returns the summary and what it cost. Billed through the ledger like any
-    /// other call — it is one — so a session's spend reflects it.
+    /// Returns a usable summary (if complete) and what the attempt cost. Even
+    /// rejected/truncated summaries are billed and leave the old history intact.
     async fn summarise(
         &self,
         session_id: &str,
         plan: &compaction::CompactionPlan,
         at_ms: i64,
-    ) -> Result<(String, f64), GatewayError> {
+    ) -> Result<(Option<String>, f64), GatewayError> {
         let model = self.config.models.small.clone();
-        let price = price_of(&model).map_err(GatewayError::Price)?;
+        let price = self.client.model_price(&model)?;
 
         // A bare prompt, deliberately: no repo map, no tools, no history. The
         // transcript is the entire input, and adding anything else would both
@@ -417,11 +475,16 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 Tier::Small,
                 TaskType::Summarize,
                 response.usage,
-            ),
+            )
+            .with_rates(self.client.billing_rates(&model)),
             at_ms,
         )?;
 
-        Ok((response.text, event.cost_usd))
+        let usable = response.refusal.is_none()
+            && response.tool_calls.is_empty()
+            && !response.text.trim().is_empty()
+            && matches!(response.stop_reason.as_deref(), Some("end_turn" | "stop"));
+        Ok((usable.then_some(response.text), event.cost_usd))
     }
 
     pub async fn complete(
@@ -429,6 +492,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         mut request: CompleteRequest,
     ) -> Result<CompleteResponse, GatewayError> {
         let at_ms = now_ms();
+        let pressure_instruction = pressure_instruction(&request);
 
         // ---- stage 1: budget, and the rest of the ladder --------------------
         //
@@ -466,7 +530,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             // Reached by a session that is looping or failing rather than
             // overspending — the budget stops above have already returned.
             Restraint::Stop => {
-                self.note_outcome(&request.session_id, &request.instruction, true);
+                self.note_outcome(&request.session_id, &pressure_instruction, true);
                 return Err(GatewayError::Contained {
                     why: format!(
                         "stopped after {} failed calls and {} identical repeats — \
@@ -484,7 +548,10 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
 
         // ---- stage 2: deterministic pre-gate --------------------------------
         let pregate = match &request.repo_path {
-            Some(repo) => Some(pregate::run_detected(repo, self.config.pregate_timeout).await),
+            Some(repo) if self.config.pregate_enabled => {
+                Some(pregate::run_detected(repo, self.config.pregate_timeout).await)
+            }
+            Some(_) => Some(PreGateReport::skipped()),
             None => None,
         };
 
@@ -507,6 +574,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
 
             return Ok(CompleteResponse {
                 text: "All deterministic checks passed.".into(),
+                submitted_instruction: request.instruction.clone(),
                 model: event.model,
                 tier: event.tier,
                 // Never dispatched at all — the compiler answered.
@@ -515,6 +583,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 cost_usd: 0.0,
                 avoided: Some(Avoided::PreGate),
                 refusal: None,
+                stop_reason: None,
                 tool_calls: Vec::new(),
                 batch_item_id: None,
                 compacted_history: None,
@@ -550,7 +619,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             deferrable,
             &self.config.models,
         );
-        let price = price_of(&route.model).map_err(GatewayError::Price)?;
+        let price = self.client.model_price(&route.model)?;
 
         // ---- stage 5: retrieval ---------------------------------------------
         let context = match &request.repo_path {
@@ -573,15 +642,37 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         {
             match self.summarise(&request.session_id, &plan, at_ms).await {
                 Ok((summary, cost)) => {
-                    let history = compaction::apply(&summary, plan);
-                    stable.history = history.clone();
-                    compacted = Some(history);
                     compaction_cost = cost;
+                    if let Some(summary) = summary {
+                        let history = compaction::apply(&summary, plan);
+                        stable.history = history.clone();
+                        compacted = Some(history);
+                    }
                 }
+                Err(err @ (GatewayError::Store(_) | GatewayError::Ledger(_))) => return Err(err),
                 // A failed summary is not a failed call. Carrying the full
                 // history costs more than it should; refusing to answer costs
                 // the user their turn.
                 Err(err) => eprintln!("compaction: {err}; continuing uncompacted"),
+            }
+
+            // A summary is a real charged call. Do not start another one if it
+            // has just exhausted either budget ring.
+            let budget = self.store.session_budget(&request.session_id)?;
+            if budget.is_exhausted() {
+                return Err(GatewayError::BudgetExhausted {
+                    scope: "session",
+                    budget,
+                });
+            }
+            if let Some(session) = self.store.get_session(&request.session_id)? {
+                let budget = self.store.repo_budget(&session.repo_id)?;
+                if budget.is_exhausted() {
+                    return Err(GatewayError::BudgetExhausted {
+                        scope: "repo",
+                        budget,
+                    });
+                }
             }
         }
 
@@ -590,7 +681,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             stable.repo_map = context.render();
         }
 
-        // Only pre-gate *failures* enter the prompt, and they go in the dynamic
+        // Pre-gate failures and skips enter the prompt in the dynamic
         // tail — never ahead of a breakpoint.
         //
         // A breaker correction rides in the same place and for the same reason:
@@ -605,11 +696,20 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             None => dynamic,
         };
 
-        let plan = assemble(&stable, &dynamic, &price);
+        let plan = assemble_with_results(&stable, &dynamic, &request.tool_results, &price);
 
         // ---- stage 3: exact response cache ---------------------------------
-        let cache_key =
-            cache::is_cacheable(request.task_type).then(|| cache::key(&route.model, &plan));
+        // The response cache stores text only. Tool-bearing histories must
+        // retain their call/result protocol and cannot use that representation.
+        // Definitions alone are safe: they are in the key and tool responses
+        // are never written to this cache.
+        let has_tools = !request.tool_results.is_empty()
+            || stable
+                .history
+                .iter()
+                .any(|turn| !turn.tool_calls.is_empty() || !turn.tool_results.is_empty());
+        let cache_key = (cache::is_cacheable(request.task_type) && !has_tools)
+            .then(|| cache::key(&self.client.cache_namespace(&route.model), &plan));
 
         if let Some(key) = &cache_key
             && let Some(hit) = self.store.cache_get(key, at_ms)?
@@ -627,19 +727,21 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
 
             return Ok(CompleteResponse {
                 text: hit,
+                submitted_instruction: dynamic.clone(),
                 model: event.model,
                 tier: event.tier,
                 // Served from the cache, so nothing was dispatched anywhere.
                 dispatch: Dispatch::Live,
                 usage: Usage::default(),
-                cost_usd: 0.0,
+                cost_usd: compaction_cost,
                 avoided: Some(Avoided::ResponseCache),
                 refusal: None,
+                stop_reason: None,
                 tool_calls: Vec::new(),
                 batch_item_id: None,
-                compacted_history: None,
+                compacted_history: compacted,
                 trace: StageTrace {
-                    budget: session_budget,
+                    budget: self.store.session_budget(&request.session_id)?,
                     budget_warning: session_budget.is_warning(),
                     pregate,
                     route,
@@ -703,15 +805,17 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 // No text, and no pretending otherwise. The caller asked for
                 // this by setting `deferrable`.
                 text: String::new(),
+                submitted_instruction: dynamic.clone(),
                 model: route.model.clone(),
                 tier: route.tier,
                 dispatch: route.dispatch,
                 usage: Usage::default(),
-                // Nothing is billed until the batch settles and the real token
-                // counts come back — at half rates.
-                cost_usd: 0.0,
+                // The queued answer is not billed until settlement. An earlier
+                // summary was dispatched live and must still be reported now.
+                cost_usd: compaction_cost,
                 avoided: None,
                 refusal: None,
+                stop_reason: None,
                 tool_calls: Vec::new(),
                 batch_item_id: Some(item_id),
                 compacted_history: compacted.clone(),
@@ -749,19 +853,19 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 // A refusal is not a failure of the session: the model answered,
                 // and answering "no" is a legitimate answer that the breaker
                 // must not read as being stuck.
-                self.note_outcome(&request.session_id, &request.instruction, false);
+                self.note_outcome(&request.session_id, &pressure_instruction, false);
                 response
             }
             Err(err) => {
-                self.note_outcome(&request.session_id, &request.instruction, true);
+                self.note_outcome(&request.session_id, &pressure_instruction, true);
                 return Err(err.into());
             }
         };
 
         // ---- stage 8: ledger ------------------------------------------------
-        // Priced against the model that *ran*, not the one requested: a
-        // server-side fallback bills at its own rates, and pretending otherwise
-        // would put a wrong number in an append-only table.
+        // Record the actual model identity. Configured providers use their
+        // requested deployment's rate snapshot; the legacy client prices its
+        // actual model against the table (including any server-side fallback).
         let event = Ledger::new(&self.store).record_at(
             Call::new(
                 &request.session_id,
@@ -769,7 +873,8 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 route.tier,
                 request.task_type,
                 response.usage,
-            ),
+            )
+            .with_rates(self.client.billing_rates(&route.model)),
             at_ms,
         )?;
 
@@ -785,6 +890,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             && response.refusal.is_none()
             && response.tool_calls.is_empty()
             && !response.text.is_empty()
+            && matches!(response.stop_reason.as_deref(), Some("end_turn" | "stop"))
         {
             self.store
                 .cache_put(key, &response.text, at_ms, self.config.cache_ttl_ms)?;
@@ -792,6 +898,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
 
         Ok(CompleteResponse {
             text: response.text,
+            submitted_instruction: dynamic,
             model: response.model,
             tier: event.tier,
             // This path dispatched live: a deferrable call returned above,
@@ -804,6 +911,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             cost_usd: event.cost_usd + compaction_cost,
             avoided: None,
             refusal: response.refusal,
+            stop_reason: response.stop_reason,
             tool_calls: response.tool_calls,
             batch_item_id: None,
             compacted_history: compacted,
@@ -1099,24 +1207,71 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_green_pre_gate_answers_a_verify_task_for_free() {
-        let repo = std::env::temp_dir().join(format!("forge-gw-green-{}", std::process::id()));
+    async fn a_verify_task_cannot_claim_success_when_execution_is_disabled() {
+        let repo = std::env::temp_dir().join(format!("forge-gw-skipped-{}", std::process::id()));
         std::fs::create_dir_all(&repo).unwrap();
         std::fs::write(repo.join("go.mod"), "module x").unwrap();
 
-        let gw = gateway(store_with(Some(5.0), None), StubClient::new("unused"));
+        let gw = gateway(
+            store_with(Some(5.0), None),
+            StubClient::new("No verification checks ran."),
+        );
         let mut request = CompleteRequest::new("s1", TaskType::HardDebug, "is this correct?");
         request.repo_path = Some(repo.clone());
         request.verify_only = true;
 
         let response = gw.complete(request).await.unwrap();
 
-        // gofmt/go vet/go test are absent in the test environment, which the
-        // gate reports as green rather than as failures.
-        assert_eq!(response.avoided, Some(Avoided::PreGate));
-        assert_eq!(response.cost_usd, 0.0);
-        assert_eq!(gw.client.call_count(), 0, "the model was never asked");
+        // A marker file and verify_only request do not authorize executing its
+        // scripts. This result must never claim the deterministic checks passed.
+        assert_ne!(response.avoided, Some(Avoided::PreGate));
+        assert_eq!(response.trace.served, Served::Live);
+        let report = response.trace.pregate.unwrap();
+        assert!(report.skipped);
+        assert!(report.outcomes.is_empty());
+        assert!(!report.all_green());
+        assert_eq!(gw.client.call_count(), 1);
+        assert!(
+            gw.client.calls()[0]
+                .plan
+                .dynamic_tail()
+                .contains("No checks ran")
+        );
 
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[tokio::test]
+    async fn repository_checks_require_an_explicit_trusted_execution_configuration() {
+        let repo = std::env::temp_dir().join(format!("forge-gw-trusted-{}", std::process::id()));
+        std::fs::create_dir_all(&repo).unwrap();
+        // An invalid manifest fails before any build script or test can run.
+        std::fs::write(repo.join("Cargo.toml"), "not a valid manifest").unwrap();
+        let gw = Gateway::new(
+            store_with(Some(5.0), None),
+            StubClient::new("Verification is incomplete."),
+            GatewayConfig {
+                pregate_enabled: true,
+                ..GatewayConfig::default()
+            },
+        );
+        let mut request = CompleteRequest::new("s1", TaskType::HardDebug, "verify this repository");
+        request.repo_path = Some(repo.clone());
+        request.verify_only = true;
+
+        let response = gw.complete(request).await.unwrap();
+
+        let report = response.trace.pregate.unwrap();
+        assert!(
+            !report.outcomes.is_empty(),
+            "the configured checks were attempted"
+        );
+        assert!(
+            !report.all_green(),
+            "a failed or unavailable check proves nothing"
+        );
+        assert_ne!(response.avoided, Some(Avoided::PreGate));
+        assert_eq!(gw.client.call_count(), 1);
         std::fs::remove_dir_all(&repo).ok();
     }
 
@@ -1238,6 +1393,52 @@ mod tests {
         let efforts: Vec<_> = gw.client.calls().iter().map(|call| call.effort).collect();
         let expected: Vec<_> = cases.iter().map(|(_, effort)| Some(*effort)).collect();
         assert_eq!(efforts, expected);
+    }
+
+    fn tool_continuation(id: &str, content: &str) -> CompleteRequest {
+        let mut request = CompleteRequest::new("s1", TaskType::Edit, "");
+        request.stable.history = vec![Turn::assistant_with_tools(
+            "",
+            vec![ToolCall {
+                id: id.into(),
+                name: "read_file".into(),
+                input: serde_json::json!({"path":"README.md"}),
+            }],
+        )];
+        request.tool_results = vec![ToolResult {
+            tool_use_id: id.into(),
+            content: content.into(),
+            is_error: false,
+        }];
+        request
+    }
+
+    #[tokio::test]
+    async fn progressing_tool_results_are_not_identical_empty_instructions() {
+        let gw = gateway(store_with(Some(5.0), None), StubClient::new("ok"));
+        for index in 0..12 {
+            gw.complete(tool_continuation("read", &format!("revision {index}")))
+                .await
+                .unwrap();
+        }
+        assert_eq!(gw.client.call_count(), 12);
+    }
+
+    #[tokio::test]
+    async fn fresh_tool_ids_do_not_disguise_repeated_work() {
+        let gw = gateway(store_with(Some(5.0), None), StubClient::new("ok"));
+        let mut contained = false;
+        for index in 0..12 {
+            if matches!(
+                gw.complete(tool_continuation(&format!("read-{index}"), "unchanged"))
+                    .await,
+                Err(GatewayError::Contained { .. })
+            ) {
+                contained = true;
+                break;
+            }
+        }
+        assert!(contained);
     }
 
     #[tokio::test]

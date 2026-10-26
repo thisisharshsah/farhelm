@@ -24,11 +24,20 @@ use crate::plan::{Plan, SubscriptionStatus, Usage};
 use crate::secret;
 use farhelm_crypto::token::Role;
 
+/// How long the token a session held before its last rotation still works.
+/// See [`Store::rotate_refresh_token`].
+///
+/// Tens of seconds: enough to cover a dropped tunnel connection and the
+/// client's immediate retry. Another tab never needs it, because the web
+/// client re-reads the stored token before every refresh.
+pub const REFRESH_REUSE_GRACE_MS: i64 = 30 * 1000;
+
 /// Applied in order; the index+1 is the `PRAGMA user_version` they leave behind.
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_oauth.sql"),
     include_str!("../migrations/0003_device_authorization.sql"),
+    include_str!("../migrations/0004_refresh_grace.sql"),
 ];
 
 #[derive(Debug)]
@@ -1119,6 +1128,14 @@ impl CloudStore {
     /// permanent foothold into a race: whichever party uses it second is
     /// refused, and the legitimate user's next refresh failing is a signal
     /// worth acting on.
+    ///
+    /// With one allowance: the token a session held just before its last
+    /// rotation is still accepted for [`REFRESH_REUSE_GRACE_MS`], and rotated
+    /// again. Strict single use signed people out whenever the response to a
+    /// committed rotation was lost (a dropped tunnel connection) or a second
+    /// tab refreshed with the token the first tab had just replaced. The
+    /// window is short, and only the immediately previous token qualifies, so
+    /// a replay found later is still refused.
     pub fn rotate_refresh_token(
         &self,
         token: &str,
@@ -1128,31 +1145,74 @@ impl CloudStore {
     ) -> Result<Option<String>> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(backend)?;
+        let presented = secret::hash_token(token);
 
-        let found: Option<(String, String, i64, Option<i64>)> = tx
+        let current: Option<(String, String, i64, Option<i64>)> = tx
             .query_row(
                 "SELECT id, account_id, expires_at, revoked_at FROM refresh_token \
                  WHERE token_hash = ?1",
-                params![secret::hash_token(token)],
+                params![presented],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(backend)?;
 
-        let Some((id, account_id, token_expires_at, revoked_at)) = found else {
-            return Ok(None);
-        };
-        if revoked_at.is_some() || now_ms >= token_expires_at {
-            return Ok(None);
+        if let Some((id, account_id, token_expires_at, revoked_at)) = current {
+            if revoked_at.is_some() || now_ms >= token_expires_at {
+                return Ok(None);
+            }
+            tx.execute(
+                "UPDATE refresh_token SET token_hash = ?2, expires_at = ?3, \
+                 previous_hash = ?4, rotated_at = ?5 WHERE id = ?1",
+                params![
+                    id,
+                    secret::hash_token(replacement),
+                    expires_at,
+                    presented,
+                    now_ms
+                ],
+            )
+            .map_err(backend)?;
+            tx.commit().map_err(backend)?;
+            return Ok(Some(account_id));
         }
 
-        tx.execute(
-            "UPDATE refresh_token SET token_hash = ?2, expires_at = ?3 WHERE id = ?1",
-            params![id, secret::hash_token(replacement), expires_at],
-        )
-        .map_err(backend)?;
-        tx.commit().map_err(backend)?;
-        Ok(Some(account_id))
+        // The previous token, inside the grace window. Re-rotated without
+        // moving `rotated_at`, so retrying cannot stretch the window.
+        let previous: Option<(String, String)> = tx
+            .query_row(
+                "SELECT id, account_id FROM refresh_token \
+                 WHERE previous_hash = ?1 AND revoked_at IS NULL \
+                 AND rotated_at IS NOT NULL AND rotated_at + ?2 > ?3 AND expires_at > ?3",
+                params![presented, REFRESH_REUSE_GRACE_MS, now_ms],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(backend)?;
+        if let Some((id, account_id)) = previous {
+            tx.execute(
+                "UPDATE refresh_token SET token_hash = ?2, expires_at = ?3 WHERE id = ?1",
+                params![id, secret::hash_token(replacement), expires_at],
+            )
+            .map_err(backend)?;
+            tx.commit().map_err(backend)?;
+            return Ok(Some(account_id));
+        }
+
+        // The previous token after the window: two holders of one session, and
+        // one of them is not the user. Ending the session is what strict
+        // rotation existed to do; the person signs in again and the copy dies.
+        let reused = tx
+            .execute(
+                "UPDATE refresh_token SET revoked_at = ?2 \
+                 WHERE previous_hash = ?1 AND revoked_at IS NULL",
+                params![presented, now_ms],
+            )
+            .map_err(backend)?;
+        if reused > 0 {
+            tx.commit().map_err(backend)?;
+        }
+        Ok(None)
     }
 
     pub fn revoke_refresh_token(&self, token: &str, now_ms: i64) -> Result<()> {
@@ -1968,29 +2028,93 @@ mod tests {
         let (account, _) = signed_up(&store);
         let first = secret::random_secret();
         store
-            .insert_refresh_token(&account.id, &first, "Safari", NOW, NOW + 1_000_000)
+            .insert_refresh_token(&account.id, &first, "Safari", NOW, NOW + 10_000_000)
             .unwrap();
 
         let second = secret::random_secret();
         assert_eq!(
             store
-                .rotate_refresh_token(&first, &second, NOW, NOW + 1_000_000)
+                .rotate_refresh_token(&first, &second, NOW, NOW + 10_000_000)
                 .unwrap(),
             Some(account.id.clone())
         );
-        // Replaying the used token is the signal that one of the two holders is
-        // not the user.
+        // Replaying the used token after the grace window is the signal that
+        // one of the two holders is not the user, and it ends the session for
+        // both: the current token stops working too.
+        let late = NOW + REFRESH_REUSE_GRACE_MS;
         assert_eq!(
             store
-                .rotate_refresh_token(&first, &secret::random_secret(), NOW, NOW + 1_000_000)
+                .rotate_refresh_token(&first, &secret::random_secret(), late, late + 1_000_000)
                 .unwrap(),
             None
         );
         assert!(
             store
-                .rotate_refresh_token(&second, &secret::random_secret(), NOW, NOW + 1_000_000)
+                .rotate_refresh_token(&second, &secret::random_secret(), late, late + 1_000_000)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_lost_rotation_response_does_not_sign_the_session_out() {
+        // The server rotated `first` to `second`, but the response was lost, so
+        // the client still holds `first` and retries with it.
+        let store = store();
+        let (account, _) = signed_up(&store);
+        let first = secret::random_secret();
+        store
+            .insert_refresh_token(&account.id, &first, "Chrome", NOW, NOW + 10_000_000)
+            .unwrap();
+        let lost = secret::random_secret();
+        store
+            .rotate_refresh_token(&first, &lost, NOW, NOW + 10_000_000)
+            .unwrap();
+
+        let third = secret::random_secret();
+        let retry = NOW + 10_000;
+        assert_eq!(
+            store
+                .rotate_refresh_token(&first, &third, retry, retry + 10_000_000)
+                .unwrap(),
+            Some(account.id.clone())
+        );
+        // The retry's token is now the session's; the lost one never reached
+        // anybody and is gone.
+        assert!(
+            store
+                .rotate_refresh_token(&lost, &secret::random_secret(), retry, retry + 1)
+                .unwrap()
+                .is_none()
+        );
+        // The window runs from the original rotation; a retry cannot stretch it.
+        let after = NOW + REFRESH_REUSE_GRACE_MS;
+        assert!(
+            store
+                .rotate_refresh_token(&third, &secret::random_secret(), after - 1, after + 10_000)
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn a_revoked_session_is_not_revived_by_its_previous_token() {
+        let store = store();
+        let (account, _) = signed_up(&store);
+        let first = secret::random_secret();
+        store
+            .insert_refresh_token(&account.id, &first, "Chrome", NOW, NOW + 10_000_000)
+            .unwrap();
+        let second = secret::random_secret();
+        store
+            .rotate_refresh_token(&first, &second, NOW, NOW + 10_000_000)
+            .unwrap();
+        store.revoke_refresh_token(&second, NOW + 1).unwrap();
+        assert!(
+            store
+                .rotate_refresh_token(&first, &secret::random_secret(), NOW + 2, NOW + 3)
+                .unwrap()
+                .is_none()
         );
     }
 

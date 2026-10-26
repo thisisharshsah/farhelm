@@ -22,9 +22,10 @@
 use farhelm_agent::script::ScriptedClient;
 use farhelm_agent::{TaskSpec, run};
 use farhelm_app::store::{TimeRange, prelude::*};
+use farhelm_gateway::dispatch::{DispatchError, ModelRequest, ModelResponse};
 use farhelm_gateway::router::Models;
-use farhelm_gateway::{Gateway, GatewayConfig};
-use farhelm_proto::types::{Agent, Machine, Repo, Session, SessionStatus, Tier};
+use farhelm_gateway::{Gateway, GatewayConfig, ModelClient, ToolCall};
+use farhelm_proto::types::{Agent, Machine, Repo, Session, SessionStatus, TaskType, Tier};
 use farhelm_sqlite::SqliteStore;
 
 const NOW: i64 = 1_800_000_000_000;
@@ -145,6 +146,31 @@ fn script() -> ScriptedClient {
         "VERDICT: pass\nThe shift is bounded and matches the ask.",
     ));
     ScriptedClient::new(turns)
+}
+
+/// Drafting is unchanged; only the final reviewer response is interrupted.
+struct ReviewerCompletion {
+    inner: ScriptedClient,
+    stop_reason: Option<&'static str>,
+    requests_tool: bool,
+}
+
+impl ModelClient for ReviewerCompletion {
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, DispatchError> {
+        let reviewing = request.purpose == Some(TaskType::HardDebug);
+        let mut response = self.inner.complete(request).await?;
+        if reviewing {
+            response.stop_reason = self.stop_reason.map(str::to_owned);
+            if self.requests_tool {
+                response.tool_calls.push(ToolCall {
+                    id: "unfinished_review".into(),
+                    name: "read_file".into(),
+                    input: serde_json::json!({ "path": "retry.rs" }),
+                });
+            }
+        }
+        Ok(response)
+    }
 }
 
 struct Replay {
@@ -316,4 +342,68 @@ async fn the_verifier_reads_the_diff_and_not_the_session() {
         !verifier.plan.stable_prefix().contains("Repository context"),
         "the verifier was sent a repo map"
     );
+}
+
+#[tokio::test]
+async fn incomplete_reviewer_passes_become_concerns_without_losing_cost_or_model() {
+    for (label, stop_reason, requests_tool) in [
+        ("length", Some("length"), false),
+        ("max-tokens", Some("max_tokens"), false),
+        (
+            "context-limit",
+            Some("model_context_window_exceeded"),
+            false,
+        ),
+        ("missing-finish", None, false),
+        ("unknown-finish", Some("unknown_completion"), false),
+        ("pending-tool", Some("tool_use"), true),
+        ("tool-with-stop", Some("stop"), true),
+    ] {
+        let repo = TempRepo::new(&format!("review-{label}"));
+        let store = store("s");
+        let client = script();
+        let gateway = Gateway::new(
+            &store,
+            ReviewerCompletion {
+                inner: client.clone(),
+                stop_reason,
+                requests_tool,
+            },
+            GatewayConfig {
+                compaction: None,
+                ..GatewayConfig::default()
+            },
+        );
+        let spec = TaskSpec::new("s", &repo.0, "Widen the retry backoff");
+        let outcome = run(&gateway, &Yes, &spec).await;
+        assert!(!outcome.changes.is_empty(), "{label} lost the draft");
+        let assessment = outcome.assessment.expect("reviewer was called");
+        assert_eq!(assessment.grade, farhelm_agent::Grade::Concerns, "{label}");
+        assert!(assessment.notes.contains("review"), "{label}");
+        assert!(
+            assessment.notes.contains(if requests_tool {
+                "tools"
+            } else if matches!(
+                stop_reason,
+                Some("length" | "max_tokens" | "model_context_window_exceeded")
+            ) {
+                "limit"
+            } else {
+                "completed"
+            }),
+            "{label}: {}",
+            assessment.notes
+        );
+        let events = store.list_usage("s", TimeRange::ALL).unwrap();
+        let reviewer: Vec<_> = events
+            .iter()
+            .filter(|event| event.task_type == TaskType::HardDebug)
+            .collect();
+        assert_eq!(reviewer.len(), 1, "{label}");
+        assert!(assessment.cost_usd > 0.0, "{label} lost reviewer cost");
+        assert_eq!(assessment.cost_usd, reviewer[0].cost_usd, "{label}");
+        assert_eq!(assessment.model, reviewer[0].model, "{label}");
+        assert_eq!(assessment.model, Models::default().frontier, "{label}");
+        assert_eq!(client.call_count(), TURNS + 1, "{label} changed drafting");
+    }
 }

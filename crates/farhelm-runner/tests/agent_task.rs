@@ -93,10 +93,12 @@ fn state_for(provider_addr: SocketAddr) -> Arc<AppState> {
         move |store| {
             Some(Gateway::new(
                 store,
-                AnthropicClient::new("test-key")
-                    .with_base_url(format!("http://{provider_addr}"))
-                    // The stand-in does not implement the fallback beta header.
-                    .without_fallbacks(),
+                farhelm_gateway::ProviderClient::from_legacy(
+                    AnthropicClient::new("test-key")
+                        .with_base_url(format!("http://{provider_addr}"))
+                        // The stand-in does not implement the fallback beta header.
+                        .without_fallbacks(),
+                ),
                 GatewayConfig::default(),
             ))
         },

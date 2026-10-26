@@ -63,6 +63,11 @@
     },
     {
       "type": "snapshot"
+    },
+    {
+      "level": "low",
+      "session_id": "session-1",
+      "type": "set_auto_approve"
     }
   ],
   "dashboard_view": {
@@ -164,6 +169,7 @@
     "sessions": [
       {
         "agent": "claude-code",
+        "auto_approve": "off",
         "awaiting_approval_id": "approval-1",
         "budget": {
           "cap_usd": 10.0,
@@ -215,8 +221,66 @@
     ],
     "today_usd": 12.34
   },
+  "project_workflow": {
+    "attach_repository": {
+      "repo_id": "repo-1"
+    },
+    "repository": {
+      "id": "repo-1",
+      "name": "payments-api",
+      "path": "/srv/payments-api"
+    },
+    "repository_page": {
+      "next_cursor": "repo-1",
+      "repositories": [
+        {
+          "id": "repo-1",
+          "name": "payments-api",
+          "path": "/srv/payments-api"
+        }
+      ]
+    },
+    "start_task": {
+      "budget_usd": 1.0,
+      "max_steps": 12,
+      "prompt": "Bound the retry loop",
+      "repo_id": "repo-1",
+      "retry_of": "previous-task"
+    },
+    "task_page": {
+      "next_cursor": "task-1",
+      "tasks": [
+        {
+          "change_summary": "3 files, +42 −17",
+          "cost_usd": 0.42,
+          "created_at": 1785369600000,
+          "decided_at": 1785369602000,
+          "decided_via": "web",
+          "error": "a tool call failed once",
+          "files_changed": 3,
+          "id": "task-1",
+          "lines_added": 42,
+          "lines_removed": 17,
+          "prompt": "Make the retry path give up",
+          "repo_id": "repo-1",
+          "repo_name": "payments-api",
+          "repo_path": "/srv/payments-api",
+          "review_note": "too broad, try again",
+          "session_id": "session-1",
+          "status": "awaiting_review",
+          "steps": 9,
+          "summary": "Bounded the retry loop",
+          "updated_at": 1785369601000,
+          "verify_grade": "concerns",
+          "verify_model": "claude-opus-5",
+          "verify_notes": "the timeout is not covered"
+        }
+      ]
+    }
+  },
   "session_detail": {
     "agent": "claude-code",
+    "auto_approve": "off",
     "awaiting_approval_id": "approval-1",
     "budget": {
       "cap_usd": 10.0,
@@ -337,5 +401,90 @@
     "verify_grade": "concerns",
     "verify_model": "claude-opus-5",
     "verify_notes": "the timeout is not covered"
+  },
+  "workspace": {
+    "conversation": {
+      "created_at": 1785369600000,
+      "id": "conversation-1",
+      "project_id": "project-1",
+      "title": "Discuss retry limits",
+      "updated_at": 1785369602000
+    },
+    "create_project": {
+      "description": "Synthetic local project metadata",
+      "name": "Local pilot"
+    },
+    "document": {
+      "content": "# Retry policy\nLimit retries to three attempts.",
+      "content_hash": "sha256:fixture-content-hash",
+      "created_at": 1785369600000,
+      "id": "document-1",
+      "project_id": "project-1",
+      "title": "Retry policy",
+      "updated_at": 1785369603000,
+      "version": 2
+    },
+    "empty_project_page": {
+      "next_cursor": null,
+      "projects": []
+    },
+    "entity_kinds": [
+      "project",
+      "conversation",
+      "task",
+      "task_run",
+      "document",
+      "artifact",
+      "repo"
+    ],
+    "entity_link": {
+      "created_at": 1785369603000,
+      "id": "link-1",
+      "relation_kind": "documents",
+      "source_id": "conversation-1",
+      "source_type": "conversation",
+      "target_id": "document-1",
+      "target_type": "document"
+    },
+    "project": {
+      "budget_cap_usd": 100.0,
+      "created_at": 1785369600000,
+      "description": "Reliable payment workflows",
+      "id": "project-1",
+      "name": "Payments",
+      "updated_at": 1785369601000,
+      "workspace_id": "workspace-1"
+    },
+    "project_page": {
+      "next_cursor": "019a0000-0000-7000-8000-000000000001",
+      "projects": [
+        {
+          "budget_cap_usd": null,
+          "created_at": 1785369600000,
+          "description": "Synthetic local project metadata",
+          "id": "019a0000-0000-7000-8000-000000000001",
+          "name": "Local pilot",
+          "updated_at": 1785369600000,
+          "workspace_id": "local:0123456789abcdef0123456789abcdef"
+        }
+      ]
+    },
+    "project_without_budget": {
+      "budget_cap_usd": null,
+      "created_at": 1785369600000,
+      "description": "",
+      "id": "project-2",
+      "name": "Documentation",
+      "updated_at": 1785369600000,
+      "workspace_id": "workspace-1"
+    },
+    "relation_kinds": [
+      "mentions",
+      "spawns",
+      "blocks",
+      "documents",
+      "produces",
+      "belongs_to"
+    ]
   }
 }

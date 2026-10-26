@@ -33,12 +33,18 @@
 //! field being read.
 
 pub mod agent;
+pub mod auth;
+pub mod auto_approve;
 pub mod breaker;
 pub mod budget;
 pub mod plan;
 pub mod price;
+pub mod recovery;
 pub mod risk;
 
+pub use auth::{ActionCapability, AuthError, MemberRole, Principal, authorize};
+pub use auto_approve::{auto_approves, may_set_auto_approve};
 pub use budget::{ApprovalRules, BudgetRules, budget_view};
 pub use plan::{ParsedPlan, PlanProgress};
 pub use price::{CacheTtl, ModelPrice, Quote, QuoteContext, quote};
+pub use recovery::{RecoveryAction, StepCheckpoint, StepStage, TaskLease, evaluate_recovery};

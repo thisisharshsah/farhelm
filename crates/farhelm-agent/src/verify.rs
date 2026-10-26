@@ -21,7 +21,7 @@
 //! ## An unreadable answer is never a pass
 //!
 //! The verdict is parsed out of a leading `VERDICT:` line. When that line is
-//! missing, malformed, or the call fails outright, the result is
+//! missing, malformed, the response is incomplete, or the call fails, the result is
 //! [`Grade::Concerns`] and never [`Grade::Pass`]. A verification that silently
 //! degraded to "looks fine" would be worse than no verification: it would put a
 //! reassuring line on a review card that nothing stood behind.
@@ -188,6 +188,33 @@ pub async fn assess<S: Store, C: ModelClient>(
                         .explanation
                         .clone()
                         .unwrap_or_else(|| "the reviewer declined to judge this change".into()),
+                    cost_usd: response.cost_usd,
+                    model: response.model,
+                });
+            }
+            let incomplete = match (
+                response.tool_calls.is_empty(),
+                response.stop_reason.as_deref(),
+            ) {
+                (false, _) => Some("the reviewer requested tools instead of completing the review"),
+                (true, Some("end_turn" | "stop" | "stop_sequence")) => None,
+                (
+                    true,
+                    Some(
+                        "length"
+                        | "max_tokens"
+                        | "model_context_window_exceeded"
+                        | "context_length_exceeded",
+                    ),
+                ) => Some(
+                    "the reviewer reached an output or context limit before completing the review",
+                ),
+                _ => Some("the reviewer's response did not confirm a completed review"),
+            };
+            if let Some(notes) = incomplete {
+                return Some(Assessment {
+                    grade: Grade::Concerns,
+                    notes: notes.into(),
                     cost_usd: response.cost_usd,
                     model: response.model,
                 });

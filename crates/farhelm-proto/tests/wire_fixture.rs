@@ -22,11 +22,14 @@ use farhelm_proto::commands::{Command, PlanAction, Review};
 use farhelm_proto::diff::{ChangeKind, ChangeSet, DiffLine, FileDiff, Hunk, Tag};
 use farhelm_proto::events::{CommandRejected, ServerEvent};
 use farhelm_proto::types::{
-    Agent, Approval, BatchItem, BatchStatus, DecidedVia, Decision, Risk, TaskStatus, TaskType, Tier,
+    Agent, Approval, AttachProjectRepositoryRequest, BatchItem, BatchStatus, Conversation,
+    CreateProjectRequest, DecidedVia, Decision, Document, EntityKind, EntityLink, Project,
+    ProjectPage, ProjectRepository, ProjectRepositoryPage, RelationKind, Risk,
+    StartProjectTaskRequest, TaskStatus, TaskType, Tier,
 };
 use farhelm_proto::views::{
     ApprovalView, BudgetView, DashboardView, FleetView, OutputLine, PlanProgress, PlanStepView,
-    SessionDetail, SessionView, SpendBucket, TaskDetail, TaskView, TierSlice,
+    ProjectTaskPage, SessionDetail, SessionView, SpendBucket, TaskDetail, TaskView, TierSlice,
 };
 
 const AT: i64 = 1_785_369_600_000;
@@ -77,6 +80,7 @@ fn build() -> serde_json::Value {
         started_at: AT,
         ended_at: Some(AT + 60_000),
         awaiting_approval_id: Some("approval-1".into()),
+        auto_approve: farhelm_proto::types::AutoApprove::Off,
     };
 
     let task = TaskView {
@@ -189,6 +193,10 @@ fn build() -> serde_json::Value {
             Command::TaskList,
             Command::RevertTask { task_id: "task-1".into() },
             Command::Snapshot,
+            Command::SetAutoApprove {
+                session_id: "session-1".into(),
+                level: farhelm_proto::types::AutoApprove::Low,
+            },
         ],
         "fleet_view": FleetView {
             sessions: vec![session.clone()],
@@ -209,7 +217,7 @@ fn build() -> serde_json::Value {
             pending_approval: Some(approval_view),
         },
         "task_detail": TaskDetail {
-            task,
+            task: task.clone(),
             patch: changes.render(),
             changes,
             output,
@@ -244,6 +252,83 @@ fn build() -> serde_json::Value {
             queued_at: AT,
             submitted_at: Some(AT + 1),
             settled_at: Some(AT + 2),
+        },
+        "project_workflow": {
+            "repository": ProjectRepository { id: "repo-1".into(), name: "payments-api".into(), path: "/srv/payments-api".into() },
+            "repository_page": ProjectRepositoryPage {
+                repositories: vec![ProjectRepository { id: "repo-1".into(), name: "payments-api".into(), path: "/srv/payments-api".into() }],
+                next_cursor: Some("repo-1".into()),
+            },
+            "attach_repository": AttachProjectRepositoryRequest { repo_id: "repo-1".into() },
+            "start_task": StartProjectTaskRequest {
+                repo_id: "repo-1".into(), prompt: "Bound the retry loop".into(), budget_usd: Some(1.0), max_steps: Some(12), retry_of: Some("previous-task".into()),
+            },
+            "task_page": ProjectTaskPage { tasks: vec![task.clone()], next_cursor: Some(task.id.clone()) },
+        },
+        "workspace": {
+            "create_project": CreateProjectRequest {
+                name: "Local pilot".into(),
+                description: "Synthetic local project metadata".into(),
+            },
+            "project_page": ProjectPage {
+                projects: vec![Project {
+                    id: "019a0000-0000-7000-8000-000000000001".into(),
+                    workspace_id: "local:0123456789abcdef0123456789abcdef".into(),
+                    name: "Local pilot".into(),
+                    description: "Synthetic local project metadata".into(),
+                    budget_cap_usd: None,
+                    created_at: AT,
+                    updated_at: AT,
+                }],
+                next_cursor: Some("019a0000-0000-7000-8000-000000000001".into()),
+            },
+            "empty_project_page": ProjectPage { projects: Vec::new(), next_cursor: None },
+            "project": Project {
+                id: "project-1".into(),
+                workspace_id: "workspace-1".into(),
+                name: "Payments".into(),
+                description: "Reliable payment workflows".into(),
+                budget_cap_usd: Some(100.0),
+                created_at: AT,
+                updated_at: AT + 1_000,
+            },
+            "project_without_budget": Project {
+                id: "project-2".into(),
+                workspace_id: "workspace-1".into(),
+                name: "Documentation".into(),
+                description: String::new(),
+                budget_cap_usd: None,
+                created_at: AT,
+                updated_at: AT,
+            },
+            "conversation": Conversation {
+                id: "conversation-1".into(),
+                project_id: "project-1".into(),
+                title: "Discuss retry limits".into(),
+                created_at: AT,
+                updated_at: AT + 2_000,
+            },
+            "document": Document {
+                id: "document-1".into(),
+                project_id: "project-1".into(),
+                title: "Retry policy".into(),
+                content: "# Retry policy\nLimit retries to three attempts.".into(),
+                content_hash: "sha256:fixture-content-hash".into(),
+                version: 2,
+                created_at: AT,
+                updated_at: AT + 3_000,
+            },
+            "entity_link": EntityLink {
+                id: "link-1".into(),
+                source_type: EntityKind::Conversation,
+                source_id: "conversation-1".into(),
+                target_type: EntityKind::Document,
+                target_id: "document-1".into(),
+                relation_kind: RelationKind::Documents,
+                created_at: AT + 3_000,
+            },
+            "entity_kinds": EntityKind::ALL,
+            "relation_kinds": RelationKind::ALL,
         },
     })
 }
@@ -316,6 +401,7 @@ fn the_fixture_covers_every_variant() {
             "task_list",
             "revert_task",
             "snapshot",
+            "set_auto_approve",
         ],
         "every Command variant must be in the fixture"
     );
