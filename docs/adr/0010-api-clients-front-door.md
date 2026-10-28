@@ -43,9 +43,11 @@ with repositories, conversations and tasks.
 
 - One ledger and one set of limits for every local model call on the
   machine.
-- The runner becomes a dependency of those projects: a runner restart is a
-  model outage for them. Restarts are short, and the engine keeps its
-  servers' state on disk, but a client should retry a refused connection.
+- The runner becomes a dependency of those projects. A service restart
+  leaves the engine's servers running and the next runner adopts them, so
+  a restart costs about a second (measured: a call answered 1.3 s after
+  the restart began) rather than a model reload. A client should still
+  retry a refused connection.
 - A client's `temperature`, `top_p`, `max_tokens` (lowered, never raised)
   and `reasoning_effort` (top-level or in `chat_template_kwargs`) reach the
   model, and a client can have a `default_effort`; the moved projects keep

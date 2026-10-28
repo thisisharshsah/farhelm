@@ -352,6 +352,20 @@ impl ModelServer {
     pub fn base_url(&self) -> String {
         format!("http://127.0.0.1:{}/v1", self.model.port)
     }
+
+    /// What exactly this server runs: the binary and every argument. A
+    /// server is adopted only when its pid file carries the same fingerprint,
+    /// so a changed model, port, context or adapter list starts a new one.
+    pub fn fingerprint(&self) -> String {
+        use sha2::{Digest as _, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(self.server.to_string_lossy().as_bytes());
+        for arg in self.args() {
+            hasher.update([0u8]);
+            hasher.update(arg.as_bytes());
+        }
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 /// A TOML basic string.
@@ -472,7 +486,19 @@ const LOG_LIMIT_BYTES: u64 = 16 * 1024 * 1024;
 pub struct Engine {
     pub config: EngineConfig,
     servers: Vec<Supervised>,
-    stop: watch::Sender<bool>,
+    stop: watch::Sender<Stop>,
+}
+
+/// What the supervisors are told when the runner stops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stop {
+    Running,
+    /// Stop the servers too: Ctrl-C in a terminal, or a test.
+    Servers,
+    /// Leave them serving for the next runner to adopt: a service manager
+    /// restarting the runner, which the projects using the models should not
+    /// notice.
+    Detach,
 }
 
 struct Supervised {
@@ -486,8 +512,8 @@ impl Engine {
     pub fn spawn(config: EngineConfig, home: PathBuf) -> Arc<Self> {
         // The first, single-model engine kept its pid here. A runner upgraded
         // from it may have left that server running on the first port.
-        stop_leftover(&home.join("engine.pid"), &config.server);
-        let (stop, _) = watch::channel(false);
+        stop_recorded(&home.join("engine.pid"), &config.server);
+        let (stop, _) = watch::channel(Stop::Running);
         let servers = config
             .servers()
             .into_iter()
@@ -532,7 +558,18 @@ impl Engine {
 
     /// Stop every server and wait for the supervisors to finish.
     pub async fn shutdown(&self) {
-        let _ = self.stop.send(true);
+        self.finish(Stop::Servers).await;
+    }
+
+    /// Stop supervising but leave the servers running, with their pid files,
+    /// for the next runner to adopt. Their models stay loaded through a
+    /// runner restart.
+    pub async fn detach(&self) {
+        self.finish(Stop::Detach).await;
+    }
+
+    async fn finish(&self, mode: Stop) {
+        let _ = self.stop.send(mode);
         for supervised in &self.servers {
             let task = supervised.task.lock().ok().and_then(|mut task| task.take());
             if let Some(task) = task {
@@ -552,16 +589,27 @@ async fn supervise(
     config: ModelServer,
     home: PathBuf,
     state: Arc<Mutex<EngineState>>,
-    mut stopped: watch::Receiver<bool>,
+    mut stopped: watch::Receiver<Stop>,
 ) {
     let alias = config.model.alias.clone();
     let pid_file = home.join(format!("engine-{alias}.pid"));
     let log_file = home.join("logs").join(format!("engine-{alias}.log"));
-    stop_leftover(&pid_file, &config.server);
+
+    // A server the previous runner left running exactly as configured is
+    // taken over rather than restarted: its model is already loaded, and the
+    // projects calling it never see a gap.
+    match adopt(&config, &pid_file, &state, &mut stopped).await {
+        Adoption::Stopped => {
+            let _ = std::fs::remove_file(&pid_file);
+            return;
+        }
+        Adoption::Detached => return,
+        Adoption::Declined => {}
+    }
 
     let mut attempt = 0u32;
     loop {
-        if *stopped.borrow() {
+        if *stopped.borrow() != Stop::Running {
             break;
         }
         if let Err(err) = config.preflight() {
@@ -571,7 +619,9 @@ async fn supervise(
 
         let started = Instant::now();
         let reason = match run_once(&config, &pid_file, &log_file, &state, &mut stopped).await {
-            Ok(()) => break,
+            // Detached: the server and its pid file stay for the next runner.
+            Ok(Stop::Detach) => return,
+            Ok(_) => break,
             Err(reason) => reason,
         };
         let _ = std::fs::remove_file(&pid_file);
@@ -607,8 +657,8 @@ async fn run_once(
     pid_file: &Path,
     log_file: &Path,
     state: &Mutex<EngineState>,
-    stopped: &mut watch::Receiver<bool>,
-) -> Result<(), String> {
+    stopped: &mut watch::Receiver<Stop>,
+) -> Result<Stop, String> {
     set(state, EngineState::Starting);
     // Something else on the port would answer the health check in our
     // server's place, and the gateway would talk to it. Refuse instead.
@@ -634,7 +684,9 @@ async fn run_once(
         .stdin(std::process::Stdio::null())
         .stdout(log)
         .stderr(log_err)
-        .kill_on_drop(true);
+        // Not killed when the handle drops: a detached server outlives this
+        // runner on purpose. Every other way out of here stops it explicitly.
+        .kill_on_drop(false);
     // Its own process group, so a terminal's Ctrl-C reaches the runner, which
     // then stops the engine deliberately, rather than both at once.
     #[cfg(unix)]
@@ -643,7 +695,7 @@ async fn run_once(
         .spawn()
         .map_err(|err| format!("could not start {}: {err}", config.server.display()))?;
     if let Some(pid) = child.id() {
-        let _ = std::fs::write(pid_file, pid.to_string());
+        let _ = std::fs::write(pid_file, format!("{pid}\n{}\n", config.fingerprint()));
     }
 
     let client = reqwest::Client::builder()
@@ -662,9 +714,12 @@ async fn run_once(
                 return Err(format!("the server exited ({status}); see {}", log_file.display()));
             }
             _ = stopped.changed() => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-                return Ok(());
+                let mode = *stopped.borrow();
+                if mode != Stop::Detach {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                }
+                return Ok(mode);
             }
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 if ready {
@@ -705,50 +760,162 @@ fn open_log(path: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
-/// Stop a server a previous runner left behind.
+enum Adoption {
+    Declined,
+    /// Adopted, then told to stop the server too.
+    Stopped,
+    /// Adopted, then told to leave it running.
+    Detached,
+}
+
+/// Health checks in a row an adopted server may fail before it is replaced.
+const ADOPTED_MISSES: u32 = 3;
+
+/// Take over a server a previous runner left running, when its pid file says
+/// it runs exactly this configuration and it answers. Anything else found in
+/// the pid file (another configuration, a server that does not answer) is
+/// stopped, so the port is free for a fresh start.
 ///
-/// launchd stops the runner with SIGTERM, and a runner that restarts itself in
-/// place replaces its own image; neither runs the code that stops the engine.
-/// Without this the old server keeps the port and its memory, and the new one
-/// cannot start. Only a process that is still our server binary is signalled,
-/// so a recycled pid is left alone.
-fn stop_leftover(pid_file: &Path, server: &Path) {
-    let Some(pid) = std::fs::read_to_string(pid_file)
-        .ok()
-        .and_then(|text| text.trim().parse::<u32>().ok())
-    else {
-        return;
+/// An adopted server is not this process's child, so it is watched through
+/// its health check rather than `wait`. That also covers a server that died
+/// as an unreaped child of a runner that replaced its own image.
+async fn adopt(
+    config: &ModelServer,
+    pid_file: &Path,
+    state: &Mutex<EngineState>,
+    stopped: &mut watch::Receiver<Stop>,
+) -> Adoption {
+    let Some((pid, fingerprint)) = read_pid_file(pid_file) else {
+        return Adoption::Declined;
     };
+    let ours = is_server_process(pid, &config.server);
+    if !ours {
+        let _ = std::fs::remove_file(pid_file);
+        return Adoption::Declined;
+    }
+    if fingerprint.as_deref() != Some(config.fingerprint().as_str())
+        || !healthy(config.model.port).await
+    {
+        stop_process(pid);
+        let _ = std::fs::remove_file(pid_file);
+        return Adoption::Declined;
+    }
+
+    set(state, EngineState::Ready);
+    let mut misses = 0u32;
+    loop {
+        tokio::select! {
+            _ = stopped.changed() => {
+                return match *stopped.borrow() {
+                    Stop::Detach => Adoption::Detached,
+                    _ => {
+                        stop_process(pid);
+                        Adoption::Stopped
+                    }
+                };
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                if healthy(config.model.port).await {
+                    misses = 0;
+                    continue;
+                }
+                misses += 1;
+                if misses >= ADOPTED_MISSES {
+                    eprintln!("engine {}: the adopted server stopped answering; starting a new one", config.model.alias);
+                    if is_server_process(pid, &config.server) {
+                        stop_process(pid);
+                    }
+                    let _ = std::fs::remove_file(pid_file);
+                    return Adoption::Declined;
+                }
+            }
+        }
+    }
+}
+
+async fn healthy(port: u16) -> bool {
+    let Ok(client) = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+    else {
+        return false;
+    };
+    client
+        .get(format!("http://127.0.0.1:{port}/health"))
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
+}
+
+/// A pid file: the pid, then (since adoption) the server's fingerprint.
+fn read_pid_file(path: &Path) -> Option<(u32, Option<String>)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    let pid = lines.next()?.trim().parse().ok()?;
+    let fingerprint = lines
+        .next()
+        .map(|line| line.trim().to_owned())
+        .filter(|line| !line.is_empty());
+    Some((pid, fingerprint))
+}
+
+/// Whether `pid` is still our server binary, so a recycled pid is left
+/// alone. `contains`, not `starts_with`: a server started through an
+/// interpreter or wrapper shows that first.
+fn is_server_process(pid: u32, server: &Path) -> bool {
     #[cfg(unix)]
     {
-        let command = std::process::Command::new("ps")
+        std::process::Command::new("ps")
             .args(["-o", "command=", "-p", &pid.to_string()])
             .output()
             .ok()
             .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
-            .unwrap_or_default();
-        // `contains`, not `starts_with`: a server started through an
-        // interpreter or wrapper shows that first.
-        if command.contains(&*server.to_string_lossy()) {
-            let _ = std::process::Command::new("kill")
-                .arg(pid.to_string())
-                .status();
-            // Give it a moment to release the port before a new one binds.
-            for _ in 0..50 {
-                let alive = std::process::Command::new("kill")
-                    .args(["-0", &pid.to_string()])
-                    .status()
-                    .is_ok_and(|status| status.success());
-                if !alive {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
+            .is_some_and(|command| command.contains(&*server.to_string_lossy()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, server);
+        false
+    }
+}
+
+/// SIGTERM, then wait up to five seconds for the port to be released.
+fn stop_process(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+        for _ in 0..50 {
+            let alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !alive {
+                break;
             }
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
     #[cfg(not(unix))]
-    let _ = (pid, server);
+    let _ = pid;
+}
+
+/// Stop a server recorded in a pid file, if it is still ours. For servers a
+/// detaching runner left behind (`farhelm engine stop`) and for the first,
+/// single-model engine's pid file.
+pub fn stop_recorded(pid_file: &Path, server: &Path) -> bool {
+    let Some((pid, _)) = read_pid_file(pid_file) else {
+        return false;
+    };
+    let ours = is_server_process(pid, server);
+    if ours {
+        stop_process(pid);
+    }
     let _ = std::fs::remove_file(pid_file);
+    ours
 }
 
 #[cfg(test)]
@@ -881,16 +1048,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let server = dir.join("llama-server");
+        // A Python script rather than a shell script that execs Python, so
+        // its own path stays in its command line, as the real binary's does.
         let body = if crash {
-            "#!/bin/sh\nexit 3\n".to_owned()
+            "#!/usr/bin/env python3\nimport sys\nsys.exit(3)\n".to_owned()
         } else {
-            "#!/bin/sh\n\
-             while [ $# -gt 0 ]; do [ \"$1\" = --port ] && PORT=$2; shift; done\n\
-             exec python3 -c \"import http.server as h\n\
+            "#!/usr/bin/env python3\n\
+             import sys, http.server as h\n\
+             port = int(sys.argv[sys.argv.index('--port') + 1])\n\
              class H(h.BaseHTTPRequestHandler):\n\
-             \x20def do_GET(s): s.send_response(200); s.end_headers(); s.wfile.write(b'ok')\n\
-             \x20def log_message(s, *a): pass\n\
-             h.HTTPServer(('127.0.0.1', $PORT), H).serve_forever()\"\n"
+             \x20   def do_GET(s): s.send_response(200); s.end_headers(); s.wfile.write(b'ok')\n\
+             \x20   def log_message(s, *a): pass\n\
+             h.HTTPServer(('127.0.0.1', port), H).serve_forever()\n"
                 .to_owned()
         };
         std::fs::write(&server, body).unwrap();
@@ -943,6 +1112,9 @@ mod tests {
 
     fn pid_of(dir: &Path, alias: &str) -> u32 {
         std::fs::read_to_string(dir.join(format!("engine-{alias}.pid")))
+            .unwrap()
+            .lines()
+            .next()
             .unwrap()
             .trim()
             .parse()
@@ -997,6 +1169,115 @@ mod tests {
         engine.shutdown().await;
         assert!(!dir.join("engine-model-1.pid").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_runner_restart_keeps_the_same_server_serving() {
+        let (dir, config) = fake_engine("adopt", false);
+        let first = Engine::spawn(config.clone(), dir.clone());
+        assert_eq!(
+            wait_for(&first, |s| *s == EngineState::Ready).await,
+            EngineState::Ready
+        );
+        let pid = pid_of(&dir, "model-0");
+        // A service restart: the runner goes, the server stays.
+        first.detach().await;
+        assert!(
+            process_alive(pid),
+            "detaching must leave the server running"
+        );
+
+        let second = Engine::spawn(config, dir.clone());
+        assert_eq!(
+            wait_for(&second, |s| *s == EngineState::Ready).await,
+            EngineState::Ready
+        );
+        assert_eq!(
+            pid_of(&dir, "model-0"),
+            pid,
+            "the same server is adopted, not replaced"
+        );
+        second.shutdown().await;
+        assert!(
+            !process_alive(pid),
+            "an adopted server stops with a full shutdown"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_changed_configuration_replaces_the_detached_server() {
+        let (dir, config) = fake_engine("reconfigure", false);
+        let first = Engine::spawn(config.clone(), dir.clone());
+        assert_eq!(
+            wait_for(&first, |s| *s == EngineState::Ready).await,
+            EngineState::Ready
+        );
+        let pid = pid_of(&dir, "model-0");
+        first.detach().await;
+
+        let mut changed = config;
+        changed.models[0].ctx_size = 8_192;
+        let second = Engine::spawn(changed, dir.clone());
+        assert_eq!(
+            wait_for(&second, |s| *s == EngineState::Ready).await,
+            EngineState::Ready
+        );
+        assert_ne!(pid_of(&dir, "model-0"), pid);
+        assert!(
+            !process_alive(pid),
+            "the old configuration's server is stopped"
+        );
+        second.shutdown().await;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_adopted_server_that_dies_is_replaced() {
+        let (dir, config) = fake_engine("adopted-death", false);
+        let first = Engine::spawn(config.clone(), dir.clone());
+        assert_eq!(
+            wait_for(&first, |s| *s == EngineState::Ready).await,
+            EngineState::Ready
+        );
+        let pid = pid_of(&dir, "model-0");
+        first.detach().await;
+        let second = Engine::spawn(config, dir.clone());
+        assert_eq!(
+            wait_for(&second, |s| *s == EngineState::Ready).await,
+            EngineState::Ready
+        );
+
+        stop_process(pid);
+        let mut replaced = None;
+        for _ in 0..200 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let now = std::fs::read_to_string(dir.join("engine-model-0.pid"))
+                .ok()
+                .and_then(|text| text.lines().next()?.parse::<u32>().ok());
+            if now.is_some_and(|now| now != pid) && second.states()[0].1 == EngineState::Ready {
+                replaced = now;
+                break;
+            }
+        }
+        assert!(
+            replaced.is_some(),
+            "a new server should replace the dead adopted one"
+        );
+        second.shutdown().await;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn process_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
     }
 
     #[cfg(unix)]

@@ -66,6 +66,8 @@ SETTING UP
                      --name <name>` converts an MLX-trained LoRA adapter, and
                      `engine add-adapter --to <model> --adapter <name>` loads
                      it with that model. `engine status` shows all of it.
+                     A service restart (SIGTERM) leaves the servers running for
+                     the next start to adopt; Ctrl-C or `engine stop` stops them.
     install-service  A unit file for this machine, with its paths filled in, and
                      the one line that installs it.
 
@@ -1037,11 +1039,23 @@ async fn serve_async(flags: Flags) -> Fallible {
 
     // Outbound-only is the security posture (§6); binding to loopback keeps the
     // runner off the network even before the relay exists.
+    let signalled = Arc::new(std::sync::Mutex::new(Shutdown::Interrupt));
     axum::serve(listener, app_router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(Arc::clone(&signalled)))
         .await?;
     if let Some(engine) = engine {
-        engine.shutdown().await;
+        let how = signalled
+            .lock()
+            .map(|how| *how)
+            .unwrap_or(Shutdown::Interrupt);
+        if how == Shutdown::Terminate {
+            println!(
+                "  engine     left running for the next start (`farhelm engine stop` stops it)"
+            );
+            engine.detach().await;
+        } else {
+            engine.shutdown().await;
+        }
     }
     Ok(())
 }
@@ -1319,6 +1333,21 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
             print_registry(&config, &to);
             Ok(())
         }
+        Some("stop") => {
+            let config = existing()?;
+            for model in &config.models {
+                let pid_file = home.join(format!("engine-{}.pid", model.alias));
+                let stopped = engine::stop_recorded(&pid_file, &config.server);
+                println!(
+                    "  {:<18} {}",
+                    model.alias,
+                    if stopped { "stopped" } else { "not running" }
+                );
+            }
+            println!();
+            println!("A running runner starts them again; stop the runner first to keep them down.");
+            Ok(())
+        }
         Some("status") | None => {
             let Some(config) = EngineConfig::load(config_path)? else {
                 println!("No engine is set up. `farhelm engine install --model <file.gguf> --alias <name>` sets one up.");
@@ -1367,7 +1396,7 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
             Ok(())
         }
         Some(other) => Err(format!(
-            "unknown engine command `{other}`; try install, add-model, import-adapter, add-adapter or status"
+            "unknown engine command `{other}`; try install, add-model, import-adapter, add-adapter, stop or status"
         )
         .into()),
     }
@@ -1618,9 +1647,18 @@ fn clients_command(flags: &Flags, args: &[String]) -> Fallible {
     }
 }
 
-/// Ctrl-C in a terminal, or SIGTERM from launchd and systemd. Both shut down
-/// the same way, so the engine is stopped rather than left holding its port.
-async fn shutdown_signal() {
+/// How the runner was asked to stop.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shutdown {
+    /// Ctrl-C in a terminal: stop everything, the engine's servers included.
+    Interrupt,
+    /// SIGTERM from launchd or systemd, which is how a service restarts. The
+    /// engine's servers are left running for the next runner to adopt, so
+    /// the projects using them see no gap.
+    Terminate,
+}
+
+async fn shutdown_signal(signalled: Arc<std::sync::Mutex<Shutdown>>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -1628,18 +1666,25 @@ async fn shutdown_signal() {
             Ok(mut terminate) => {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {}
-                    _ = terminate.recv() => {}
+                    _ = terminate.recv() => {
+                        if let Ok(mut how) = signalled.lock() {
+                            *how = Shutdown::Terminate;
+                        }
+                    }
                 }
             }
             // No handler means SIGTERM keeps its default; the next start
-            // still stops a leftover engine through its pid file.
+            // still deals with the servers through their pid files.
             Err(_) => {
                 let _ = tokio::signal::ctrl_c().await;
             }
         }
     }
     #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
+    {
+        let _ = signalled;
+        let _ = tokio::signal::ctrl_c().await;
+    }
     println!("\nshutting down");
 }
 
