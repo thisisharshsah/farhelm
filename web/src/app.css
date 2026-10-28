@@ -1318,9 +1318,24 @@ svg.is-open {
   font-size: 0.85rem;
 }
 
+/* The secondary yes: a plain button, so the filled Approve stays the one
+   obvious default. */
 .approval-delegate {
-  border-color: color-mix(in srgb, var(--fill-done) 45%, transparent);
-  color: var(--success-text);
+  color: var(--text-primary);
+}
+
+.approval-choices {
+  align-items: center;
+}
+
+.approval-choices .btn-deny {
+  border-color: transparent;
+  background: transparent;
+  color: var(--status-critical);
+}
+
+.approval-choices .btn-deny:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-critical) 10%, transparent);
 }
 
 /* ---------------------------------------------------------------- new task */
@@ -1692,4 +1707,67 @@ svg.is-open {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 650;
+}
+
+/* ---------------------------------------------------------------- settings */
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--s-3);
+  width: 100%;
+  max-width: 62rem;
+  margin: 0 auto var(--s-3);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.settings-section .seg {
+  align-self: flex-start;
+}
+
+.settings-signin {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  max-width: 62rem;
+  margin: 0 auto;
+}
+
+.settings-signin .btn {
+  flex: none;
+  padding-inline: var(--s-4);
+}
+
+.settings-facts {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.settings-facts > div {
+  display: flex;
+  gap: var(--s-3);
+}
+
+.settings-facts dt {
+  width: 6.5rem;
+  color: var(--text-muted);
+}
+
+.settings-facts dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.settings-head {
+  width: 100%;
+  max-width: 62rem;
+  margin: 0 auto var(--s-3);
 }

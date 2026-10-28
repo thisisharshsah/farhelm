@@ -1005,6 +1005,16 @@ input.pair-input {
   flex: 1;
 }
 
+/* Each fact stays on one line; in a narrow side panel the second one moves
+   under the first instead of breaking "$0.88 of $2.00" in half. */
+.meter-caption {
+  flex-wrap: wrap;
+}
+
+.meter-caption > span {
+  white-space: nowrap;
+}
+
 .bars {
   display: flex;
   flex-direction: column;

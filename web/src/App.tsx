@@ -12,6 +12,7 @@ import { AccountScreen, BillingScreen } from "./components/Account";
 import { PushSettings } from "./components/PushSettings";
 import { NewSession } from "./components/NewSession";
 import { TaskBoard } from "./components/Board";
+import { Preferences, type Theme } from "./components/Preferences";
 import { Overview } from "./components/Overview";
 import { NewTaskComposer, TaskThread } from "./components/TaskThread";
 import { ProjectsList } from "./components/Projects";
@@ -22,14 +23,13 @@ import { Palette, type Action } from "./components/Palette";
 import { Icon } from "./components/Icon";
 import { CLOUD_URL } from "./cloud";
 
-type Theme = "system" | "light" | "dark";
 
 const THEME_KEY = "farhelm-theme";
 
 /** How long a burst of runner events is gathered into one refetch. */
 const EVENT_COALESCE_MS = 120;
 
-function useTheme(): [Theme, () => void] {
+function useTheme(): [Theme, () => void, (theme: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(
     () => (getMigratingSync(THEME_KEY, "forge-theme") as Theme | null) ?? "system",
   );
@@ -49,12 +49,12 @@ function useTheme(): [Theme, () => void] {
     [],
   );
 
-  return [theme, cycle];
+  return [theme, cycle, setTheme];
 }
 
 export default function App() {
   const [route, navigate] = useRoute();
-  const [theme, cycleTheme] = useTheme();
+  const [theme, cycleTheme, setTheme] = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   // ⌘K on a Mac, Ctrl-K elsewhere, and `/` when the caret is not already in a
@@ -577,6 +577,19 @@ export default function App() {
         ) : null}
 
         {route.view === "account" ? (
+          <Preferences
+            theme={theme}
+            onTheme={setTheme}
+            connection={
+              connection.mode === "cloud"
+                ? transport?.kind === "loopback" ? "Signed in, on this machine" : "Signed in, through the relay"
+                : "On this machine only"
+            }
+            machineName={activeRunner?.name ?? (transport?.kind === "loopback" ? "Local runner" : null)}
+            sessions={fleet.data ? fleet.data.sessions.length : null}
+          />
+        ) : null}
+        {route.view === "account" ? (
           connection.mode === "cloud" && connection.workspace && connection.cloud ? (
             <AccountScreen
               workspace={connection.workspace}
@@ -589,12 +602,15 @@ export default function App() {
               onPickRunner={connection.pickRunner}
             />
           ) : (
-            <section className="card">
-              <div className="chart-title">Not signed in</div>
-              <p className="tile-note">
-                This browser is talking to a runner on this machine directly.
-                Sign in to reach it from your phone as well.
-              </p>
+            <section className="panel settings-section settings-signin" aria-labelledby="pref-account">
+              <div>
+                <h2 className="panel-title" id="pref-account">Account</h2>
+                <p className="field-hint">
+                  Not signed in. This browser talks to the runner on this machine
+                  directly. Sign in to reach it from your phone as well.
+                </p>
+              </div>
+              <span className="spacer" />
               <button className="btn btn-primary" onClick={connection.chooseCloud}>
                 Sign in
               </button>

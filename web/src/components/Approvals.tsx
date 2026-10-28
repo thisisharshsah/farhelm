@@ -137,24 +137,20 @@ export function ApprovalCard({
 
       {error ? <p className="notice" role="alert">{error}</p> : null}
 
-      <div className="approval-actions">
+      {/* Ordered like Codex's prompt: the yes, the yes-for-the-session, and the
+          no set apart on the right, so the two answers that run the command sit
+          together and a slip cannot land on the opposite one. */}
+      <div className="approval-actions approval-choices">
         <button
-          className="btn btn-approve"
+          className="btn btn-primary"
           disabled={busy !== null}
           onClick={() => void decide("approved")}
         >
           {busy === "approved" ? "Approving…" : "Approve"}
         </button>
-        <button
-          className="btn btn-deny"
-          disabled={busy !== null}
-          onClick={() => void decide("denied")}
-        >
-          {busy === "denied" ? "Denying…" : "Deny"}
-        </button>
         {delegate ? (
           <button
-            className="btn btn-quiet approval-delegate"
+            className="btn approval-delegate"
             disabled={busy !== null}
             onClick={() => void decide("approved", delegate)}
           >
@@ -165,6 +161,14 @@ export function ApprovalCard({
                 : "Yes, and don't ask again this session"}
           </button>
         ) : null}
+        <span className="spacer" />
+        <button
+          className="btn btn-quiet btn-deny"
+          disabled={busy !== null}
+          onClick={() => void decide("denied")}
+        >
+          {busy === "denied" ? "Denying…" : "Deny"}
+        </button>
       </div>
     </section>
   );
