@@ -88,7 +88,7 @@ Implemented the same day: the engine runs one supervised server per base model
 (`farhelm engine add-model`), loads adapters switched off
 (`farhelm engine add-adapter`), and a registry model with `adapters` is a
 specialist whose requests switch them on. qwen3-coder 30B, gpt-oss-20b and the
-`gpt-oss-c2` specialist each passed the conformance probe through the
+C2 specialist (now the `fast` adapter, `gpt-oss-20b:fast`) each passed the conformance probe through the
 registry. Every model starts with the runner; unloading idle models to fit
 memory is not built yet.
 

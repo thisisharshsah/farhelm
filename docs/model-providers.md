@@ -69,7 +69,7 @@ Reasoning models such as gpt-oss write their analysis before a tool call and nee
 Projects that call models directly can go through the runner instead, each as an API client with its own key ([ADR 0010](adr/0010-api-clients-front-door.md)):
 
 ```sh
-farhelm clients add everest --default-model gpt-oss-20b --models gpt-oss-20b,gpt-oss-c2 --daily-tokens 2000000
+farhelm clients add everest --default-model think --models think,quick --daily-tokens 2000000
 ```
 
 `--default-effort low` keeps a reasoning model at the effort a request does not set, and `farhelm clients set <name>` changes any of these. The key is printed once. Point the project at `http://127.0.0.1:7842/p/everest/v1` (OpenAI style) or `http://127.0.0.1:7842/p/everest` (Anthropic style) and send the key as `Authorization: Bearer` or `x-api-key`. Restart the runner after adding, rotating or removing a client.

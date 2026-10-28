@@ -40,13 +40,18 @@ training data or evaluation sets, and an evaluation set is never trained on.
 1. Projects call through Farhelm (done: everest, career, lacuna and fennec
    have clients; the first three switch when their services restart).
 2. A runner restart costs projects nothing (done: servers are adopted).
-3. Host project models (started 2026-10-28): fennec's tuned Qwen3.5-4B
-   adapter runs on the engine as `crawl-4b`, the name fennec asks for, with
-   thinking off as it was trained. The importer maps Qwen3.5's hybrid layers
-   and reorders its value heads to llama.cpp's layout. The base differs (Q8
-   GGUF against the 4-bit MLX base the adapter was trained on), so the
-   adapter's style carries over but answers are not identical; fennec's own
-   benchmark decides whether `crawl-4b` serves Crawl. `crawl-2b` is next.
+3. Host project models (done for fennec, 2026-10-28): fennec's tuned
+   Qwen3.5-4B adapter is `qwen3.5-4b:conscious`, which fennec asks for as
+   the alias `companion`, with thinking off as it was trained. The importer
+   maps Qwen3.5's hybrid layers and reorders its value heads to llama.cpp's
+   layout. On fennec's own benchmark it matched or beat the MLX original on
+   six of seven measures (judge "fit" 3.42 against 3.75; the engine's base is
+   Q8 where training used a 4-bit base).
+
+   Naming, confirmed by the owner: models keep their makers' names; each
+   model lists its adapters, selected as `model:adapter` (`@vN` pins a
+   version); aliases name purposes (`code`, `think`, `quick`,
+   `companion`).
 4. Evaluation as a Farhelm feature: a per-project evaluation set and grader,
    run against any registry model, results kept with the deployment record.
    fennec's `bench.py` is the template.
