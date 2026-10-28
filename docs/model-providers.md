@@ -17,24 +17,40 @@ Without `FARHELM_MODELS_CONFIG`, the existing Conscious/Anthropic environment an
 
 ## The Farhelm engine
 
-The runner can own its model server instead of relying on one installed by hand. `farhelm engine install` installs a pinned llama.cpp server build after checking the SHA-256 GitHub publishes for it, links the model file into `models/`, hashes it, and writes `engine.toml` beside the runner's other state:
+The runner can own its model servers instead of relying on one installed by hand. `farhelm engine install` installs a pinned llama.cpp server build after checking the SHA-256 GitHub publishes for it; `add-model` links a GGUF model into `models/`, hashes it and gives it its own port; `engine.toml` beside the runner's other state records all of it:
 
 ```sh
-farhelm engine install --model /path/to/model.gguf --alias qwen3-coder-30b
+farhelm engine install --model /path/to/coder.gguf --alias qwen3-coder-30b
+farhelm engine add-model --model /path/to/gpt-oss-20b.gguf --alias gpt-oss-20b --ctx-size 16384
 farhelm engine status
 ```
 
-`--from <archive>` installs from an archive you already downloaded; it is checked against the same pin. `serve` then starts the server on `127.0.0.1:7846` with the model's own chat template (`--jinja`), waits for `/health`, restarts it with backoff (2 s doubling to a minute) when it exits, and stops it on Ctrl-C or SIGTERM. A server left by a previous runner is stopped at the next start through `engine.pid`. Its output goes to `logs/engine.log`, cut at 16 MiB.
+`--from <archive>` installs from an archive you already downloaded; it is checked against the same pin. `serve` starts one server per model (the first on `127.0.0.1:7846`, then the next free ports) with the model's own chat template (`--jinja`), waits for `/health`, restarts each with backoff (2 s doubling to a minute) when it exits, and stops them all on Ctrl-C or SIGTERM. A server left by a previous runner is stopped at the next start through its `engine-<alias>.pid`, and another process on a model's port is refused rather than mistaken for it. Output goes to `logs/engine-<alias>.log`, cut at 16 MiB. Every configured model starts with the runner; nothing unloads an idle model yet, so the models must fit in memory together.
 
-Requests still go through the gateway: point a registry provider at the engine like any other local endpoint (`kind = "openai_compatible"`, `base_url = "http://127.0.0.1:7846/v1"`, `data_location = "local"`, and the model's alias). Only Apple Silicon has a pinned build so far (`b11624`); a new build is a new deployment and passes the conformance probe before it is pinned. A model file is checked by size on every start; its install-time hash is the deployment record.
+Requests still go through the gateway: point a registry provider at each model's port like any other local endpoint (`kind = "openai_compatible"`, `data_location = "local"`, and the model's alias). Only Apple Silicon has a pinned build so far (`b11624`); a new build is a new deployment and passes the conformance probe before it is pinned. A model file is checked by size on every start; its install-time hash is the deployment record.
 
 ### Adapters trained with MLX
 
-`farhelm engine import-adapter --from <mlx-adapter-dir> --name <name>` converts an MLX-LM LoRA adapter (`adapter_config.json` and `adapters.safetensors`, F32) into the engine's GGUF adapter format under `adapters/`. Linear matrices are transposed, per-expert matrices are kept, and `alpha = scale * rank` so llama.cpp applies the same strength. Only gpt-oss is mapped so far; an adapter tensor with no counterpart in the base model is an error rather than being dropped. Load it with the server's `--lora`; requests choose its strength with the `lora` field.
+`farhelm engine import-adapter --from <mlx-adapter-dir> --name <name>` converts an MLX-LM LoRA adapter (`adapter_config.json` and `adapters.safetensors`, F32) into the engine's GGUF adapter format under `adapters/`. Linear matrices are transposed, per-expert matrices are kept, and `alpha = scale * rank` so llama.cpp applies the same strength. Only gpt-oss is mapped so far; an adapter tensor with no counterpart in the base model is an error rather than being dropped. `farhelm engine add-adapter --to <model> --adapter <name>` loads it with that model's server, switched off, and prints its id.
+
+### Specialists
+
+A specialist is a base model plus adapters switched on for its requests only. Declare it in the registry as a model on the base model's provider, naming the adapter ids `farhelm engine status` lists:
+
+```toml
+[models.gpt-oss-c2]
+provider = "engine-gpt-oss-20b"
+model = "gpt-oss-20b"
+tools = true
+max_output_tokens = 8192
+adapters = [{ id = 0, scale = 1.0 }]
+```
+
+The gateway sends llama.cpp's `lora` field with those ids; the base model on the same server sends none and gets every adapter at scale 0. Ids must be distinct and below 64, scales from 0 to 4, and only `openai_compatible` providers may declare adapters. The ledger records the specialist, not just the base model (`local/<provider>/gpt-oss-20b+gpt-oss-c2`), so its spend and quality can be told apart.
 
 ### Reasoning models and tool calls
 
-Reasoning models such as gpt-oss write their analysis before a tool call and need it back on the next request. The OpenAI-compatible adapter keeps a plain `reasoning_content` string that comes with tool calls and returns it on the assistant message of the following request, where llama.cpp renders it into the model's analysis channel. Structured reasoning (`reasoning_details`, OpenRouter's `reasoning`) still fails the request, since it needs exact replay this adapter does not do. Reasoning is not sent to Anthropic, whose thinking blocks need Anthropic's own signature.
+Reasoning models such as gpt-oss write their analysis before a tool call and need it back on the next request. The OpenAI-compatible adapter keeps a plain `reasoning_content` string that comes with tool calls and returns it on the assistant message of the following request, where llama.cpp renders it into the model's analysis channel. A successful tool result is sent as the tool's plain output; a failed one as `{"content": ..., "is_error": true}`, since Chat Completions has no error flag. Structured reasoning (`reasoning_details`, OpenRouter's `reasoning`) still fails the request, since it needs exact replay this adapter does not do. Reasoning is not sent to Anthropic, whose thinking blocks need Anthropic's own signature.
 
 ## Configuration contract
 

@@ -57,9 +57,14 @@ pub fn archive_url(asset: &str) -> String {
 }
 
 pub const DEFAULT_ENGINE_CONFIG: &str = "engine.toml";
+/// The first model's port; later models take the next free ones.
 pub const DEFAULT_PORT: u16 = 7846;
 
-/// `engine.toml`, written by `farhelm engine install`.
+/// `engine.toml`: the server build and the models it serves.
+///
+/// Written by `farhelm engine install`, `add-model` and `add-adapter`. Each
+/// model gets its own server process and port, so one crashing or running out
+/// of memory does not take the others down.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EngineConfig {
@@ -67,28 +72,53 @@ pub struct EngineConfig {
     pub build: String,
     /// The `llama-server` binary.
     pub server: PathBuf,
-    /// The base model, a GGUF file.
+    #[serde(default)]
+    pub models: Vec<ModelEntry>,
+}
+
+/// One base model and the adapters loaded with it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelEntry {
+    /// The model name the server answers to, and the `model` the registry
+    /// sends.
+    pub alias: String,
+    /// A GGUF file.
     pub model: PathBuf,
     /// Its SHA-256 at install time: the deployment record, not re-hashed on
     /// every start (that is half a minute of disk reads for a 30B model).
     pub model_sha256: String,
     /// Its size at install time, checked on every start instead.
     pub model_bytes: u64,
-    /// The model name the server answers to, and the `model` the registry
-    /// sends.
-    pub alias: String,
-    #[serde(default = "default_port")]
     pub port: u16,
     #[serde(default = "default_ctx_size")]
     pub ctx_size: u32,
     /// Requests decoded at once. Each one takes its share of `ctx_size`.
     #[serde(default = "default_parallel")]
     pub parallel: u32,
+    /// LoRA adapters, loaded switched off. Their position is the id a
+    /// registry specialist names (`adapters = [{ id = 0, scale = 1.0 }]`).
+    #[serde(default)]
+    pub adapters: Vec<AdapterEntry>,
 }
 
-fn default_port() -> u16 {
-    DEFAULT_PORT
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdapterEntry {
+    pub name: String,
+    /// A GGUF LoRA adapter (`farhelm engine import-adapter` writes one).
+    pub path: PathBuf,
+    pub sha256: String,
 }
+
+/// One model's server: what the supervisor starts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelServer {
+    pub build: String,
+    pub server: PathBuf,
+    pub model: ModelEntry,
+}
+
 fn default_ctx_size() -> u32 {
     32_768
 }
@@ -111,6 +141,14 @@ fn fail(message: impl Into<String>) -> EngineError {
     EngineError(message.into())
 }
 
+fn valid_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 impl EngineConfig {
     /// `Ok(None)` when there is no file: the engine is simply not set up.
     pub fn load(path: &Path) -> Result<Option<Self>, EngineError> {
@@ -125,27 +163,130 @@ impl EngineConfig {
         Ok(Some(config))
     }
 
-    fn validate(&self) -> Result<(), EngineError> {
-        if self.alias.is_empty()
-            || !self
-                .alias
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        {
-            return Err(fail(
-                "engine alias must be ASCII letters, digits, '-', '_' or '.'",
-            ));
-        }
-        if self.port == 0 || self.ctx_size < 2_048 || self.parallel == 0 || self.parallel > 16 {
-            return Err(fail(
-                "engine port must be set, ctx_size at least 2048, and parallel 1 to 16",
-            ));
+    pub fn validate(&self) -> Result<(), EngineError> {
+        let mut aliases = std::collections::BTreeSet::new();
+        let mut ports = std::collections::BTreeSet::new();
+        for model in &self.models {
+            if !valid_name(&model.alias) {
+                return Err(fail(format!(
+                    "model alias `{}` must be ASCII letters, digits, '-', '_' or '.'",
+                    model.alias
+                )));
+            }
+            if !aliases.insert(model.alias.as_str()) || !ports.insert(model.port) {
+                return Err(fail(format!(
+                    "model `{}` repeats another model's alias or port",
+                    model.alias
+                )));
+            }
+            if model.port == 0
+                || model.ctx_size < 2_048
+                || model.parallel == 0
+                || model.parallel > 16
+            {
+                return Err(fail(format!(
+                    "model `{}` needs a port, ctx_size of at least 2048 and parallel 1 to 16",
+                    model.alias
+                )));
+            }
+            let mut names = std::collections::BTreeSet::new();
+            for adapter in &model.adapters {
+                if !valid_name(&adapter.name) || !names.insert(adapter.name.as_str()) {
+                    return Err(fail(format!(
+                        "adapter names on `{}` must be distinct and ASCII letters, digits, '-', '_' or '.'",
+                        model.alias
+                    )));
+                }
+            }
         }
         Ok(())
     }
 
-    /// Check what can go stale between starts: the binary still exists and the
-    /// model file is the one that was installed, by size.
+    pub fn servers(&self) -> Vec<ModelServer> {
+        self.models
+            .iter()
+            .map(|model| ModelServer {
+                build: self.build.clone(),
+                server: self.server.clone(),
+                model: model.clone(),
+            })
+            .collect()
+    }
+
+    /// The first port from [`DEFAULT_PORT`] up that no model uses.
+    pub fn next_port(&self) -> u16 {
+        (DEFAULT_PORT..u16::MAX)
+            .find(|port| self.models.iter().all(|model| model.port != *port))
+            .unwrap_or(DEFAULT_PORT)
+    }
+
+    /// Add or replace the model with this alias. A replaced model keeps its
+    /// port and adapters unless the new entry names its own.
+    pub fn upsert_model(&mut self, mut entry: ModelEntry) {
+        match self
+            .models
+            .iter_mut()
+            .find(|model| model.alias == entry.alias)
+        {
+            Some(existing) => {
+                if entry.adapters.is_empty() {
+                    entry.adapters = std::mem::take(&mut existing.adapters);
+                }
+                *existing = entry;
+            }
+            None => self.models.push(entry),
+        }
+    }
+
+    /// The `engine.toml` text for this configuration.
+    pub fn to_toml(&self) -> String {
+        let mut out = format!(
+            "# Written by `farhelm engine`. The runner starts one server per model\n\
+             # when it starts; the model registry reaches each at its port.\n\
+             build = {}\n\
+             server = {}\n",
+            quote(&self.build),
+            quote(&self.server.to_string_lossy()),
+        );
+        for model in &self.models {
+            out.push_str(&format!(
+                "\n[[models]]\n\
+                 alias = {}\n\
+                 model = {}\n\
+                 model_sha256 = {}\n\
+                 model_bytes = {}\n\
+                 port = {}\n\
+                 ctx_size = {}\n\
+                 parallel = {}\n",
+                quote(&model.alias),
+                quote(&model.model.to_string_lossy()),
+                quote(&model.model_sha256),
+                model.model_bytes,
+                model.port,
+                model.ctx_size,
+                model.parallel,
+            ));
+            for (id, adapter) in model.adapters.iter().enumerate() {
+                out.push_str(&format!(
+                    "\n# adapter id {id}\n\
+                     [[models.adapters]]\n\
+                     name = {}\n\
+                     path = {}\n\
+                     sha256 = {}\n",
+                    quote(&adapter.name),
+                    quote(&adapter.path.to_string_lossy()),
+                    quote(&adapter.sha256),
+                ));
+            }
+        }
+        out
+    }
+}
+
+impl ModelServer {
+    /// Check what can go stale between starts: the binary still exists, the
+    /// model file is the one that was installed (by size), and the adapters
+    /// are still there.
     pub fn preflight(&self) -> Result<(), EngineError> {
         if !self.server.is_file() {
             return Err(fail(format!(
@@ -153,70 +294,63 @@ impl EngineConfig {
                 self.server.display()
             )));
         }
-        let bytes = std::fs::metadata(&self.model)
-            .map_err(|err| fail(format!("the model {}: {err}", self.model.display())))?
+        let path = &self.model.model;
+        let bytes = std::fs::metadata(path)
+            .map_err(|err| fail(format!("the model {}: {err}", path.display())))?
             .len();
-        if bytes != self.model_bytes {
+        if bytes != self.model.model_bytes {
             return Err(fail(format!(
                 "the model {} is {bytes} bytes, but {} were installed; reinstall it",
-                self.model.display(),
-                self.model_bytes
+                path.display(),
+                self.model.model_bytes
             )));
+        }
+        for adapter in &self.model.adapters {
+            if !adapter.path.is_file() {
+                return Err(fail(format!(
+                    "the adapter {} is missing; import it again",
+                    adapter.path.display()
+                )));
+            }
         }
         Ok(())
     }
 
-    /// The server's arguments. Loopback only, and `--jinja` so the model's own
-    /// chat template (and with it, tool calling) is used.
+    /// The server's arguments. Loopback only, `--jinja` so the model's own
+    /// chat template (and with it, tool calling) is used, and every adapter
+    /// loaded switched off: a request without a `lora` field gets the base
+    /// model, and only a specialist's request switches its adapter on.
     pub fn args(&self) -> Vec<String> {
-        vec![
+        let model = &self.model;
+        let mut args = vec![
             "--model".into(),
-            self.model.to_string_lossy().into_owned(),
+            model.model.to_string_lossy().into_owned(),
             "--alias".into(),
-            self.alias.clone(),
+            model.alias.clone(),
             "--host".into(),
             "127.0.0.1".into(),
             "--port".into(),
-            self.port.to_string(),
+            model.port.to_string(),
             "--jinja".into(),
             "--ctx-size".into(),
-            self.ctx_size.to_string(),
+            model.ctx_size.to_string(),
             "--parallel".into(),
-            self.parallel.to_string(),
+            model.parallel.to_string(),
             "--n-gpu-layers".into(),
             "999".into(),
-        ]
+        ];
+        for adapter in &model.adapters {
+            args.push("--lora".into());
+            args.push(adapter.path.to_string_lossy().into_owned());
+        }
+        if !model.adapters.is_empty() {
+            args.push("--lora-init-without-apply".into());
+        }
+        args
     }
 
     pub fn base_url(&self) -> String {
-        format!("http://127.0.0.1:{}/v1", self.port)
-    }
-
-    /// The `engine.toml` text for this configuration.
-    pub fn to_toml(&self) -> String {
-        format!(
-            "# Written by `farhelm engine install`. The runner starts this server when it\n\
-             # starts, and the model registry reaches it at {base}.\n\
-             build = {build}\n\
-             server = {server}\n\
-             model = {model}\n\
-             model_sha256 = {sha}\n\
-             model_bytes = {bytes}\n\
-             alias = {alias}\n\
-             port = {port}\n\
-             ctx_size = {ctx}\n\
-             parallel = {parallel}\n",
-            base = self.base_url(),
-            build = quote(&self.build),
-            server = quote(&self.server.to_string_lossy()),
-            model = quote(&self.model.to_string_lossy()),
-            sha = quote(&self.model_sha256),
-            bytes = self.model_bytes,
-            alias = quote(&self.alias),
-            port = self.port,
-            ctx = self.ctx_size,
-            parallel = self.parallel,
-        )
+        format!("http://127.0.0.1:{}/v1", self.model.port)
     }
 }
 
@@ -333,44 +467,77 @@ const STABLE_AFTER: Duration = Duration::from_secs(300);
 /// The engine log is cut when a start finds it larger than this.
 const LOG_LIMIT_BYTES: u64 = 16 * 1024 * 1024;
 
-/// The running supervisor. Dropping it does not stop the engine; call
-/// [`Engine::shutdown`].
+/// The running supervisor: one task per model server. Dropping it does not
+/// stop the servers; call [`Engine::shutdown`].
 pub struct Engine {
     pub config: EngineConfig,
-    state: Arc<Mutex<EngineState>>,
+    servers: Vec<Supervised>,
     stop: watch::Sender<bool>,
+}
+
+struct Supervised {
+    server: ModelServer,
+    state: Arc<Mutex<EngineState>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Engine {
-    /// Start supervising. `home` holds the pid file and the engine log.
+    /// Start supervising every model. `home` holds the pid files and logs.
     pub fn spawn(config: EngineConfig, home: PathBuf) -> Arc<Self> {
-        let state = Arc::new(Mutex::new(EngineState::Starting));
-        let (stop, stopped) = watch::channel(false);
-        let task = tokio::spawn(supervise(config.clone(), home, Arc::clone(&state), stopped));
+        // The first, single-model engine kept its pid here. A runner upgraded
+        // from it may have left that server running on the first port.
+        stop_leftover(&home.join("engine.pid"), &config.server);
+        let (stop, _) = watch::channel(false);
+        let servers = config
+            .servers()
+            .into_iter()
+            .map(|server| {
+                let state = Arc::new(Mutex::new(EngineState::Starting));
+                let task = tokio::spawn(supervise(
+                    server.clone(),
+                    home.clone(),
+                    Arc::clone(&state),
+                    stop.subscribe(),
+                ));
+                Supervised {
+                    server,
+                    state,
+                    task: Mutex::new(Some(task)),
+                }
+            })
+            .collect();
         Arc::new(Self {
             config,
-            state,
+            servers,
             stop,
-            task: Mutex::new(Some(task)),
         })
     }
 
-    pub fn state(&self) -> EngineState {
-        self.state
-            .lock()
-            .map(|state| state.clone())
-            .unwrap_or(EngineState::Stopped {
-                reason: "supervisor state poisoned".into(),
+    /// Each model server and what it is doing, in configuration order.
+    pub fn states(&self) -> Vec<(ModelServer, EngineState)> {
+        self.servers
+            .iter()
+            .map(|supervised| {
+                let state = supervised
+                    .state
+                    .lock()
+                    .map(|state| state.clone())
+                    .unwrap_or(EngineState::Stopped {
+                        reason: "supervisor state poisoned".into(),
+                    });
+                (supervised.server.clone(), state)
             })
+            .collect()
     }
 
-    /// Stop the server and wait for the supervisor to finish.
+    /// Stop every server and wait for the supervisors to finish.
     pub async fn shutdown(&self) {
         let _ = self.stop.send(true);
-        let task = self.task.lock().ok().and_then(|mut task| task.take());
-        if let Some(task) = task {
-            let _ = task.await;
+        for supervised in &self.servers {
+            let task = supervised.task.lock().ok().and_then(|mut task| task.take());
+            if let Some(task) = task {
+                let _ = task.await;
+            }
         }
     }
 }
@@ -382,13 +549,14 @@ fn set(state: &Mutex<EngineState>, next: EngineState) {
 }
 
 async fn supervise(
-    config: EngineConfig,
+    config: ModelServer,
     home: PathBuf,
     state: Arc<Mutex<EngineState>>,
     mut stopped: watch::Receiver<bool>,
 ) {
-    let pid_file = home.join("engine.pid");
-    let log_file = home.join("logs").join("engine.log");
+    let alias = config.model.alias.clone();
+    let pid_file = home.join(format!("engine-{alias}.pid"));
+    let log_file = home.join("logs").join(format!("engine-{alias}.log"));
     stop_leftover(&pid_file, &config.server);
 
     let mut attempt = 0u32;
@@ -420,7 +588,10 @@ async fn supervise(
                 reason: reason.clone(),
             },
         );
-        eprintln!("engine: {reason}; restarting in {:?}", backoff(attempt));
+        eprintln!(
+            "engine {alias}: {reason}; restarting in {:?}",
+            backoff(attempt)
+        );
         tokio::select! {
             _ = tokio::time::sleep(backoff(attempt)) => {}
             _ = stopped.changed() => break,
@@ -432,7 +603,7 @@ async fn supervise(
 /// One server lifetime. `Ok` when asked to stop, `Err` with the reason when
 /// it died or never became healthy.
 async fn run_once(
-    config: &EngineConfig,
+    config: &ModelServer,
     pid_file: &Path,
     log_file: &Path,
     state: &Mutex<EngineState>,
@@ -442,14 +613,14 @@ async fn run_once(
     // Something else on the port would answer the health check in our
     // server's place, and the gateway would talk to it. Refuse instead.
     if std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], config.port)),
+        &std::net::SocketAddr::from(([127, 0, 0, 1], config.model.port)),
         Duration::from_millis(300),
     )
     .is_ok()
     {
         return Err(format!(
             "port {} is already in use by another process; stop it or change `port` in engine.toml",
-            config.port
+            config.model.port
         ));
     }
     let log = open_log(log_file).map_err(|err| format!("engine log: {err}"))?;
@@ -480,7 +651,7 @@ async fn run_once(
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|err| err.to_string())?;
-    let health = format!("http://127.0.0.1:{}/health", config.port);
+    let health = format!("http://127.0.0.1:{}/health", config.model.port);
     let deadline = Instant::now() + READY_DEADLINE;
     let mut ready = false;
 
@@ -584,30 +755,54 @@ fn stop_leftover(pid_file: &Path, server: &Path) {
 mod tests {
     use super::*;
 
+    fn entry() -> ModelEntry {
+        ModelEntry {
+            alias: "qwen3-coder-30b".into(),
+            model: "/models/qwen \"coder\".gguf".into(),
+            model_sha256: "ab".repeat(32),
+            model_bytes: 42,
+            port: DEFAULT_PORT,
+            ctx_size: 32_768,
+            parallel: 1,
+            adapters: Vec::new(),
+        }
+    }
+
     fn config() -> EngineConfig {
         EngineConfig {
             build: PINNED_BUILD.into(),
             server: "/opt/engine/llama-server".into(),
-            model: "/models/qwen \"coder\".gguf".into(),
-            model_sha256: "ab".repeat(32),
-            model_bytes: 42,
-            alias: "qwen3-coder-30b".into(),
-            port: DEFAULT_PORT,
-            ctx_size: 32_768,
-            parallel: 1,
+            models: vec![entry()],
         }
+    }
+
+    fn with_specialist() -> EngineConfig {
+        let mut config = config();
+        config.models.push(ModelEntry {
+            alias: "gpt-oss-20b".into(),
+            model: "/models/gpt-oss-20b.gguf".into(),
+            port: config.next_port(),
+            adapters: vec![AdapterEntry {
+                name: "gpt-oss-c2".into(),
+                path: "/adapters/gpt-oss-c2.gguf".into(),
+                sha256: "cd".repeat(32),
+            }],
+            ..entry()
+        });
+        config
     }
 
     #[test]
     fn the_written_config_reads_back_identically() {
-        let written = config();
+        let written = with_specialist();
         let read: EngineConfig = toml::from_str(&written.to_toml()).unwrap();
         assert_eq!(read, written);
+        assert_eq!(read.models[1].port, DEFAULT_PORT + 1);
     }
 
     #[test]
     fn the_server_listens_on_loopback_with_the_models_template() {
-        let args = config().args();
+        let args = config().servers()[0].args();
         let after = |flag: &str| {
             args.iter()
                 .position(|arg| arg == flag)
@@ -616,16 +811,41 @@ mod tests {
         assert_eq!(after("--host"), Some("127.0.0.1"));
         assert_eq!(after("--alias"), Some("qwen3-coder-30b"));
         assert!(args.iter().any(|arg| arg == "--jinja"));
+        assert!(!args.iter().any(|arg| arg.starts_with("--lora")));
     }
 
     #[test]
-    fn a_bad_alias_or_limit_is_refused() {
+    fn adapters_load_switched_off_so_only_a_specialist_turns_one_on() {
+        let args = with_specialist().servers()[1].args();
+        let lora = args.iter().position(|arg| arg == "--lora").unwrap();
+        assert_eq!(args[lora + 1], "/adapters/gpt-oss-c2.gguf");
+        assert!(args.iter().any(|arg| arg == "--lora-init-without-apply"));
+    }
+
+    #[test]
+    fn a_bad_alias_repeated_port_or_limit_is_refused() {
         let mut bad = config();
-        bad.alias = "qwen coder".into();
+        bad.models[0].alias = "qwen coder".into();
         assert!(bad.validate().is_err());
         let mut bad = config();
-        bad.parallel = 0;
+        bad.models[0].parallel = 0;
         assert!(bad.validate().is_err());
+        let mut bad = with_specialist();
+        bad.models[1].port = bad.models[0].port;
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn replacing_a_model_keeps_its_adapters() {
+        let mut config = with_specialist();
+        let port = config.models[1].port;
+        config.upsert_model(ModelEntry {
+            alias: "gpt-oss-20b".into(),
+            port,
+            ..entry()
+        });
+        assert_eq!(config.models.len(), 2);
+        assert_eq!(config.models[1].adapters.len(), 1);
     }
 
     #[test]
@@ -651,6 +871,11 @@ mod tests {
     /// given, or exits at once when `crash` is set.
     #[cfg(unix)]
     fn fake_engine(name: &str, crash: bool) -> (PathBuf, EngineConfig) {
+        fake_engine_with(name, crash, 1)
+    }
+
+    #[cfg(unix)]
+    fn fake_engine_with(name: &str, crash: bool, models: usize) -> (PathBuf, EngineConfig) {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = std::env::temp_dir().join(format!("farhelm-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -672,12 +897,18 @@ mod tests {
         std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o755)).unwrap();
         let model = dir.join("model.gguf");
         std::fs::write(&model, b"GGUF").unwrap();
-        let port = free_test_port();
         let config = EngineConfig {
             server,
-            model,
-            model_bytes: 4,
-            port,
+            models: (0..models)
+                .map(|index| ModelEntry {
+                    alias: format!("model-{index}"),
+                    model: model.clone(),
+                    model_bytes: 4,
+                    port: free_test_port(),
+                    adapters: Vec::new(),
+                    ..entry()
+                })
+                .collect(),
             ..config()
         };
         (dir, config)
@@ -699,39 +930,72 @@ mod tests {
     }
 
     async fn wait_for(engine: &Engine, want: impl Fn(&EngineState) -> bool) -> EngineState {
+        let first = || engine.states().remove(0).1;
         for _ in 0..200 {
-            let state = engine.state();
+            let state = first();
             if want(&state) {
                 return state;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        engine.state()
+        first()
+    }
+
+    fn pid_of(dir: &Path, alias: &str) -> u32 {
+        std::fs::read_to_string(dir.join(format!("engine-{alias}.pid")))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn the_engine_becomes_ready_and_is_stopped_on_shutdown() {
         let (dir, config) = fake_engine("ready", false);
-        let port = config.port;
+        let port = config.models[0].port;
         let engine = Engine::spawn(config, dir.clone());
         let state = wait_for(&engine, |s| *s == EngineState::Ready).await;
         assert_eq!(state, EngineState::Ready);
-        let pid: u32 = std::fs::read_to_string(dir.join("engine.pid"))
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
+        let pid = pid_of(&dir, "model-0");
 
         engine.shutdown().await;
-        assert!(!dir.join("engine.pid").exists());
+        assert!(!dir.join("engine-model-0.pid").exists());
         let alive = std::process::Command::new("kill")
             .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
             .status()
             .unwrap()
             .success();
         assert!(!alive, "the server outlived the runner's shutdown");
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn every_model_gets_its_own_server() {
+        let (dir, config) = fake_engine_with("pair", false, 2);
+        let engine = Engine::spawn(config, dir.clone());
+        for _ in 0..200 {
+            if engine
+                .states()
+                .iter()
+                .all(|(_, state)| *state == EngineState::Ready)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let states = engine.states();
+        assert_eq!(states.len(), 2);
+        assert!(
+            states.iter().all(|(_, state)| *state == EngineState::Ready),
+            "{states:?}"
+        );
+        assert_ne!(pid_of(&dir, "model-0"), pid_of(&dir, "model-1"));
+        engine.shutdown().await;
+        assert!(!dir.join("engine-model-1.pid").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -758,7 +1022,7 @@ mod tests {
         let (dir, mut config) = fake_engine("squatter", false);
         // Held from the moment it is chosen, so no parallel test can take it.
         let squatter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        config.port = squatter.local_addr().unwrap().port();
+        config.models[0].port = squatter.local_addr().unwrap().port();
         let engine = Engine::spawn(config, dir.clone());
         let state = wait_for(&engine, |s| matches!(s, EngineState::Restarting { .. })).await;
         match state {
@@ -777,10 +1041,10 @@ mod tests {
     async fn a_server_left_by_a_previous_runner_is_stopped_first() {
         let (dir, config) = fake_engine("leftover", false);
         let leftover = std::process::Command::new(&config.server)
-            .args(config.args())
+            .args(config.servers()[0].args())
             .spawn()
             .unwrap();
-        std::fs::write(dir.join("engine.pid"), leftover.id().to_string()).unwrap();
+        std::fs::write(dir.join("engine-model-0.pid"), leftover.id().to_string()).unwrap();
 
         let engine = Engine::spawn(config, dir.clone());
         let state = wait_for(&engine, |s| *s == EngineState::Ready).await;
@@ -802,11 +1066,11 @@ mod tests {
         let model = dir.join("model.gguf");
         std::fs::write(&server, b"").unwrap();
         std::fs::write(&model, b"GGUF and then some").unwrap();
-        let mut config = config();
-        config.server = server;
-        config.model = model;
-        config.model_bytes = 3;
-        let err = config.preflight().unwrap_err();
+        let mut target = config().servers().remove(0);
+        target.server = server;
+        target.model.model = model;
+        target.model.model_bytes = 3;
+        let err = target.preflight().unwrap_err();
         assert!(err.0.contains("reinstall"), "{err}");
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -50,13 +50,15 @@ SETTING UP
                      given. Nothing is copied by hand and it works over SSH.
                      After it, `serve` needs no cloud flags at all.
     logout           Forget those credentials on this machine.
-    engine           The local model server this runner owns. `engine install
-                     --model <file.gguf>` installs the pinned llama.cpp build
-                     (checksum verified) and records the model; `serve` then
-                     starts and supervises it. --from <archive> uses an archive
-                     you already downloaded. `engine status` shows its state.
-                     `engine import-adapter --from <mlx-dir> --name <name>`
-                     converts an MLX-trained LoRA adapter for the engine.
+    engine           The local model servers this runner owns. `engine install`
+                     installs the pinned llama.cpp build (checksum verified;
+                     --from <archive> uses one you downloaded). `engine
+                     add-model --model <file.gguf> --alias <name>` adds a base
+                     model with its own port; `serve` starts and supervises one
+                     server per model. `engine import-adapter --from <mlx-dir>
+                     --name <name>` converts an MLX-trained LoRA adapter, and
+                     `engine add-adapter --to <model> --adapter <name>` loads
+                     it with that model. `engine status` shows all of it.
     install-service  A unit file for this machine, with its paths filled in, and
                      the one line that installs it.
 
@@ -906,13 +908,23 @@ async fn serve_async(flags: Flags) -> Fallible {
     println!("  events     http://{addr}/v1/events");
     println!("  gateway    {provider}");
     match &engine {
-        Some(engine) => println!(
-            "  engine     llama.cpp {} · {} on {} · {}",
-            engine.config.build,
-            engine.config.alias,
-            engine.config.base_url(),
-            engine.state()
-        ),
+        Some(engine) if !engine.config.models.is_empty() => {
+            for (server, state) in engine.states() {
+                let adapters = server.model.adapters.len();
+                println!(
+                    "  engine     llama.cpp {} · {}{} on {} · {state}",
+                    server.build,
+                    server.model.alias,
+                    match adapters {
+                        0 => String::new(),
+                        1 => " + 1 adapter".to_owned(),
+                        n => format!(" + {n} adapters"),
+                    },
+                    server.base_url(),
+                );
+            }
+        }
+        Some(_) => println!("  engine     installed, no models (`farhelm engine add-model`)"),
         None => println!("  engine     none (`farhelm engine install` sets one up)"),
     }
     println!("  terminal   {terminal_label}");
@@ -1004,9 +1016,9 @@ fn engine_home(config: &Path) -> PathBuf {
     std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf())
 }
 
-/// `farhelm engine install|status`.
+/// `farhelm engine install|add-model|import-adapter|add-adapter|status`.
 fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
-    use farhelm_runner::engine::{self, EngineConfig};
+    use farhelm_runner::engine::{self, AdapterEntry, EngineConfig, ModelEntry};
 
     let config_path = Path::new(&flags.engine_config);
     let home = engine_home(config_path);
@@ -1016,30 +1028,100 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
             .and_then(|index| args.get(index + 1))
             .cloned()
     };
+    let valid_name = |name: &str| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
+    let save = |config: &EngineConfig| -> Fallible {
+        config.validate()?;
+        std::fs::write(config_path, config.to_toml())?;
+        println!("  config     {}", config_path.display());
+        Ok(())
+    };
+    let existing = || -> Result<EngineConfig, Box<dyn std::error::Error>> {
+        EngineConfig::load(config_path)?
+            .ok_or_else(|| "no engine is installed yet; run `farhelm engine install` first".into())
+    };
+
+    // Link a model into the store, hash it, and describe it. Linked rather than
+    // copied: an Ollama blob is deleted with its model, and a second copy of
+    // eighteen gigabytes helps nobody.
+    let store_model =
+        |source: &Path, alias: &str, port: u16| -> Result<ModelEntry, Box<dyn std::error::Error>> {
+            if !engine::is_gguf(source) {
+                return Err(format!("{} is not a GGUF model file", source.display()).into());
+            }
+            let models = home.join("models");
+            std::fs::create_dir_all(&models)?;
+            let stored = models.join(format!("{alias}.gguf"));
+            if std::fs::canonicalize(source).ok() != std::fs::canonicalize(&stored).ok() {
+                let _ = std::fs::remove_file(&stored);
+                if std::fs::hard_link(source, &stored).is_err() {
+                    println!("  model      copying (a different disk, so no link)");
+                    std::fs::copy(source, &stored)?;
+                }
+            }
+            println!(
+                "  model      hashing {} (a large model takes a while)",
+                stored.display()
+            );
+            Ok(ModelEntry {
+                alias: alias.to_owned(),
+                model_sha256: engine::sha256_file(&stored)?,
+                model_bytes: std::fs::metadata(&stored)?.len(),
+                model: stored,
+                port,
+                ctx_size: value_of("--ctx-size")
+                    .and_then(|raw| raw.parse().ok())
+                    .unwrap_or(32_768),
+                parallel: 1,
+                adapters: Vec::new(),
+            })
+        };
+    let model_args = || -> Result<(PathBuf, String), Box<dyn std::error::Error>> {
+        let model = PathBuf::from(
+            value_of("--model")
+                .ok_or("say which model to serve: `--model <file.gguf> --alias <name>`")?,
+        );
+        let alias = value_of("--alias").ok_or("give the model an --alias")?;
+        if !valid_name(&alias) {
+            return Err("a model alias is ASCII letters, digits, '-', '_' or '.'".into());
+        }
+        Ok((model, alias))
+    };
+    let print_registry = |config: &EngineConfig, alias: &str| {
+        let Some(model) = config.models.iter().find(|model| model.alias == alias) else {
+            return;
+        };
+        println!();
+        println!("Restart the runner to start it. In the model registry:");
+        println!();
+        println!("  [providers.engine-{alias}]");
+        println!("  kind = \"openai_compatible\"");
+        println!("  base_url = \"http://127.0.0.1:{}/v1\"", model.port);
+        println!("  data_location = \"local\"");
+        for (id, adapter) in model.adapters.iter().enumerate() {
+            println!();
+            println!(
+                "  [models.{}]  # specialist: {alias} with adapter {id}",
+                adapter.name
+            );
+            println!("  provider = \"engine-{alias}\"");
+            println!("  model = \"{alias}\"");
+            println!("  adapters = [{{ id = {id}, scale = 1.0 }}]");
+        }
+    };
 
     match args.first().map(String::as_str) {
         Some("install") => {
             let pinned = engine::pinned_archive().ok_or(
                 "no llama.cpp build is pinned for this platform yet; only Apple Silicon is",
             )?;
-            let model = value_of("--model").ok_or(
-                "say which model to serve: `farhelm engine install --model <file.gguf> --alias <name>`",
-            )?;
-            let model = PathBuf::from(model);
-            if !engine::is_gguf(&model) {
-                return Err(format!("{} is not a GGUF model file", model.display()).into());
-            }
-            let alias = value_of("--alias").unwrap_or_else(|| {
-                model
-                    .file_stem()
-                    .map(|stem| stem.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "local-model".into())
-            });
-
-            // 1. The server build, verified before anything is unpacked.
             let archive = match value_of("--from") {
                 Some(path) => {
                     println!("  engine     reading {path}");
@@ -1098,51 +1180,46 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
             }
             println!("  engine     installed {}", server.display());
 
-            // 2. The model: linked into the store, so it outlives whatever
-            // downloaded it (an Ollama blob is deleted with its model).
-            let models = home.join("models");
-            std::fs::create_dir_all(&models)?;
-            let stored = models.join(format!("{alias}.gguf"));
-            if stored != model {
-                let _ = std::fs::remove_file(&stored);
-                if std::fs::hard_link(&model, &stored).is_err() {
-                    println!("  model      copying (a different disk, so no link)");
-                    std::fs::copy(&model, &stored)?;
-                }
-            }
-            println!(
-                "  model      hashing {} (a 30B model takes a while)",
-                stored.display()
-            );
-            let model_sha256 = engine::sha256_file(&stored)?;
-            let model_bytes = std::fs::metadata(&stored)?.len();
-
-            // 3. The record. Port and limits survive a reinstall.
-            let previous = EngineConfig::load(config_path).ok().flatten();
-            let config = EngineConfig {
-                build: engine::PINNED_BUILD.into(),
-                server,
-                model: stored,
-                model_sha256,
-                model_bytes,
-                alias,
-                port: previous.as_ref().map_or(engine::DEFAULT_PORT, |p| p.port),
-                ctx_size: previous.as_ref().map_or(32_768, |p| p.ctx_size),
-                parallel: previous.as_ref().map_or(1, |p| p.parallel),
+            // Models survive a reinstall of the server.
+            let mut config = EngineConfig::load(config_path)?.unwrap_or(EngineConfig {
+                build: String::new(),
+                server: PathBuf::new(),
+                models: Vec::new(),
+            });
+            config.build = engine::PINNED_BUILD.into();
+            config.server = server;
+            let added = if value_of("--model").is_some() {
+                let (model, alias) = model_args()?;
+                let port = config
+                    .models
+                    .iter()
+                    .find(|existing| existing.alias == alias)
+                    .map_or_else(|| config.next_port(), |existing| existing.port);
+                config.upsert_model(store_model(&model, &alias, port)?);
+                Some(alias)
+            } else {
+                None
             };
-            std::fs::write(config_path, config.to_toml())?;
-            println!("  config     {}", config_path.display());
-            println!();
-            println!("Restart the runner to start it. The model registry reaches it as:");
-            println!();
-            println!("  [providers.engine]");
-            println!("  kind = \"openai_compatible\"");
-            println!("  base_url = \"{}\"", config.base_url());
-            println!("  data_location = \"local\"");
-            println!();
-            println!("  [models.<name>]");
-            println!("  provider = \"engine\"");
-            println!("  model = \"{}\"", config.alias);
+            save(&config)?;
+            if let Some(alias) = added {
+                print_registry(&config, &alias);
+            }
+            Ok(())
+        }
+        Some("add-model") => {
+            let mut config = existing()?;
+            let (model, alias) = model_args()?;
+            let port = match value_of("--port") {
+                Some(raw) => raw.parse().map_err(|_| "--port must be a number")?,
+                None => config
+                    .models
+                    .iter()
+                    .find(|existing| existing.alias == alias)
+                    .map_or_else(|| config.next_port(), |existing| existing.port),
+            };
+            config.upsert_model(store_model(&model, &alias, port)?);
+            save(&config)?;
+            print_registry(&config, &alias);
             Ok(())
         }
         Some("import-adapter") => {
@@ -1150,11 +1227,7 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
                 "say which MLX adapter to import: `farhelm engine import-adapter --from <dir> --name <name>`",
             )?;
             let name = value_of("--name").ok_or("give the adapter a --name")?;
-            if name.is_empty()
-                || !name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-            {
+            if !valid_name(&name) {
                 return Err("an adapter name is ASCII letters, digits, '-', '_' or '.'".into());
             }
             let arch = value_of("--arch").unwrap_or_else(|| "gpt-oss".into());
@@ -1168,48 +1241,95 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
                 imported.rank, imported.alpha, imported.tensors, imported.layers
             );
             println!("  sha256     {}", engine::sha256_file(&out)?);
+            println!();
+            println!("Attach it with `farhelm engine add-adapter --to <model> --adapter {name}`.");
+            Ok(())
+        }
+        Some("add-adapter") => {
+            let mut config = existing()?;
+            let to = value_of("--to").ok_or("say which model it adapts: --to <model alias>")?;
+            let name = value_of("--adapter").ok_or("say which adapter: --adapter <name>")?;
+            let path = value_of("--path")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join("adapters").join(format!("{name}.gguf")));
+            if !engine::is_gguf(&path) {
+                return Err(format!(
+                    "{} is not a GGUF adapter; import it with `farhelm engine import-adapter`",
+                    path.display()
+                )
+                .into());
+            }
+            let sha256 = engine::sha256_file(&path)?;
+            let model = config
+                .models
+                .iter_mut()
+                .find(|model| model.alias == to)
+                .ok_or_else(|| format!("no model `{to}` in the engine"))?;
+            let entry = AdapterEntry {
+                name: name.clone(),
+                path,
+                sha256,
+            };
+            // Replacing keeps the id, so registry entries stay right.
+            match model.adapters.iter_mut().find(|adapter| adapter.name == name) {
+                Some(existing) => *existing = entry,
+                None => model.adapters.push(entry),
+            }
+            save(&config)?;
+            print_registry(&config, &to);
             Ok(())
         }
         Some("status") | None => {
             let Some(config) = EngineConfig::load(config_path)? else {
-                println!(
-                    "No engine is set up. `farhelm engine install --model <file.gguf>` sets one up."
-                );
+                println!("No engine is set up. `farhelm engine install --model <file.gguf> --alias <name>` sets one up.");
                 return Ok(());
             };
             println!("  build      llama.cpp {}", config.build);
             println!("  server     {}", config.server.display());
-            println!("  model      {} ({})", config.alias, config.model.display());
-            println!("  sha256     {}", config.model_sha256);
-            println!("  endpoint   {}", config.base_url());
-            let healthy = runtime.block_on(async {
-                reqwest::Client::builder()
-                    .no_proxy()
-                    .timeout(Duration::from_secs(3))
-                    .build()
-                    .ok()?
-                    .get(format!("http://127.0.0.1:{}/health", config.port))
-                    .send()
-                    .await
-                    .ok()
-                    .map(|response| response.status().is_success())
-            });
-            println!(
-                "  state      {}",
-                match healthy {
-                    Some(true) => "ready".to_owned(),
-                    Some(false) => "answering, but not healthy yet (still loading?)".to_owned(),
-                    None => format!(
-                        "not running; `serve` starts it (log: {})",
-                        home.join("logs").join("engine.log").display()
-                    ),
+            if config.models.is_empty() {
+                println!("  models     none (`farhelm engine add-model`)");
+            }
+            for server in config.servers() {
+                let model = &server.model;
+                let healthy = runtime.block_on(async {
+                    reqwest::Client::builder()
+                        .no_proxy()
+                        .timeout(Duration::from_secs(3))
+                        .build()
+                        .ok()?
+                        .get(format!("http://127.0.0.1:{}/health", model.port))
+                        .send()
+                        .await
+                        .ok()
+                        .map(|response| response.status().is_success())
+                });
+                println!();
+                println!("  model      {} ({})", model.alias, model.model.display());
+                println!("  sha256     {}", model.model_sha256);
+                println!("  endpoint   {}", server.base_url());
+                for (id, adapter) in model.adapters.iter().enumerate() {
+                    println!("  adapter {id}  {} ({})", adapter.name, adapter.path.display());
                 }
-            );
+                println!(
+                    "  state      {}",
+                    match healthy {
+                        Some(true) => "ready".to_owned(),
+                        Some(false) => "answering, but not healthy yet (still loading?)".to_owned(),
+                        None => format!(
+                            "not running; `serve` starts it (log: {})",
+                            home.join("logs")
+                                .join(format!("engine-{}.log", model.alias))
+                                .display()
+                        ),
+                    }
+                );
+            }
             Ok(())
         }
-        Some(other) => {
-            Err(format!("unknown engine command `{other}`; try `install` or `status`").into())
-        }
+        Some(other) => Err(format!(
+            "unknown engine command `{other}`; try install, add-model, import-adapter, add-adapter or status"
+        )
+        .into()),
     }
 }
 

@@ -84,6 +84,14 @@ On eight questions with known answers at medium effort it cut output tokens
 by 34% (MLX original: 38%) with unchanged accuracy (7 of 8 both ways). That
 is a smoke comparison, not the held-out evaluation promotion requires.
 
+Implemented the same day: the engine runs one supervised server per base model
+(`farhelm engine add-model`), loads adapters switched off
+(`farhelm engine add-adapter`), and a registry model with `adapters` is a
+specialist whose requests switch them on. qwen3-coder 30B, gpt-oss-20b and the
+`gpt-oss-c2` specialist each passed the conformance probe through the
+registry. Every model starts with the runner; unloading idle models to fit
+memory is not built yet.
+
 ### Training
 
 Training lives in its own Python project (`pyproject.toml`, uv lockfile,
