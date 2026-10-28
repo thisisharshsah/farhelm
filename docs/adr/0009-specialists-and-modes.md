@@ -60,13 +60,22 @@ kept for rollback.
 
 ### Serving
 
-Ollama stays the developer default. It serves an adapter as its own model
-(`ADAPTER` in a Modelfile), which shares the base weights on disk but is loaded
-separately in memory. On 64 GB that allows about two 30B-class models
-resident at once, so the first specialists should share the small base or
-take turns with `OLLAMA_MAX_LOADED_MODELS`. Many specialists on one base need
-runtime LoRA switching (llama.cpp server adapters, or vLLM multi-LoRA on a
-GPU host); adopt that when the count requires it, after conformance testing.
+Farhelm owns its model server (user direction, 2026-10-28): no Ollama or
+second gateway to install. The runner installs a pinned llama.cpp server build,
+verified against its published SHA-256, and supervises it as a separate
+process on loopback (`farhelm engine install`, then `serve`). The arithmetic
+(Metal and CUDA kernels, quantized formats, templates and tool-call parsing)
+stays in llama.cpp; routing, accounting, policy and deployment records stay in
+Farhelm. A separate process keeps a server crash or GPU out-of-memory away
+from approvals and sessions, and lets the runner restart without reloading
+weights.
+
+llama.cpp was chosen over Ollama because it switches LoRA adapters per request
+on one loaded base model (`/lora-adapters` and the request's `lora` field),
+which many specialists on a 64 GB machine need; Ollama loads each adapter as a
+separate model. Build `b11624` with `qwen3-coder:30b` passed the conformance
+probe (all three cases, about 0.7 s for the text case). Ollama remains usable
+as a registry provider until nothing depends on it.
 
 ### Training
 

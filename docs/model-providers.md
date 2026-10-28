@@ -15,6 +15,19 @@ Launch desktop with the same environment when using the packaged desktop host. A
 
 Without `FARHELM_MODELS_CONFIG`, the existing Conscious/Anthropic environment and stored-credential paths remain available with their existing behavior. The configuration-file policy described here applies to the explicitly selected registry, not to an unconfigured legacy client.
 
+## The Farhelm engine
+
+The runner can own its model server instead of relying on one installed by hand. `farhelm engine install` installs a pinned llama.cpp server build after checking the SHA-256 GitHub publishes for it, links the model file into `models/`, hashes it, and writes `engine.toml` beside the runner's other state:
+
+```sh
+farhelm engine install --model /path/to/model.gguf --alias qwen3-coder-30b
+farhelm engine status
+```
+
+`--from <archive>` installs from an archive you already downloaded; it is checked against the same pin. `serve` then starts the server on `127.0.0.1:7846` with the model's own chat template (`--jinja`), waits for `/health`, restarts it with backoff (2 s doubling to a minute) when it exits, and stops it on Ctrl-C or SIGTERM. A server left by a previous runner is stopped at the next start through `engine.pid`. Its output goes to `logs/engine.log`, cut at 16 MiB.
+
+Requests still go through the gateway: point a registry provider at the engine like any other local endpoint (`kind = "openai_compatible"`, `base_url = "http://127.0.0.1:7846/v1"`, `data_location = "local"`, and the model's alias). Only Apple Silicon has a pinned build so far (`b11624`); a new build is a new deployment and passes the conformance probe before it is pinned. A model file is checked by size on every start; its install-time hash is the deployment record.
+
 ## Configuration contract
 
 The TOML file has `version = 1`, a required `policy`, `routes`, `providers` and `models`. Unknown fields fail validation. Provider/model aliases use ASCII letters, digits, underscores, hyphens or periods; upstream model identifiers may include runtime-specific syntax such as `qwen3-coder:30b` or a deployed LoRA alias. No adapter upload/activation endpoint is exposed.

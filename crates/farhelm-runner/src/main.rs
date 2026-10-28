@@ -50,6 +50,11 @@ SETTING UP
                      given. Nothing is copied by hand and it works over SSH.
                      After it, `serve` needs no cloud flags at all.
     logout           Forget those credentials on this machine.
+    engine           The local model server this runner owns. `engine install
+                     --model <file.gguf>` installs the pinned llama.cpp build
+                     (checksum verified) and records the model; `serve` then
+                     starts and supervises it. --from <archive> uses an archive
+                     you already downloaded. `engine status` shows its state.
     install-service  A unit file for this machine, with its paths filled in, and
                      the one line that installs it.
 
@@ -91,6 +96,7 @@ DEFAULTS
     --cloud-file farhelm.cloud.json           (written by `login`, mode 0600)
     --credential-file farhelm.credential.json (written by `auth`, mode 0600)
     --policy farhelm.policy.toml   (optional; the built-in rules stand alone)
+    --engine-config engine.toml    (written by `engine install`; optional)
     --terminal auto  (tmux when installed, otherwise this process's own PTYs)
 
     The `forge`-prefixed names these files and variables had before the rename
@@ -228,6 +234,7 @@ fn main() -> ExitCode {
         Some("auth") => auth(&flags, &args[1..]),
         Some("doctor") => doctor(&flags),
         Some("policy") => policy_command(&flags, &args[1..]),
+        Some("engine") => engine_command(&flags, &args[1..]),
         Some("install-service") => install_service(&flags),
         // The two server halves. They were separate binaries; they are
         // subcommands so that everything this system does is reachable from the
@@ -291,6 +298,8 @@ struct Flags {
     policy: Option<String>,
     /// `tmux`, `pty`, or `None` to pick whatever is available.
     terminal: Option<String>,
+    /// The local model server's configuration. Absent file means no engine.
+    engine_config: String,
 }
 
 impl Flags {
@@ -338,6 +347,9 @@ impl Flags {
             terminal: value_of("--terminal"),
             policy: value_of("--policy"),
             key: defaulted(value_of("--key"), DEFAULT_KEY, LEGACY_KEY),
+            engine_config: value_of("--engine-config")
+                .or_else(|| farhelm_app::legacy::env_var("FARHELM_ENGINE_CONFIG"))
+                .unwrap_or_else(|| farhelm_runner::engine::DEFAULT_ENGINE_CONFIG.to_owned()),
         }
     }
 }
@@ -867,11 +879,40 @@ async fn serve_async(flags: Flags) -> Fallible {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", flags.port)).await?;
     let addr = listener.local_addr()?;
 
+    // The local model server, when one is installed. Started before the banner
+    // so the banner can say so; it becomes ready in the background.
+    let engine = if flags.demo {
+        None
+    } else {
+        let path = Path::new(&flags.engine_config);
+        match farhelm_runner::engine::EngineConfig::load(path) {
+            Ok(Some(config)) => Some(farhelm_runner::engine::Engine::spawn(
+                config,
+                engine_home(path),
+            )),
+            Ok(None) => None,
+            Err(err) => {
+                eprintln!("  engine     {err}");
+                None
+            }
+        }
+    };
+
     println!("farhelm listening on http://{addr}");
     println!("  database   {label}");
     println!("  api        http://{addr}/v1/fleet");
     println!("  events     http://{addr}/v1/events");
     println!("  gateway    {provider}");
+    match &engine {
+        Some(engine) => println!(
+            "  engine     llama.cpp {} · {} on {} · {}",
+            engine.config.build,
+            engine.config.alias,
+            engine.config.base_url(),
+            engine.state()
+        ),
+        None => println!("  engine     none (`farhelm engine install` sets one up)"),
+    }
     println!("  terminal   {terminal_label}");
     println!("  agents     {}", installed_agents());
     println!(
@@ -945,7 +986,204 @@ async fn serve_async(flags: Flags) -> Fallible {
     axum::serve(listener, app_router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    if let Some(engine) = engine {
+        engine.shutdown().await;
+    }
     Ok(())
+}
+
+/// Where the engine keeps its pid file, log and installed builds: beside its
+/// configuration file.
+fn engine_home(config: &Path) -> PathBuf {
+    let parent = config
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf())
+}
+
+/// `farhelm engine install|status`.
+fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
+    use farhelm_runner::engine::{self, EngineConfig};
+
+    let config_path = Path::new(&flags.engine_config);
+    let home = engine_home(config_path);
+    let value_of = |name: &str| {
+        args.iter()
+            .position(|arg| arg == name)
+            .and_then(|index| args.get(index + 1))
+            .cloned()
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    match args.first().map(String::as_str) {
+        Some("install") => {
+            let pinned = engine::pinned_archive().ok_or(
+                "no llama.cpp build is pinned for this platform yet; only Apple Silicon is",
+            )?;
+            let model = value_of("--model").ok_or(
+                "say which model to serve: `farhelm engine install --model <file.gguf> --alias <name>`",
+            )?;
+            let model = PathBuf::from(model);
+            if !engine::is_gguf(&model) {
+                return Err(format!("{} is not a GGUF model file", model.display()).into());
+            }
+            let alias = value_of("--alias").unwrap_or_else(|| {
+                model
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "local-model".into())
+            });
+
+            // 1. The server build, verified before anything is unpacked.
+            let archive = match value_of("--from") {
+                Some(path) => {
+                    println!("  engine     reading {path}");
+                    std::fs::read(&path)?
+                }
+                None => {
+                    let url = engine::archive_url(pinned.asset);
+                    println!("  engine     downloading {url}");
+                    runtime.block_on(async {
+                        let response = reqwest::get(&url).await?.error_for_status()?;
+                        Ok::<_, reqwest::Error>(response.bytes().await?.to_vec())
+                    })?
+                }
+            };
+            let got = {
+                use sha2::{Digest as _, Sha256};
+                format!("{:x}", Sha256::digest(&archive))
+            };
+            if got != pinned.sha256 {
+                return Err(format!(
+                    "checksum mismatch for {}: expected {}, got {got}; refusing to install",
+                    pinned.asset, pinned.sha256
+                )
+                .into());
+            }
+            println!("  engine     checksum verified ({})", engine::PINNED_BUILD);
+
+            let builds = home.join("engine");
+            let target = builds.join(engine::PINNED_BUILD);
+            let staging = builds.join(format!(".{}.unpacking", engine::PINNED_BUILD));
+            let _ = std::fs::remove_dir_all(&staging);
+            std::fs::create_dir_all(&staging)?;
+            let staged_archive = staging.join(pinned.asset);
+            std::fs::write(&staged_archive, &archive)?;
+            // The system tar, as for `ant`: this runs once, by hand.
+            let unpacked = std::process::Command::new("tar")
+                .arg("-xzf")
+                .arg(&staged_archive)
+                .arg("-C")
+                .arg(&staging)
+                .status()?;
+            std::fs::remove_file(&staged_archive)?;
+            if !unpacked.success() {
+                return Err("could not unpack the engine archive".into());
+            }
+            let _ = std::fs::remove_dir_all(&target);
+            std::fs::rename(&staging, &target)?;
+            let server =
+                engine::find_server(&target).ok_or("the archive did not contain llama-server")?;
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("xattr")
+                    .args(["-dr", "com.apple.quarantine"])
+                    .arg(&target)
+                    .status();
+            }
+            println!("  engine     installed {}", server.display());
+
+            // 2. The model: linked into the store, so it outlives whatever
+            // downloaded it (an Ollama blob is deleted with its model).
+            let models = home.join("models");
+            std::fs::create_dir_all(&models)?;
+            let stored = models.join(format!("{alias}.gguf"));
+            if stored != model {
+                let _ = std::fs::remove_file(&stored);
+                if std::fs::hard_link(&model, &stored).is_err() {
+                    println!("  model      copying (a different disk, so no link)");
+                    std::fs::copy(&model, &stored)?;
+                }
+            }
+            println!(
+                "  model      hashing {} (a 30B model takes a while)",
+                stored.display()
+            );
+            let model_sha256 = engine::sha256_file(&stored)?;
+            let model_bytes = std::fs::metadata(&stored)?.len();
+
+            // 3. The record. Port and limits survive a reinstall.
+            let previous = EngineConfig::load(config_path).ok().flatten();
+            let config = EngineConfig {
+                build: engine::PINNED_BUILD.into(),
+                server,
+                model: stored,
+                model_sha256,
+                model_bytes,
+                alias,
+                port: previous.as_ref().map_or(engine::DEFAULT_PORT, |p| p.port),
+                ctx_size: previous.as_ref().map_or(32_768, |p| p.ctx_size),
+                parallel: previous.as_ref().map_or(1, |p| p.parallel),
+            };
+            std::fs::write(config_path, config.to_toml())?;
+            println!("  config     {}", config_path.display());
+            println!();
+            println!("Restart the runner to start it. The model registry reaches it as:");
+            println!();
+            println!("  [providers.engine]");
+            println!("  kind = \"openai_compatible\"");
+            println!("  base_url = \"{}\"", config.base_url());
+            println!("  data_location = \"local\"");
+            println!();
+            println!("  [models.<name>]");
+            println!("  provider = \"engine\"");
+            println!("  model = \"{}\"", config.alias);
+            Ok(())
+        }
+        Some("status") | None => {
+            let Some(config) = EngineConfig::load(config_path)? else {
+                println!(
+                    "No engine is set up. `farhelm engine install --model <file.gguf>` sets one up."
+                );
+                return Ok(());
+            };
+            println!("  build      llama.cpp {}", config.build);
+            println!("  server     {}", config.server.display());
+            println!("  model      {} ({})", config.alias, config.model.display());
+            println!("  sha256     {}", config.model_sha256);
+            println!("  endpoint   {}", config.base_url());
+            let healthy = runtime.block_on(async {
+                reqwest::Client::builder()
+                    .no_proxy()
+                    .timeout(Duration::from_secs(3))
+                    .build()
+                    .ok()?
+                    .get(format!("http://127.0.0.1:{}/health", config.port))
+                    .send()
+                    .await
+                    .ok()
+                    .map(|response| response.status().is_success())
+            });
+            println!(
+                "  state      {}",
+                match healthy {
+                    Some(true) => "ready".to_owned(),
+                    Some(false) => "answering, but not healthy yet (still loading?)".to_owned(),
+                    None => format!(
+                        "not running; `serve` starts it (log: {})",
+                        home.join("logs").join("engine.log").display()
+                    ),
+                }
+            );
+            Ok(())
+        }
+        Some(other) => {
+            Err(format!("unknown engine command `{other}`; try `install` or `status`").into())
+        }
+    }
 }
 
 /// Keep trying to enrol after a startup that could not reach the control plane,
@@ -1029,7 +1267,27 @@ fn restart_in_place() {
     std::process::exit(75);
 }
 
+/// Ctrl-C in a terminal, or SIGTERM from launchd and systemd. Both shut down
+/// the same way, so the engine is stopped rather than left holding its port.
 async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            // No handler means SIGTERM keeps its default; the next start
+            // still stops a leftover engine through its pid file.
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
     println!("\nshutting down");
 }

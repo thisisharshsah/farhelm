@@ -8,6 +8,7 @@
 pub mod api;
 pub mod cloud;
 pub mod commands;
+pub mod engine;
 pub mod hook;
 pub mod hook_cli;
 pub mod mcp;
