@@ -1199,19 +1199,11 @@ impl CloudStore {
             return Ok(Some(account_id));
         }
 
-        // The previous token after the window: two holders of one session, and
-        // one of them is not the user. Ending the session is what strict
-        // rotation existed to do; the person signs in again and the copy dies.
-        let reused = tx
-            .execute(
-                "UPDATE refresh_token SET revoked_at = ?2 \
-                 WHERE previous_hash = ?1 AND revoked_at IS NULL",
-                params![presented, now_ms],
-            )
-            .map_err(backend)?;
-        if reused > 0 {
-            tx.commit().map_err(backend)?;
-        }
+        // The previous token after the window is refused, as any used token
+        // always was. It does not end the session: the other holder is far
+        // more often a stale tab of the same person than a thief, and ending
+        // the session signed every tab out. The refused copy is worthless
+        // either way.
         Ok(None)
     }
 
@@ -2038,9 +2030,8 @@ mod tests {
                 .unwrap(),
             Some(account.id.clone())
         );
-        // Replaying the used token after the grace window is the signal that
-        // one of the two holders is not the user, and it ends the session for
-        // both: the current token stops working too.
+        // Replaying the used token after the grace window is refused, and the
+        // session's current token keeps working.
         let late = NOW + REFRESH_REUSE_GRACE_MS;
         assert_eq!(
             store
@@ -2052,7 +2043,7 @@ mod tests {
             store
                 .rotate_refresh_token(&second, &secret::random_secret(), late, late + 1_000_000)
                 .unwrap()
-                .is_none()
+                .is_some()
         );
     }
 

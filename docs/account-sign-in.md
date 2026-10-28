@@ -76,8 +76,11 @@ refreshed with the token the first had just replaced. Now:
 - The token a session held just before its last rotation is accepted for
   `REFRESH_REUSE_GRACE_MS` (30 s) after that rotation, on the same session row
   only, and rotated again. Retries do not extend the window.
-- The same previous token presented after the window is treated as reuse by a
-  second holder: the whole session is revoked and the person signs in again.
+- The same previous token presented after the window is refused, as any used
+  token always was. It does not end the session: in practice the other holder
+  was a stale tab of the same person, and revoking signed every tab out.
+- A refused tab re-reads the stored token and retries with it when another tab
+  rotated the session. It signs out only when storage holds nothing newer.
 - The web client reads the stored token before every refresh, so another tab's
   rotation is picked up instead of replayed. It ignores a stored token it has
   itself retired, because persisting a rotation is asynchronous. After a

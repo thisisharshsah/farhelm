@@ -486,24 +486,45 @@ export class CloudClient {
   }
 
   private async doRefresh(): Promise<void> {
-    if (this.storedRefreshToken) {
-      const stored = await this.storedRefreshToken().catch(() => null);
-      if (stored && stored !== this.refreshToken && !this.retired.includes(stored)) {
-        this.refreshToken = stored;
-      }
-    }
+    await this.adoptStored();
+    const presented = this.refreshToken;
     try {
       await this.rotate();
     } catch (cause) {
-      // Unreachable, or the gateway answered for a server it could not reach.
-      // The server may already have rotated the token and lost the reply on
-      // the way back; it accepts the previous token for a short grace window,
-      // so one prompt retry recovers a dropped tunnel connection instead of
-      // leaving it to sign the person out later.
-      if (!(cause instanceof CloudError) || !(cause.status === 0 || cause.status >= 502)) throw cause;
-      await new Promise((resolve) => setTimeout(resolve, REFRESH_RETRY_MS));
-      await this.rotate();
+      if (!(cause instanceof CloudError)) throw cause;
+      if (cause.status === 0 || cause.status >= 502) {
+        // Unreachable, or the gateway answered for a server it could not
+        // reach. The server may already have rotated the token and lost the
+        // reply; it accepts the previous token for a short grace window, so one
+        // prompt retry recovers a dropped tunnel connection.
+        await new Promise((resolve) => setTimeout(resolve, REFRESH_RETRY_MS));
+        await this.rotate();
+        return;
+      }
+      // Refused. If another tab rotated the session after this one last
+      // looked, storage now holds the live token: use it rather than sign out.
+      if ((cause.status === 401 || cause.status === 403) && presented && await this.adoptStored(presented)) {
+        await this.rotate();
+        return;
+      }
+      throw cause;
     }
+  }
+
+  /**
+   * Take the persisted token when it is newer than the one held here.
+   *
+   * Never one this client has itself rotated away from (storage can lag a
+   * rotation), nor `refused`, the token the server just turned down.
+   */
+  private async adoptStored(refused: string | null = null): Promise<boolean> {
+    if (!this.storedRefreshToken) return false;
+    const stored = await this.storedRefreshToken().catch(() => null);
+    if (!stored || stored === refused || stored === this.refreshToken || this.retired.includes(stored)) {
+      return false;
+    }
+    this.refreshToken = stored;
+    return true;
   }
 
   private async rotate(): Promise<void> {

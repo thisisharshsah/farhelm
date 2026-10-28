@@ -275,6 +275,38 @@ describe("token refresh", () => {
     }
   });
 
+  it("recovers with another tab's token instead of signing out when refused", async () => {
+    const presented: string[] = [];
+    handler = (url, init) => {
+      if (url.endsWith("/v1/auth/refresh")) {
+        const token = JSON.parse(String(init.body)).refresh_token;
+        presented.push(token);
+        if (token === "refresh-1") return json({ error: "that session has expired — sign in again" }, 401);
+        return json({ access_token: "access-3", access_expires_at: Date.now() + 3_600_000, refresh_token: "refresh-3" });
+      }
+      return json([]);
+    };
+    // Storage only shows the other tab's token after this one's attempt.
+    let stored = "refresh-1";
+    const client = new CloudClient("https://x", "refresh-1", () => {}, async () => {
+      const now = stored;
+      stored = "refresh-2";
+      return now;
+    });
+    await expect(client.runners()).resolves.toEqual([]);
+    expect(presented).toEqual(["refresh-1", "refresh-2"]);
+    expect(client.isSignedIn).toBe(true);
+  });
+
+  it("signs out when storage has nothing newer than the refused token", async () => {
+    handler = (url) => url.endsWith("/v1/auth/refresh")
+      ? json({ error: "that session has expired — sign in again" }, 401)
+      : json([]);
+    const client = new CloudClient("https://x", "refresh-1", () => {}, async () => "refresh-1");
+    await expect(client.runners()).rejects.toThrow("expired");
+    expect(client.isSignedIn).toBe(false);
+  });
+
   it("collapses concurrent refreshes into one", async () => {
     // Two refreshes in flight means one of them rotates a token the other is
     // about to present — and the loser gets signed out for no reason.
