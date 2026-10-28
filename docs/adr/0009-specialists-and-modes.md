@@ -77,6 +77,13 @@ separate model. Build `b11624` with `qwen3-coder:30b` passed the conformance
 probe (all three cases, about 0.7 s for the text case). Ollama remains usable
 as a registry provider until nothing depends on it.
 
+The first specialist made the trip on 2026-10-28: the C2 "shortest reasoning"
+adapter, trained with MLX on gpt-oss-20b, was converted with
+`farhelm engine import-adapter` and served on the pinned gpt-oss-20b GGUF.
+On eight questions with known answers at medium effort it cut output tokens
+by 34% (MLX original: 38%) with unchanged accuracy (7 of 8 both ways). That
+is a smoke comparison, not the held-out evaluation promotion requires.
+
 ### Training
 
 Training lives in its own Python project (`pyproject.toml`, uv lockfile,

@@ -55,6 +55,8 @@ SETTING UP
                      (checksum verified) and records the model; `serve` then
                      starts and supervises it. --from <archive> uses an archive
                      you already downloaded. `engine status` shows its state.
+                     `engine import-adapter --from <mlx-dir> --name <name>`
+                     converts an MLX-trained LoRA adapter for the engine.
     install-service  A unit file for this machine, with its paths filled in, and
                      the one line that installs it.
 
@@ -1141,6 +1143,31 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
             println!("  [models.<name>]");
             println!("  provider = \"engine\"");
             println!("  model = \"{}\"", config.alias);
+            Ok(())
+        }
+        Some("import-adapter") => {
+            let from = value_of("--from").ok_or(
+                "say which MLX adapter to import: `farhelm engine import-adapter --from <dir> --name <name>`",
+            )?;
+            let name = value_of("--name").ok_or("give the adapter a --name")?;
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            {
+                return Err("an adapter name is ASCII letters, digits, '-', '_' or '.'".into());
+            }
+            let arch = value_of("--arch").unwrap_or_else(|| "gpt-oss".into());
+            let out = home.join("adapters").join(format!("{name}.gguf"));
+            let imported =
+                farhelm_runner::adapter_import::import_mlx_lora(Path::new(&from), &arch, &out)?;
+            println!("  adapter    {}", out.display());
+            println!("  trained on {}", imported.trained_on);
+            println!(
+                "  lora       rank {}, alpha {} ({} tensors, layers {:?})",
+                imported.rank, imported.alpha, imported.tensors, imported.layers
+            );
+            println!("  sha256     {}", engine::sha256_file(&out)?);
             Ok(())
         }
         Some("status") | None => {

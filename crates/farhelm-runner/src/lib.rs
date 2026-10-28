@@ -5,6 +5,7 @@
 //! spawning the daemon and poking it over HTTP, which tests the transport rather
 //! than the behaviour.
 
+pub mod adapter_import;
 pub mod api;
 pub mod cloud;
 pub mod commands;

@@ -28,6 +28,14 @@ farhelm engine status
 
 Requests still go through the gateway: point a registry provider at the engine like any other local endpoint (`kind = "openai_compatible"`, `base_url = "http://127.0.0.1:7846/v1"`, `data_location = "local"`, and the model's alias). Only Apple Silicon has a pinned build so far (`b11624`); a new build is a new deployment and passes the conformance probe before it is pinned. A model file is checked by size on every start; its install-time hash is the deployment record.
 
+### Adapters trained with MLX
+
+`farhelm engine import-adapter --from <mlx-adapter-dir> --name <name>` converts an MLX-LM LoRA adapter (`adapter_config.json` and `adapters.safetensors`, F32) into the engine's GGUF adapter format under `adapters/`. Linear matrices are transposed, per-expert matrices are kept, and `alpha = scale * rank` so llama.cpp applies the same strength. Only gpt-oss is mapped so far; an adapter tensor with no counterpart in the base model is an error rather than being dropped. Load it with the server's `--lora`; requests choose its strength with the `lora` field.
+
+### Reasoning models and tool calls
+
+Reasoning models such as gpt-oss write their analysis before a tool call and need it back on the next request. The OpenAI-compatible adapter keeps a plain `reasoning_content` string that comes with tool calls and returns it on the assistant message of the following request, where llama.cpp renders it into the model's analysis channel. Structured reasoning (`reasoning_details`, OpenRouter's `reasoning`) still fails the request, since it needs exact replay this adapter does not do. Reasoning is not sent to Anthropic, whose thinking blocks need Anthropic's own signature.
+
 ## Configuration contract
 
 The TOML file has `version = 1`, a required `policy`, `routes`, `providers` and `models`. Unknown fields fail validation. Provider/model aliases use ASCII letters, digits, underscores, hyphens or periods; upstream model identifiers may include runtime-specific syntax such as `qwen3-coder:30b` or a deployed LoRA alias. No adapter upload/activation endpoint is exposed.
