@@ -71,7 +71,27 @@ impl OpenAiClient {
     }
 
     pub async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, DispatchError> {
-        let body = completion_params(&request, self.openrouter)?;
+        self.complete_with_adapters(request, &[]).await
+    }
+
+    /// A completion with LoRA adapters switched on for this request only
+    /// (llama.cpp's `lora` field). An empty list sends no field, so the
+    /// server's own default applies; the engine starts servers with every
+    /// adapter off.
+    pub async fn complete_with_adapters(
+        &self,
+        request: ModelRequest,
+        adapters: &[crate::providers::AdapterUse],
+    ) -> Result<ModelResponse, DispatchError> {
+        let mut body = completion_params(&request, self.openrouter)?;
+        if !adapters.is_empty() {
+            body["lora"] = Value::Array(
+                adapters
+                    .iter()
+                    .map(|adapter| json!({ "id": adapter.id, "scale": adapter.scale }))
+                    .collect(),
+            );
+        }
         let mut pending = self.http.post(self.endpoint.clone()).json(&body);
         if let Some(key) = &self.api_key {
             pending = pending.bearer_auth(key);
@@ -234,11 +254,19 @@ fn completion_params(request: &ModelRequest, openrouter: bool) -> Result<Value, 
                     if !pending_ids.remove(&result.tool_use_id) {
                         return Err(invalid("tool result has no matching pending call"));
                     }
-                    // Chat Completions has no standard is_error field. Keep it
-                    // in the tool's content instead of losing failure status.
+                    // Chat Completions has no standard is_error field. A failure
+                    // keeps it in the tool's content rather than losing it; a
+                    // success is the plain output, as every client sends it.
+                    // Wrapping successes too made gpt-oss quote the wrapper
+                    // when asked for the tool's exact output.
+                    let content = if result.is_error {
+                        json!({ "content": result.content, "is_error": true }).to_string()
+                    } else {
+                        result.content.clone()
+                    };
                     results.push(json!({
                         "role": "tool", "tool_call_id": result.tool_use_id,
-                        "content": json!({ "content": result.content, "is_error": result.is_error }).to_string()
+                        "content": content
                     }));
                 }
                 _ => return Err(invalid("unsupported message content block or role")),
@@ -682,6 +710,8 @@ mod tests {
             body["messages"][2]["reasoning_content"],
             "We need the file."
         );
+        // A successful result is the tool's plain output.
+        assert_eq!(body["messages"][3]["content"], "fn main() {}");
         assert_eq!(body["messages"][2]["tool_calls"][0]["id"], "history_1");
         // Anthropic's request leaves it out: its thinking blocks need its own
         // signatures.

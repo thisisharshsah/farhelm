@@ -318,7 +318,9 @@ async fn tool_case(gateway: &ProbeGateway, timeout: Duration, failed: bool) -> C
     // This is an in-memory fixture, never a dispatch to the agent's OS tools.
     request.stable.history = vec![
         Turn::user(first.submitted_instruction),
-        Turn::assistant_with_tools(first.text, first.tool_calls.clone()),
+        // As the agent does: a reasoning model gets its analysis back.
+        Turn::assistant_with_tools(first.text, first.tool_calls.clone())
+            .with_reasoning(first.reasoning.clone()),
     ];
     request.instruction.clear();
     request.tool_results = vec![ToolResult {

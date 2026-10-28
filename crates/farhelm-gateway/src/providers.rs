@@ -97,6 +97,19 @@ struct ModelConfig {
     tools: bool,
     max_output_tokens: u32,
     pricing: Option<Pricing>,
+    /// LoRA adapters the server applies to this model's requests: a
+    /// specialist is a base model plus these. Ids are the order the server
+    /// loaded them in (`farhelm engine status` lists them). Only for
+    /// `openai_compatible` servers that read llama.cpp's `lora` field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    adapters: Vec<AdapterUse>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdapterUse {
+    pub id: u32,
+    pub scale: f32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -374,6 +387,25 @@ impl ProviderRegistry {
                     "model {alias} max_output_tokens must be positive"
                 )));
             }
+            if !model.adapters.is_empty() {
+                if provider.kind != ProviderKind::OpenaiCompatible {
+                    return Err(ConfigError(format!(
+                        "model {alias} uses adapters, which only openai_compatible servers apply"
+                    )));
+                }
+                let mut ids = std::collections::BTreeSet::new();
+                for adapter in &model.adapters {
+                    if adapter.id >= 64
+                        || !ids.insert(adapter.id)
+                        || !adapter.scale.is_finite()
+                        || !(0.0..=4.0).contains(&adapter.scale)
+                    {
+                        return Err(ConfigError(format!(
+                            "model {alias} adapters need distinct ids below 64 and a scale from 0 to 4"
+                        )));
+                    }
+                }
+            }
             let configured_rates = model.pricing.as_ref().map(Pricing::rates).transpose()?;
             let rate = match provider.data_location {
                 DataLocation::Local => {
@@ -477,9 +509,18 @@ impl ProviderRegistry {
                 "selected model does not support tools".into(),
             ));
         }
+        let alias = std::mem::take(&mut request.model);
         request.model.clone_from(&model.model);
         request.max_tokens = request.max_tokens.min(model.max_output_tokens);
-        let mut response = self.clients[&model.provider].complete(request).await?;
+        let mut response = self.clients[&model.provider]
+            .complete_with_adapters(request, &model.adapters)
+            .await?;
+        // The server reports the base model either way; the ledger has to say
+        // which specialist answered, or its spend and quality cannot be told
+        // apart from the base model's.
+        if !model.adapters.is_empty() {
+            response.model = format!("{}+{alias}", response.model);
+        }
         response.model = match provider.data_location {
             DataLocation::Local => format!("local/{}/{}", model.provider, response.model),
             DataLocation::Cloud => format!("{}/{}", model.provider, response.model),
@@ -904,5 +945,73 @@ cache_read_per_mtok = 0.5
         assert_eq!(body["model"], "qwen3-coder:30b");
         assert_eq!(body["max_tokens"], 4096);
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_specialist_switches_its_adapter_on_and_is_named_in_the_ledger() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let saved = captured.clone();
+        let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            saved.lock().unwrap().push(body);
+            async { axum::Json(json!({"model":"gpt-oss-20b", "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}})) }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut source =
+            local_config().replace("http://127.0.0.1:11434/v1", &format!("http://{address}/v1"));
+        source.push_str(
+            r#"
+[models.oss-c2]
+provider = "ollama"
+model = "gpt-oss-20b"
+tools = true
+max_output_tokens = 4096
+adapters = [{ id = 0, scale = 1.0 }]
+"#,
+        );
+        let client = load(&source).unwrap();
+
+        let mut specialist = request(&client);
+        specialist.model = "oss-c2".into();
+        let response = client.complete(specialist).await.unwrap();
+        assert_eq!(response.model, "local/ollama/gpt-oss-20b+oss-c2");
+        // The base model on the same server sends no adapter at all.
+        client.complete(request(&client)).await.unwrap();
+
+        let bodies = captured.lock().unwrap();
+        assert_eq!(bodies[0]["model"], "gpt-oss-20b");
+        assert_eq!(bodies[0]["lora"], json!([{ "id": 0, "scale": 1.0 }]));
+        assert!(bodies[1].get("lora").is_none());
+        server.abort();
+    }
+
+    #[test]
+    fn adapters_need_a_server_that_applies_them_and_sane_values() {
+        let with = |adapters: &str| {
+            let mut source = with_cloud(local_config()).replace(
+                "max_output_tokens = 1024\n",
+                &format!("max_output_tokens = 1024\nadapters = {adapters}\n"),
+            );
+            source.push('\n');
+            load(&source)
+        };
+        assert!(
+            with("[{ id = 0, scale = 1.0 }]")
+                .err()
+                .is_some_and(|err| err.0.contains("openai_compatible"))
+        );
+        let local = |adapters: &str| {
+            load(&local_config().replace(
+                "max_output_tokens = 4096\n",
+                &format!("max_output_tokens = 4096\nadapters = {adapters}\n"),
+            ))
+        };
+        assert!(local("[{ id = 0, scale = 1.0 }]").is_ok());
+        assert!(local("[{ id = 0, scale = 9.0 }]").is_err());
+        assert!(local("[{ id = 1, scale = 1.0 }, { id = 1, scale = 0.5 }]").is_err());
+        assert!(local("[{ id = 0, scale = 1.0, path = \"x\" }]").is_err());
     }
 }

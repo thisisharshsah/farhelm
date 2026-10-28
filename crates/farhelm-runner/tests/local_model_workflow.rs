@@ -231,12 +231,18 @@ fn assert_tool_history(request: &Value, expected_ids: &[&str]) {
         if message["role"] == "tool" {
             let id = message["tool_call_id"].as_str().unwrap();
             assert_eq!(pending.pop_front(), Some(id));
-            let result: Value = serde_json::from_str(message["content"].as_str().unwrap()).unwrap();
-            assert_eq!(result["is_error"], false);
+            // A successful result is the tool's plain output; only a failure
+            // is wrapped with `is_error`.
+            let result = message["content"].as_str().unwrap();
+            assert!(
+                serde_json::from_str::<Value>(result)
+                    .map_or(true, |value| value.get("is_error").is_none()),
+                "a success must not be wrapped: {result}"
+            );
             match id {
-                "read-1" => assert!(result["content"].as_str().unwrap().contains("say(\"old\")")),
-                "edit-2" => assert_eq!(result["content"], "edited src.txt"),
-                "run-3" => assert!(result["content"].as_str().unwrap().starts_with("exit 0\n")),
+                "read-1" => assert!(result.contains("say(\"old\")")),
+                "edit-2" => assert_eq!(result, "edited src.txt"),
+                "run-3" => assert!(result.starts_with("exit 0\n")),
                 _ => panic!("unexpected tool result {id}"),
             }
             result_ids.push(id);

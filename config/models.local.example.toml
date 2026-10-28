@@ -20,6 +20,22 @@ model = "qwen3-coder:30b" # Must already exist on your runtime; pin in deploymen
 tools = true # Enable only after testing this model/runtime/template combination.
 max_output_tokens = 4096
 
+# A specialist: a base model plus a LoRA adapter switched on for its requests
+# only. The adapter is loaded by the server (`farhelm engine add-adapter`) and
+# named here by its id, which `farhelm engine status` lists.
+#
+# [providers.engine-gpt-oss-20b]
+# kind = "openai_compatible"
+# base_url = "http://127.0.0.1:7847/v1"
+# data_location = "local"
+#
+# [models.gpt-oss-c2]
+# provider = "engine-gpt-oss-20b"
+# model = "gpt-oss-20b"
+# tools = true
+# max_output_tokens = 8192
+# adapters = [{ id = 0, scale = 1.0 }]
+
 # Optional cloud route: deliberately absent from the default configuration.
 # To enable, change policy to "cloud_allowed", uncomment this provider/model,
 # set OPENROUTER_API_KEY in the runner environment and choose a route alias.
