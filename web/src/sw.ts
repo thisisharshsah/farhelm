@@ -5,14 +5,14 @@
  *
  * ## What the notification knows, and how
  *
- * The push carries **no payload** — the relay cannot read the envelope that
+ * The push carries **no payload**: the relay cannot read the envelope that
  * triggered it, so anything it put in a body would be a guess. But the *device*
  * can read it. So on a wake-up this worker opens the pairing from IndexedDB,
  * connects to the relay itself, decrypts a fleet snapshot, and only then writes
  * the notification.
  *
- * That is why the notification can say `git push --force origin main —
- * payments-api` while the relay still knows nothing. The decryption happens
+ * That is why the notification can say `git push --force origin main` for
+ * `payments-api` while the relay still knows nothing. The decryption happens
  * here, on the device, with the device's own key.
  *
  * ## Why approving from the notification is the whole point
@@ -23,7 +23,7 @@
  *
  * ## Except for destructive commands
  *
- * `rm -rf`, `git push --force`, `DROP TABLE` and friends get no action buttons —
+ * `rm -rf`, `git push --force`, `DROP TABLE` and friends get no action buttons,
  * only "Open". This is the same reasoning as D3 refusing them from a watch:
  * convenience must not become catastrophe, and a notification action is *less*
  * deliberate than a wrist tap, not more. The runner enforces its own rule
@@ -55,7 +55,7 @@ const SHELL = "farhelm-shell-v2";
  * Show what `notification.ts` composed.
  *
  * The cast is because TypeScript's `lib.dom` models the *page's*
- * `new Notification()`, which cannot take `actions` or `renotify` — they are
+ * `new Notification()`, which cannot take `actions` or `renotify`; they are
  * meaningful only through `ServiceWorkerRegistration.showNotification`, which
  * is the one this file uses.
  */
@@ -120,7 +120,7 @@ self.addEventListener("fetch", (event) => {
  * Read the pairing straight from IndexedDB.
  *
  * Duplicated rather than imported from `idb.ts` because that module is written
- * for the page and this bundle must stay small — the worker is fetched on every
+ * for the page and this bundle must stay small: the worker is fetched on every
  * update check. It is twenty lines and one key.
  */
 function readPairing(): Promise<Pairing | null> {
@@ -200,7 +200,7 @@ async function wakeUp(): Promise<void> {
     context = { kind: "fleet", fleet: await fetchFleetOnce(pairing) };
   } catch {
     // Cellular, a relay restart, a runner that went away between the push and
-    // now. The wake-up is still worth showing — just without the detail.
+    // now. The wake-up is still worth showing, just without the detail.
     context = { kind: "unreachable" };
   }
   return show(wakeUpNotification(context));

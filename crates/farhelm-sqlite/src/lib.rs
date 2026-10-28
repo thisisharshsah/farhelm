@@ -1,6 +1,6 @@
 //! SQLite (WAL) implementation of [`Store`].
 //!
-//! One file, no daemon, trivially backed up — the right shape for a single
+//! One file, no daemon, trivially backed up: the right shape for a single
 //! always-on runner. The connection sits behind a `Mutex` because SQLite is a
 //! single writer anyway and [`Store`] takes `&self`.
 
@@ -1438,7 +1438,7 @@ impl BatchStore for SqliteStore {
         let mut conn = self.lock()?;
         // One transaction for the whole flush. A crash partway through would
         // otherwise leave some rows queued and some submitted, and the queued
-        // half would go out again in the next batch — paid for twice.
+        // half would go out again in the next batch, paid for twice.
         let tx = conn.transaction().map_err(backend)?;
         for id in item_ids {
             tx.execute(
@@ -1808,7 +1808,7 @@ impl HiveStore for SqliteStore {
         let conn = self.lock()?;
         // `OR IGNORE` on the id: posting is retried by callers that cannot tell
         // whether the previous attempt landed, and a handoff delivered twice is
-        // worse than one delivered once — the recipient would act on it twice.
+        // worse than one delivered once: the recipient would act on it twice.
         conn.execute(
             "INSERT OR IGNORE INTO hive_message
                  (id, session_id, from_session_id, body, created_at, read_at)
@@ -2359,8 +2359,8 @@ mod migration_tests {
 
     /// Rows written before `dispatch` existed are backfilled, not guessed.
     ///
-    /// A row that said `tier = 'batch'` *was* batched — that is the whole reason
-    /// the value was there — so `dispatch` becomes `batch` and the historical
+    /// A row that said `tier = 'batch'` *was* batched (that is the whole reason
+    /// the value was there), so `dispatch` becomes `batch` and the historical
     /// cost stays explicable. Its real model tier is not recoverable and `tier`
     /// keeps saying `batch` for those rows; the alternative was inventing one.
     #[test]
@@ -2409,7 +2409,7 @@ mod migration_tests {
         assert_eq!(dispatch_of("u-live"), "live");
 
         // The rows still read back through the type, rather than only through
-        // raw SQL — a legacy `tier = batch` must not become a parse error.
+        // raw SQL; a legacy `tier = batch` must not become a parse error.
         let events: Vec<UsageEvent> = {
             let mut stmt = conn
                 .prepare(&format!(
@@ -2613,7 +2613,7 @@ mod tests {
         let store = seeded();
         store.upsert_session(&session("s1", None)).unwrap();
 
-        // No row yet — including every session that predates the setting.
+        // No row yet, including every session that predates the setting.
         assert_eq!(store.auto_approve("s1").unwrap(), AutoApprove::Off);
 
         store
@@ -2742,7 +2742,7 @@ mod tests {
     #[test]
     fn the_second_device_to_review_a_diff_does_not_apply_it_again() {
         // The failure this prevents: two phones on the same notification, and a
-        // change set written to the working tree twice — the second time
+        // change set written to the working tree twice; the second time
         // against a tree that has already moved.
         let store = seeded();
         store
@@ -3222,7 +3222,7 @@ mod tests {
                 .as_deref(),
             Some("the answer")
         );
-        // Exactly at the expiry instant it is already gone — the boundary is
+        // Exactly at the expiry instant it is already gone; the boundary is
         // exclusive, so a stale answer never sneaks through on a tie.
         assert_eq!(
             store.cache_get("key-a", NOW_MS + 5 * MINUTE_MS).unwrap(),
@@ -3487,7 +3487,7 @@ mod batch_queue_tests {
 
     #[test]
     fn two_items_cannot_share_a_custom_id() {
-        // The custom id is the only thing tying a result — and its cost — to the
+        // The custom id is the only thing tying a result (and its cost) to the
         // row that asked for it. A collision would bill the wrong session.
         let store = store();
         store.enqueue_batch_item(&item("b1", "same")).unwrap();
@@ -3566,7 +3566,7 @@ mod batch_queue_tests {
 
     #[test]
     fn settling_twice_does_not_overwrite_the_first_answer() {
-        // Results can be fetched more than once — a poll overlapping a retry.
+        // Results can be fetched more than once: a poll overlapping a retry.
         // Billing the same tokens twice is the failure this prevents.
         let store = store();
         store.enqueue_batch_item(&item("b1", "c1")).unwrap();
@@ -3749,7 +3749,7 @@ mod hive_tests {
     #[test]
     fn marking_twice_reports_the_second_time_as_nothing_to_do() {
         // The count is how many were still waiting, not how many ids were
-        // passed — otherwise a retried acknowledgement reads as new work done.
+        // passed; otherwise a retried acknowledgement reads as new work done.
         let store = store();
         store.post_message(&message("m1", "s1", 100)).unwrap();
 

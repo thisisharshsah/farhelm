@@ -184,7 +184,7 @@ extension ServerEvent: Decodable {
 /// What a device sends. Mirrors `farhelm_runner::commands::Command`.
 ///
 /// The watch sends only three of these. It cannot start a session, control a
-/// plan, or read the cost dashboard — not because of a missing case here, but
+/// plan, or read the cost dashboard, not because of a missing case here, but
 /// because none of those are things to do from a wrist.
 public enum Command: Encodable, Sendable {
     case snapshot

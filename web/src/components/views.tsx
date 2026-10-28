@@ -83,7 +83,7 @@ export function OutputTail({ lines, agent }: { lines: OutputLine[]; agent: strin
           <div className="turn" data-kind={turn.kind} key={key}>
             {/* Both sides are named, and both carry a time. Only your own turns
                 were labelled before, which left the reader inferring where one
-                agent response ended and the next began from spacing alone —
+                agent response ended and the next began from spacing alone,
                 and left a transcript with no times in it at all, though every
                 line has carried one on the wire the whole time. */}
             <div className="turn-head">
@@ -140,7 +140,7 @@ function useDictation(onText: (text: string) => void) {
     recognition.interimResults = false;
     recognition.onresult = (event) => {
       const first = event.results[0]?.[0]?.transcript;
-      // Never sent automatically — a dictation error into a live agent is
+      // Never sent automatically: a dictation error into a live agent is
       // destructive, so the text lands in the box for review.
       if (first) onText(first);
     };
@@ -216,7 +216,7 @@ export function SessionScreen({
           ) : null}
           {/* Stopping is loopback-only for the same reason starting is: it ends
               a process on somebody's machine. Hidden rather than disabled over
-              the relay — a button that always refuses teaches nothing. */}
+              the relay; a button that always refuses teaches nothing. */}
           {transport?.supportsSessionControl && session.is_live ? (
             <button
               className="btn btn-quiet btn-small"
@@ -374,10 +374,10 @@ export function DashboardScreen({ dashboard }: { dashboard: DashboardView }) {
           label="Budget left"
           value={
             dashboard.budget.cap_usd == null
-              ? "—"
+              ? "No cap"
               : usd(Math.max(0, dashboard.budget.cap_usd - dashboard.budget.spent_usd))
           }
-          note={dashboard.budget.cap_usd == null ? "no cap" : "of session cap"}
+          note={dashboard.budget.cap_usd == null ? "nothing to run out of" : "of session cap"}
         />
       </div>
 
@@ -434,7 +434,7 @@ export function DashboardScreen({ dashboard }: { dashboard: DashboardView }) {
   );
 }
 
-/** Scroll to the top whenever the route changes — a phone habit, not a nicety. */
+/** Scroll to the top whenever the route changes: a phone habit, not a nicety. */
 export function useScrollReset(key: string) {
   useEffect(() => {
     window.scrollTo(0, 0);

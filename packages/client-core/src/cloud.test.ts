@@ -1,7 +1,7 @@
 /**
  * The control-plane client, against a stubbed `fetch`.
  *
- * The behaviour worth pinning down here is not "does it call the right URL" —
+ * The behaviour worth pinning down here is not "does it call the right URL";
  * it is the token lifecycle, because that is where a client silently signs
  * somebody out or, worse, keeps using a credential it should have rotated.
  */
@@ -281,7 +281,7 @@ describe("token refresh", () => {
       if (url.endsWith("/v1/auth/refresh")) {
         const token = JSON.parse(String(init.body)).refresh_token;
         presented.push(token);
-        if (token === "refresh-1") return json({ error: "that session has expired — sign in again" }, 401);
+        if (token === "refresh-1") return json({ error: "that session has expired; sign in again" }, 401);
         return json({ access_token: "access-3", access_expires_at: Date.now() + 3_600_000, refresh_token: "refresh-3" });
       }
       return json([]);
@@ -300,7 +300,7 @@ describe("token refresh", () => {
 
   it("signs out when storage has nothing newer than the refused token", async () => {
     handler = (url) => url.endsWith("/v1/auth/refresh")
-      ? json({ error: "that session has expired — sign in again" }, 401)
+      ? json({ error: "that session has expired; sign in again" }, 401)
       : json([]);
     const client = new CloudClient("https://x", "refresh-1", () => {}, async () => "refresh-1");
     await expect(client.runners()).rejects.toThrow("expired");
@@ -309,7 +309,7 @@ describe("token refresh", () => {
 
   it("collapses concurrent refreshes into one", async () => {
     // Two refreshes in flight means one of them rotates a token the other is
-    // about to present — and the loser gets signed out for no reason.
+    // about to present, and the loser gets signed out for no reason.
     let refreshed = 0;
     handler = async (url) => {
       if (url.endsWith("/v1/auth/refresh")) {
@@ -377,7 +377,7 @@ describe("signing out", () => {
 
   it("still signs out locally when the network is gone", async () => {
     // The user pressed Sign out. Whatever the server thinks, this device is
-    // done — the token expires on its own.
+    // done; the token expires on its own.
     handler = () => Promise.reject(new Error("offline"));
     const client = new CloudClient("https://x", "refresh-1");
 
@@ -526,7 +526,7 @@ describe("presentation helpers", () => {
  * These pin down the shape of a real lockout: `signIn` used to mint a fresh
  * keypair every time, so a seat was consumed per sign-in. On a two-seat plan,
  * signing out and back in twice exhausted the plan, the third registration was
- * refused, and — because registration was part of sign-in — the refusal locked
+ * refused, and (because registration was part of sign-in) the refusal locked
  * the account out of the one screen that could have freed a seat.
  */
 describe("this device's key", () => {

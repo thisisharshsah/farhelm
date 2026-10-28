@@ -1,4 +1,4 @@
-//! Pipeline stage 4 — routing.
+//! Pipeline stage 4: routing.
 //!
 //! A static table, deliberately. An ML router would need training data the
 //! project does not have yet, and the failure mode of a wrong route (a frontier
@@ -9,7 +9,7 @@ use farhelm_proto::types::{Dispatch, TaskType, Tier};
 use serde::{Deserialize, Serialize};
 
 /// Which concrete model backs each tier. Any of these may be a self-hosted
-/// endpoint — the price table treats a `local/` id as free (§7's "my own
+/// endpoint; the price table treats a `local/` id as free (§7's "my own
 /// model" small tier).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Models {
@@ -17,7 +17,7 @@ pub struct Models {
     pub small: String,
     /// Edits and refactors.
     pub large: String,
-    /// Planning and hard debugging — the calls worth the top rate.
+    /// Planning and hard debugging: the calls worth the top rate.
     pub frontier: String,
 }
 
@@ -42,7 +42,7 @@ pub enum Slot {
 
 impl Slot {
     /// The ledger dimension. `Frontier` and `Large` both bill as the large
-    /// tier — the distinction is which model ran, which the ledger records
+    /// tier; the distinction is which model ran, which the ledger records
     /// separately.
     pub const fn tier(self) -> Tier {
         match self {
@@ -70,7 +70,7 @@ pub const fn slot_for(task: TaskType) -> Slot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Route {
     /// Which model tier. Since `dispatch` exists, this is always the *capability*
-    /// tier — deferring a call no longer erases which model was going to run it.
+    /// tier; deferring a call no longer erases which model was going to run it.
     pub tier: Tier,
     /// Live or batched.
     pub dispatch: Dispatch,
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn a_plan_pin_cannot_reach_the_frontier_model() {
         // Pinning `large` on a triage task gets the large model, not the
-        // frontier one — the expensive slot stays a config decision.
+        // frontier one; the expensive slot stays a config decision.
         let route = route(TaskType::Triage, Some(Tier::Large), false, &models());
         assert_eq!(route.model, "claude-sonnet-5");
     }

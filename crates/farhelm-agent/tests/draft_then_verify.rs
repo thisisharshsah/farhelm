@@ -4,14 +4,14 @@
 //! replays the *same* task twice through the real pipeline and prices both from
 //! the ledger:
 //!
-//!   A. **Frontier throughout** — every turn of the loop on the top model, which
+//!   A. **Frontier throughout**: every turn of the loop on the top model, which
 //!      is what you get if you route a coding agent by "use the best one".
-//!   B. **Draft-then-verify** — the loop on the large tier, then exactly one
+//!   B. **Draft-then-verify**: the loop on the large tier, then exactly one
 //!      frontier call that sees only the diff.
 //!
 //! Both do identical work: the same tool calls, the same reads, the same edit.
 //! The only difference is which model each turn was billed at, which is the
-//! whole point — the saving is a routing decision, not a smaller task.
+//! whole point: the saving is a routing decision, not a smaller task.
 //!
 //! Run it to see the numbers:
 //!
@@ -82,7 +82,7 @@ fn store(session: &str) -> SqliteStore {
 struct TempRepo(std::path::PathBuf);
 
 impl TempRepo {
-    /// A real repository with the file committed — a task cuts a branch from
+    /// A real repository with the file committed; a task cuts a branch from
     /// `HEAD`, so content that was never committed is content the agent will
     /// not see.
     fn new(name: &str) -> Self {
@@ -242,7 +242,7 @@ async fn drafting_cheap_and_verifying_expensive_beats_frontier_throughout() {
     println!(
         "frontier throughout ${:.4} ({} frontier calls) vs \
          draft-then-verify ${:.4} ({} large + {} frontier) \
-         over {TURNS} turns — {:.1}% reduction",
+         over {TURNS} turns: {:.1}% reduction",
         baseline.usd,
         baseline.frontier_calls,
         c10.usd,
@@ -261,19 +261,19 @@ async fn drafting_cheap_and_verifying_expensive_beats_frontier_throughout() {
     // whenever those move.
     //
     // It has moved once already. This asserted a third, which held comfortably
-    // at roughly 50% while Claude Sonnet 5 was on introductory pricing — and
+    // at roughly 50% while Claude Sonnet 5 was on introductory pricing, and
     // failed the morning that lapsed (`SONNET_5_PROMO_UNTIL_MS`, 2026-09-01),
     // because the draft arm is Sonnet and got 50% more expensive overnight
     // while the frontier baseline did not move at all. Nothing about the code
     // changed; a promotion ended.
     //
-    // So the floor is what the claim actually needs — that drafting cheaply and
-    // verifying once is *materially* cheaper than never leaving the top tier —
+    // So the floor is what the claim actually needs (that drafting cheaply and
+    // verifying once is *materially* cheaper than never leaving the top tier)
     // rather than a number tuned to whatever the table said the week it was
     // written. The real figure is printed above and is the thing to read.
     assert!(
         reduction >= 0.25,
-        "only {:.1}% cheaper — C10 claims bulk generation moves tier. \
+        "only {:.1}% cheaper; C10 claims bulk generation moves tier. \
          If this dropped suddenly, check the price table for a lapsed promo \
          before looking at the router.",
         reduction * 100.0
@@ -329,7 +329,7 @@ async fn the_verifier_reads_the_diff_and_not_the_session() {
     println!("verifier input {verifier_input} bytes vs final drafting turn {draft_input} bytes");
     assert!(
         verifier_input < draft_input,
-        "the frontier call read more than the drafting turns did — \
+        "the frontier call read more than the drafting turns did; \
          the patch is supposed to be the small input"
     );
 

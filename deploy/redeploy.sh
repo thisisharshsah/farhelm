@@ -3,7 +3,7 @@
 # Build what changed, install it, restart it, and prove it came back.
 #
 # This exists because the alternative was a five-command sequence typed from
-# memory every time — build, copy, kickstart, sleep, curl — and the failure mode
+# memory every time (build, copy, kickstart, sleep, curl) and the failure mode
 # was not typing it wrong. It was typing four fifths of it: copying the binary
 # and forgetting the restart, so the old process kept serving while the new
 # binary sat on disk, and the next twenty minutes went into debugging a change
@@ -75,7 +75,7 @@ for job in cloud relay runner tunnel; do
   esac
   launchctl kickstart -k "gui/$(id -u)/com.farhelm.$job" >/dev/null 2>&1 \
     && ok "com.farhelm.$job" \
-    || bad "com.farhelm.$job did not restart — is it loaded? (launchctl list | grep farhelm)"
+    || bad "com.farhelm.$job did not restart. Is it loaded? (launchctl list | grep farhelm)"
 done
 
 # ------------------------------------------------------------------ prove
@@ -101,7 +101,7 @@ check "control plane " https://farhelm.aurovie.com/v1/health        200 || faile
 check "web app       " https://farhelm.aurovie.com/                 200 || failed=1
 check "relay         " https://farhelm-relay.aurovie.com/v1/health  200 || failed=1
 check "runner        " http://127.0.0.1:7852/v1/health              200 || failed=1
-# The connector is optional — it is served only when FARHELM_MCP_URL is set — so
+# The connector is optional (it is served only when FARHELM_MCP_URL is set), so
 # its absence is reported rather than failing the deploy.
 #
 # Checked by content type, not by status code. The runner serves the web app as
@@ -113,7 +113,7 @@ connector="https://farhelm-mac.aurovie.com/mcp"
 kind="$(curl -s -o /dev/null -m 10 -w '%{content_type}' "$connector" || true)"
 case "$kind" in
   text/html*)
-    printf '  %s·%s connector      not served (FARHELM_MCP_URL unset) %s— optional%s\n' \
+    printf '  %s·%s connector      not served (FARHELM_MCP_URL unset) %s(optional)%s\n' \
       "$DIM" "$OFF" "$DIM" "$OFF" ;;
   application/json*)
     ok "connector      answering" ;;
@@ -129,7 +129,7 @@ esac
 if grep -aq "auth       on" "$HOME_DIR/logs/relay.log" 2>/dev/null; then
   ok "relay gating   on"
 else
-  bad "relay is not gated — check $HOME_DIR/logs/relay.log for 'auth OPEN'"
+  bad "relay is not gated; check $HOME_DIR/logs/relay.log for 'auth OPEN'"
   failed=1
 fi
 

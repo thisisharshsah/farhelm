@@ -15,7 +15,7 @@
 //!
 //! It never sees a session, an approval, a diff, or a repository path. Devices
 //! still generate their own keys and still seal everything to a runner's public
-//! key, exactly as they did before — this service hands out *addresses and
+//! key, exactly as they did before; this service hands out *addresses and
 //! permissions*, not content. Compromising it lets an attacker add a machine to
 //! a fleet or read a billing address. It does not let them read a single line of
 //! anyone's code, which is the property `farhelm-crypto` exists to protect and the

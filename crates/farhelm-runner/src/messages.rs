@@ -1,10 +1,10 @@
-//! `POST /v1/messages` — the Anthropic Messages API, served by the gateway.
+//! `POST /v1/messages`: the Anthropic Messages API, served by the gateway.
 //!
 //! # Why this exists when `/v1/complete` already did
 //!
 //! `/v1/complete` takes the gateway's own shape: a session id, a task type, and
 //! a prompt already split into the half that never changes and the one
-//! instruction that does. That split is the point — it is what makes prompt
+//! instruction that does. That split is the point: it is what makes prompt
 //! caching pay, and a caller physically cannot interleave a timestamp into the
 //! stable half because the two are separate fields.
 //!
@@ -16,15 +16,15 @@
 //!
 //! This endpoint speaks the wire format tools already emit. Set
 //! `ANTHROPIC_BASE_URL` to the runner and existing software goes through the
-//! eight stages — budget, pre-gate, routing, retrieval, compaction,
-//! cache-shaped assembly, response cache, dispatch — without being modified.
+//! eight stages (budget, pre-gate, routing, retrieval, compaction,
+//! cache-shaped assembly, response cache, dispatch) without being modified.
 //!
 //! # What is lost in the translation, stated plainly
 //!
 //! The Messages API has no session id and no task type, and the gateway needs
 //! both: one to attribute spend, the other to route to a tier. They are read
 //! from `metadata.user_id` and an `x-farhelm-task` header, and defaulted when
-//! absent. A default task type means default routing — correct, and not as
+//! absent. A default task type means default routing: correct, and not as
 //! cheap as telling the gateway that this call is a commit message.
 //!
 //! Text, assistant tool calls and matching user tool results survive translation.
@@ -34,9 +34,9 @@
 //!
 //! # Streaming
 //!
-//! Honestly synthetic. The gateway answers in one piece — it has to, because
-//! the response cache and the batch queue both need a complete answer to store
-//! — so a streamed response is the finished text emitted as one delta inside a
+//! Honestly synthetic. The gateway answers in one piece (it has to, because
+//! the response cache and the batch queue both need a complete answer to store),
+//! so a streamed response is the finished text emitted as one delta inside a
 //! correctly-framed SSE envelope.
 //!
 //! It is implemented anyway because most clients send `stream: true` by
@@ -383,8 +383,8 @@ const LEGACY_REPO_HEADER: &str = "x-forge-repo";
 
 /// Turn a Messages request into a gateway request.
 ///
-/// Split out from the handler so the translation — which is where every
-/// interesting decision lives — can be tested without a model provider, a
+/// Split out from the handler so the translation (which is where every
+/// interesting decision lives) can be tested without a model provider, a
 /// gateway or a network. It also fixes an ordering bug worth naming: the
 /// provider check used to run first, so a client with a malformed request got
 /// "no model provider configured" and went looking for a missing API key
@@ -402,7 +402,7 @@ pub fn translate(headers: &HeaderMap, body: MessagesBody) -> Result<CompleteRequ
     if last.role != "user" {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "the last message must be from the user — assistant prefill is not \
+            "the last message must be from the user; assistant prefill is not \
              supported",
         ));
     }
@@ -422,7 +422,7 @@ pub fn translate(headers: &HeaderMap, body: MessagesBody) -> Result<CompleteRequ
             ApiError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 format!(
-                    "{TASK_HEADER}: `{raw}` is not a task type — one of {}",
+                    "{TASK_HEADER}: `{raw}` is not a task type; one of {}",
                     TaskType::ALL
                         .iter()
                         .map(|task| task.as_str())
@@ -470,7 +470,7 @@ pub async fn messages(
     let request = translate(&headers, body)?;
 
     // The gateway attributes spend to a session, and a caller coming in over
-    // the Messages API has no reason to have created one — it does not know
+    // the Messages API has no reason to have created one: it does not know
     // this system exists. Making them create one first would be the exact
     // "do the same thing again before you can start" this endpoint is meant to
     // remove, so the bucket creates itself on first use.
@@ -479,7 +479,7 @@ pub async fn messages(
     let Some(gateway) = &state.gateway else {
         return Err(ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
-            "no model provider configured — set ANTHROPIC_API_KEY or \
+            "no model provider configured; set ANTHROPIC_API_KEY or \
              ANTHROPIC_AUTH_TOKEN and restart",
         ));
     };
@@ -564,7 +564,7 @@ fn messages_stop_reason(reason: Option<&str>, has_tools: bool) -> &'static str {
 ///
 /// Idempotent, and deliberately cheap: one lookup on the common path, two
 /// inserts exactly once per bucket. The repo row exists because a session
-/// belongs to one — there is no real checkout behind an API call, so it points
+/// belongs to one; there is no real checkout behind an API call, so it points
 /// at the runner's own home and is named for what it is.
 fn ensure_bucket(state: &AppState, session_id: &str) -> Result<(), ApiError> {
     use farhelm_app::store::{FleetStore, SessionStore};
@@ -990,8 +990,8 @@ mod tests {
 
     #[test]
     fn the_headers_this_used_to_answer_to_still_work() {
-        // Anything already pointed at this endpoint — a shell alias, a CI job,
-        // another tool's config — is sending the old spelling. A rename that
+        // Anything already pointed at this endpoint (a shell alias, a CI job,
+        // another tool's config) is sending the old spelling. A rename that
         // stops reading it turns every one of those calls into an unattributed
         // edit, which is a billing and routing regression with no error to
         // notice it by.

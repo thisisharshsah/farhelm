@@ -1,7 +1,7 @@
 /**
  * The shared visual pieces: budget meter, approval card, session row.
  *
- * Deliberately plain `View`s and `Text`s — no chart library. The one graphic
+ * Deliberately plain `View`s and `Text`s: no chart library. The one graphic
  * that earns its place on a phone is the budget meter, and a meter is a rounded
  * rectangle inside another rounded rectangle. The cost dashboard's real charts
  * stay on the web tier, where there is room to read them.
@@ -147,7 +147,7 @@ export function ApprovalCard({
 
       {!approval.allows_watch_decision ? (
         <Text style={{ color: palette.serious, fontSize: 12 }}>
-          ■ Destructive — deliberate friction. This one cannot be cleared from
+          ■ Destructive: deliberate friction. This one cannot be cleared from
           the watch.
         </Text>
       ) : null}
@@ -284,7 +284,7 @@ export function SessionRow({
  *
  * Lived in `App.tsx` and was imported back out of it by `screens/Pairing.tsx`,
  * which made the app's entry point and one of its screens a cycle. Nothing broke
- * — a bundler resolves it — but it meant the screen could not be understood, or
+ * (a bundler resolves it), but it meant the screen could not be understood, or
  * tested, without dragging the whole app in.
  */
 export function Field({

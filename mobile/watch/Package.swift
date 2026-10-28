@@ -3,7 +3,7 @@ import PackageDescription
 
 /// The watch's crypto and relay client, as a package so it can be tested on a
 /// Mac without a watch, a simulator, or Xcode. The SwiftUI app in `App/` is a
-/// thin shell over this — which is the point: the part that must be right is the
+/// thin shell over this, which is the point: the part that must be right is the
 /// part that runs under `swift test`.
 let package = Package(
     name: "FarhelmWatch",
@@ -17,7 +17,7 @@ let package = Package(
         .target(name: "FarhelmCrypto"),
         .target(name: "FarhelmWatchKit", dependencies: ["FarhelmCrypto"]),
         // The SwiftUI screens. A package target rather than loose files in an
-        // Xcode project so `swift build` typechecks them on a Mac — watchOS-only
+        // Xcode project so `swift build` typechecks them on a Mac; watchOS-only
         // API is behind `#if os(watchOS)` for exactly that reason.
         .target(name: "FarhelmWatchUI", dependencies: ["FarhelmWatchKit"]),
         // The cross-language fixture is read from the repo at its canonical

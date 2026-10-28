@@ -8,7 +8,7 @@
  * # What a phone changes about reading a diff
  *
  * **Monospace and no wrapping.** A soft-wrapped diff line reads as two changed
- * lines. So the code scrolls sideways inside each file, and only there — the
+ * lines. So the code scrolls sideways inside each file, and only there: the
  * page itself never does.
  *
  * **Files start collapsed past the first.** A five-file change set otherwise
@@ -123,7 +123,7 @@ function FileDiffView({
           <Text
             style={{ color: palette.textMuted, fontSize: 12, padding: 10 }}
           >
-            Binary file — not shown. Nothing here can be reviewed on a screen.
+            Binary file, not shown. Nothing here can be reviewed on a screen.
           </Text>
         ) : (
           // The one place in the app that scrolls sideways. Code must not wrap:
@@ -213,7 +213,7 @@ const numberStyle = (palette: Palette) => ({
  *
  * A task with no verdict renders nothing rather than a reassuring placeholder:
  * "not judged" and "judged and found fine" are different answers, and on a
- * phone — where somebody may well approve without scrolling — blurring them
+ * phone (where somebody may well approve without scrolling) blurring them
  * would be the most expensive wrong pixel in the app.
  */
 function SecondOpinion({
@@ -327,7 +327,7 @@ function Verdict({
             }}
           />
           <Text style={{ color: palette.textMuted, fontSize: 12 }}>
-            Handed to the next attempt verbatim — the only part of a rejection
+            Handed to the next attempt verbatim: the only part of a rejection
             the agent gets to read.
           </Text>
         </>

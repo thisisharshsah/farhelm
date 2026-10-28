@@ -1,14 +1,14 @@
 //! The localhost API and the relay link must answer identically.
 //!
-//! `commands.rs` opens with the claim that "there are two ways in — the
-//! localhost HTTP API and the relay link — and they must not be able to
+//! `commands.rs` opens with the claim that "there are two ways in: the
+//! localhost HTTP API and the relay link, and they must not be able to
 //! diverge". Until now nothing checked it. Every test drove one path or the
 //! other, so a change that made a browser and a phone see different things
 //! would have passed the suite.
 //!
 //! That matters more than it sounds. The two paths exist because a device on a
-//! relay has no request/response channel — it receives events on one socket and
-//! sends on the same one — so "what is the state right now" has to be a message
+//! relay has no request/response channel (it receives events on one socket and
+//! sends on the same one), so "what is the state right now" has to be a message
 //! rather than a GET. The same read model has to come back either way, or the
 //! phone and the browser disagree about a fleet somebody is making decisions
 //! from.
@@ -189,7 +189,7 @@ async fn a_session_detail_is_identical_over_both_transports() {
 
     assert_eq!(http, relay);
     // The flattened SessionView, the output tail and the pending approval are
-    // all present — the three things that would differ if a re-export lost a
+    // all present: the three things that would differ if a re-export lost a
     // `#[serde(flatten)]`.
     assert_eq!(http["id"], "s1");
     assert_eq!(http["output"].as_array().unwrap().len(), 1);
@@ -314,8 +314,8 @@ async fn an_unknown_session_is_refused_on_both_transports() {
 ///
 /// Three places derive it: `farhelm-runner`'s binary, the Tauri app, and this
 /// endpoint's no-relay fallback. The first two were unified earlier; this one
-/// was missed, and used `machine_id` — `machine-<hostname>`, not
-/// `forge-<key prefix>`. An offer minted before `--relay` was configured
+/// was missed, and used `machine_id` (`machine-<hostname>`, not
+/// `forge-<key prefix>`). An offer minted before `--relay` was configured
 /// therefore named a channel the runner would never publish on.
 ///
 /// It was not reachable: `claimPairing` refuses an offer with an empty

@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
  *
  * Separate because it must be a **classic script**, not an ES module. Module
  * service workers (`{ type: "module" }`) are still not in Safari or Firefox
- * stable, and Safari is the platform this whole design bends around — a module
+ * stable, and Safari is the platform this whole design bends around: a module
  * worker there simply fails to register, taking push with it.
  *
  * So: one IIFE bundle, emitted to `dist/sw.js` at the root, because a service
@@ -18,7 +18,7 @@ export default defineConfig({
     // The app is built first; this must not delete it.
     emptyOutDir: false,
     sourcemap: true,
-    // The worker is fetched on every update check, so it stays small — no
+    // The worker is fetched on every update check, so it stays small: no
     // code-splitting, no shared chunks with the app.
     rollupOptions: {
       input: "src/sw.ts",

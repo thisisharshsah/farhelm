@@ -3,7 +3,7 @@
  *
  * Three clients import this package: the web PWA, the React Native phone app,
  * and (indirectly, by matching its wire format) the watchOS app. Nothing here
- * touches the DOM, `localStorage`, React, or React Native — that is enforced by
+ * touches the DOM, `localStorage`, React, or React Native; that is enforced by
  * running this package's tests in a Node environment with no jsdom.
  */
 

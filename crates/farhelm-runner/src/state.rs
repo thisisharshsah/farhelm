@@ -2,7 +2,7 @@
 //! event bus every connected client tails.
 //!
 //! Output is deliberately *not* in SQLite. It is a throttled tail for glancing
-//! at, not an audit record — §6 sends `output_chunk` over the wire and forgets
+//! at, not an audit record; §6 sends `output_chunk` over the wire and forgets
 //! it. Keeping it in memory means a chatty agent can't grow the database.
 
 use farhelm_sqlite::SqliteStore;
@@ -23,7 +23,7 @@ pub struct RelayInfo {
     ///
     /// These were the same field until a machine spent an afternoon
     /// unreachable while `doctor` reported `fleet connected`. It was reading
-    /// the URL — which never changes — and calling that a connection. A device
+    /// the URL (which never changes) and calling that a connection. A device
     /// asking for that machine got its token, dialled the relay, and found
     /// nobody there, with every check on both sides saying green.
     ///
@@ -68,7 +68,7 @@ impl RelayInfo {
 /// The gateway as the runner holds it: the real store, the real provider.
 ///
 /// `Option` because the runner must start and serve the read-only API with no
-/// API key configured — a fresh clone should show you the UI before it asks for
+/// API key configured: a fresh clone should show you the UI before it asks for
 /// a credential.
 pub type RunnerGateway = Gateway<Arc<SqliteStore>, ProviderClient>;
 
@@ -177,7 +177,7 @@ pub struct AppState {
     pub store: Arc<SqliteStore>,
     /// This runner's long-term keypair. Devices encrypt to its public half.
     pub identity: Arc<farhelm_crypto::Identity>,
-    /// Outstanding pairing codes. In memory only — an unredeemed code should not
+    /// Outstanding pairing codes. In memory only; an unredeemed code should not
     /// survive a restart.
     pub pairing: Mutex<farhelm_crypto::PairingBroker>,
     /// The relay channel this runner publishes on, if a relay is configured.
@@ -195,13 +195,13 @@ pub struct AppState {
     /// the built-ins stand on their own.
     pub policy: farhelm_domain::risk::Policy,
     /// The terminal backend. One instance, because the PTY backend owns its
-    /// panes — `TmuxTerminal` is stateless only because tmux holds the state.
+    /// panes; `TmuxTerminal` is stateless only because tmux holds the state.
     pub terminal: Arc<crate::terminal::AnyTerminal>,
     /// Native agent tasks drafting right now.
     ///
     /// In memory rather than counted from the database, because that is what it
     /// describes: a spawned loop, which does not survive a restart. The rows
-    /// left behind by one are reconciled at startup — see
+    /// left behind by one are reconciled at startup; see
     /// [`crate::task::reconcile_after_restart`].
     pub running_tasks: std::sync::atomic::AtomicUsize,
     /// Bound local metadata work before it reaches Tokio's blocking pool.
@@ -214,7 +214,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Build state with a throwaway identity and no relay. Tests only — the
+    /// Build state with a throwaway identity and no relay. Tests only; the
     /// daemon loads a persistent key so paired devices survive a restart.
     ///
     /// The closure lets the caller construct a gateway over the same store
@@ -253,7 +253,7 @@ impl AppState {
     /// [`AppState::build`] with the terminal backend chosen explicitly.
     ///
     /// `None` means tmux, which is what every existing caller wants and what a
-    /// server should use — panes that survive a runner restart.
+    /// server should use: panes that survive a runner restart.
     pub fn build_with_terminal(
         store: SqliteStore,
         build: impl FnOnce(Arc<SqliteStore>) -> Option<RunnerGateway>,
@@ -289,7 +289,7 @@ impl AppState {
     /// used to be a chain, and the longest link in it built an `Arc`, tore it
     /// back apart with `Arc::try_unwrap(...).unwrap_or_else(|_| unreachable!())`
     /// to assign a single field, and re-wrapped it. That worked only because no
-    /// clone existed yet — a fact nothing enforced. Anyone adding a
+    /// clone existed yet, a fact nothing enforced. Anyone adding a
     /// `let handle = Arc::clone(&state)` to the constructor it delegated to
     /// would have turned a runner start-up into a panic, and the compiler would
     /// have had nothing to say about it.
@@ -330,8 +330,8 @@ impl AppState {
     /// Record a new approval, clearing it on the spot when the session's
     /// standing delegation covers its risk.
     ///
-    /// One entry point for the three places an approval is born — the hook
-    /// bridge, the terminal watcher and the native agent's `run` tool — so
+    /// One entry point for the three places an approval is born (the hook
+    /// bridge, the terminal watcher and the native agent's `run` tool), so
     /// auto-approve cannot be honoured on one path and forgotten on another.
     /// The ceiling is in `farhelm_domain::auto_approves`: a destructive command
     /// is recorded as pending whatever the level says.
@@ -359,7 +359,7 @@ impl AppState {
             self.push_output(
                 &approval.session_id,
                 format!(
-                    "• auto-approved ({} risk) — {} {}",
+                    "• auto-approved ({} risk): {} {}",
                     approval.risk, approval.tool, approval.payload
                 ),
                 approval.requested_at,
@@ -374,7 +374,7 @@ impl AppState {
             self.push_output(
                 &approval.session_id,
                 format!(
-                    "⏳ awaiting approval — {} {}",
+                    "⏳ awaiting approval: {} {}",
                     approval.tool, approval.payload
                 ),
                 approval.requested_at,
@@ -389,7 +389,7 @@ impl AppState {
         }
     }
 
-    /// Publish an event. A send with no subscribers is not an error — the
+    /// Publish an event. A send with no subscribers is not an error; the
     /// runner keeps working whether or not a phone is watching.
     pub fn publish(&self, event: ServerEvent) {
         let _ = self.events.send(event);
@@ -414,8 +414,8 @@ impl AppState {
         };
 
         // Written through to the store so the transcript survives a restart.
-        // The ring buffer above is still the live tail — reading the last few
-        // lines of a running session must not touch the disk — and this is the
+        // The ring buffer above is still the live tail (reading the last few
+        // lines of a running session must not touch the disk), and this is the
         // record behind it.
         //
         // A failure here is logged rather than propagated: losing a line of
@@ -462,7 +462,7 @@ impl AppState {
     /// `tmux capture-pane` returns the *visible pane*, not a stream, so polling
     /// it naively would re-send every line on every tick. This diffs against the
     /// previous snapshot by finding the longest overlap between the old tail and
-    /// the new head — which is exactly what a scrolled pane looks like — and
+    /// the new head (which is exactly what a scrolled pane looks like) and
     /// returns only what is genuinely new.
     pub fn new_output_lines(&self, session_id: &str, snapshot: &str) -> Vec<String> {
         // tmux pads the pane to its full height; those blanks are not output.
@@ -489,8 +489,8 @@ impl AppState {
 
         // That suffix rule assumes a terminal that *scrolls*: new output arrives
         // at the bottom and everything above keeps its place. A full-screen TUI
-        // does not work that way. Claude Code repaints the whole pane — banner,
-        // tips, a spinner glyph that changes every frame — so two consecutive
+        // does not work that way. Claude Code repaints the whole pane (banner,
+        // tips, a spinner glyph that changes every frame), so two consecutive
         // snapshots overlap almost nowhere, the rule concludes that everything
         // is new, and the entire screen is emitted again. Poll after poll, the
         // transcript becomes the same banner a hundred times over with a
@@ -501,7 +501,7 @@ impl AppState {
         // screen was on screen a moment ago. In that case the only honest
         // "new output" is the lines that were not there before.
         //
-        // Scrolling is untouched — it has an overlap, so it never reaches here —
+        // Scrolling is untouched (it has an overlap, so it never reaches here),
         // and that matters, because agents without a hook system are read
         // through this pane and dropping a line would drop a question somebody
         // is waiting on.
@@ -533,8 +533,8 @@ impl AppState {
             }
         }
 
-        // Nothing in memory. Either this session predates the current process —
-        // a restart, which used to mean the transcript was simply gone — or it
+        // Nothing in memory. Either this session predates the current process
+        // (a restart, which used to mean the transcript was simply gone) or it
         // has produced nothing yet. The store knows which.
         //
         // Deliberately not repopulating the ring buffer: that is the live tail
@@ -558,7 +558,7 @@ impl AppState {
 /// advances a spinner *and* adds a couple of lines still shares only about
 /// two thirds of its screen, and demanding more than that lets the whole banner
 /// through again. It stays a majority, because treating a scroll as a repaint
-/// would drop real output and that is the more expensive mistake — though a
+/// would drop real output and that is the more expensive mistake, though a
 /// scroll almost never arrives here at all, since it has an overlap.
 fn is_repaint(previous: &[String], fresh: &[String]) -> bool {
     let interesting: Vec<&String> = fresh
@@ -641,7 +641,7 @@ mod tests {
         // The failure this prevents, and it is what the transcript actually
         // looked like: Claude Code repaints its entire pane every frame, the
         // suffix rule found no overlap, and the banner plus the tips box plus
-        // the spinner went into the transcript again on every poll — a hundred
+        // the spinner went into the transcript again on every poll: a hundred
         // copies of the same screen with a different spinner glyph, the answer
         // buried somewhere inside.
         let state = state();
@@ -698,7 +698,7 @@ mod tests {
             ("✶", "There isn't one global \"suggested upgrade\""),
             (
                 "✻",
-                "There isn't one global \"suggested upgrade\" — the ladder",
+                "There isn't one global \"suggested upgrade\": the ladder",
             ),
         ] {
             emitted.extend(state.new_output_lines("s1", &screen(spinner, answer)));
@@ -843,7 +843,7 @@ mod tests {
     fn a_cleared_pane_sends_everything_again() {
         let state = state();
         state.new_output_lines("s1", "one\ntwo\n");
-        // No overlap at all — the agent ran `clear`.
+        // No overlap at all; the agent ran `clear`.
         assert_eq!(state.new_output_lines("s1", "fresh\n"), vec!["fresh"]);
     }
 
@@ -902,7 +902,7 @@ mod relay_liveness_tests {
     fn saying_the_same_thing_twice_does_not_restart_the_clock() {
         // The link loop sets `false` on every cycle, including cycles where it
         // was already false. If each of those moved the timestamp, "offline for
-        // how long" would always answer "a second" — which is the one thing it
+        // how long" would always answer "a second", which is the one thing it
         // must not say about a machine that has been unreachable all afternoon.
         let relay = RelayInfo::new("wss://relay".into(), "forge-abc".into(), 100);
         relay.set_linked(true, 200);

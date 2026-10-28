@@ -1,6 +1,6 @@
 //! Noticing that a machine has gone quiet, and saying so.
 //!
-//! The fleet has always *known* this — [`Runner::is_online`] is a subtraction on
+//! The fleet has always *known* this: [`Runner::is_online`] is a subtraction on
 //! `last_seen_at`, and the fleet view has rendered it since the beginning. What
 //! it never did was tell anybody. You found out by opening the app and looking,
 //! which means you found out when you already suspected, which is exactly when
@@ -13,7 +13,7 @@
 //! # Why the control plane is the one that notices
 //!
 //! Absence cannot be detected by the thing that is absent, and the relay only
-//! ever acts on an envelope arriving — an offline machine sends none, so
+//! ever acts on an envelope arriving; an offline machine sends none, so
 //! nothing there fires. The control plane is the only party that both knows a
 //! machine has stopped reporting and can still reach a phone.
 //!
@@ -21,7 +21,7 @@
 //!
 //! The wake-up carries no payload, exactly as every other one does. The control
 //! plane asks the relay to buzz the devices watching a channel; a woken device
-//! asks the *control plane* — which it is already authenticated to — what
+//! asks the *control plane* (which it is already authenticated to) what
 //! changed, and learns from the fleet view that a machine is offline. No
 //! session content is involved, because none is needed: "your machine stopped
 //! answering" is a fact about the fleet, not about the work.
@@ -32,8 +32,8 @@ use crate::model::Runner;
 
 /// Which machines have gone quiet since the last look.
 ///
-/// Deliberately a pure state machine over observations, so the awkward parts —
-/// not shouting on startup, not repeating, recovering — are arguable in a test
+/// Deliberately a pure state machine over observations, so the awkward parts
+/// (not shouting on startup, not repeating, recovering) are arguable in a test
 /// rather than in production at three in the morning.
 #[derive(Debug, Default)]
 pub struct FleetWatch {
@@ -62,7 +62,7 @@ impl FleetWatch {
     /// how a phone gets muted.
     ///
     /// **Coming back re-arms it.** A machine that recovers and drops again is a
-    /// second event and worth a second notice — that pattern is a flapping link
+    /// second event and worth a second notice; that pattern is a flapping link
     /// or a laptop lid, and it is precisely what somebody needs to see.
     pub fn observe(&mut self, runners: &[Runner], now_ms: i64) -> Vec<Runner> {
         let mut went_quiet = Vec::new();
@@ -134,7 +134,7 @@ pub fn spawn(state: std::sync::Arc<crate::CloudState>) {
                         runner.name
                     ),
                     // Logged, never fatal. A push service being unreachable is
-                    // not a reason to stop watching the fleet — and the next
+                    // not a reason to stop watching the fleet, and the next
                     // drop is still worth reporting.
                     Err(err) => eprintln!("fleet: {} went offline; {err}", runner.name),
                 }
@@ -169,7 +169,7 @@ async fn wake(
 
     // `relay_url` is the `wss://` address devices dial. The push endpoint is
     // the same host over HTTP, so the scheme is swapped rather than a second
-    // URL being configured — one address to get wrong instead of two.
+    // URL being configured: one address to get wrong instead of two.
     let base = state
         .config
         .relay_url

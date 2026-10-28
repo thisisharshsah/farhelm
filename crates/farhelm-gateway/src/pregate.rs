@@ -1,4 +1,4 @@
-//! Pipeline stage 2 — the deterministic pre-gate (C3/M3).
+//! Pipeline stage 2: the deterministic pre-gate (C3/M3).
 //!
 //! The cheapest token is the one never sent. A formatter, a linter, a type
 //! checker and the affected tests all answer questions a model would otherwise
@@ -201,7 +201,7 @@ pub fn detect(repo: &Path) -> Option<Toolchain> {
     None
 }
 
-/// The default check set for a toolchain, cheapest first — a formatter failure
+/// The default check set for a toolchain, cheapest first: a formatter failure
 /// is found in milliseconds and there is no point type-checking past it.
 pub fn checks_for(toolchain: Toolchain) -> Vec<Check> {
     let commands: &[(&str, CheckKind, &[&str])] = match toolchain {

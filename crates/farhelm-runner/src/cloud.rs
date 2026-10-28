@@ -16,14 +16,14 @@
 //!
 //! No session, no approval, no diff, no repository path. It carries an
 //! enrolment, a heartbeat, and two tokens. Everything a device actually reads
-//! still travels sealed to that device's key, over the relay, exactly as before
-//! — the control plane is a directory, not a middlebox.
+//! still travels sealed to that device's key, over the relay, exactly as before:
+//! the control plane is a directory, not a middlebox.
 //!
 //! # Trust on first use
 //!
 //! Enrolling with a key you already used pins this machine's public key. If the
-//! same *name* enrols later with a **different** key — a reinstall, or somebody
-//! standing in front of the machine — the control plane parks it and refuses to
+//! same *name* enrols later with a **different** key (a reinstall, or somebody
+//! standing in front of the machine), the control plane parks it and refuses to
 //! hand devices a channel token until an admin confirms. The runner keeps
 //! working on its old channel in the meantime and says so at startup, because
 //! failing silently here would be indistinguishable from a network problem.
@@ -45,7 +45,7 @@ use farhelm_app::time::now_ms;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Backoff when the control plane is unreachable. The runner keeps working
-/// throughout — losing the control plane costs you *new* connections, not the
+/// throughout: losing the control plane costs you *new* connections, not the
 /// agent that is mid-task.
 const MIN_BACKOFF: Duration = Duration::from_secs(5);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
@@ -152,11 +152,11 @@ pub const LEGACY_CREDENTIALS_FILE: &str = "forge.cloud.json";
 /// This holds an enrolment key, which is a live credential: it is written
 /// `0600` before any bytes reach it and refused on load if the mode says
 /// otherwise, exactly as [`farhelm_crypto::keystore`] treats the identity key.
-/// The reasoning is the same and so is the failure — a daemon that looks
+/// The reasoning is the same and so is the failure: a daemon that looks
 /// healthy while its credential is world-readable.
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct Credentials {
-    /// The control plane this was issued by, as *it* named itself — not as it
+    /// The control plane this was issued by, as *it* named itself, not as it
     /// was typed on a command line. A machine that enrolled against
     /// `https://farhelm.aurovie.com` must keep going there after somebody types
     /// the IP once.
@@ -187,7 +187,7 @@ impl std::fmt::Display for CredentialsError {
             CredentialsError::TooPermissive { path, mode } => write!(
                 f,
                 "{} is mode {mode:o}; it holds an enrolment key and must be readable \
-                 only by you — `chmod 600 {}`",
+                 only by you: `chmod 600 {}`",
                 path.display(),
                 path.display()
             ),
@@ -249,7 +249,7 @@ impl Credentials {
         file.write_all(b"\n").map_err(CredentialsError::Io)?;
 
         // An existing file keeps its old mode through `create(true)`, so tighten
-        // it explicitly for the overwrite case — a second `login` must not
+        // it explicitly for the overwrite case: a second `login` must not
         // inherit whatever the first one's file had been chmod-ed to.
         #[cfg(unix)]
         {
@@ -278,7 +278,7 @@ pub const LEGACY_MODEL_CREDENTIAL_FILE: &str = "forge.credential.json";
 ///
 /// A file the runner owns removes all three: `farhelm auth` writes it,
 /// `serve` reads it, and nothing has to be exported by anybody. The environment
-/// still wins where it is set — a deployment that already exports a credential
+/// still wins where it is set: a deployment that already exports a credential
 /// should not have it quietly overridden by a file left behind by an
 /// experiment.
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
@@ -443,15 +443,15 @@ async fn describe(response: reqwest::Response) -> String {
 /// Exists because of a launchd race: the control plane and the runner are
 /// started at the same instant with no ordering between them, so the very first
 /// enrolment attempt reliably lost. A single attempt turned a two-second
-/// startup race into a runner that stayed on loopback until someone noticed —
+/// startup race into a runner that stayed on loopback until someone noticed,
 /// and `KeepAlive` could not fix it, because the process was alive and healthy,
 /// just not enrolled.
 const ENROLL_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Enrol, retrying while the control plane is still coming up.
 ///
-/// Only *unreachable* is retried. A refusal — a revoked key, a machine removed
-/// from the workspace — is an answer, and retrying an answer just delays
+/// Only *unreachable* is retried. A refusal (a revoked key, a machine removed
+/// from the workspace) is an answer, and retrying an answer just delays
 /// telling the operator what is wrong.
 pub async fn enroll_with_retry(
     config: &CloudConfig,
@@ -476,7 +476,7 @@ pub async fn enroll_with_retry(
                     return Err(err);
                 }
                 if attempts == 1 {
-                    println!("  cloud      not reachable yet, retrying — {err}");
+                    println!("  cloud      not reachable yet, retrying: {err}");
                 }
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(15));
@@ -487,8 +487,8 @@ pub async fn enroll_with_retry(
 
 /// Enrol this machine, or recognise it as already enrolled.
 ///
-/// Called once at startup and awaited, because everything downstream — which
-/// channel to publish on, which relay to dial — is decided by the answer. A
+/// Called once at startup and awaited, because everything downstream (which
+/// channel to publish on, which relay to dial) is decided by the answer. A
 /// runner that could not enrol does not silently fall back to a channel nobody
 /// is listening to; it says so and serves loopback only.
 pub async fn enroll(config: &CloudConfig, public_key: &str) -> Result<CloudSession, CloudError> {
@@ -529,7 +529,7 @@ pub async fn enroll(config: &CloudConfig, public_key: &str) -> Result<CloudSessi
         org_id: enrolled.org_id,
         channel: enrolled.channel,
         relay_url: enrolled.relay_url,
-        // Enrolment does not mint one — the first heartbeat does, immediately.
+        // Enrolment does not mint one; the first heartbeat does, immediately.
         channel_token: String::new(),
         runner_token: enrolled.runner_token,
         key_change_pending: enrolled.key_change_pending,
@@ -569,7 +569,7 @@ pub async fn fetch_verifier(
 /// Three things happen on every beat, and each is the reason for one of them:
 /// the fleet learns this machine is alive, the channel token is refreshed before
 /// the current one expires, and the local device list is reconciled to the
-/// organisation's — which is how a phone removed in the web app stops receiving.
+/// organisation's, which is how a phone removed in the web app stops receiving.
 pub fn spawn_heartbeat<S>(store: Arc<S>, config: CloudConfig, session: SharedSession)
 where
     S: DeviceStore + Send + Sync + 'static,
@@ -596,7 +596,7 @@ where
                     if beat.key_change_pending {
                         eprintln!(
                             "cloud link: this machine's identity does not match the one on \
-                             file — devices cannot connect until an admin confirms it in the \
+                             file; devices cannot connect until an admin confirms it in the \
                              web app"
                         );
                     }
@@ -626,7 +626,7 @@ where
 /// Re-read the organisation's device list right now.
 ///
 /// The heartbeat already does this every thirty seconds, which is fine for
-/// *revocation* — a removed phone stops being sealed to within half a minute.
+/// *revocation*: a removed phone stops being sealed to within half a minute.
 /// It is not fine for *arrival*: a device that just signed in is unknown to this
 /// runner until the next beat, so its very first request is dropped and the user
 /// is told the runner cannot be reached. That is the worst possible first
@@ -692,7 +692,7 @@ async fn beat(
         // fault, and the fix is to enrol again.
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(CloudError::Refused(format!(
-                "{message} — this machine was removed from the workspace"
+                "{message}: this machine was removed from the workspace"
             )));
         }
         return Err(CloudError::Refused(message));

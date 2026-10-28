@@ -1,6 +1,6 @@
 //! Auto-approve through the real local HTTP API, on the path a hook-bridged
 //! agent actually takes: `POST /v1/hooks/tool-request` blocks until a person
-//! decides — unless the session's standing level already covers the request.
+//! decides, unless the session's standing level already covers the request.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -140,7 +140,7 @@ async fn a_hook_bridged_command_is_cleared_without_a_card_once_the_level_covers_
     let fleet = server.fleet().await;
     assert!(fleet["pending_approvals"].as_array().unwrap().is_empty());
     assert_eq!(fleet["sessions"][0]["auto_approve"], "medium");
-    // Still `running` — it was never blocked.
+    // Still `running`: it was never blocked.
     assert_eq!(fleet["sessions"][0]["status"], "running");
 
     // A destructive command under the same level still waits for a person.

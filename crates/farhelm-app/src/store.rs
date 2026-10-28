@@ -2,7 +2,7 @@
 //!
 //! Everything above this line talks to the [`Store`] trait, never to SQLite.
 //! That keeps the Postgres swap for the team tier a new impl rather than a
-//! rewrite — and lets the gateway be tested against an in-memory database.
+//! rewrite, and lets the gateway be tested against an in-memory database.
 //!
 //! The trait is synchronous. SQLite is a single-writer embedded engine, so
 //! there is nothing to await; async callers wrap these in `spawn_blocking`.
@@ -106,8 +106,8 @@ impl TimeRange {
 /// Spend and cache behaviour over a window, summed by the store.
 ///
 /// Exists so the fleet's cost strip does not have to load every ledger row to
-/// add up three numbers. `SUM` in SQL is the store's job; the previous shape —
-/// `list_usage` per session, folded in Rust — moved the whole 24-hour ledger
+/// add up three numbers. `SUM` in SQL is the store's job; the previous shape
+/// (`list_usage` per session, folded in Rust) moved the whole 24-hour ledger
 /// across the boundary on every home-screen fetch, and every phone that woke up
 /// asked for it again.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -116,7 +116,7 @@ pub struct UsageTotals {
     /// Tokens served from the provider's prefix cache.
     pub cache_read_tokens: u64,
     /// Tokens billed as fresh input. The cache-read ratio is
-    /// `cache_read / (cache_read + input)` — see [`UsageTotals::cache_read_ratio`].
+    /// `cache_read / (cache_read + input)` (see [`UsageTotals::cache_read_ratio`]).
     pub input_tokens: u64,
     pub calls: usize,
 }
@@ -133,8 +133,8 @@ impl UsageTotals {
 /// Declares one role port, and derives its forwarding impls.
 ///
 /// Every port here has three implementations that are pure delegation: the real
-/// store, `Arc<S>`, and `&S`. Those were written out by hand — 294 lines whose
-/// entire content was `(**self).method(args)` — which made adding a method a
+/// store, `Arc<S>`, and `&S`. Those were written out by hand (294 lines whose
+/// entire content was `(**self).method(args)`), which made adding a method a
 /// multi-place edit, and made a *typo* in one of them a silent bug: a forwarding
 /// impl that delegates to the wrong method still compiles, because every method
 /// in this file has a plausible-looking sibling with the same shape.
@@ -169,8 +169,8 @@ macro_rules! store_port {
         }
 
         /// Borrowed stores are stores. Lets a caller hand a `&SqliteStore` to
-        /// anything generic over the port — notably [`crate::ledger::Ledger`],
-        /// which takes ownership — without giving up the original handle.
+        /// anything generic over the port (notably [`crate::ledger::Ledger`],
+        /// which takes ownership) without giving up the original handle.
         impl<S: $port + ?Sized> $port for &S {
             $( fn $name(&self $(, $arg: $ty)*) -> $ret { (**self).$name($($arg),*) } )*
         }
@@ -178,7 +178,7 @@ macro_rules! store_port {
 }
 
 store_port! {
-    /// Machines and the repositories on them — the topology a session hangs off.
+    /// Machines and the repositories on them: the topology a session hangs off.
     FleetStore {
     fn upsert_machine(&self, machine: &Machine) -> Result<()>;
 
@@ -233,7 +233,7 @@ store_port! {
     /// What was said in a session, kept so it can be read back.
     ///
     /// Its own port rather than three more methods on [`SessionStore`], because
-    /// the pipeline that reads sessions has no business writing transcripts —
+    /// the pipeline that reads sessions has no business writing transcripts,
     /// and `farhelm-gateway`'s narrow-port test says so by refusing to compile if
     /// the bound widens. Only the runner implements this.
     TranscriptStore {
@@ -313,7 +313,7 @@ store_port! {
 
     fn get_approval(&self, id: &str) -> Result<Option<Approval>>;
 
-    /// Every approval still waiting on a human, oldest first — what the fleet
+    /// Every approval still waiting on a human, oldest first: what the fleet
     /// view and the push trigger read.
     fn list_pending_approvals(&self) -> Result<Vec<Approval>>;
 
@@ -343,13 +343,13 @@ store_port! {
 
     fn get_batch_item(&self, id: &str) -> Result<Option<BatchItem>>;
 
-    /// Items for one session, newest first — what the UI shows.
+    /// Items for one session, newest first: what the UI shows.
     fn list_batch_items_for_session(&self, session_id: &str) -> Result<Vec<BatchItem>>;
 
     /// Mark items as sent, recording the provider's batch id.
     ///
     /// One statement per call rather than per item so a crash mid-flush cannot
-    /// leave half a batch looking queued and half looking submitted — which
+    /// leave half a batch looking queued and half looking submitted, which
     /// would resubmit the queued half and pay for it twice.
     fn mark_batch_submitted(
         &self,
@@ -378,7 +378,7 @@ store_port! {
 
     fn get_task(&self, id: &str) -> Result<Option<AgentTask>>;
 
-    /// Tasks newest first — what the task list renders.
+    /// Tasks newest first: what the task list renders.
     fn list_tasks(&self, limit: usize) -> Result<Vec<AgentTask>>;
 
     /// Every task still waiting on a human, oldest first. The diff-review
@@ -399,7 +399,7 @@ store_port! {
 
     /// Settle a task, resolving the race between two devices reviewing the same
     /// diff. Returns what was stored, and whether this caller's decision is the
-    /// one that stuck — the same contract as [`Store::decide_approval`],
+    /// one that stuck: the same contract as [`Store::decide_approval`],
     /// because applying a change set twice is exactly as bad as approving a
     /// command twice.
     fn decide_task(
@@ -417,7 +417,7 @@ store_port! {
     /// Pipeline stage 3.
     ResponseCache {
     /// Pipeline stage 3. Returns the cached response only if it has not
-    /// expired, and counts the hit — a cache nobody reads from is a bug worth
+    /// expired, and counts the hit; a cache nobody reads from is a bug worth
     /// seeing in the dashboard.
     fn cache_get(&self, key_hash: &str, now_ms: i64) -> Result<Option<String>>;
 
@@ -458,7 +458,7 @@ store_port! {
     /// The hive: what agents say to each other, and what they leave behind.
     ///
     /// Two shapes because agents have two things to say. A [`Message`] is
-    /// addressed and consumed — a handoff, a question, an answer. A [`Note`] is
+    /// addressed and consumed: a handoff, a question, an answer. A [`Note`] is
     /// left on a repository for whoever works on it next and is consumed by
     /// nobody.
     ///
@@ -604,7 +604,7 @@ store_port! {
 ///
 /// The runner's `AppState` holds one store and its handlers touch all of it, so
 /// a single bound stays the honest signature there. Narrower callers name only
-/// the ports they use — `Ledger` takes a [`LedgerStore`], and the gateway's four
+/// the ports they use: `Ledger` takes a [`LedgerStore`], and the gateway's four
 /// ports are the reason a test double for it is now a few methods rather than
 /// forty.
 ///

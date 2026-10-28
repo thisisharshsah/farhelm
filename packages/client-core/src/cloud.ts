@@ -1,5 +1,5 @@
 /**
- * The client for the control plane — accounts, workspaces, machines, plans.
+ * The client for the control plane: accounts, workspaces, machines, plans.
  *
  * This is the half of the app that replaced pairing. The old flow was: run a
  * command on the runner, read a QR, paste a JSON blob, be on the same network.
@@ -21,7 +21,7 @@
  * - an **access token**, an hour, held in memory only. Sent on every call.
  * - a **refresh token**, a month, persisted, and *rotated on every use*. A
  *   stolen refresh token therefore stops being a permanent foothold and becomes
- *   a race — whoever uses it second is signed out, which is a signal the user
+ *   a race: whoever uses it second is signed out, which is a signal the user
  *   can act on.
  *
  * The access token is not persisted for the same reason a password is not: it
@@ -145,7 +145,7 @@ export interface PendingDevice {
   /** Normalised: upper case, no dash. */
   user_code: string;
   /**
-   * What the machine calls itself — the only thing a human has to go on when
+   * What the machine calls itself, the only thing a human has to go on when
    * deciding, so it is shown prominently rather than as a subtitle.
    */
   name: string;
@@ -164,7 +164,7 @@ export interface DeviceDecision {
 /**
  * Codes are shown as `BKPT-4QW9` and typed every other way.
  *
- * The server normalises too — this is so the URL a person is looking at matches
+ * The server normalises too; this is so the URL a person is looking at matches
  * what they typed, not a correctness measure.
  */
 export function normaliseUserCode(code: string): string {
@@ -226,7 +226,7 @@ export const CLOUD_SESSION_STORAGE_KEY = "farhelm-cloud-session";
 export const LEGACY_CLOUD_SESSION_STORAGE_KEY = "forge-cloud-session";
 
 /**
- * Where this device's own keypair is kept — deliberately *not* inside the
+ * Where this device's own keypair is kept, deliberately *not* inside the
  * session.
  *
  * A device seat is a property of the device, not of a sign-in. Storing the key
@@ -249,7 +249,7 @@ export async function deviceIdentity(backend: {
 }): Promise<Identity> {
   // The legacy key is read but not deleted: this backend has no `remove`, and
   // the seat this key holds is worth more than a stale entry is worth tidying.
-  // Missing it would generate a fresh identity and consume a second seat —
+  // Missing it would generate a fresh identity and consume a second seat,
   // precisely the failure the comment above this function describes.
   const stored =
     (await backend.get(DEVICE_KEY_STORAGE_KEY)) ??
@@ -273,7 +273,7 @@ export async function deviceIdentity(backend: {
  * Build a [`CloudSessionStore`] over any get/set/remove trio.
  *
  * Validates the stored device secret on load and drops the session if it is
- * unusable — a session whose key cannot decrypt anything is worse than no
+ * unusable: a session whose key cannot decrypt anything is worse than no
  * session, because it looks signed in and fails at the first approval.
  */
 export function cloudSessionStore(backend: {
@@ -787,7 +787,7 @@ export function describeLimit(value: number): string {
 /**
  * Whether a plan's allowance for something has run out.
  *
- * Used to disable an action *before* the server refuses it — a button that
+ * Used to disable an action *before* the server refuses it: a button that
  * explains why it is unavailable beats one that fails when pressed.
  */
 export function isAtLimit(used: number, limit: number): boolean {
@@ -803,12 +803,12 @@ export function formatPrice(cents: number): string {
 
 /**
  * A sentence for the subscription banner, or `null` when there is nothing worth
- * saying — the common case, and a banner that is always present is a banner
+ * saying. That is the common case, and a banner that is always present is a banner
  * nobody reads.
  */
 export function subscriptionNotice(subscription: Subscription): string | null {
   if (subscription.status === "past_due") {
-    return "A payment did not go through. Everything keeps working — update your card to avoid losing the plan.";
+    return "A payment did not go through. Everything keeps working; update your card to avoid losing the plan.";
   }
   if (subscription.status === "canceled") {
     return "This workspace is on the Free plan.";

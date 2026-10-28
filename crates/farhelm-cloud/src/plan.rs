@@ -2,7 +2,7 @@
 //!
 //! Pure, in the same sense `farhelm-domain` is pure: no clock, no I/O, no async.
 //! An entitlement question is a total function of (plan, current counts), which
-//! is what makes it testable without arranging an account first — and what makes
+//! is what makes it testable without arranging an account first, and what makes
 //! it safe to answer in three different places (the API, the runner enrolment
 //! path, the billing webhook) without them drifting.
 //!
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// a test below fails if you add the variant and forget the row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Plan {
-    /// What you get without paying, and what every organisation starts on —
+    /// What you get without paying, and what every organisation starts on:
     /// including when billing is not configured at all.
     #[serde(rename = "free")]
     Free,
@@ -50,7 +50,7 @@ impl Plan {
         }
     }
 
-    /// Monthly price in cents. Display only — what is actually charged is
+    /// Monthly price in cents. Display only; what is actually charged is
     /// whatever the Stripe price says, and the webhook is the source of truth
     /// for which plan is live.
     pub const fn monthly_cents(self) -> u32 {
@@ -93,7 +93,7 @@ impl std::fmt::Display for Plan {
 ///
 /// `u32::MAX` is the encoding of "no limit". A sentinel rather than an
 /// `Option<u32>` because every comparison below would otherwise need a match,
-/// and a forgotten `None` arm reads as *unlimited* — the wrong direction to fail.
+/// and a forgotten `None` arm reads as *unlimited*, the wrong direction to fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
     /// Machines that may be enrolled.
@@ -185,7 +185,7 @@ impl std::fmt::Display for LimitExceeded {
             self.resource
         )?;
         if let Some(plan) = self.upgrade_to {
-            write!(f, " — {} allows more", plan.display_name())?;
+            write!(f, "; {} allows more", plan.display_name())?;
         }
         Ok(())
     }
@@ -227,7 +227,7 @@ impl Resource {
 
 /// May this organisation add one more of `resource`?
 ///
-/// Called before the insert, not after — a limit checked afterwards is a limit
+/// Called before the insert, not after: a limit checked afterwards is a limit
 /// that has already been exceeded once.
 pub fn may_add(plan: Plan, usage: Usage, resource: Resource) -> Result<(), LimitExceeded> {
     let limit = resource.limit_of(plan.limits());
@@ -257,7 +257,7 @@ fn cheapest_plan_allowing(resource: Resource, wanted: u32, current: Plan) -> Opt
 /// know is whether to serve the paid limits, and whether to nag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubscriptionStatus {
-    /// Paid and current, or free — either way, serve the plan.
+    /// Paid and current, or free; either way, serve the plan.
     #[serde(rename = "active")]
     Active,
     /// Payment failed but the grace period has not run out. Paid limits still

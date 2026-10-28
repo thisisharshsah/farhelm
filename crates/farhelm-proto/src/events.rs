@@ -9,8 +9,8 @@
 //! External tagging is what makes the wire forward-compatible in one direction:
 //! a client that meets an unknown `type` fails to parse that frame cleanly
 //! rather than misreading it as the nearest variant it does know. Negotiating in
-//! the *other* direction — the runner knowing what a device can handle before it
-//! sends — needs [`crate::hello`], which is defined but not yet spoken.
+//! the *other* direction (the runner knowing what a device can handle before it
+//! sends) needs [`crate::hello`], which is defined but not yet spoken.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ use crate::views::OutputLine;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
-    /// A session's status, plan progress, or spend changed — re-fetch it.
+    /// A session's status, plan progress, or spend changed; re-fetch it.
     SessionUpsert {
         session_id: String,
     },
@@ -49,7 +49,7 @@ pub enum ServerEvent {
         pct: f64,
         hard_stop: bool,
     },
-    /// A native agent task changed state — most importantly, reached
+    /// A native agent task changed state, most importantly, reached
     /// `awaiting_review` with a diff somebody has to look at.
     ///
     /// Carries the headline rather than only an id, so a notification can say
@@ -68,7 +68,7 @@ pub enum ServerEvent {
 /// Why a command did not happen.
 ///
 /// Shaped like a [`ServerEvent`] so it arrives on the client's existing event
-/// path, but never broadcast — only ever sealed to the device that sent the
+/// path, but never broadcast, only ever sealed to the device that sent the
 /// failing command. Over loopback the client sees an HTTP status instead; on the
 /// relay a rejected instruction would otherwise evaporate, and "I tapped it and
 /// nothing happened" is the worst failure a remote control surface can have.

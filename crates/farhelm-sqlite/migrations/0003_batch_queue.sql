@@ -11,7 +11,7 @@ CREATE TABLE batch_item (
   session_id    TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
   -- What the provider echoes back on each result, and the only thing tying a
   -- result to the row that asked for it. Unique because a collision would
-  -- attribute one answer — and its cost — to the wrong session.
+  -- attribute one answer (and its cost) to the wrong session.
   custom_id     TEXT NOT NULL UNIQUE,
   task_type     TEXT NOT NULL,
   model         TEXT NOT NULL,

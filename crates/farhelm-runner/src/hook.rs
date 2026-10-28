@@ -2,7 +2,7 @@
 //!
 //! `farhelm hook` is registered as a hook command. Claude Code runs it as a
 //! child process, writes the event as JSON on stdin, and reads a decision as
-//! JSON from stdout. That makes the bridge language-agnostic — nothing about it
+//! JSON from stdout. That makes the bridge language-agnostic: nothing about it
 //! requires the runner to be written in the agent's language.
 //!
 //! ## The failure mode is the design
@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 pub enum HookEvent {
     /// A tool is about to run and needs a decision.
     ToolRequest {
-        /// Which wire event this came from — the reply shape differs.
+        /// Which wire event this came from; the reply shape differs.
         kind: RequestKind,
         session_id: String,
         cwd: String,
@@ -129,7 +129,7 @@ fn summarise(tool_name: &str, input: &serde_json::Value) -> String {
 }
 
 /// Parse a hook payload. Unrecognised events become [`HookEvent::Ignored`]
-/// rather than an error — a hook that fails on an event it was not asked about
+/// rather than an error: a hook that fails on an event it was not asked about
 /// is a hook that breaks on the next release.
 pub fn parse(raw: &str) -> Result<HookEvent, serde_json::Error> {
     let wire: WireEvent = serde_json::from_str(raw)?;
@@ -192,7 +192,7 @@ struct PermissionRequestOutput<'a> {
 ///
 /// The two permission events take genuinely different shapes:
 /// `PreToolUse` uses `permissionDecision`, `PermissionRequest` nests a
-/// `decision.behavior`. `PermissionRequest` has no "defer" — omitting the
+/// `decision.behavior`. `PermissionRequest` has no "defer"; omitting the
 /// decision entirely is how you fall back to the normal flow there.
 pub fn decision_json(kind: RequestKind, decision: Decision, reason: &str) -> serde_json::Value {
     match kind {
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn deferring_a_permission_request_omits_the_decision_entirely() {
-        // There is no "defer" behaviour on that event — saying nothing is how
+        // There is no "defer" behaviour on that event; saying nothing is how
         // you fall through to the normal permission flow.
         let json = decision_json(
             RequestKind::PermissionRequest,

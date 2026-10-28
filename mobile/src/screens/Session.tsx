@@ -2,7 +2,7 @@
  * One session: plan, transcript, instruction box.
  *
  * The output tail is capped and scrolls, and auto-scroll only engages when the
- * reader is already at the bottom — yanking the view while someone scrolls back
+ * reader is already at the bottom: yanking the view while someone scrolls back
  * through a failure is hostile, and it is exactly when they most need to read.
  */
 

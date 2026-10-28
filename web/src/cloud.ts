@@ -38,7 +38,7 @@ export const CLOUD_URL: string = preferredCloudUrl(defaultCloudUrl(
  * burying. Any XSS on this origin steals it and can then act as this device. The
  * mitigations are that the app loads no third-party script, the service worker
  * caches only the app shell, and a stolen device key is revoked by removing the
- * device in the web app — without rotating any machine's key or disturbing any
+ * device in the web app, without rotating any machine's key or disturbing any
  * other device.
  */
 export const webCloudSessionStore = cloudSessionStore(idbBackend);
@@ -75,7 +75,7 @@ export function cloudClient(session: CloudSession | null): CloudClient {
  * What this device is called in the workspace.
  *
  * A guess from the user agent, because the alternative is asking somebody to
- * name their browser during sign-up — a question with no good answer and a
+ * name their browser during sign-up: a question with no good answer and a
  * mandatory field. It is editable later, and "Safari on macOS" is enough to tell
  * two entries apart, which is the only job this string has.
  */

@@ -3,12 +3,12 @@
  *
  * Two shapes, one interface:
  *
- * - **Loopback** — plain HTTP to the runner, with a live stream on top. What you
+ * - **Loopback**: plain HTTP to the runner, with a live stream on top. What you
  *   get on the same machine or the same network. No pairing, no crypto, because
  *   there is no untrusted hop. The stream is platform-specific (`EventSource` on
  *   the web, polling in React Native), so [`HttpTransport`] takes it as a
  *   parameter rather than assuming one exists.
- * - **Relay** — a WebSocket to the relay, everything sealed to the runner's
+ * - **Relay**: a WebSocket to the relay, everything sealed to the runner's
  *   public key. What you get on cellular.
  *
  * The relay has no request/response: a client sends a `snapshot` command and the
@@ -17,8 +17,8 @@
  * which one it is talking to. That symmetry is the only reason the web app's
  * views, written against loopback HTTP, work unchanged over the relay.
  *
- * Three snapshot types travel that way — the fleet, one session, and one
- * session's cost dashboard — plus a task list and a task's diff. What stays
+ * Three snapshot types travel that way (the fleet, one session, and one
+ * session's cost dashboard), plus a task list and a task's diff. What stays
  * loopback-only is *starting* things: a session, or an agent task. Deciding
  * about work that already exists is what a paired device is for.
  */
@@ -69,7 +69,7 @@ export interface Transport {
    * Loopback only, deliberately. Starting an agent is a bigger capability than
    * answering one: it picks a directory on someone's machine and runs a process
    * in it. The design deferred "start a session from the phone" (A6) for exactly
-   * that reason, and nothing has changed — a paired device supervises work that
+   * that reason, and nothing has changed: a paired device supervises work that
    * already exists.
    */
   readonly supportsSessionControl: boolean;
@@ -79,7 +79,7 @@ export interface Transport {
    *
    * Loopback only, for the same reason as `supportsSessionControl`: starting a
    * task points an agent at a directory on someone's machine. **Reviewing** one
-   * is available everywhere, and is the point — a diff is exactly the thing
+   * is available everywhere, and is the point: a diff is exactly the thing
    * worth deciding on from a phone.
    */
   readonly supportsTaskControl: boolean;
@@ -183,8 +183,8 @@ export class HttpTransport implements Transport {
     private readonly api: RunnerApi,
     stream: EventStream,
     /**
-     * The surface a decision came from. The runner cannot infer it here — there
-     * is no paired device to look up — so an unpaired client asserts it. This is
+     * The surface a decision came from. The runner cannot infer it here (there
+     * is no paired device to look up), so an unpaired client asserts it. This is
      * exactly why the D3 rule is *also* enforced per registered device kind over
      * the relay, where a client cannot choose its own answer.
      */
@@ -321,7 +321,7 @@ export type Command =
  *
  * The relay has no request/response pairing, so a waiting promise claims a
  * reply by *shape*. `repo_name` plus `status` is the narrowest pair that a
- * session has and no other reply on this socket does — a session detail adds
+ * session has and no other reply on this socket does. A session detail adds
  * `steps`, which is why this deliberately does not check for it.
  */
 function isSessionView(value: unknown): boolean {
@@ -343,7 +343,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
  * seat over HTTPS and then completes a WebSocket handshake, which across a
  * tunnel is a few hundred milliseconds. A screen that mounts and immediately
  * asks for the fleet used to lose that race and report "not connected to the
- * relay" within a millisecond — indistinguishable, on screen, from a machine
+ * relay" within a millisecond, indistinguishable, on screen, from a machine
  * that is genuinely unreachable.
  *
  * Separate from `REQUEST_TIMEOUT_MS` because the two answer different
@@ -368,7 +368,7 @@ export class RelayTransport implements Transport {
    * With accounts, the asker is a registered device belonging to a named person
    * in an organisation, revocable from the web app within fifteen minutes. That
    * is a strong enough answer to "who started this" to drive a fleet from a
-   * phone. The destructive-command rule is untouched — `rm -rf` still raises an
+   * phone. The destructive-command rule is untouched: `rm -rf` still raises an
    * approval and that approval is still phone-only.
    */
   readonly supportsSessionControl = true;
@@ -512,7 +512,7 @@ export class RelayTransport implements Transport {
    * Wait for a usable socket.
    *
    * Reconnection is already handled with backoff, so a command issued while the
-   * link is down is not an error — it is a command issued slightly early, and
+   * link is down is not an error; it is a command issued slightly early, and
    * the honest response is to wait for the link the transport is already
    * building rather than to fail and make the user press Retry.
    */
@@ -663,7 +663,7 @@ export class RelayTransport implements Transport {
 
   async stopSession(id: string): Promise<void> {
     // Awaited rather than fire-and-forget: stopping is the one control action
-    // whose *failure* the user needs to see immediately — a session that is
+    // whose *failure* the user needs to see immediately: a session that is
     // still running after you pressed Stop is worth knowing about now.
     await this.request<SessionView>(
       { type: "stop_session", session_id: id },
@@ -674,7 +674,7 @@ export class RelayTransport implements Transport {
   /**
    * Mutating commands are fire-and-forget: the relay has no acknowledgement, and
    * the change comes back as the event it produced. A *refusal* does come back,
-   * as a `command_error` event — see `onEvent`.
+   * as a `command_error` event; see `onEvent`.
    */
   async decide(approvalId: string, decision: Decision) {
     if (this.socket?.readyState !== 1 /* OPEN */) await this.whenOpen();
@@ -762,7 +762,7 @@ export class RelayTransport implements Transport {
   }
 
   /**
-   * Reviewing *is* available over the relay — it is the whole reason the review
+   * Reviewing *is* available over the relay; it is the whole reason the review
    * screen exists. Fire-and-forget like every other mutating command; a refusal
    * (a watch, an already-decided task) comes back as a `command_error` event.
    */
@@ -778,7 +778,7 @@ export class RelayTransport implements Transport {
   /**
    * Undoing works from a phone for the same reason approving does: the runner
    * kept both sides of every file, so this writes back only what the agent
-   * replaced — and refuses outright if anything has moved since.
+   * replaced, and refuses outright if anything has moved since.
    */
   async revertTask(id: string) {
     this.send({ type: "revert_task", task_id: id });

@@ -3,7 +3,7 @@
 //! `batch.rs`'s unit tests use a fake `BatchClient`, so they check the queue's
 //! logic but never the wire. This checks the wire: that the JSON this crate
 //! submits is the shape the API documents, and that it can read back the JSONL
-//! results format — including that the token counts survive the round trip and
+//! results format, including that the token counts survive the round trip and
 //! land in the ledger at half rates.
 //!
 //! What it still cannot show is whether the *real* endpoint agrees. No API key
@@ -24,7 +24,7 @@ use farhelm_proto::types::{
 };
 
 const NOW: i64 = 1_785_369_600_000;
-/// One million input tokens on Haiku 4.5 — $1.00 live, $0.50 batched.
+/// One million input tokens on Haiku 4.5: $1.00 live, $0.50 batched.
 const MILLION: u64 = 1_000_000;
 
 #[derive(Default)]
@@ -56,7 +56,7 @@ async fn state() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "id": "batch_test", "processing_status": "ended" }))
 }
 
-/// The results endpoint answers JSONL, not JSON — one object per line.
+/// The results endpoint answers JSONL, not JSON: one object per line.
 async fn results(State(provider): State<Arc<Provider>>) -> String {
     provider
         .submitted

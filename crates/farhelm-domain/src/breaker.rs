@@ -2,7 +2,7 @@
 //!
 //! The budget guard could do exactly one thing: refuse to dispatch, at 100% of
 //! the cap. Everything before that point was full speed, and the rung below the
-//! cliff — 80%, where the wrist already warns — changed nothing about how the
+//! cliff (80%, where the wrist already warns) changed nothing about how the
 //! call was served. So the only lever was the one that ends the work, and the
 //! cheapest moment to intervene was the one moment nothing happened.
 //!
@@ -75,7 +75,7 @@ impl Restraint {
 /// crate that is not allowed to read one.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Pressure {
-    /// Fraction of the budget consumed. `None` when uncapped — an unlimited
+    /// Fraction of the budget consumed. `None` when uncapped; an unlimited
     /// session is not thereby a session in trouble.
     pub budget: Option<f64>,
     /// Calls that have errored back-to-back. Reset by a success.
@@ -105,7 +105,7 @@ pub const STOP_AFTER_REPEATS: u32 = 8;
 /// The rung this session is on.
 ///
 /// The strongest signal wins. A session that is both looping and out of budget
-/// gets stopped, not steered — restraint is a maximum over the inputs, because
+/// gets stopped, not steered: restraint is a maximum over the inputs, because
 /// the whole point is that any one of them is sufficient reason.
 pub fn restraint(pressure: &Pressure) -> Restraint {
     let from_budget = match pressure.budget {
@@ -134,7 +134,7 @@ pub fn restraint(pressure: &Pressure) -> Restraint {
 ///
 /// Written to be read by a model and acted on: it names what was observed and
 /// what to do differently, and does not scold. `None` at rungs that speak
-/// through their behaviour instead — a stop is not a suggestion, and a
+/// through their behaviour instead: a stop is not a suggestion, and a
 /// constrain that announced itself would invite the agent to argue with it.
 pub fn correction(pressure: &Pressure) -> Option<String> {
     match restraint(pressure) {
@@ -154,7 +154,7 @@ pub fn correction(pressure: &Pressure) -> Option<String> {
     if pressure.consecutive_errors >= STEER_AFTER_ERRORS {
         return Some(format!(
             "The last {} calls all failed. Read the most recent error before \
-             trying again — repeating the call is not going to clear it.",
+             trying again; repeating the call is not going to clear it.",
             pressure.consecutive_errors
         ));
     }

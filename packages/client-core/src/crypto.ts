@@ -4,7 +4,7 @@
  * This has to interoperate byte-for-byte with `crates/farhelm-crypto`, which uses
  * NaCl `crypto_box` (X25519 + XSalsa20-Poly1305), and with the watch's Swift
  * implementation in `mobile/watch/`. TweetNaCl's `nacl.box` is the same
- * construction in the same combined form, so they speak to each other directly —
+ * construction in the same combined form, so they speak to each other directly,
  * but "should interoperate" is not a thing to take on faith, which is why
  * `crypto.test.ts` decrypts a fixture the Rust side generated, and the Swift and
  * Rust suites do the same against their own halves of it.
@@ -14,7 +14,7 @@
  * WebCrypto can do X25519 in current browsers but has no XSalsa20-Poly1305, so
  * it cannot produce a `crypto_box`. Using it would mean changing the wire format
  * to something WebCrypto and RustCrypto both speak, for the sole benefit of
- * non-extractable keys — which a PWA cannot fully exploit anyway, since the
+ * non-extractable keys, which a PWA cannot fully exploit anyway, since the
  * service worker and the page share an origin. React Native has no WebCrypto at
  * all, so the choice also keeps one implementation across three clients.
  *
@@ -23,7 +23,7 @@
  * TweetNaCl needs a CSPRNG. Browsers and Node have `crypto.getRandomValues`;
  * React Native does **not** until `react-native-get-random-values` is imported,
  * which `mobile/index.js` does as its very first line. Without it TweetNaCl
- * throws rather than silently producing predictable keys — the right failure.
+ * throws rather than silently producing predictable keys, the right failure.
  */
 
 import { getMigrating } from "./legacy.ts";
@@ -35,7 +35,7 @@ import { fromBase64Url, toBase64Url } from "./base64.ts";
  * Copy into a `Uint8Array` this realm owns.
  *
  * TweetNaCl checks `instanceof Uint8Array`, which is false for a typed array
- * created in a different realm — `TextEncoder` under jsdom is one, and so is
+ * created in a different realm: `TextEncoder` under jsdom is one, and so is
  * anything arriving from a worker, an iframe, or React Native's bridge. The copy
  * is a few bytes and turns a baffling "unexpected type" into a non-issue.
  */
@@ -109,7 +109,7 @@ export class Identity {
   /**
    * Decrypt an envelope `senderPublicKey` sealed for this device.
    *
-   * Requiring the sender's key is the authentication — an envelope from anyone
+   * Requiring the sender's key is the authentication: an envelope from anyone
    * else fails even though it was correctly addressed.
    */
   open(senderPublicKey: string, envelope: Envelope): Uint8Array {
@@ -193,7 +193,7 @@ export function parseOffer(payload: string): PairingOffer {
     throw new CryptoError("pairing code carries a malformed runner key");
   }
   if (typeof offer.expires_at === "number" && offer.expires_at <= Date.now()) {
-    throw new CryptoError("that pairing code has expired — generate a new one");
+    throw new CryptoError("that pairing code has expired; generate a new one");
   }
 
   return {
@@ -209,11 +209,11 @@ export function parseOffer(payload: string): PairingOffer {
  * Redeem a pairing code against the runner.
  *
  * This one call goes over plain HTTP, because pairing is by definition the
- * moment before there is a shared key — which is why the code is single-use,
+ * moment before there is a shared key, which is why the code is single-use,
  * short-lived, and only usable by someone who saw the QR. Do it while you can
  * still reach the runner directly; everything after it goes through the relay.
  *
- * `publicKey` is the *device's* — the secret half never leaves the device that
+ * `publicKey` is the *device's*; the secret half never leaves the device that
  * generated it, including when a phone claims a code on a watch's behalf.
  */
 export async function claimPairing(
@@ -224,7 +224,7 @@ export async function claimPairing(
 ): Promise<Pairing> {
   if (!offer.relay_url) {
     throw new CryptoError(
-      "this runner has no relay configured — start it with --relay to pair a remote device",
+      "this runner has no relay configured; start it with --relay to pair a remote device",
     );
   }
 
@@ -266,7 +266,7 @@ export async function claimPairing(
  * clear.** Any XSS on that origin steals it and can then approve things as that
  * device. That is real and worth naming rather than burying: the mitigations are
  * that the app loads no third-party script, the service worker caches only the
- * app shell, and a stolen device key is revoked by unpairing — without rotating
+ * app shell, and a stolen device key is revoked by unpairing, without rotating
  * the runner's key or disturbing any other device. The React Native client does
  * better, keeping the secret in the platform keystore.
  */
@@ -285,7 +285,7 @@ export const LEGACY_PAIRING_STORAGE_KEY = "forge-device-identity";
  * Build a [`PairingStore`] over any get/set/remove trio.
  *
  * Validates the stored secret on load, so a corrupt entry surfaces at startup
- * rather than on the first approval — and drops it, since a pairing that cannot
+ * rather than on the first approval, and drops it, since a pairing that cannot
  * produce a key is not a pairing.
  */
 export function pairingStore(backend: {

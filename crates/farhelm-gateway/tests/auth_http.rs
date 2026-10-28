@@ -102,7 +102,7 @@ async fn a_bearer_token_goes_on_authorization_and_never_on_x_api_key() {
     assert_eq!(headers["authorization"], "Bearer oat-abc");
     assert!(
         !headers.contains_key("x-api-key"),
-        "a bearer token was sent as x-api-key — the API answers 401 to that"
+        "a bearer token was sent as x-api-key; the API answers 401 to that"
     );
 }
 

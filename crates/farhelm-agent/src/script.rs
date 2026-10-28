@@ -1,7 +1,7 @@
 //! A model that answers from a script.
 //!
 //! Public rather than `#[cfg(test)]` because the runner's own integration tests
-//! need it too — driving a whole task through the HTTP API, the approval queue
+//! need it too: driving a whole task through the HTTP API, the approval queue
 //! and the review endpoint is only worth doing if the model's half is
 //! deterministic. It follows [`farhelm_gateway::StubClient`], which is public for
 //! the same reason.
@@ -41,7 +41,7 @@ impl ScriptedClient {
         }
     }
 
-    /// A model that answers the same way forever — for exercising step limits.
+    /// A model that answers the same way forever, for exercising step limits.
     pub fn looping(turn: ScriptedTurn) -> Self {
         Self {
             turns: Arc::new(Mutex::new(Default::default())),

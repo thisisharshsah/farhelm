@@ -306,7 +306,7 @@ export function MachinePicker({
       <section className="card" aria-label="No machines yet">
         <div className="chart-title">No machines yet</div>
         <p className="tile-note">
-          One command on the machine you want supervised — it installs Farhelm
+          One command on the machine you want supervised. It installs Farhelm
           and asks to join, and you approve it here.
         </p>
         <button className="btn btn-primary" onClick={onAddMachine}>
@@ -334,7 +334,7 @@ export function MachinePicker({
               <span className="machine-name">{runner.name}</span>
               <span className="machine-meta">
                 {runner.needs_key_approval
-                  ? "identity changed — needs confirming"
+                  ? "identity changed, needs confirming"
                   : runner.online
                     ? `v${runner.version}`
                     : "offline"}

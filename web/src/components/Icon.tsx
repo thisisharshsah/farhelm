@@ -1,7 +1,7 @@
 /**
  * The icon set, as inline SVG.
  *
- * This replaces a row of Unicode glyphs — `⌥ ◈ ☾ ⛓` — that were doing duty as
+ * This replaces a row of Unicode glyphs (`⌥ ◈ ☾ ⛓`) that were doing duty as
  * buttons. They were never icons: each one renders in whatever the platform's
  * emoji or symbol font decides, so the same button was a different weight,
  * colour and optical size on macOS, Windows and Android, and two of them fell
@@ -15,7 +15,7 @@
  *
  * They are deliberately hand-written rather than pulled from a library. There
  * are seventeen, the whole set is under 100 lines, and a dependency here would
- * ship a few thousand paths to render the dozen we use — while also being the
+ * ship a few thousand paths to render the dozen we use, while also being the
  * one runtime dependency that the strict CSP could not fetch anyway.
  */
 
@@ -42,7 +42,7 @@ export type IconName =
   | "board"
   | "folder";
 
-/** Path data only — the wrapper below supplies every shared attribute. */
+/** Path data only; the wrapper below supplies every shared attribute. */
 const PATHS: Record<IconName, string> = {
   // A stack of running things.
   fleet: "M4 6h16M4 12h16M4 18h10",
@@ -90,7 +90,7 @@ export function Icon({
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
-      // The icon is never the accessible name — every caller pairs it with a
+      // The icon is never the accessible name; every caller pairs it with a
       // label or an `aria-label`, so announcing it again would read the same
       // control twice.
       aria-hidden="true"

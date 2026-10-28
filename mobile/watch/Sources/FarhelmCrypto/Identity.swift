@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// base64url, unpadded — the form every Farhelm component speaks.
+/// base64url, unpadded: the form every Farhelm component speaks.
 public enum Base64URL {
     public static func encode(_ bytes: [UInt8]) -> String {
         Data(bytes).base64EncodedString()
@@ -27,7 +27,7 @@ public enum Base64URL {
 }
 
 /// Exactly what crosses the relay. Mirrors `farhelm_crypto::Envelope` and the
-/// TypeScript `Envelope`, field name for field name — this struct is the wire
+/// TypeScript `Envelope`, field name for field name; this struct is the wire
 /// format, so its `CodingKeys` are not cosmetic.
 public struct Envelope: Codable, Equatable, Sendable {
     public let channel: String
@@ -53,7 +53,7 @@ public struct Envelope: Codable, Equatable, Sendable {
 /// This device's keypair.
 ///
 /// Generated on the watch and never sent anywhere. When the phone claims a
-/// pairing code on the watch's behalf, it carries `publicKey` and nothing else —
+/// pairing code on the watch's behalf, it carries `publicKey` and nothing else;
 /// see `mobile/src/watch/bridge.ts`.
 public struct Identity: Sendable {
     private let secret: [UInt8]
@@ -95,7 +95,7 @@ public struct Identity: Sendable {
     ) throws -> Envelope {
         // CryptoKit's key generator is the system CSPRNG, stated as such. A
         // repeated nonce under the same key is total loss for XSalsa20, so this
-        // must never be anything cheaper — not a counter, not `Int.random`.
+        // must never be anything cheaper: not a counter, not `Int.random`.
         let nonce = SymmetricKey(size: .init(bitCount: SecretBox.nonceLength * 8))
             .withUnsafeBytes { Array($0) }
 
@@ -117,7 +117,7 @@ public struct Identity: Sendable {
     ///
     /// Requiring the sender's key is the authentication: an envelope from anyone
     /// else fails even though it was correctly addressed. This is what makes
-    /// `decided_via` meaningful — the runner knows which device spoke.
+    /// `decided_via` meaningful: the runner knows which device spoke.
     public func open(senderPublicKey: String, envelope: Envelope) throws -> [UInt8] {
         let nonce = try Base64URL.decode(envelope.nonce)
         guard nonce.count == SecretBox.nonceLength else { throw CryptoError.badNonceLength }

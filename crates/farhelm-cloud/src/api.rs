@@ -13,7 +13,7 @@
 //!
 //! Every handler that touches organisation data goes through [`Caller::org`],
 //! which is the *only* place a membership is checked. There is no handler that
-//! takes an `org_id` from the request body — it comes from the token, and the
+//! takes an `org_id` from the request body; it comes from the token, and the
 //! token was minted against a membership row. That is what keeps "multi-tenant"
 //! from meaning "one forgotten `WHERE org_id = ?` away from a data leak".
 
@@ -102,7 +102,7 @@ pub fn router(state: Arc<CloudState>) -> Router {
 /// One line per request that changes something.
 ///
 /// Written after a device disappeared from a workspace and there was no way to
-/// answer "what removed it" — not from the logs, not from the database, which
+/// answer "what removed it": not from the logs, not from the database, which
 /// stores current state and no history. The absence was the problem: with three
 /// clients, a CLI and two MCP connectors all able to call `DELETE`, "it must
 /// have been one of those" is not an answer anybody can act on.
@@ -112,8 +112,8 @@ pub fn router(state: Arc<CloudState>) -> Router {
 /// being read. `GET` is skipped for that reason rather than for volume.
 ///
 /// Deliberately not an audit *table*. That is a different feature with its own
-/// retention and access questions, and this answers the operational question —
-/// what happened to my workspace, and roughly when — at a hundredth of the
+/// retention and access questions, and this answers the operational question
+/// (what happened to my workspace, and roughly when) at a hundredth of the
 /// cost.
 async fn record_change(
     request: axum::extract::Request,
@@ -188,7 +188,7 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, message)
     }
 
-    /// The request was understood and the state says no — a code somebody
+    /// The request was understood and the state says no: a code somebody
     /// already answered, most often because two people opened the same link.
     fn conflict(message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, message)
@@ -511,7 +511,7 @@ async fn refresh(
             now,
             now + REFRESH_TOKEN_TTL_MS,
         )?
-        .ok_or_else(|| ApiError::unauthorized("that session has expired — sign in again"))?;
+        .ok_or_else(|| ApiError::unauthorized("that session has expired; sign in again"))?;
 
     let (org, role) = state
         .store
@@ -585,7 +585,7 @@ async fn change_password(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /v1/auth/public-key` — what `farhelm relay --auth-key` needs.
+/// `GET /v1/auth/public-key`: what `farhelm relay --auth-key` needs.
 ///
 /// Public by design: it is the *verifying* half. Serving it means an operator
 /// configures the relay by pointing it at the control plane rather than by
@@ -709,7 +709,7 @@ async fn add_member(
     let account = state.store.account_by_email(&body.email)?.ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
-            "nobody with that email has signed up yet — ask them to create an account first",
+            "nobody with that email has signed up yet; ask them to create an account first",
         )
     })?;
 
@@ -753,7 +753,7 @@ pub struct RegisterDeviceBody {
     pub kind: farhelm_proto::types::DeviceKind,
     pub name: String,
     /// base64url X25519 public key, generated on the device. The secret half
-    /// stays there — this server has never been able to decrypt a session and
+    /// stays there; this server has never been able to decrypt a session and
     /// this endpoint does not change that.
     pub public_key: String,
 }
@@ -929,14 +929,14 @@ pub struct EnrollResponse {
     pub key_change_pending: bool,
 }
 
-/// `POST /v1/runners/enroll` — a machine joins the fleet by itself.
+/// `POST /v1/runners/enroll`: a machine joins the fleet by itself.
 ///
 /// This is the whole of "no pairing codes": one enrolment key, pasted into a
 /// config file once, and every machine started with it appears in the fleet.
 ///
 /// The mitigation for that convenience is trust-on-first-use pinning. A stolen
-/// enrolment key can register a *new* machine — which is visible in the fleet
-/// and revocable — but cannot quietly take over an existing one, because a key
+/// enrolment key can register a *new* machine (which is visible in the fleet
+/// and revocable) but cannot quietly take over an existing one, because a key
 /// that does not match the pinned one is parked rather than applied.
 async fn enroll_runner(
     State(state): State<Arc<CloudState>>,
@@ -1173,7 +1173,7 @@ pub struct ChannelTokenResponse {
     pub runner_public_key: String,
 }
 
-/// `POST /v1/channel-token` — a seat on a runner's channel, for fifteen minutes.
+/// `POST /v1/channel-token`: a seat on a runner's channel, for fifteen minutes.
 ///
 /// Refused for a runner with a pending key change: handing out a token then
 /// would mean devices talking to a machine whose identity nobody has confirmed.
@@ -1185,13 +1185,13 @@ async fn channel_token(
     let runner = owned_runner(&state, &caller, &body.runner_id)?;
     if runner.pending_public_key.is_some() {
         return Err(ApiError::forbidden(
-            "this machine's identity changed — an admin has to confirm it before devices reconnect",
+            "this machine's identity changed; an admin has to confirm it before devices reconnect",
         ));
     }
 
     // Named rather than left to the store's generic not-found, because this
     // handler can 404 for two entirely different reasons with two opposite
-    // recoveries — the machine is gone, or *this browser's* registration is —
+    // recoveries (the machine is gone, or *this browser's* registration is)
     // and a bare 404 tells the client neither. That ambiguity cost a real
     // deployment days of "connecting…" with 244 identical refusals in the log
     // and nothing anywhere naming which of the two was missing.
@@ -1199,7 +1199,7 @@ async fn channel_token(
         ApiError::new(
             StatusCode::NOT_FOUND,
             format!(
-                "device {} is not registered in this workspace — it was removed, \
+                "device {} is not registered in this workspace; it was removed, \
                  or it was registered against a different deployment",
                 body.device_id
             ),
@@ -1333,7 +1333,7 @@ pub struct DeviceCodeBody {
 
 #[derive(Debug, Serialize)]
 pub struct DeviceCodeIssued {
-    /// The machine's half. Never displayed, never typed — it is what proves the
+    /// The machine's half. Never displayed, never typed; it is what proves the
     /// collector is the same process that asked.
     pub device_code: String,
     /// The human's half, in `XXXX-XXXX` form.
@@ -1344,7 +1344,7 @@ pub struct DeviceCodeIssued {
     pub expires_in: i64,
 }
 
-/// A machine asks to join. Unauthenticated, necessarily — the entire point is
+/// A machine asks to join. Unauthenticated, necessarily: the entire point is
 /// that this machine has no credential yet.
 ///
 /// Nothing is granted here and no key is minted: this only creates a request
@@ -1376,7 +1376,7 @@ async fn request_device_code(
     Ok(Json(DeviceCodeIssued {
         device_code,
         user_code,
-        // Hash route, like every other link this service hands out — the web
+        // Hash route, like every other link this service hands out; the web
         // app is a single page and `/connect` alone would 404 on refresh.
         verification_uri: format!(
             "{}/#/connect",
@@ -1397,7 +1397,7 @@ pub struct DeviceTokenBody {
 pub enum DeviceTokenAnswer {
     /// Still waiting on a human. The machine polls again.
     Pending { interval: u64 },
-    /// Approved, and here is the credential — once.
+    /// Approved, and here is the credential, once.
     Approved {
         enrollment_key: String,
         /// Echoed back so the runner writes the URL it actually enrolled
@@ -1441,7 +1441,7 @@ async fn collect_device_token(
                 enrollment_key,
                 cloud_url: state.config.public_url.clone(),
             },
-            // Approved, but the key is gone — this poll lost the race with the
+            // Approved, but the key is gone; this poll lost the race with the
             // one that collected it. Not an error to report to a human: the
             // machine that has it is already enrolling.
             None => DeviceTokenAnswer::Expired,
@@ -1465,7 +1465,7 @@ async fn pending_device(
         .filter(|auth| !auth.is_expired(now))
         .ok_or_else(|| {
             ApiError::not_found(
-                "that code is not one this workspace is waiting on — check it, or ask \
+                "that code is not one this workspace is waiting on; check it, or ask \
                  the machine for a fresh one",
             )
         })?;
@@ -1481,7 +1481,7 @@ pub struct DeviceDecision {
 
 /// A signed-in human lets the machine in.
 ///
-/// This is where the enrolment key is minted — not when the machine asked. A
+/// This is where the enrolment key is minted, not when the machine asked. A
 /// key that existed before anybody agreed would be a credential sitting in the
 /// database waiting for whoever found it.
 ///
@@ -1501,7 +1501,7 @@ async fn approve_device(
         .device_authorization(&user_code)?
         .filter(|auth| !auth.is_expired(now))
         .ok_or_else(|| {
-            ApiError::not_found("that code has expired — ask the machine for a fresh one")
+            ApiError::not_found("that code has expired; ask the machine for a fresh one")
         })?;
 
     if auth.status != DeviceAuthStatus::Pending {
@@ -1512,7 +1512,7 @@ async fn approve_device(
     }
 
     // A machine counts against the plan the moment it can enrol, so the limit
-    // is checked here rather than at enrolment — refusing after somebody has
+    // is checked here rather than at enrolment; refusing after somebody has
     // already tapped approve is a worse place to find out.
     let subscription = state.store.subscription(&caller.org_id)?;
     may_add(
@@ -1688,7 +1688,7 @@ async fn portal(
     Ok(Json(RedirectResponse { url }))
 }
 
-/// `POST /v1/billing/webhook` — Stripe telling us what happened.
+/// `POST /v1/billing/webhook`: Stripe telling us what happened.
 ///
 /// Takes the raw body, not `Json`: the signature covers the exact bytes, and
 /// deserialising then re-serialising changes them.
@@ -1751,7 +1751,7 @@ async fn webhook(
 
 /* -------------------------------------------------------------------- helpers */
 
-/// Names come from clients and end up on screens. Trim, cap, and fall back —
+/// Names come from clients and end up on screens. Trim, cap, and fall back:
 /// a device called `""` renders as a gap nobody can tap.
 fn sane_name(name: &str, fallback: &str) -> String {
     let trimmed = name.trim();

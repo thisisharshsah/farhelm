@@ -2,7 +2,7 @@
  * What a wake-up should say, and which buttons it should offer.
  *
  * Pure, and separate from `sw.ts`, because this is the part with judgement in
- * it. The worker's job is plumbing — read the pairing, connect, decrypt — and
+ * it. The worker's job is plumbing (read the pairing, connect, decrypt), and
  * plumbing either works or throws. *This* is where a wrong decision is quiet and
  * expensive: offering a one-tap Approve on `rm -rf /`, or saying "an agent needs
  * you" when the app is already open in front of the user.
@@ -47,7 +47,7 @@ export const REFUSAL_TAG = "farhelm-refused";
  *
  * Destructive commands may not. This is the same reasoning as D3 refusing them
  * from a watch: convenience must not become catastrophe, and a notification
- * action is *less* deliberate than a wrist tap, not more — it can be hit from a
+ * action is *less* deliberate than a wrist tap, not more: it can be hit from a
  * lock screen without the app ever coming to the front.
  *
  * The runner enforces its own rule server-side regardless of what any client
@@ -61,7 +61,7 @@ export function wakeUpNotification(context: WakeUpContext): Notification {
   switch (context.kind) {
     case "focused":
       // The page has the WebSocket and the real screen. Interrupting someone
-      // about something they are looking at is noise — but a push with no
+      // about something they are looking at is noise, but a push with no
       // notification at all is a "silent push", and browsers revoke the
       // permission for those. So: quiet, not absent.
       return {
@@ -82,7 +82,7 @@ export function wakeUpNotification(context: WakeUpContext): Notification {
       // This used to share the line above, and that stopped being true the day
       // the control plane started sending a wake-up *because* a machine went
       // quiet. In that case the fetch fails precisely because there is nothing
-      // there — so "an agent needs you" sends somebody into the app hunting for
+      // there, so "an agent needs you" sends somebody into the app hunting for
       // an approval that does not exist.
       //
       // What this branch actually knows is that it tried and could not get
@@ -107,12 +107,12 @@ function fromFleet(fleet: FleetView): Notification {
   const approval = fleet.pending_approvals[0];
   if (!approval) {
     // No approval, but possibly a change set. A task is *not* more urgent than
-    // an approval — an approval is blocking a live process, a task has already
-    // finished and is waiting — so it is checked second, not first.
+    // an approval (an approval is blocking a live process, a task has already
+    // finished and is waiting), so it is checked second, not first.
     const task = fleet.tasks_awaiting_review[0];
     if (task) return fromTask(task, fleet.tasks_awaiting_review.length - 1);
 
-    // Something happened — a budget alert, most likely, or an approval that was
+    // Something happened: a budget alert, most likely, or an approval that was
     // decided between the push and this connection.
     return {
       title: "Farhelm",
@@ -132,7 +132,7 @@ function fromFleet(fleet: FleetView): Notification {
       body: [
         `${approval.repo_name} · ${approval.payload}`,
         others > 0 ? `(+${others} more waiting)` : null,
-        oneTap ? null : "Destructive — open the app to review it.",
+        oneTap ? null : "Destructive. Open the app to review it.",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -155,7 +155,7 @@ function fromFleet(fleet: FleetView): Notification {
  * A change set waiting on a review.
  *
  * **Never one-tap.** The whole value of a diff is that somebody read it, and a
- * notification action is the least deliberate surface there is — it can be hit
+ * notification action is the least deliberate surface there is: it can be hit
  * from a lock screen without the app ever coming to the front. "Approve" on a
  * diff nobody has opened is worse than no notification at all, because it looks
  * like review and is not. The runner refuses it server-side too; this is the
@@ -178,7 +178,7 @@ function fromTask(
         .join("\n"),
       tag: TAG,
       renotify: true,
-      // It is not urgent in the way a blocked agent is — the work is done and
+      // It is not urgent in the way a blocked agent is; the work is done and
       // will keep. Let it dismiss itself rather than nagging.
       requireInteraction: false,
       data: { taskId: task.id },

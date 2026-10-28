@@ -1,11 +1,11 @@
-//! Pipeline stage 3 — the exact response cache (C8).
+//! Pipeline stage 3: the exact response cache (C8).
 //!
 //! Distinct from *prompt* caching, which makes a call cheaper. This makes a call
 //! not happen: the same question, asked again, costs nothing.
 //!
 //! The key is a hash of the model plus the whole assembled prompt, so any change
 //! to the repo map, the history, or the instruction produces a different key.
-//! That is what makes it safe to cache retrieval and summarisation — if the
+//! That is what makes it safe to cache retrieval and summarisation: if the
 //! inputs moved, the key moved.
 
 use farhelm_proto::types::TaskType;
@@ -37,7 +37,7 @@ pub const fn is_cacheable(task: TaskType) -> bool {
 
 /// Hash the material that determines a response.
 ///
-/// `cache_control` markers are deliberately excluded — they change how the
+/// `cache_control` markers are deliberately excluded; they change how the
 /// provider bills the call, never what it answers, so two prompts that differ
 /// only in breakpoint placement should share a cached response.
 pub fn key(model: &str, plan: &PromptPlan) -> String {

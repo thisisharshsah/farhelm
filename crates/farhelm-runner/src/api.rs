@@ -1,4 +1,4 @@
-//! The runner's localhost HTTP API — §6's "Gateway API", plus the read models
+//! The runner's localhost HTTP API: §6's "Gateway API", plus the read models
 //! the phone and web clients render.
 //!
 //! Handlers call SQLite directly rather than through `spawn_blocking`. At
@@ -65,7 +65,7 @@ pub fn router_with_app_and_auth(
 /// taken as sufficient, and it is not: `CorsLayer::permissive()` told every
 /// browser that **any** website may make cross-origin requests here *and read
 /// the response*. A page in a tab the user already had open could enumerate
-/// their repositories, start a session, and approve a destructive command — from
+/// their repositories, start a session, and approve a destructive command, from
 /// the outside, over a port that is "only local".
 ///
 /// So the origin list is now explicit, and there is a token for the case where
@@ -189,7 +189,7 @@ fn base_router(state: Arc<AppState>) -> Router {
 /// The production app is served *by this process*, so it is same-origin and
 /// needs no CORS at all. React Native sends no `Origin` header, so it is not
 /// subject to CORS either. That leaves exactly one legitimate cross-origin
-/// caller — the Vite dev server — and the previous `permissive()` was handing
+/// caller (the Vite dev server), and the previous `permissive()` was handing
 /// the same access to every website on the internet.
 fn local_cors() -> CorsLayer {
     use axum::http::{HeaderName, Method};
@@ -332,7 +332,7 @@ impl IntoResponse for ApiError {
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
-/// `GET /v1/batch` — the deferred-work queue.
+/// `GET /v1/batch`: the deferred-work queue.
 ///
 /// Exists because queued work is invisible otherwise: a deferrable call returns
 /// an id and nothing else, and "where did my summary go" needs an answer that is
@@ -352,7 +352,7 @@ async fn batch_queue(State(state): State<Arc<AppState>>) -> ApiResult<BatchQueue
 
 /* --------------------------------------------------- local repositories */
 
-/// `GET /v1/repos` — bounded registered repositories on this runner.
+/// `GET /v1/repos`: bounded registered repositories on this runner.
 /// Reading a list does not scan the host or silently register nearby directories.
 async fn list_repos(
     State(state): State<Arc<AppState>>,
@@ -396,12 +396,12 @@ async fn list_repos(
 
 /* --------------------------------------------------- native agent tasks */
 
-/// `GET /v1/tasks` — every task, newest first.
+/// `GET /v1/tasks`: every task, newest first.
 async fn list_tasks(State(state): State<Arc<AppState>>) -> ApiResult<Vec<TaskView>> {
     Ok(Json(build_task_list(&state)?))
 }
 
-/// `POST /v1/tasks` — start the native agent on a repo.
+/// `POST /v1/tasks`: start the native agent on a repo.
 ///
 /// Returns as soon as the row exists. A task takes minutes and the client that
 /// asked for it may be a phone about to lose signal; progress arrives on
@@ -414,7 +414,7 @@ async fn start_task(
     Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
 }
 
-/// `GET /v1/tasks/{id}` — the review screen's payload.
+/// `GET /v1/tasks/{id}`: the review screen's payload.
 async fn task_detail(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -422,7 +422,7 @@ async fn task_detail(
     Ok(Json(build_task_detail(&state, &id)?))
 }
 
-/// `GET /v1/tasks/{id}/steps` — the step ledger: every tool exchange the task
+/// `GET /v1/tasks/{id}/steps`: the step ledger: every tool exchange the task
 /// recorded, in order, including one still open if the task was interrupted.
 async fn task_steps(
     State(state): State<Arc<AppState>>,
@@ -438,8 +438,8 @@ async fn task_steps(
 #[derive(Debug, Deserialize)]
 pub struct ReviewBody {
     pub decision: crate::task::Review,
-    /// Why. Required in spirit for a rejection — it is what the next attempt
-    /// is handed — but not enforced, because a reviewer on a train should not
+    /// Why. Required in spirit for a rejection (it is what the next attempt
+    /// is handed), but not enforced, because a reviewer on a train should not
     /// be blocked from saying no.
     #[serde(default)]
     pub note: Option<String>,
@@ -447,7 +447,7 @@ pub struct ReviewBody {
     pub via: Option<DecidedVia>,
 }
 
-/// `POST /v1/tasks/{id}/review` — approve a change set onto disk, or reject it.
+/// `POST /v1/tasks/{id}/review`: approve a change set onto disk, or reject it.
 async fn review_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -469,10 +469,10 @@ pub struct RevertBody {
     pub via: Option<DecidedVia>,
 }
 
-/// `POST /v1/tasks/{id}/revert` — take an applied change set back off disk.
+/// `POST /v1/tasks/{id}/revert`: take an applied change set back off disk.
 ///
 /// The overlay kept both sides, so this is `apply` in reverse. It refuses if any
-/// touched file has changed since — undoing over somebody's later edit would
+/// touched file has changed since; undoing over somebody's later edit would
 /// discard *their* work.
 async fn revert_task(
     State(state): State<Arc<AppState>>,
@@ -486,7 +486,7 @@ async fn revert_task(
     Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
 }
 
-/// `GET /v1/agents` — what this machine can start, and what it cannot.
+/// `GET /v1/agents`: what this machine can start, and what it cannot.
 ///
 /// `installed` is computed per request rather than cached: agents get installed
 /// while the runner is up, and a stale "not installed" is a worse answer than a
@@ -498,8 +498,8 @@ async fn list_agents() -> Json<Vec<AgentView>> {
 // ---------------------------------------------------------------- read models
 //
 // The shapes moved to `farhelm-proto`. They are what four client implementations
-// agree on, and keeping them here forced `commands::execute` — the path both
-// transports share — to depend on this module for its reply types. Assembly
+// agree on, and keeping them here forced `commands::execute` (the path both
+// transports share) to depend on this module for its reply types. Assembly
 // stays here; the contract does not.
 
 pub use farhelm_proto::views::{
@@ -538,7 +538,7 @@ async fn list_sessions(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Sess
 /// a deploy script polls. This answers the question a person has: *why is
 /// nothing happening*. The daemon is the only thing that can: it holds the
 /// gateway, it knows which relay it dialled, and under launchd or systemd its
-/// environment is not the one a terminal would see — so a check run from a
+/// environment is not the one a terminal would see, so a check run from a
 /// shell cannot read any of it.
 #[derive(Debug, Serialize)]
 pub struct RunnerStatus {
@@ -553,7 +553,7 @@ pub struct RunnerStatus {
     /// request needs it, so a runner pointed at one that cannot produce a token
     /// starts cleanly and reports a gateway it cannot use.
     pub credential_error: Option<String>,
-    /// The relay this runner is configured to dial. Configured, not connected —
+    /// The relay this runner is configured to dial. Configured, not connected;
     /// see `relay_linked`, which is the field that answers "can a phone reach
     /// this machine right now".
     pub relay: Option<String>,
@@ -573,7 +573,7 @@ pub struct RunnerStatus {
     /// How many devices may reach this machine.
     ///
     /// Enrolled, this is the list the control plane sends on every heartbeat
-    /// and the runner reconciles against — so zero means no phone or browser
+    /// and the runner reconciles against, so zero means no phone or browser
     /// has registered, and **nothing can connect to this machine however
     /// healthy everything else looks**. That state was invisible: the daemon
     /// reported a good relay link, the control plane reported a live runner,
@@ -593,7 +593,7 @@ async fn status(State(state): State<Arc<AppState>>) -> ApiResult<RunnerStatus> {
         .map(|agent| agent.id)
         .collect();
 
-    // Probed, not assumed. Cheap on the common path — a live token comes from
+    // Probed, not assumed. Cheap on the common path: a live token comes from
     // the same cache the next request will use.
     let credential_error = state
         .gateway
@@ -703,7 +703,7 @@ pub struct AutoApproveBody {
     pub level: farhelm_proto::types::AutoApprove,
 }
 
-/// `POST /v1/sessions/{id}/auto-approve` — a standing delegation for one session.
+/// `POST /v1/sessions/{id}/auto-approve`: a standing delegation for one session.
 ///
 /// The surface is the web app, so `via` is fixed rather than taken from the
 /// body: a caller must not be able to claim a more trusted surface than the one
@@ -731,7 +731,7 @@ async fn set_auto_approve(
     }
 }
 
-/// `POST /v1/repos/{id}/auto-approve` — the default for every session in a
+/// `POST /v1/repos/{id}/auto-approve`: the default for every session in a
 /// repository. Same fixed surface and same shared rule as the session form.
 async fn set_repo_auto_approve(
     State(state): State<Arc<AppState>>,
@@ -799,7 +799,7 @@ async fn decide(
     Json(body): Json<DecisionBody>,
 ) -> ApiResult<ApprovalView> {
     // The guard and the race resolution both live in `commands`, shared with the
-    // relay link — a decision arriving over the relay gets identical treatment.
+    // relay link; a decision arriving over the relay gets identical treatment.
     commands::execute(
         &state,
         commands::Command::Decide {
@@ -840,7 +840,7 @@ pub struct StartSessionBody {
     pub agent: Option<farhelm_proto::types::Agent>,
 }
 
-/// `POST /v1/sessions` — start an agent in a repo.
+/// `POST /v1/sessions`: start an agent in a repo.
 ///
 /// The MVP starts sessions at the runner (A6, start-from-phone, is P1), but the
 /// endpoint is the same one a phone would call, so bringing A6 forward is a
@@ -855,7 +855,7 @@ async fn start_session(
     ))
 }
 
-/// `POST /v1/sessions/{id}/stop` — end a session and its pane.
+/// `POST /v1/sessions/{id}/stop`: end a session and its pane.
 async fn stop_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -865,7 +865,7 @@ async fn stop_session(
 
 /* ------------------------------------------------------------ device pairing */
 
-/// `POST /v1/pair/offer` — mint a single-use pairing offer.
+/// `POST /v1/pair/offer`: mint a single-use pairing offer.
 ///
 /// The payload is what goes in the QR code: where the relay is, which channel,
 /// the runner's public key, and a code good once before it expires.
@@ -874,9 +874,9 @@ async fn pair_offer(State(state): State<Arc<AppState>>) -> ApiResult<farhelm_cry
         .relay
         .clone()
         .unwrap_or_else(|| crate::state::RelayInfo {
-            // No relay configured. The offer is still minted — `farhelm-runner
+            // No relay configured. The offer is still minted (`farhelm-runner
             // pair` renders it, and it is the only way to see this machine's
-            // public key and channel without reading the database — but a client
+            // public key and channel without reading the database), but a client
             // will refuse to claim it, because there is nowhere for the device to
             // connect. See `claimPairing` in packages/client-core/src/crypto.ts.
             url: String::new(),
@@ -913,7 +913,7 @@ pub struct PairClaimBody {
     pub public_key: String,
 }
 
-/// `POST /v1/pair/claim` — redeem a code and register the device.
+/// `POST /v1/pair/claim`: redeem a code and register the device.
 async fn pair_claim(
     State(state): State<Arc<AppState>>,
     Json(body): Json<PairClaimBody>,
@@ -947,7 +947,7 @@ async fn pair_claim(
     Ok(Json(device))
 }
 
-/// `GET /v1/devices` — what is paired. Public keys only; no secrets exist here.
+/// `GET /v1/devices`: what is paired. Public keys only; no secrets exist here.
 async fn list_devices(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Vec<farhelm_proto::types::Device>> {
@@ -967,7 +967,7 @@ const DEFAULT_APPROVAL_WAIT: Duration = Duration::from_secs(15 * 60);
 pub struct ToolRequestBody {
     /// The *agent's* session id, from the hook payload.
     pub agent_session_id: String,
-    /// The agent's working directory — how the request finds its repo.
+    /// The agent's working directory: how the request finds its repo.
     pub cwd: String,
     pub tool: String,
     /// The command or file summary the human decides on.
@@ -988,7 +988,7 @@ pub struct ToolRequestView {
 
 /// Resolve (or create) the Farhelm session behind an agent's hook callback.
 ///
-/// A hook can fire for a repo the runner has never seen — an agent started by
+/// A hook can fire for a repo the runner has never seen: an agent started by
 /// hand, in a directory nobody registered. Refusing would make the bridge
 /// useless in exactly the case it is most needed, so the runner adopts it.
 fn resolve_session(
@@ -1041,7 +1041,7 @@ fn resolve_session(
 /// Wait for a decision on an approval, or record a timeout.
 ///
 /// Subscribes to the event bus **before** re-reading the store, so a decision
-/// landing in the gap between the two cannot be missed — without that ordering
+/// landing in the gap between the two cannot be missed; without that ordering
 /// this blocks for the full timeout on an already-answered request.
 pub(crate) async fn await_decision(
     state: &Arc<AppState>,
@@ -1082,7 +1082,7 @@ pub(crate) async fn await_decision(
     }
 
     // Nobody answered. Record it as a timeout so the audit trail says so, and
-    // let the caller deny — an unanswered request must never become an allow.
+    // let the caller deny; an unanswered request must never become an allow.
     let outcome = state.store.decide_approval(
         approval_id,
         Decision::Timeout,
@@ -1092,7 +1092,7 @@ pub(crate) async fn await_decision(
     Ok(outcome.approval().clone())
 }
 
-/// `POST /v1/hooks/tool-request` — blocks until a human decides.
+/// `POST /v1/hooks/tool-request`: blocks until a human decides.
 async fn hook_tool_request(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ToolRequestBody>,
@@ -1167,7 +1167,7 @@ async fn hook_tool_request(
             } else {
                 format!("{}ms", wait.as_millis())
             };
-            format!("no response within {elapsed} — denied by default")
+            format!("no response within {elapsed}; denied by default")
         }
     };
     state.push_output(&session.id, format!("• {reason}"), now_ms());
@@ -1192,7 +1192,7 @@ pub struct HookNoticeBody {
     pub notification_type: Option<String>,
 }
 
-/// `POST /v1/hooks/stop` — the agent finished its turn.
+/// `POST /v1/hooks/stop`: the agent finished its turn.
 async fn hook_stop(
     State(state): State<Arc<AppState>>,
     Json(body): Json<HookNoticeBody>,
@@ -1216,7 +1216,7 @@ async fn hook_stop(
     Ok(Json(serde_json::json!({ "session_id": session.id })))
 }
 
-/// `POST /v1/hooks/notification` — the agent wants attention.
+/// `POST /v1/hooks/notification`: the agent wants attention.
 async fn hook_notification(
     State(state): State<Arc<AppState>>,
     Json(body): Json<HookNoticeBody>,
@@ -1238,12 +1238,12 @@ async fn hook_notification(
 
 /* ------------------------------------------------------- the cost gateway */
 
-/// `POST /v1/complete` — §6's gateway API.
+/// `POST /v1/complete`: §6's gateway API.
 ///
 /// This is the endpoint an agent points `ANTHROPIC_BASE_URL`-style redirection
 /// at (full-gateway mode). Everything the caller sends is split into the stable
 /// half of the prompt and the one instruction that changes, because that split
-/// is what makes prompt caching work — the gateway will not accept a blob and
+/// is what makes prompt caching work; the gateway will not accept a blob and
 /// guess where the boundary is.
 #[derive(Debug, Deserialize)]
 pub struct CompleteBody {
@@ -1251,7 +1251,7 @@ pub struct CompleteBody {
     pub task_type: TaskType,
     /// What changes this turn.
     pub instruction: String,
-    /// Frozen system prompt. No dates, no ids — anything volatile here destroys
+    /// Frozen system prompt. No dates, no ids: anything volatile here destroys
     /// the cache for every turn that follows.
     #[serde(default)]
     pub system: String,
@@ -1283,7 +1283,7 @@ pub struct CompleteView {
     pub avoided: Option<farhelm_proto::types::Avoided>,
     pub refusal: Option<farhelm_gateway::dispatch::Refusal>,
     pub budget: BudgetView,
-    /// What each stage did — the answer to "why did that cost what it cost".
+    /// What each stage did: the answer to "why did that cost what it cost".
     pub trace: farhelm_gateway::StageTrace,
 }
 
@@ -1294,7 +1294,7 @@ async fn complete(
     let Some(gateway) = &state.gateway else {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            message: "no model provider configured — set ANTHROPIC_API_KEY or \
+            message: "no model provider configured; set ANTHROPIC_API_KEY or \
                  ANTHROPIC_AUTH_TOKEN and restart"
                 .into(),
         });

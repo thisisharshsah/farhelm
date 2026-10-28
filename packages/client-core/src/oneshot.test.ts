@@ -1,7 +1,7 @@
 /**
  * One-shot relay calls.
  *
- * The thing that matters here is not the happy path — it is that **every call
+ * The thing that matters here is not the happy path; it is that **every call
  * settles**. These run inside a service worker's `waitUntil`, and a promise that
  * never resolves there is a worker the browser eventually kills with the socket
  * still open and the user's tap silently lost.
@@ -142,7 +142,7 @@ describe("sending one command", () => {
   it("seals it so the relay cannot read it", async () => {
     // The id is long and distinctive because the assertion below searches the
     // *whole* frame, and the frame is mostly random base64url. A two-character
-    // canary like `a1` collides with a nonce roughly one run in ten — which is
+    // canary like `a1` collides with a nonce roughly one run in ten, which is
     // a test that fails for a reason having nothing to do with sealing.
     const canary = "approval-canary-9Q7";
     const pending = sendCommandOnce(
@@ -163,7 +163,7 @@ describe("sending one command", () => {
 
   it("reports a refusal rather than claiming success", async () => {
     // From a notification the user has already dismissed, a silent refusal is
-    // unrecoverable — there is nothing left on screen to show an error on.
+    // unrecoverable: there is nothing left on screen to show an error on.
     const pending = sendCommandOnce(
       pairing,
       { type: "decide", approval_id: "a1", decision: "approved" },

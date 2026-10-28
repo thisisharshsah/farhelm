@@ -1,7 +1,7 @@
 /**
  * The phone app.
  *
- * Three screens — fleet, session, pairing — over the same `Transport` the web
+ * Three screens (fleet, session, pairing) over the same `Transport` the web
  * app uses, which is why there is no second implementation of anything that
  * matters here. What differs from the web is only what has to: the keystore, the
  * absence of SSE, and the watch tab.
@@ -68,7 +68,7 @@ type Route =
 /**
  * A change set this phone has been told about through an event.
  *
- * The fleet snapshot is the authority — it carries every task actually awaiting
+ * The fleet snapshot is the authority: it carries every task actually awaiting
  * review, and it is what a freshly woken phone reads. This is the *live* half:
  * an event arriving between refreshes, so a task that appears while you are
  * looking at the screen shows up without waiting for the next fetch.
@@ -88,20 +88,20 @@ export default function App() {
   /**
    * `undefined` means the keystore has not answered yet. Starting a loopback
    * transport in the meantime would flash a connection error on a paired phone
-   * that is nowhere near the runner — which is the normal case for this app.
+   * that is nowhere near the runner, which is the normal case for this app.
    */
   const [pairing, setPairing] = useState<Pairing | null | undefined>(undefined);
   /**
    * Where the runner is, for the loopback path and for pairing the watch.
    *
-   * Loopback, because that is the only interface the runner listens on — its
+   * Loopback, because that is the only interface the runner listens on; its
    * localhost API has no authentication, so binding it to the network would put
    * an unauthenticated approval endpoint on the LAN. This therefore works on the
    * **simulator**, which shares the host's network stack, and on a real handset
    * it does not: pair that one to a relay instead.
    *
    * The previous default was a plausible-looking LAN address, which is the worst
-   * of both worlds — nothing is listening there, and a TCP connect to a dead host
+   * of both worlds: nothing is listening there, and a TCP connect to a dead host
    * on your own subnet hangs for the better part of a minute before failing.
    */
   const [runnerUrl, setRunnerUrl] = useState("http://127.0.0.1:7842");
@@ -133,7 +133,7 @@ export default function App() {
 
   useEffect(() => {
     // A rejection here used to leave `pairing` at `undefined` forever, and the
-    // body renders a spinner in that state — so one keystore hiccup became an
+    // body renders a spinner in that state, so one keystore hiccup became an
     // app that loads for eternity with nothing on screen to say why. An
     // unreadable pairing means "not paired", which is a working app.
     void Promise.all([
@@ -200,7 +200,7 @@ export default function App() {
     if (pairing === undefined || cloudSession === undefined) return;
 
     let transport: Transport;
-    // `deviceId` empty means this phone holds no seat — there is no key a
+    // `deviceId` empty means this phone holds no seat: there is no key a
     // runner would seal to, so it falls through to the signed-in-idle branch
     // instead of dialling a link that can only fail.
     if (cloudSession?.deviceId && activeRunner && workspace && cloudRef.current) {
@@ -269,7 +269,7 @@ export default function App() {
       transportRef.current = null;
     };
     // `workspace` is a dependency because the machine's channel and pinned key
-    // come from it — a key rotation confirmed elsewhere must rebuild the link.
+    // come from it; a key rotation confirmed elsewhere must rebuild the link.
   }, [pairing, runnerUrl, cloudSession, activeRunner, workspace]);
 
   /* ------------------------------------------------------------ sign in */
@@ -429,7 +429,7 @@ export default function App() {
   /**
    * The fleet's list of waiting change sets, plus anything an event has told us
    * about since. Snapshot first so its ordering (oldest waiting first) wins, and
-   * de-duplicated by id — both sources describe the same task the moment a
+   * de-duplicated by id: both sources describe the same task the moment a
    * refresh lands after an event.
    */
   const mergedWaiting = useMemo<WaitingTask[]>(() => {
@@ -673,7 +673,7 @@ export default function App() {
               <Banner
                 palette={palette}
                 title="Could not read the keystore."
-                body={`${storeError} — carrying on as an unpaired device. Pairing again will try to write it afresh.`}
+                body={`${storeError}. Carrying on as an unpaired device. Pairing again will try to write it afresh.`}
                 onDismiss={() => setStoreError(null)}
               />
             ) : null}
@@ -690,7 +690,7 @@ export default function App() {
                 body={
                   pairing
                     ? fleetError
-                    : `${fleetError} — set the address under Pair, or pair this device to reach it from anywhere.`
+                    : `${fleetError}. Set the address under Pair, or pair this device to reach it from anywhere.`
                 }
                 onDismiss={bump}
                 dismissLabel="Retry"
@@ -810,7 +810,7 @@ function TaskCard({
         borderWidth: 1,
         borderColor: palette.border,
         // The amber edge is the same signal an approval card carries, and the
-        // words below say the same thing — colour is never alone.
+        // words below say the same thing; colour is never alone.
         borderLeftWidth: 3,
         borderLeftColor: working ? palette.textMuted : palette.warning,
       }}

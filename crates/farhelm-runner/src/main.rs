@@ -25,7 +25,7 @@ use farhelm_runner::state::{self, AppState, ServerEvent};
 use farhelm_runner::{api, hook_cli, relay, seed, service, session, terminal};
 
 const USAGE: &str = "\
-farhelm — supervise your coding agents from anywhere, and cut what they cost
+farhelm: supervise your coding agents from anywhere, and cut what they cost
 
 USAGE:
     farhelm                 where this machine stands, and what is left to do
@@ -37,7 +37,7 @@ SETTING UP
                      skips what is not. This is the whole quickstart.
     auth             The model credential. With no arguments it signs you in
                      with your subscription, fetching the Anthropic CLI first if
-                     it is missing, and stores how to obtain a token — nothing
+                     it is missing, and stores how to obtain a token: nothing
                      to export and no PATH to get right. --api-key stores a key
                      instead; --status shows what is stored; --forget removes it.
     install-hooks    Register the hook bridge in .claude/settings.json, merging
@@ -63,7 +63,7 @@ RUNNING
     status           Schema version, sessions and spend, straight from the
                      database. Needs no daemon.
     policy           The destructive-command rules in force. With a command
-                     after it, prints how that command would be classified —
+                     after it, prints how that command would be classified:
                      the way to check a rule you wrote actually fires, short of
                      asking an agent to run something drastic.
     pair             Mint a pairing offer and show it as a QR code.
@@ -76,7 +76,7 @@ SERVING OTHERS
 
 OTHER
     hook             Reads a Claude Code hook event on stdin and answers on
-                     stdout. Not run by hand — `install-hooks` registers it.
+                     stdout. Not run by hand; `install-hooks` registers it.
     seed             Write the wireframe fleet into a database file.
     demo             Price a synthetic session and print the ledger summary.
     help             This.
@@ -105,8 +105,8 @@ ENVIRONMENT
     FARHELM_RUNNER_URL          where `hook` reaches the daemon (loopback:7842)
     FARHELM_MACHINE_NAME        overrides the hostname used for this machine
     FARHELM_CLOUD_URL           same as --cloud
-    FARHELM_CLOUD_KEY           same as --cloud-key, and the better place for it
-                                — a credential on a command line is in every `ps`
+    FARHELM_CLOUD_KEY           same as --cloud-key, and the better place for it:
+                                a credential on a command line is in every `ps`
     FARHELM_MCP_URL             same as --mcp-url
     FARHELM_TMUX                path to the tmux binary
 
@@ -119,7 +119,7 @@ TERMINAL BACKENDS
 REACHABILITY
     On its own the daemon serves loopback only. Enrolled with a control plane it
     appears in your fleet and any device signed into that workspace can reach
-    it, over a relay the control plane names — so --relay is not needed
+    it, over a relay the control plane names, so --relay is not needed
     alongside --cloud. `serve --cloud <url>` on a machine that has never
     enrolled asks to join rather than giving up, then carries straight on into
     serving.
@@ -139,14 +139,14 @@ const DEFAULT_DB: &str = "farhelm.db";
 const LEGACY_DB: &str = "forge.db";
 const DEFAULT_PORT: u16 = 7842;
 const DEFAULT_APP_DIR: &str = "web/dist";
-/// Where an installed copy puts it — see `deploy/redeploy.sh`.
+/// Where an installed copy puts it; see `deploy/redeploy.sh`.
 const INSTALLED_APP_DIR: &str = "web";
 
 /// Find the built web app.
 ///
 /// `--app-dir` used to default to the literal relative path `web/dist`, which
 /// works only when the runner is started from the repository root. The quickstart
-/// tells you to `cd` into a state directory first — so following it produced a
+/// tells you to `cd` into a state directory first, so following it produced a
 /// runner that served the API happily and answered 404 for the app itself.
 ///
 /// So an unqualified default now *searches*, in the order that matches how the
@@ -164,7 +164,7 @@ fn resolve_app_dir(explicit: Option<&str>) -> Option<std::path::PathBuf> {
 
     // Two layouts, because there are two ways this binary is run and they do
     // not agree about where the app lands. In a checkout it is `web/dist`,
-    // straight out of the bundler. Installed, it is a plain `web` directory —
+    // straight out of the bundler. Installed, it is a plain `web` directory:
     // that is what `deploy/redeploy.sh` has always copied it to, and what a
     // package would ship.
     //
@@ -200,7 +200,7 @@ fn resolve_app_dir(explicit: Option<&str>) -> Option<std::path::PathBuf> {
 /// the built app.
 ///
 /// The placeholder exists so the Rust build does not depend on a JavaScript
-/// build (see `desktop/src-tauri/build.rs`), and it is worth serving — it is the
+/// build (see `desktop/src-tauri/build.rs`), and it is worth serving: it is the
 /// page that says what to run. But it must not be *reported* as the app. A
 /// banner line claiming the app is up, over a page saying it is not built, is
 /// the kind of disagreement that costs an hour to notice.
@@ -348,7 +348,7 @@ fn seed_command(db_path: &str) -> Fallible {
     let store = SqliteStore::open(db_path)?;
     if !store.list_sessions()?.is_empty() {
         return Err(format!(
-            "{db_path} already has sessions — seed only writes to an empty database"
+            "{db_path} already has sessions; seed only writes to an empty database"
         )
         .into());
     }
@@ -359,7 +359,7 @@ fn seed_command(db_path: &str) -> Fallible {
     Ok(())
 }
 
-/// Answer one hook event. Runs on a single-threaded runtime — this process
+/// Answer one hook event. Runs on a single-threaded runtime; this process
 /// exists for one blocking round trip and then exits.
 fn run_hook(args: &[String]) -> Fallible {
     tokio::runtime::Builder::new_current_thread()
@@ -372,7 +372,7 @@ fn run_hook(args: &[String]) -> Fallible {
 ///
 /// This used to print a JSON block for somebody to paste. That is a step per
 /// repository, repeated forever, and it fails silently in the ordinary ways
-/// pasting fails — a stray comma, or the wrong object. It writes the file now,
+/// pasting fails: a stray comma, or the wrong object. It writes the file now,
 /// merging so that nothing else in the settings is disturbed, and `--print`
 /// still gives you the block if you would rather do it yourself.
 fn install_hooks(args: &[String], port: u16) -> Fallible {
@@ -386,14 +386,14 @@ fn install_hooks(args: &[String], port: u16) -> Fallible {
     // The registration is run by the *agent*, in an environment nobody here
     // controls, so a daemon on a non-default port has to be named in the
     // command itself. Left to an environment variable, the hook connected to
-    // nothing, deferred, and supervised nothing — and deferring is exactly what
+    // nothing, deferred, and supervised nothing, and deferring is exactly what
     // a healthy hook does when the daemon is legitimately down, so there was no
     // symptom to notice.
     //
     // Only when it differs from the default: the common case keeps the shorter
     // command, and a `--url` nobody needs is a thing to wonder about.
     //
-    // After `hook`, not before it — dispatch matches on the first argument, so
+    // After `hook`, not before it: dispatch matches on the first argument, so
     // a flag ahead of the subcommand is not a flag, it is an unknown command.
     let command = match port == DEFAULT_PORT {
         true => format!("{binary} hook"),
@@ -417,7 +417,7 @@ fn install_hooks(args: &[String], port: u16) -> Fallible {
             .map_err(|_| "HOME is not set, so there is no user settings file to write")?;
         home.join(".claude").join("settings.json")
     } else {
-        // The repo you are in, unless you name another — the common case is
+        // The repo you are in, unless you name another; the common case is
         // standing in it, and the common case should need no argument.
         args.iter()
             .find(|arg| !arg.starts_with("--"))
@@ -433,7 +433,7 @@ fn install_hooks(args: &[String], port: u16) -> Fallible {
         }
         hook_cli::Installed::Merged => {
             println!(
-                "Added the hooks to {} — everything else in it was left alone.",
+                "Added the hooks to {}; everything else in it was left alone.",
                 settings.display()
             );
         }
@@ -456,7 +456,7 @@ fn install_hooks(args: &[String], port: u16) -> Fallible {
     println!(
         "\nEvery tool call Claude Code makes in {scope} now waits for you.\n\
          With the daemon down, hooks defer to Claude Code's own prompt rather \n\
-         than blocking — Farhelm being off degrades to plain Claude Code."
+         than blocking: Farhelm being off degrades to plain Claude Code."
     );
     Ok(())
 }
@@ -495,7 +495,7 @@ fn install_service(flags: &Flags) -> Fallible {
     if written {
         println!("  \u{2713} wrote {path}");
     } else {
-        println!("  Could not write {path} — here it is to place by hand:");
+        println!("  Could not write {path}; here it is to place by hand:");
         println!();
         print!("{body}");
     }
@@ -518,7 +518,7 @@ fn install_service(flags: &Flags) -> Fallible {
         "    echo 'ANTHROPIC_API_KEY=sk-…' > {}/farhelm.env && chmod 600 {}/farhelm.env",
         spec.working_dir, spec.working_dir
     );
-    println!("  — or `farhelm auth`, which stores one without an environment file at all.");
+    println!("  Or use `farhelm auth`, which stores one without an environment file at all.");
     println!();
     Ok(())
 }
@@ -566,7 +566,7 @@ fn policy_path(flags: &Flags) -> std::path::PathBuf {
 
 /// Load the local destructive-command rules.
 ///
-/// A missing file is fine — the built-ins stand on their own. A *malformed* one
+/// A missing file is fine; the built-ins stand on their own. A *malformed* one
 /// is fatal, because somebody wrote a rule in there expecting it to be enforced
 /// and starting up without it would be the worst possible outcome.
 fn load_policy(flags: &Flags) -> Result<farhelm_domain::risk::Policy, Box<dyn std::error::Error>> {
@@ -585,7 +585,7 @@ fn load_policy(flags: &Flags) -> Result<farhelm_domain::risk::Policy, Box<dyn st
 /// `farhelm policy [<command>...]`
 ///
 /// With no command, prints what is loaded. With one, prints how it would be
-/// classified — which is the only way to check that a rule you just wrote
+/// classified, which is the only way to check that a rule you just wrote
 /// actually fires, short of asking an agent to run something destructive.
 fn policy_command(flags: &Flags, rest: &[String]) -> Fallible {
     let file = policy_path(flags);
@@ -594,7 +594,7 @@ fn policy_command(flags: &Flags, rest: &[String]) -> Fallible {
     let (added, retired) = policy.rule_count();
 
     if !file.exists() {
-        println!("no policy file at {path} — the built-in rules apply on their own");
+        println!("no policy file at {path}; the built-in rules apply on their own");
         println!("\nTo add your own, write this and edit it:\n");
         println!("{}", farhelm_domain::risk::EXAMPLE_POLICY);
     } else {
@@ -620,7 +620,7 @@ fn policy_command(flags: &Flags, rest: &[String]) -> Fallible {
     println!("  → {risk}");
     match risk {
         farhelm_proto::types::Risk::Destructive => {
-            println!("  phone only — this cannot be approved from a watch or a notification")
+            println!("  phone only: this cannot be approved from a watch or a notification")
         }
         _ => println!("  can be approved from any paired device"),
     }
@@ -651,7 +651,7 @@ async fn serve_async(flags: Flags) -> Fallible {
     };
 
     // The runner's long-term identity. Minted on first start, reused forever
-    // after — a new key would silently break every paired device.
+    // after; a new key would silently break every paired device.
     let identity = Arc::new(farhelm_crypto::keystore::load_or_create(&flags.key)?);
 
     // Enrol before anything else that depends on where this machine belongs.
@@ -674,7 +674,7 @@ async fn serve_async(flags: Flags) -> Fallible {
                     if session.key_change_pending {
                         eprintln!(
                             "  cloud      this machine's identity does not match the one on \
-                             file — an admin has to confirm it before devices can connect"
+                             file; an admin has to confirm it before devices can connect"
                         );
                     }
                     let shared = Arc::new(std::sync::RwLock::new(session));
@@ -725,7 +725,7 @@ async fn serve_async(flags: Flags) -> Fallible {
     // exporting a credential command by hand meant getting a service manager's
     // environment and PATH right, and a banner that points at the variable is
     // pointing at the three steps that command removed.
-    let mut provider = "none — `farhelm auth` turns on /v1/complete and /v1/messages".to_owned();
+    let mut provider = "none: `farhelm auth` turns on /v1/complete and /v1/messages".to_owned();
 
     // Chosen before the state is built, because the PTY backend owns its panes
     // and there can only be one of it.
@@ -773,7 +773,7 @@ async fn serve_async(flags: Flags) -> Fallible {
                 config.models = models;
             }
             provider = format!(
-                "{} ({}) — small {} / large {} / frontier {}",
+                "{} ({}): small {} / large {} / frontier {}",
                 client.provider_name(),
                 client.credential_kind(),
                 config.models.small,
@@ -797,7 +797,7 @@ async fn serve_async(flags: Flags) -> Fallible {
     let orphaned = farhelm_runner::task::reconcile_after_restart(&state);
     if orphaned > 0 {
         println!(
-            "  {orphaned} task(s) were still working when the runner last stopped — \
+            "  {orphaned} task(s) were still working when the runner last stopped; \
              marked failed"
         );
     }
@@ -806,7 +806,7 @@ async fn serve_async(flags: Flags) -> Fallible {
     match farhelm_runner::project_chat::reconcile_after_restart(&state) {
         Ok(interrupted) if interrupted > 0 => println!(
             "  {interrupted} conversation reply(ies) were pending when the runner last \
-             stopped — marked interrupted"
+             stopped; marked interrupted"
         ),
         Ok(_) => {}
         Err(err) => eprintln!("  could not reconcile conversations: {err}"),
@@ -893,12 +893,12 @@ async fn serve_async(flags: Flags) -> Fallible {
     );
     match &app_dir {
         Some(dir) if is_placeholder_app(dir) => println!(
-            "  app        not built — http://{addr}/ explains what to run\n\
+            "  app        not built; http://{addr}/ explains what to run\n\
              \x20            (`pnpm --filter @farhelm/web build`)"
         ),
         Some(dir) => println!("  app        http://{addr}/  (from {})", dir.display()),
         None => println!(
-            "  app        not found — run `pnpm --filter @farhelm/web build`,\n\
+            "  app        not found; run `pnpm --filter @farhelm/web build`,\n\
              \x20            or pass --app-dir <path> if it is built elsewhere"
         ),
     }
@@ -928,7 +928,7 @@ async fn serve_async(flags: Flags) -> Fallible {
             }
             // Not fatal, and deliberately loud: serving the connector without a
             // verifier would mean serving it unauthenticated.
-            Err(err) => eprintln!("  connector  not served — {err}"),
+            Err(err) => eprintln!("  connector  not served: {err}"),
         }
     }
 
@@ -1037,7 +1037,7 @@ async fn shutdown_signal() {
 /// The budget guard (C5, M4): watch every session's spend and fire once when it
 /// crosses 80%, once more when it hits the cap.
 ///
-/// It polls rather than hooking the ledger write on purpose — spend can arrive
+/// It polls rather than hooking the ledger write on purpose: spend can arrive
 /// from the gateway, a replayed batch, or a manual correction, and a watcher
 /// over the committed state catches all three. At one query per session every
 /// few seconds against a local file, the cost is noise.
@@ -1045,7 +1045,7 @@ async fn shutdown_signal() {
 ///
 /// Two intervals, because the two halves have different costs. Flushing is one
 /// request and can be frequent; collecting means fetching results, so it runs
-/// less often. Neither is urgent — this is the queue for work that can wait, and
+/// less often. Neither is urgent; this is the queue for work that can wait, and
 /// the provider's own ceiling is twenty-four hours.
 ///
 /// Errors are logged and the loop continues. A provider outage must not stop the
@@ -1217,7 +1217,7 @@ fn spawn_demo_activity(state: Arc<AppState>, session_id: String) {
 ///
 /// Derived from the public key rather than random, so it survives a restart
 /// without another file to keep, and derived rather than *being* the key so the
-/// channel id — which the relay sees — is not the thing devices encrypt to.
+/// channel id (which the relay sees) is not the thing devices encrypt to.
 fn machine_channel(identity: &farhelm_crypto::Identity) -> String {
     farhelm_proto::channel_for(identity.public_key().as_str())
 }
@@ -1227,7 +1227,7 @@ fn machine_channel(identity: &farhelm_crypto::Identity) -> String {
 /// Three things are required and none can be guessed: the public URL a client
 /// will reach (only the operator knows what the tunnel maps), the control plane
 /// that mints tokens, and this machine's organisation. Enrolment supplies the
-/// last two, so a runner that never enrolled cannot serve a connector — there
+/// last two, so a runner that never enrolled cannot serve a connector; there
 /// would be no authorization server to trust and no tenant to check against.
 fn mcp_settings(
     flags: &Flags,
@@ -1260,7 +1260,7 @@ fn mcp_settings(
 ///    machine can be pointed somewhere else for one run without disturbing what
 ///    `login` stored.
 /// 2. Whatever `farhelm login` wrote. This is the path that makes a fresh
-///    install a single command with no secret to copy — see [`login`].
+///    install a single command with no secret to copy; see [`login`].
 ///
 /// A URL without a key was once a plausible half-configuration; it is not,
 /// because enrolment is the only thing this link does first and it cannot happen
@@ -1337,7 +1337,7 @@ fn has_terminal() -> bool {
 ///
 /// Reads `/dev/tty` rather than stdin. `setup` is exactly the sort of thing
 /// somebody runs from an install script piped into a shell, where stdin *is the
-/// rest of the script* — a prompt reading it would swallow the remaining lines
+/// rest of the script*, and a prompt reading it would swallow the remaining lines
 /// and act on them. This is the same care `install.sh` documents for `login`.
 ///
 /// Returns `None` when there is no terminal to ask on, which is the caller's cue
@@ -1388,7 +1388,7 @@ fn ask_for(prompt: &str) -> Option<String> {
     (!answer.is_empty()).then_some(answer)
 }
 
-/// `farhelm setup` — every remaining step, in the order they block you.
+/// `farhelm setup`: every remaining step, in the order they block you.
 ///
 /// The steps are the ones `farhelm` with no arguments lists, run rather than
 /// printed. Three properties are the whole point:
@@ -1447,7 +1447,7 @@ fn setup_command(flags: &Flags) -> Fallible {
     let mut skipped: Vec<Step> = Vec::new();
     for step in remaining {
         println!();
-        println!("  \u{1b}[1m{}\u{1b}[0m — {}", step.title(), step.why());
+        println!("  \u{1b}[1m{}\u{1b}[0m: {}", step.title(), step.why());
 
         if confirm("Do it now?") != Some(true) {
             skipped.push(step);
@@ -1470,7 +1470,7 @@ fn setup_command(flags: &Flags) -> Fallible {
                 }
                 None => {
                     skipped.push(step);
-                    println!("  Skipped — no URL given.");
+                    println!("  Skipped: no URL given.");
                     continue;
                 }
             },
@@ -1505,21 +1505,21 @@ fn setup_command(flags: &Flags) -> Fallible {
 /// Enrol this machine by asking, rather than by being told a secret.
 ///
 /// The shape is the OAuth device authorization grant, for the reason it exists:
-/// the thing that needs a credential — a server over SSH, a desktop app on a
-/// laptop — is not the thing that can conveniently show somebody a login page.
+/// the thing that needs a credential (a server over SSH, a desktop app on a
+/// laptop) is not the thing that can conveniently show somebody a login page.
 /// So the machine generates a secret it keeps, gets back eight characters a
 /// person can read off a console, and waits while they approve it wherever they
 /// are already signed in.
 ///
 /// What this replaces is copying `frg_…` by hand, which put a long-lived bearer
 /// credential through a clipboard, a shell history and quite often a chat
-/// message — and could not be done at all on a box whose browser belongs to
+/// message, and could not be done at all on a box whose browser belongs to
 /// somebody else.
 fn login(flags: &Flags) -> Fallible {
     let base_url = flags
         .cloud
         .clone()
-        .ok_or("--cloud <url> is required — that is the control plane to join")?;
+        .ok_or("--cloud <url> is required; that is the control plane to join")?;
     let name = flags.cloud_name.clone().unwrap_or_else(machine_name);
     let path = Path::new(&flags.cloud_file).to_path_buf();
 
@@ -1537,7 +1537,7 @@ fn login(flags: &Flags) -> Fallible {
 /// Run the device flow to completion and write what it yields.
 ///
 /// Shared by [`login`] and by `serve` on a machine that has never enrolled,
-/// because they are the same exchange — one of them just happens to be on the
+/// because they are the same exchange; one of them just happens to be on the
 /// way to somewhere else.
 async fn ask_to_join(
     base_url: &str,
@@ -1561,7 +1561,7 @@ async fn ask_to_join(
 
     loop {
         if tokio::time::Instant::now() >= deadline {
-            return Err("nobody approved that code in time — run `login` again".into());
+            return Err("nobody approved that code in time; run `login` again".into());
         }
         tokio::time::sleep(interval).await;
 
@@ -1580,14 +1580,14 @@ async fn ask_to_join(
                 };
                 credentials.save(path)?;
 
-                println!("  ✔ approved — enrolled as \"{name}\"");
+                println!("  ✔ approved, enrolled as \"{name}\"");
                 println!();
                 println!("  Credentials written to {}", path.display());
                 return Ok(credentials);
             }
             Ok(DeviceAnswer::Denied) => Err("that request was refused")?,
             Ok(DeviceAnswer::Expired) => {
-                Err("that code expired before it was approved — run `login` again")?
+                Err("that code expired before it was approved; run `login` again")?
             }
             // The control plane going away mid-wait is not a refusal. Keep
             // polling: a human walking to another room takes longer than a
@@ -1601,7 +1601,7 @@ async fn ask_to_join(
 /// The control-plane configuration, asking for one if this machine has none.
 ///
 /// `serve` on a machine that had never enrolled used to print a line about
-/// missing flags and carry on serving loopback — technically correct and
+/// missing flags and carry on serving loopback: technically correct and
 /// useless, because the person watching had just typed the one command they
 /// knew and got a daemon nothing could reach.
 ///
@@ -1624,7 +1624,7 @@ async fn cloud_config_or_ask(flags: &Flags) -> Option<farhelm_runner::cloud::Clo
     if !std::io::stdin().is_terminal() {
         eprintln!(
             "  cloud      no credential for {base_url}, and nothing is watching to \
-             approve one — run `farhelm login --cloud {base_url}` here, or set \
+             approve one; run `farhelm login --cloud {base_url}` here, or set \
              FORGE_CLOUD_KEY"
         );
         eprintln!("  cloud      continuing on loopback only");
@@ -1654,7 +1654,7 @@ async fn cloud_config_or_ask(flags: &Flags) -> Option<farhelm_runner::cloud::Clo
 ///
 /// Everything this does could be done by hand, and by hand it is three separate
 /// things to get right: install a CLI, sign in with it, then tell the daemon
-/// where to find it — which means knowing that launchd hands a service its own
+/// where to find it, which means knowing that launchd hands a service its own
 /// environment, that the command therefore needs an absolute path, and which of
 /// several files that service actually sources. None of those are about running
 /// an agent.
@@ -1663,7 +1663,7 @@ async fn cloud_config_or_ask(flags: &Flags) -> Option<farhelm_runner::cloud::Clo
 /// Whatever tool signed in owns the refresh flow and holds the refresh token in
 /// whatever store its platform thinks is right; a login here would be a second
 /// place a refresh token lives and a second thing to keep current. So this
-/// drives `ant` rather than replacing it — you just never have to think about
+/// drives `ant` rather than replacing it; you just never have to think about
 /// `ant`.
 fn auth(flags: &Flags, args: &[String]) -> Fallible {
     use farhelm_runner::cloud::ModelCredential;
@@ -1694,7 +1694,7 @@ fn auth(flags: &Flags, args: &[String]) -> Fallible {
                 Ok(())
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                println!("Nothing stored at {} — nothing to do.", path.display());
+                println!("Nothing stored at {}; nothing to do.", path.display());
                 Ok(())
             }
             Err(err) => Err(err.into()),
@@ -1729,7 +1729,7 @@ fn auth(flags: &Flags, args: &[String]) -> Fallible {
             found
         }
         None => {
-            println!("  ant        not installed — fetching it");
+            println!("  ant        not installed, fetching it");
             install_ant()?
         }
     };
@@ -1744,10 +1744,10 @@ fn auth(flags: &Flags, args: &[String]) -> Fallible {
         .status()
         .map_err(|err| format!("could not run {}: {err}", ant.display()))?;
     if !signed_in.success() {
-        return Err("that sign-in did not complete — nothing was stored".into());
+        return Err("that sign-in did not complete; nothing was stored".into());
     }
 
-    // The absolute path, because the daemon's PATH is not the shell's — the
+    // The absolute path, because the daemon's PATH is not the shell's: the
     // single most likely way this works here and fails there. And
     // `--access-token`, because the bare command prints the whole credentials
     // JSON, which becomes an empty Authorization header.
@@ -1761,7 +1761,7 @@ fn auth(flags: &Flags, args: &[String]) -> Fallible {
         .map_err(|err| format!("could not run {}: {err}", ant.display()))?;
     if !probe.status.success() || probe.stdout.is_empty() {
         return Err(format!(
-            "signed in, but `{command}` produced no token — nothing was stored. {}",
+            "signed in, but `{command}` produced no token; nothing was stored. {}",
             String::from_utf8_lossy(&probe.stderr).trim()
         )
         .into());
@@ -1777,7 +1777,7 @@ fn auth(flags: &Flags, args: &[String]) -> Fallible {
     println!("  \u{2713} signed in, and a token was obtained.");
     println!("  Stored in {}", path.display());
     println!();
-    println!("  Restart the runner and it will use this — nothing to export.");
+    println!("  Restart the runner and it will use this; nothing to export.");
     Ok(())
 }
 
@@ -1794,7 +1794,7 @@ fn shell_quote(value: &str) -> String {
 /// people are on, so the release is listed and the asset matched by name.
 ///
 /// `~/.local/bin` because that is where a user-scoped binary belongs and,
-/// conveniently, what a service's PATH is usually made to include — but the
+/// conveniently, what a service's PATH is usually made to include, but the
 /// stored command uses the absolute path regardless, so it does not matter
 /// whether it is on anyone's PATH.
 fn install_ant() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -1809,7 +1809,7 @@ fn install_ant() -> Result<PathBuf, Box<dyn std::error::Error>> {
         ("linux", "tar.gz")
     } else {
         return Err(
-            "no published build for this platform — install `ant` by hand, \
+            "no published build for this platform; install `ant` by hand, \
                     then run this again"
                 .into(),
         );
@@ -1875,7 +1875,7 @@ fn install_ant() -> Result<PathBuf, Box<dyn std::error::Error>> {
                 format!("{:x}", Sha256::digest(&bytes))
             };
             if got != want_sum {
-                return Err(format!("checksum mismatch for {name} — refusing to install").into());
+                return Err(format!("checksum mismatch for {name}; refusing to install").into());
             }
             println!("             checksum verified");
         }
@@ -1959,7 +1959,7 @@ fn locate_ant() -> Option<PathBuf> {
 /// Written after watching every individual piece report success while the thing
 /// as a whole did nothing. A machine can be installed, enrolled, online and
 /// visible in the fleet, and still be unable to do either of the two things
-/// this product does — because a credential is commented out and no hooks are
+/// this product does, because a credential is commented out and no hooks are
 /// registered. Nothing said so. The banner mentioned both, as facts rather than
 /// as problems, twelve lines apart and only at startup.
 ///
@@ -2022,7 +2022,7 @@ fn doctor(flags: &Flags) -> Fallible {
         match status.get("relay").and_then(|v| v.as_str()) {
             // Configured is not connected. This said "connected" from the URL
             // alone, so a machine whose link had dropped reported a healthy
-            // fleet while no device could reach it — the one failure this
+            // fleet while no device could reach it: the one failure this
             // check exists to catch, reported as its opposite.
             Some(url) if status.get("relay_linked").and_then(|v| v.as_bool()) == Some(false) => {
                 problems += 1;
@@ -2035,7 +2035,7 @@ fn doctor(flags: &Flags) -> Fallible {
             Some(url) => {
                 good("fleet", &format!("connected · {url}"));
                 // The relay is a `wss://` address nobody opens. What a person
-                // actually needs — and what nothing anywhere told them — is the
+                // actually needs (and what nothing anywhere told them) is the
                 // address to type on the phone they want to supervise from. The
                 // machine has known it since it enrolled.
                 if let Ok(Some(stored)) =
@@ -2046,20 +2046,20 @@ fn doctor(flags: &Flags) -> Fallible {
             }
             None => {
                 problems += 1;
-                bad("fleet", "loopback only — no phone can reach this machine");
+                bad("fleet", "loopback only; no phone can reach this machine");
                 fix("farhelm login --cloud <url>, then restart the runner");
             }
         }
 
         // 3. Something to reach it *from*. A relay link with no device on the
-        //    other end is a working connection to nobody — and it looks
+        //    other end is a working connection to nobody, and it looks
         //    completely healthy from here, which is the problem. This check
         //    exists because diagnosing exactly that state took a request log
         //    and a hand-written SQL query, when the count that explains it was
         //    already sitting in the runner's own store.
         // `unwrap_or(0)` here would be a lie with a fix attached: a daemon on an
         // older build does not send this field at all, and reading absent as
-        // zero told a machine with two registered devices that it had none —
+        // zero told a machine with two registered devices that it had none,
         // and offered a fix for a problem it did not have. Missing and zero are
         // different answers, so an absent field reports nothing.
         let devices = status.get("devices").and_then(|v| v.as_i64());
@@ -2070,7 +2070,7 @@ fn doctor(flags: &Flags) -> Fallible {
                 problems += 1;
                 bad(
                     "devices",
-                    "none registered — nothing can reach this machine yet",
+                    "none registered; nothing can reach this machine yet",
                 );
                 fix("open the app and sign in on the phone or browser you want to use");
             } else {
@@ -2098,15 +2098,15 @@ fn doctor(flags: &Flags) -> Fallible {
             println!("                  {why}");
             fix("ant auth login   (then restart the runner)");
         } else if status.get("gateway").and_then(|v| v.as_bool()) == Some(true) {
-            good("gateway", "on — agent tasks can run");
+            good("gateway", "on: agent tasks can run");
         } else {
             problems += 1;
-            bad("gateway", "off — agent tasks cannot run");
+            bad("gateway", "off: agent tasks cannot run");
             fix("farhelm auth   (or --api-key <key>), then restart the runner");
         }
 
         // 5. Hooks. The check the daemon cannot do for itself: these live in
-        //    the *user's* files, and their absence is silent by construction —
+        //    the *user's* files, and their absence is silent by construction:
         //    an agent with no hooks simply never calls.
         use farhelm_runner::setup::HookScope;
 
@@ -2117,7 +2117,7 @@ fn doctor(flags: &Flags) -> Fallible {
                 problems += 1;
                 bad(
                     "supervision",
-                    "no hooks — nothing an agent does will reach this runner",
+                    "no hooks; nothing an agent does will reach this runner",
                 );
                 fix("farhelm install-hooks --global");
             }
@@ -2132,7 +2132,7 @@ fn doctor(flags: &Flags) -> Fallible {
         if agents.is_empty() {
             problems += 1;
             bad("agents", "none installed on this machine");
-            fix("install Claude Code — it is the one verified end to end");
+            fix("install Claude Code; it is the one verified end to end");
         } else {
             good("agents", &agents.join(", "));
         }
@@ -2143,7 +2143,7 @@ fn doctor(flags: &Flags) -> Fallible {
         let sessions = status.get("sessions").and_then(|v| v.as_i64()).unwrap_or(0);
         if sessions == 0 {
             println!(
-                "  \u{b7} sessions      none yet — start an agent in a repo and it \
+                "  \u{b7} sessions      none yet; start an agent in a repo and it \
                  should appear"
             );
         } else {
@@ -2180,13 +2180,13 @@ fn logout(flags: &Flags) -> Fallible {
         Ok(()) => {
             println!("Removed {}.", path.display());
             println!(
-                "The machine stays in the fleet until somebody removes it there — \
+                "The machine stays in the fleet until somebody removes it there; \
                  this only stops *this* copy from reconnecting."
             );
             Ok(())
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            println!("Nothing stored at {} — nothing to do.", path.display());
+            println!("Nothing stored at {}; nothing to do.", path.display());
             Ok(())
         }
         Err(err) => Err(err.into()),
@@ -2196,7 +2196,7 @@ fn logout(flags: &Flags) -> Fallible {
 /// What to call this machine in the fleet.
 ///
 /// The hostname, because that is the name its owner already uses for it. Falls
-/// back to something obviously placeholder rather than something plausible — "a
+/// back to something obviously placeholder rather than something plausible: "a
 /// machine" is clearly unset, `localhost` looks deliberate and would collide.
 fn machine_name() -> String {
     farhelm_app::legacy::env_var("FARHELM_MACHINE_NAME")
@@ -2263,7 +2263,7 @@ fn status(db_path: &str) -> Fallible {
         let pct = budget
             .pct()
             .map(|p| format!("{:.0}%", p * 100.0))
-            .unwrap_or_else(|| "—".to_string());
+            .unwrap_or_else(|| "n/a".to_string());
         println!(
             "  {:<18} {:<10} ${:.4} / {pct}",
             session.status, session.id, budget.spent_usd
@@ -2390,7 +2390,7 @@ mod channel_tests {
     ///
     /// Both this binary and the Tauri app now call `farhelm_proto::channel_for`,
     /// but each keeps its own copy of this assertion: they can be pointed at one
-    /// `forge.key`, and the failure mode if they ever diverge again is silence —
+    /// `forge.key`, and the failure mode if they ever diverge again is silence:
     /// the runner publishes on a channel no paired device is listening to, and
     /// nothing anywhere reports an error.
     #[test]
@@ -2451,7 +2451,7 @@ mod app_dir_tests {
     fn an_installed_layout_is_found_as_well_as_a_checkout_one() {
         // `deploy/redeploy.sh` copies the built app to `<home>/web`, not
         // `<home>/web/dist`. Only the second was searched, so a deployed runner
-        // reported "app not found" with the app one directory away — quietly,
+        // reported "app not found" with the app one directory away, quietly,
         // because the control plane serves the same build from an explicit
         // --app-dir and nothing disagreed out loud.
         let home = TempDir::new("installed");
@@ -2462,7 +2462,7 @@ mod app_dir_tests {
         std::fs::write(web.join("index.html"), "<html></html>").unwrap();
 
         // The search walks up from the binary, so `<home>/bin/farhelm` has to
-        // reach `<home>/web` — which is the layout every installed copy has.
+        // reach `<home>/web`, which is the layout every installed copy has.
         let from_bin = ["web", "../web"]
             .iter()
             .map(|layout| bin.join(layout))
@@ -2481,8 +2481,8 @@ mod app_dir_tests {
     #[test]
     fn the_default_search_finds_the_app_beside_the_binary() {
         // The bug this fixes: the default used to be the literal relative path
-        // `web/dist`, so following the quickstart — which tells you to `cd` into
-        // a state directory — produced a runner that served the API and 404'd
+        // `web/dist`, so following the quickstart (which tells you to `cd` into
+        // a state directory) produced a runner that served the API and 404'd
         // the app.
         //
         // In this test binary the repo is above `target/debug/deps`, so the
@@ -2498,7 +2498,7 @@ mod app_dir_tests {
     #[test]
     fn a_directory_without_an_index_is_not_an_app() {
         // A stale empty `web/dist` from a cleaned build must not be served as if
-        // it were the app — every route would 404 with no explanation.
+        // it were the app; every route would 404 with no explanation.
         let dir = TempDir::new("no-index");
         assert_eq!(resolve_app_dir(Some(&dir.0.display().to_string())), None);
     }
@@ -2506,7 +2506,7 @@ mod app_dir_tests {
     #[test]
     fn the_build_scripts_placeholder_is_served_but_not_called_the_app() {
         // `desktop/src-tauri/build.rs` writes an index.html so that cargo does
-        // not depend on pnpm. It is worth serving — it says what to run — but
+        // not depend on pnpm. It is worth serving (it says what to run), but
         // reporting it as the app would mean a banner that disagrees with the
         // page it points at.
         let dir = TempDir::new("placeholder").with_index();

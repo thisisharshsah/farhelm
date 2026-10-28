@@ -53,7 +53,7 @@ public enum SecretBox {
             ciphertext[index] = plaintext[index] ^ stream[32 + index]
         }
 
-        // Authenticate the ciphertext, not the plaintext — encrypt-then-MAC.
+        // Authenticate the ciphertext, not the plaintext: encrypt-then-MAC.
         let tag = Poly1305.authenticate(message: ciphertext, key: polyKey)
         return tag + ciphertext
     }
@@ -87,7 +87,7 @@ public enum SecretBox {
 
 /// NaCl `crypto_box`: X25519 key agreement feeding [`SecretBox`].
 ///
-/// The shared secret is *not* the raw X25519 output — NaCl runs it through
+/// The shared secret is *not* the raw X25519 output; NaCl runs it through
 /// HSalsa20 with a zero nonce first. Skipping that step produces a cipher that
 /// works perfectly against itself and interoperates with nothing, which is
 /// exactly the failure `InteropTests` exists to catch.

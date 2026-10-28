@@ -232,7 +232,7 @@ export function Overview({
                             </span>
                             {session.plan.settled}/{session.plan.total}
                           </span>
-                        ) : <span className="muted">—</span>}
+                        ) : <span className="muted">None</span>}
                       </td>
                       <td className="col-budget"><BudgetMeter budget={session.budget} compact /></td>
                       <td className="muted">{AUTO_APPROVE_LABEL[session.auto_approve ?? "off"]}</td>

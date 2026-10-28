@@ -1,4 +1,4 @@
-//! The cost ledger — pipeline stage 8.
+//! The cost ledger: pipeline stage 8.
 //!
 //! Every model-bound call ends here: priced once, written once, and added to
 //! the session's spend in the same transaction. The ledger exists before the
@@ -57,7 +57,7 @@ pub struct Call<'a> {
     /// Which model ran it.
     pub tier: Tier,
     /// Live or batched. This, not [`Call::tier`], is what applies the 50%
-    /// discount — deferring a call halves the price of whatever model runs it,
+    /// discount: deferring a call halves the price of whatever model runs it,
     /// and the two used to be the same field.
     pub dispatch: Dispatch,
     pub task_type: TaskType,
@@ -111,7 +111,7 @@ impl<'a> Call<'a> {
     /// The same call, dispatched through the Batch API.
     ///
     /// Halves the price of whatever model ran it. Legitimate in exactly one
-    /// place — where a batch result settles and the tokens really did go through
+    /// place: where a batch result settles and the tokens really did go through
     /// the Batch API. Anywhere else it is a discount the bill never got.
     pub fn batched(self) -> Self {
         Self {
@@ -152,7 +152,7 @@ impl<S: LedgerStore> Ledger<S> {
             batch: call.dispatch == Dispatch::Batch,
         };
 
-        // An avoided call never reached the provider, so it bills nothing —
+        // An avoided call never reached the provider, so it bills nothing,
         // even if a caller hands us token counts by mistake.
         let (usage, cost_usd) = match call.avoided {
             Some(_) => (Usage::default(), 0.0),
@@ -269,15 +269,15 @@ mod tests {
     ///
     /// Four methods, because [`LedgerStore`] is four methods. These tests used
     /// to open a real SQLite database and write a machine, a repo and a session
-    /// first — none of which the ledger reads — purely to satisfy foreign keys
+    /// first (none of which the ledger reads) purely to satisfy foreign keys
     /// on the one table it does write. That was the price of a forty-method
     /// port: the only thing that implemented it was the real thing.
     ///
     /// It also cannot be a real store any more, and the reason is worth writing
     /// down: `farhelm-sqlite` depends on this crate, so reaching back for it as a
-    /// dev-dependency gives Cargo two compilations of `farhelm-app` — the lib one
+    /// dev-dependency gives Cargo two compilations of `farhelm-app` (the lib one
     /// `farhelm-sqlite` implements against, and the `--cfg test` one these tests
-    /// run in — whose traits are *different types*. The fake is both the better
+    /// run in), whose traits are *different types*. The fake is both the better
     /// test and the only one that compiles.
     #[derive(Default)]
     struct FakeLedgerStore {
@@ -321,7 +321,7 @@ mod tests {
             }))
         }
 
-        /// Spend summed from what was recorded — the invariant the real store
+        /// Spend summed from what was recorded: the invariant the real store
         /// keeps in a transaction: a call that was billed moves the budget.
         fn session_budget(&self, session_id: &str) -> crate::store::Result<Budget> {
             Ok(Budget {
@@ -459,7 +459,7 @@ mod tests {
     fn the_tier_alone_no_longer_buys_a_discount() {
         // `Tier::Batch` survives as a plan-file pin and as a legacy stored
         // value. Neither may quietly halve a bill: only `.batched()`, which is
-        // reachable from exactly one place — a batch result settling.
+        // reachable from exactly one place: a batch result settling.
         let ledger = ledger();
         let priced_as = |tier| {
             ledger

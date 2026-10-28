@@ -3,7 +3,7 @@
  *
  * A paired device only sees what the runner says while it is connected. The
  * relay is the only always-reachable party, so it is what wakes a sleeping
- * phone — but it cannot read the envelope that triggered the wake-up, so the
+ * phone, but it cannot read the envelope that triggered the wake-up, so the
  * push carries **no payload**. The device wakes, connects, decrypts locally, and
  * only then knows what happened.
  *
@@ -11,8 +11,8 @@
  * nothing truthful to put in one until the device has opened an envelope.
  *
  * This module is the platform-free half: fetching the relay's VAPID key and
- * registering a subscription. Getting the subscription itself is per-platform —
- * `PushManager` on the web, APNs/FCM on React Native — so it is passed in.
+ * registering a subscription. Getting the subscription itself is per-platform
+ * (`PushManager` on the web, APNs/FCM on React Native), so it is passed in.
  */
 
 import { ApiError } from "./api.ts";
@@ -31,7 +31,7 @@ export interface PushSubscription {
 /**
  * Fetch the relay's `applicationServerKey`.
  *
- * Public by definition — a browser cannot subscribe without it — and it
+ * Public by definition (a browser cannot subscribe without it) and it
  * authenticates the *relay* to the push service, not the other way round.
  * Returns `null` when the relay was started without push configured, which is a
  * supported way to run one rather than an error.
@@ -78,7 +78,7 @@ export function httpFrom(relayUrl: string): string {
 /**
  * The `applicationServerKey` as `pushManager.subscribe` wants it.
  *
- * It takes raw bytes, not the base64url string the relay serves — passing the
+ * It takes raw bytes, not the base64url string the relay serves; passing the
  * string produces an `InvalidCharacterError` from deep inside the Push API with
  * nothing pointing at the cause.
  *

@@ -5,7 +5,7 @@
 -- set, a human approves or rejects it from a phone, and only then does anything
 -- reach the working tree.
 --
--- Two columns carry JSON, for the same reason `batch_item.request_json` does —
+-- Two columns carry JSON, for the same reason `batch_item.request_json` does:
 -- keeping the domain crate free of a JSON dependency, and storing the exact
 -- bytes that were decided on rather than something rebuilt later:
 --

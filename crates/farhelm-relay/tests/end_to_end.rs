@@ -140,7 +140,7 @@ async fn a_relay_operator_replaying_an_envelope_cannot_forge_a_decision() {
     let mut attacker_socket = connect(addr, channel).await;
 
     // The attacker controls the relay, so it can join any channel and send
-    // anything. It knows the runner's public key — that travels in the QR.
+    // anything. It knows the runner's public key; that travels in the QR.
     let forged = attacker
         .seal_json(channel, "phone", runner.public_key(), &"approved")
         .unwrap();
@@ -148,7 +148,7 @@ async fn a_relay_operator_replaying_an_envelope_cannot_forge_a_decision() {
 
     let received = recv(&mut runner_socket).await;
 
-    // It arrives — the relay will carry anything. It does not authenticate:
+    // It arrives: the relay will carry anything. It does not authenticate:
     // the runner verifies against the *paired phone's* key and the forgery fails.
     assert!(
         runner
@@ -206,7 +206,7 @@ async fn the_relay_keeps_nothing_after_everyone_leaves() {
     }
 
     // Both connections dropped. Give the relay a moment to notice, then confirm
-    // it is holding no channels — there is no history for anyone to demand.
+    // it is holding no channels; there is no history for anyone to demand.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let health: serde_json::Value = reqwest_get(addr, "/v1/health").await;
     assert_eq!(health["channels"], 0, "the relay retained a channel");

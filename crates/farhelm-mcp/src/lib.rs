@@ -1,7 +1,7 @@
 //! Farhelm as a remote MCP server.
 //!
-//! This is the "custom connector" surface: Claude — running on Anthropic's
-//! infrastructure, not on your machine — calls in over HTTPS and gets a set of
+//! This is the "custom connector" surface: Claude (running on Anthropic's
+//! infrastructure, not on your machine) calls in over HTTPS and gets a set of
 //! tools it can use during a conversation.
 //!
 //! # Which way the arrows point
@@ -45,7 +45,7 @@ pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The audience an MCP access token carries.
 ///
 /// Distinct from the `api` and `relay` audiences so a token good for the
-/// connector cannot be replayed against the control plane's own API — Claude is
+/// connector cannot be replayed against the control plane's own API: Claude is
 /// a third party, and a token it holds should reach exactly the tool surface it
 /// was granted and nothing else.
 pub const MCP_AUDIENCE: farhelm_crypto::token::Audience = farhelm_crypto::token::Audience::Mcp;

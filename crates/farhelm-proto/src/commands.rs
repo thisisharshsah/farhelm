@@ -28,7 +28,7 @@ use crate::types::Decision;
 /// and no `type`, a `Command` has `type` and no `protocol`. `serde(untagged)`
 /// tries each in order.
 ///
-/// The cost of untagged is a poor error message when neither matches — serde
+/// The cost of untagged is a poor error message when neither matches; serde
 /// reports "data did not match any variant" rather than naming the field that
 /// was wrong. That is acceptable here because the sender is a paired device
 /// whose message already decrypted, so a malformed frame is a version skew
@@ -60,7 +60,7 @@ pub enum Command {
     },
     /// Ask for one session's detail: plan, output tail, pending approval.
     SessionSnapshot { session_id: String },
-    /// Ask for one session's cost dashboard — the third snapshot type.
+    /// Ask for one session's cost dashboard: the third snapshot type.
     ///
     /// `since_ms` bounds the window the same way `?since_ms=` does on the HTTP
     /// endpoint. `None` means everything, which is what the screen opens with.
@@ -85,7 +85,7 @@ pub enum Command {
     },
     /// Ask for one task's detail, including the diff to review.
     TaskSnapshot { task_id: String },
-    /// Ask for the task list. No diffs — see [`crate::views::TaskView`].
+    /// Ask for the task list. No diffs; see [`crate::views::TaskView`].
     TaskList,
     /// Take an applied change set back off the working tree.
     ///
@@ -95,8 +95,8 @@ pub enum Command {
     RevertTask { task_id: String },
     /// Ask for the current fleet.
     ///
-    /// A device on the relay has no request/response channel — it receives
-    /// events on one socket and sends on the same one — so "what is the state
+    /// A device on the relay has no request/response channel (it receives
+    /// events on one socket and sends on the same one), so "what is the state
     /// right now" has to be a message like any other. The HTTP client uses
     /// `GET /v1/fleet` instead and never sends this.
     Snapshot,
@@ -110,7 +110,7 @@ pub enum Command {
     //
     // What changed is *who is asking*. A device on the relay used to be
     // whoever held a keypair from a QR code. It is now a device registered to a
-    // named account, in an organisation, with a role — and revocable from the
+    // named account, in an organisation, with a role, and revocable from the
     // web app in fifteen minutes. That is a strong enough answer to "who is
     // starting this process" to let the fleet be driven from a phone.
     //

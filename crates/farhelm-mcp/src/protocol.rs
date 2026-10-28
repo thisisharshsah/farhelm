@@ -4,14 +4,14 @@
 //! tools-only server is four methods, and a general-purpose JSON-RPC crate
 //! would bring a transport abstraction this does not use plus its own opinion
 //! about async. What matters here is being *exactly* right about the shapes
-//! Claude sends and expects, which is easier to see — and to test — in a
+//! Claude sends and expects, which is easier to see (and to test) in a
 //! hundred lines than through a framework.
 //!
 //! # The one asymmetry worth knowing
 //!
 //! A JSON-RPC **notification** has no `id` and must produce no response body.
 //! Claude sends `notifications/initialized` after the handshake, and a server
-//! that answers it with a result — or worse, an error — is a server that looks
+//! that answers it with a result (or worse, an error) is a server that looks
 //! broken at exactly the moment the connection is being established. That is
 //! why [`Request::is_notification`] exists and why every dispatch path checks it.
 
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Claude negotiates: it sends the version it wants, and a server that speaks
 /// something else answers with what it *does* speak rather than failing. So an
-/// unknown version is not an error — see [`negotiate`].
+/// unknown version is not an error; see [`negotiate`].
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Revisions this server can actually talk, newest first.
@@ -63,7 +63,7 @@ pub struct Request {
 }
 
 impl Request {
-    /// A notification expects no response at all — not even an error.
+    /// A notification expects no response at all, not even an error.
     pub fn is_notification(&self) -> bool {
         self.id.is_none()
     }
@@ -107,7 +107,7 @@ pub struct ResponseError {
 
 impl ResponseError {
     /// The four JSON-RPC codes this server can produce. Application failures do
-    /// **not** use these — see [`ToolOutcome`].
+    /// **not** use these; see [`ToolOutcome`].
     pub const PARSE_ERROR: i32 = -32700;
     pub const INVALID_REQUEST: i32 = -32600;
     pub const METHOD_NOT_FOUND: i32 = -32601;
@@ -138,7 +138,7 @@ impl ResponseError {
 /// A tool, as `tools/list` describes it.
 ///
 /// `input_schema` is JSON Schema. Claude reads it to decide how to call the
-/// tool, so a vague schema produces vague calls — every property carries a
+/// tool, so a vague schema produces vague calls; every property carries a
 /// description for the same reason a function signature carries names.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolSpec {
@@ -152,7 +152,7 @@ pub struct ToolSpec {
 ///
 /// # Why a failure is not a JSON-RPC error
 ///
-/// A tool that fails has still been *called successfully* — the protocol worked.
+/// A tool that fails has still been *called successfully*: the protocol worked.
 /// Returning a JSON-RPC error would tell Claude the call could not be made,
 /// which is a different fact and one it cannot act on. `is_error` inside the
 /// result lets Claude read what went wrong and try something else, which is the
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn an_id_of_zero_is_still_an_id() {
-        // `Option` on a JSON value, not a truthiness check — id 0 and id null
+        // `Option` on a JSON value, not a truthiness check: id 0 and id null
         // are different requests and only one of them wants an answer.
         let call: Request =
             serde_json::from_str(r#"{"jsonrpc":"2.0","id":0,"method":"ping"}"#).unwrap();
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn a_tool_spec_renders_the_schema_key_camel_cased() {
-        // `inputSchema`, not `input_schema` — a snake_case key means Claude
+        // `inputSchema`, not `input_schema`; a snake_case key means Claude
         // sees a tool with no schema and calls it with nothing.
         let spec = ToolSpec {
             name: "x",

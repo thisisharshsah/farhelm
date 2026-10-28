@@ -6,21 +6,21 @@
 //! is not installed by default on macOS, and asking someone to set it up before
 //! they can try the product is a bad first five minutes.
 //!
-//! This backend owns the pseudo-terminals itself. It works everywhere —
-//! including Windows, via ConPTY — and needs nothing installed.
+//! This backend owns the pseudo-terminals itself. It works everywhere,
+//! including Windows, via ConPTY, and needs nothing installed.
 //!
 //! # The trade it makes, stated plainly
 //!
 //! **Sessions die with the runner.** A tmux pane survives; a PTY this process
 //! owns does not. That is a real regression for a long-running server, and it is
 //! why tmux stays the default where it is available. The desktop app uses this
-//! backend because a desktop app *is* the process you are looking at — if it is
+//! backend because a desktop app *is* the process you are looking at: if it is
 //! gone, you were not supervising anything anyway.
 //!
 //! # Scrollback
 //!
 //! tmux keeps scrollback and `capture-pane` reads it. A raw PTY has none, so
-//! this keeps its own ring buffer per session — bounded, because an agent that
+//! this keeps its own ring buffer per session, bounded, because an agent that
 //! prints for six hours must not become the reason the machine runs out of
 //! memory.
 
@@ -177,7 +177,7 @@ impl Terminal for PtyTerminal {
                         if !partial.is_empty() {
                             lines.push(strip_ansi(&partial));
                             partial.clear();
-                            // The fragment is provisional — the next read
+                            // The fragment is provisional: the next read
                             // usually completes it, so it is replaced rather
                             // than appended to.
                             if lines.len() >= 2 {
@@ -215,7 +215,7 @@ impl Terminal for PtyTerminal {
 
     async fn send_line(&self, target: &str, text: &str) -> Result<(), TerminalError> {
         self.with_pane(target, |pane| {
-            // Written as bytes, never interpolated into a shell command — the
+            // Written as bytes, never interpolated into a shell command, the
             // same reasoning as tmux's `send-keys -l`. An instruction containing
             // `C-c` is text, not a control sequence.
             pane.writer
@@ -261,7 +261,7 @@ impl Terminal for PtyTerminal {
 
 /// Is this binary on `PATH`?
 ///
-/// A PTY spawn cannot report a missing binary — it forks first, and the exec
+/// A PTY spawn cannot report a missing binary: it forks first, and the exec
 /// failure happens in the child, so the parent gets a live handle either way.
 /// Without this check, starting a session with an agent that is not installed
 /// looks like a session that mysteriously dies a moment later.
@@ -286,7 +286,7 @@ pub fn binary_exists(binary: &str) -> bool {
 /// Strip ANSI escape sequences.
 ///
 /// Agents colour their output and redraw with cursor moves. Left in, the escape
-/// bytes reach the phone as mojibake and — worse — break the prompt patterns in
+/// bytes reach the phone as mojibake and (worse) break the prompt patterns in
 /// [`farhelm_domain::agent`], because `\x1b[32mProceed?` does not contain `proceed?`
 /// at a position any human would recognise.
 pub fn strip_ansi(input: &str) -> String {
@@ -303,7 +303,7 @@ pub fn strip_ansi(input: &str) -> String {
             continue;
         }
         match chars.next() {
-            // CSI — runs until a byte in `@`..`~`.
+            // CSI: runs until a byte in `@`..`~`.
             Some('[') => {
                 for next in chars.by_ref() {
                     if ('\x40'..='\x7e').contains(&next) {
@@ -311,7 +311,7 @@ pub fn strip_ansi(input: &str) -> String {
                     }
                 }
             }
-            // OSC — runs until BEL or ST.
+            // OSC: runs until BEL or ST.
             Some(']') => {
                 while let Some(next) = chars.next() {
                     if next == '\x07' {

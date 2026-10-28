@@ -2,7 +2,7 @@
  * The watch tab: pair the wrist, and explain what it can and cannot do.
  *
  * The phone's only role in the watch's life is claiming a pairing code on its
- * behalf — see `src/watch/bridge.ts` for why the watch is a device in its own
+ * behalf; see `src/watch/bridge.ts` for why the watch is a device in its own
  * right rather than a remote control for this app.
  */
 
@@ -52,7 +52,7 @@ export function WatchScreen({
       (result) => {
         setStatus(
           result.kind === "pair-response"
-            ? `Paired — the watch is device ${result.device_id}. It talks to the relay on its own from here.`
+            ? `Paired: the watch is device ${result.device_id}. It talks to the relay on its own from here.`
             : `Could not pair the watch: ${result.message}`,
         );
       },
@@ -83,11 +83,11 @@ export function WatchScreen({
                 ? "Checking…"
                 : reachable
                   ? "Watch is reachable."
-                  : "Watch is paired but not reachable right now — open the Farhelm app on it."}
+                  : "Watch is paired but not reachable right now. Open the Farhelm app on it."}
             </Text>
             <Text style={{ color: palette.textSecondary, fontSize: 13 }}>
               On the watch, open Farhelm and tap <Text style={{ fontWeight: "600" }}>Pair</Text>. It
-              generates its own key and asks this phone to redeem a code for it —
+              generates its own key and asks this phone to redeem a code for it;
               the key itself never leaves your wrist.
             </Text>
             <Text style={{ color: palette.textMuted, fontSize: 12 }}>
@@ -121,7 +121,7 @@ export function WatchScreen({
           Approve or deny an ordinary tool call, in one tap.
         </Bullet>
         <Bullet palette={palette}>
-          Show plan progress — step 3 of 7, and what step 3 is.
+          Show plan progress: step 3 of 7, and what step 3 is.
         </Bullet>
         <Bullet palette={palette}>Show the budget as it fills.</Bullet>
 
@@ -131,7 +131,7 @@ export function WatchScreen({
           What it deliberately cannot
         </Text>
         <Bullet palette={palette}>
-          Approve a destructive command. Those need the phone — the rule is
+          Approve a destructive command. Those need the phone; the rule is
           enforced by the runner against the watch's registered device kind, so
           it holds even if the watch app is modified.
         </Bullet>

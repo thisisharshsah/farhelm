@@ -1,4 +1,4 @@
-# 0008 — Project-owned local agent runs
+# 0008: Project-owned local agent runs
 
 Status: implemented initial local workflow, 2026-10-25. This extends
 [ADR 0007](0007-local-project-api.md) with registered repository attachment and

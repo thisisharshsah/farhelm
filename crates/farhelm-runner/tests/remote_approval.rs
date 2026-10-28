@@ -3,7 +3,7 @@
 //! > approve a real agent action from a phone, laptop lid closed, runner on VPS
 //!
 //! A real relay, a real runner-side link, and a simulated phone that holds its
-//! own keypair. The phone never touches the runner's HTTP API — everything goes
+//! own keypair. The phone never touches the runner's HTTP API; everything goes
 //! through the relay as ciphertext, which is the whole point.
 
 use farhelm_sqlite::SqliteStore;
@@ -158,7 +158,7 @@ impl Phone {
             };
             let envelope: Envelope = serde_json::from_str(&text).unwrap();
             // Envelopes for *other* devices are on the same channel and simply
-            // do not open — which is the isolation working, not an error.
+            // do not open, which is the isolation working, not an error.
             if let Ok(value) = self.identity.open_json(runner_public, &envelope) {
                 return value;
             }
@@ -202,7 +202,7 @@ async fn a_phone_approves_through_the_relay_and_the_runner_records_it() {
     // Give the runner's link time to connect before the phone speaks.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // The phone approves — sealed, over the relay, never touching HTTP.
+    // The phone approves: sealed, over the relay, never touching HTTP.
     phone
         .send(
             runner_identity.public_key(),
@@ -267,7 +267,7 @@ async fn a_watch_cannot_clear_a_destructive_command_over_the_relay_either() {
             .unwrap()
             .unwrap()
             .is_pending(),
-        "a watch cleared a destructive command over the relay — the D3 guard is \
+        "a watch cleared a destructive command over the relay; the D3 guard is \
          not shared between transports"
     );
 }

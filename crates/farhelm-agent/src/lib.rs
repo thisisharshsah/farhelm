@@ -2,7 +2,7 @@
 //!
 //! Everything else in this workspace supervises *somebody else's* agent: the
 //! hook bridge answers Claude Code's permission prompts, the terminal watcher
-//! reads Aider's questions off a pane. This crate is the other half — the
+//! reads Aider's questions off a pane. This crate is the other half: the
 //! runner doing the work itself, so that a task can be started from a phone and
 //! come back as a diff rather than as a pane full of scrollback.
 //!
@@ -22,20 +22,20 @@
 //! 1. **Edits land on a branch of the task's own, never on yours.** Nothing
 //!    reaches the branch you are sitting on until somebody approves the whole
 //!    change set, and approving is a fast-forward merge. Because the work is
-//!    somewhere real, the agent's own tests see its own edits — which is what
+//!    somewhere real, the agent's own tests see its own edits, which is what
 //!    the staging overlay this replaced could not do. See [`git`].
 //! 2. **Only `run` needs a card.** Approving twelve edits one at a time is a
 //!    captcha, not supervision; the edits are reviewed together, as a diff.
 //!    Commands go through the classifier every other agent already uses. See
 //!    [`tools`].
 //! 3. **Every model call goes through the cost gateway.** The loop is a caller
-//!    of the pipeline, not a second route to a provider — otherwise budgets,
+//!    of the pipeline, not a second route to a provider; otherwise budgets,
 //!    routing and the ledger would all become advisory. See [`task`].
 //!
 //! And one cost decision that shapes the rest: the loop **drafts on the large
 //! tier and verifies once on the frontier one** (C10). Drafting is where the
-//! tokens are — a dozen turns each carrying a repo map and a growing pile of
-//! tool results — and most of it is looking things up. The judgement at the end
+//! tokens are (a dozen turns each carrying a repo map and a growing pile of
+//! tool results), and most of it is looking things up. The judgement at the end
 //! is what deserves the best model, and it only needs to see the diff. See
 //! [`verify`].
 

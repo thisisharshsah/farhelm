@@ -7,7 +7,7 @@
  * looking for it, the device silently becomes a stranger and has to be paired
  * again. Nobody would call that a rename.
  *
- * So a read misses on the new key, tries the old one, and — having found it —
+ * So a read misses on the new key, tries the old one, and (having found it)
  * writes it forward and drops the old copy. The move happens once, on the first
  * read after the upgrade, and after that there is nothing legacy left on the
  * device.
@@ -53,7 +53,7 @@ export async function getMigrating(
 /**
  * The synchronous form, for `localStorage`-backed preferences.
  *
- * Preferences are not pairings — losing one costs a theme, not a device. It is
+ * Preferences are not pairings: losing one costs a theme, not a device. It is
  * still worth carrying across, because a settings screen that resets itself on
  * upgrade reads as a bug whatever it actually cost.
  */

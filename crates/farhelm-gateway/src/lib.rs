@@ -15,7 +15,7 @@
 //! | 4 router | [`router`] | not paying frontier rates for triage |
 //! | 5 context | [`context`] | sending line ranges instead of whole files |
 //! | 6 assembler | [`prompt`] | keeping the prompt prefix byte-stable so it caches |
-//! | 7 dispatch | [`dispatch`] | (batch deferral, C6 — not built) |
+//! | 7 dispatch | [`dispatch`] | (batch deferral, C6, not built) |
 //! | 8 ledger | `farhelm_app::ledger` | pricing once, at write time |
 //!
 //! Stages 2 and 3 are zero-cost exits; 4, 5 and 6 shrink what a call costs.

@@ -16,7 +16,7 @@
  *
  * TypeScript types are erased at runtime, so a test cannot ask an interface what
  * its fields are. Each list below is tied to its interface by a compile-time
- * assertion — `Exhaustive<...>` fails to compile if the list omits a key the
+ * assertion: `Exhaustive<...>` fails to compile if the list omits a key the
  * interface declares. So the list cannot drift from the type, and the runtime
  * check then proves the Rust side still sends every one of them.
  *
@@ -147,7 +147,7 @@ const WORKSPACE_LISTS_ARE_COMPLETE: [
 ] = [true, true, true, true, true, true];
 
 /**
- * The compile-time half, collected so the assertions are *used* — an unread
+ * The compile-time half, collected so the assertions are *used*: an unread
  * `const` trips `noUnusedLocals`, and a check nobody reads is a check that gets
  * deleted. Each entry is `true` only if its list above covers every key of the
  * interface; otherwise this array stops type-checking and names the key that
@@ -186,7 +186,7 @@ function hasEveryKey(
   const missing = expected.filter((key) => !(key in actual));
   expect(
     missing,
-    `${what}: the Rust fixture is missing ${missing.join(", ")} — either the ` +
+    `${what}: the Rust fixture is missing ${missing.join(", ")}; either the ` +
       `field was renamed or removed on the Rust side, or api.ts is describing ` +
       `a shape that no longer exists`,
   ).toEqual([]);
@@ -387,7 +387,7 @@ describe("the events and commands", () => {
   /**
    * The tags a client switches on. `command_error` is in this list even though
    * no ServerEvent variant produces it: it arrives on the same socket, and a
-   * client that does not handle it shows nothing when a command is refused —
+   * client that does not handle it shows nothing when a command is refused,
    * which is the worst failure a remote control surface can have.
    */
   it("uses the tags the clients switch on", () => {
@@ -432,7 +432,7 @@ describe("the events and commands", () => {
 
   it("spells the enums the way api.ts spells them", () => {
     // The storage form and the JSON form are the same string by construction in
-    // Rust (`text_enum!`). This is the check that api.ts's union types agree —
+    // Rust (`text_enum!`). This is the check that api.ts's union types agree:
     // `claude-code` was once `claude_code` over the wire, and the API could not
     // parse the agent id its own endpoint advertised.
     const session = first(fixture.fleet_view.sessions, "sessions");

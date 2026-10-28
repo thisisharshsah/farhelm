@@ -59,8 +59,8 @@ it("filters distinct repositories with the same name and recovers a removed sele
   await render([first, second]);
   const select = host.querySelector<HTMLSelectElement>('select[aria-label="Filter by repository"]')!;
   expect(Array.from(select.options).map((option) => option.value)).toEqual(["all", "repo-a", "repo-b"]);
-  expect(select.textContent).toContain("app — /synthetic/a");
-  expect(select.textContent).toContain("app — /synthetic/b");
+  expect(select.textContent).toContain("app: /synthetic/a");
+  expect(select.textContent).toContain("app: /synthetic/b");
   await act(async () => {
     select.value = "repo-a";
     select.dispatchEvent(new Event("change", { bubbles: true }));

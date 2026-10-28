@@ -1,8 +1,8 @@
 //! This machine as a remote MCP server.
 //!
 //! The second half of the connector story. The control plane's connector knows
-//! the *fleet*; this one knows what is actually happening on one machine —
-//! sessions, pending approvals, proposed diffs, what it all cost — because the
+//! the *fleet*; this one knows what is actually happening on one machine (
+//! sessions, pending approvals, proposed diffs, what it all cost) because the
 //! data is already here in plaintext. Nothing new decrypts anything: the
 //! alternative was giving the control plane a device key, which would have
 //! ended the property that compromising it costs you access rather than
@@ -10,7 +10,7 @@
 //!
 //! # Resource server, not authorization server
 //!
-//! There is exactly one authorization server — the control plane — so a person
+//! There is exactly one authorization server (the control plane), so a person
 //! signs in once, with the account they already have. This server publishes
 //! metadata pointing at it and verifies the tokens it mints, the same way
 //! `farhelm-relay` verifies channel tokens. It holds no client registry, no
@@ -19,14 +19,14 @@
 //! # Two checks, not one
 //!
 //! A valid token is not sufficient. It must also carry **this machine's
-//! organisation** — otherwise any Farhelm account anywhere could point a
+//! organisation**; otherwise any Farhelm account anywhere could point a
 //! connector at this URL and read someone else's sessions. [`Gate::admit`] is
 //! where both checks live.
 //!
 //! # What a connector may not do
 //!
 //! Clear a destructive command. `farhelm_domain`'s rule bars it at the executor,
-//! so it holds on this path as it does on every other — but it is worth saying
+//! so it holds on this path as it does on every other, but it is worth saying
 //! here too, because this is the surface where it would be most tempting to
 //! make an exception. An agent that could approve its own `rm -rf` is an agent
 //! supervising itself.
@@ -51,7 +51,7 @@ use crate::state::AppState;
 #[derive(Clone)]
 pub struct Gate {
     /// The control plane's verifying half. Fetched at startup, exactly as the
-    /// relay fetches it — this process cannot mint a token.
+    /// relay fetches it; this process cannot mint a token.
     pub verifier: TokenVerifier,
     /// The organisation this machine belongs to. A token for any other is
     /// refused even though it is perfectly valid.
@@ -73,7 +73,7 @@ impl Gate {
         // every Farhelm account on the internet can read this machine.
         if claims.org != self.org_id {
             eprintln!(
-                "mcp: refused a token for {} — this machine belongs to {}",
+                "mcp: refused a token for {}: this machine belongs to {}",
                 claims.org, self.org_id
             );
             return None;
@@ -200,7 +200,7 @@ fn specs() -> Vec<protocol::ToolSpec> {
             name: "list_approvals",
             description: "List the commands waiting for a human decision, with the exact command text \
                  and how risky it was judged to be. Call this when the user asks whether \
-                 anything is blocked, or before deciding anything — an agent stalls until \
+                 anything is blocked, or before deciding anything; an agent stalls until \
                  these are answered.",
             input_schema: object_schema(&[]),
         },
@@ -208,7 +208,7 @@ fn specs() -> Vec<protocol::ToolSpec> {
             name: "decide_approval",
             description: "Approve or deny one pending command, unblocking the agent that is waiting. \
                  Destructive commands are refused here by design and must be cleared by a \
-                 person. Call this only when the user has told you what they want done — read \
+                 person. Call this only when the user has told you what they want done; read \
                  the command back to them first if there is any doubt.",
             input_schema: object_schema(&[
                 ("approval_id", "Which approval, from list_approvals.", true),
@@ -233,14 +233,14 @@ fn specs() -> Vec<protocol::ToolSpec> {
             name: "review_task",
             description: "Approve a proposed change set onto disk, or reject it with a reason the next \
                  attempt will be given. Nothing is written until this is called. Call this only \
-                 on the user's explicit instruction — you are applying edits to their working \
+                 on the user's explicit instruction; you are applying edits to their working \
                  tree.",
             input_schema: object_schema(&[
                 ("task_id", "Which task, from list_tasks.", true),
                 ("decision", "Either `approve` or `reject`.", true),
                 (
                     "note",
-                    "Why. Required in spirit for a rejection — it is handed to the next attempt.",
+                    "Why. Required in spirit for a rejection; it is handed to the next attempt.",
                     false,
                 ),
             ]),
@@ -249,7 +249,7 @@ fn specs() -> Vec<protocol::ToolSpec> {
             name: "start_task",
             description: "Point this machine's coding agent at a repository. It proposes a diff rather \
                  than editing the working tree, and every model call it makes goes through the \
-                 cost gateway — cache, cheaper-tier routing, compaction, batching. Call this \
+                 cost gateway: cache, cheaper-tier routing, compaction, batching. Call this \
                  when the user asks for a code change to be attempted here.",
             input_schema: object_schema(&[
                 (
@@ -286,7 +286,7 @@ async fn call(
     caller: &Caller,
 ) -> ToolOutcome {
     // Everything a connector does is recorded as one, never disguised as a
-    // person — the audit trail's whole job is telling those apart.
+    // person; the audit trail's whole job is telling those apart.
     let via = DecidedVia::Connector;
 
     match name {
@@ -317,7 +317,7 @@ async fn call(
                 "denied" | "deny" | "reject" => Decision::Denied,
                 other => {
                     return ToolOutcome::error(format!(
-                        "`{other}` is not a decision — use `approved` or `denied`"
+                        "`{other}` is not a decision; use `approved` or `denied`"
                     ));
                 }
             };
@@ -366,7 +366,7 @@ async fn call(
                 "reject" | "rejected" | "deny" => farhelm_proto::commands::Review::Reject,
                 other => {
                     return ToolOutcome::error(format!(
-                        "`{other}` is not a review — use `approve` or `reject`"
+                        "`{other}` is not a review; use `approve` or `reject`"
                     ));
                 }
             };
@@ -427,7 +427,7 @@ async fn call(
 /// Run a command through the shared executor.
 ///
 /// Everything goes through [`crate::commands::execute`] rather than touching
-/// the store directly — that is where the destructive-command rule lives, and a
+/// the store directly: that is where the destructive-command rule lives, and a
 /// transport that reached around it would be a transport that shipped without
 /// it.
 async fn run(
@@ -440,7 +440,7 @@ async fn run(
             Ok(value) => ToolOutcome::json(&value),
             Err(err) => ToolOutcome::error(err.to_string()),
         },
-        // A refusal is the tool saying no, not the call failing — Claude should
+        // A refusal is the tool saying no, not the call failing; Claude should
         // read it and tell the user why, which is exactly what happens when a
         // destructive command comes back here.
         Err(err) => ToolOutcome::error(err.to_string()),

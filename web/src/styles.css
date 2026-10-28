@@ -3,7 +3,7 @@
  *
  * Colours come from the validated reference palette. The tier ramp is an
  * *ordinal* scale (small → large → batch reads cheap → expensive), not
- * categorical hues — tiers are an ordered category. Both the ordinal ramp and
+ * categorical hues; tiers are an ordered category. Both the ordinal ramp and
  * the surfaces were checked with the palette validator in light and dark.
  *
  * Dark values are declared twice on purpose: the media query follows the OS,
@@ -34,7 +34,7 @@
 
   --series-1: #2563eb;
 
-  /* Ordinal ramp — light→dark, single hue, validated with --ordinal. */
+  /* Ordinal ramp: light→dark, single hue, validated with --ordinal. */
   --tier-small: #86b6ef;
   --tier-large: #2a78d6;
   --tier-batch: #104281;
@@ -85,7 +85,7 @@
   --radius: var(--r-xl);
 
   /* Type. A fifth-based scale, rounded to something the eye can tell apart.
-     Sizes only — weight and colour carry hierarchy at least as much, and a
+     Sizes only; weight and colour carry hierarchy at least as much, and a
      scale with nine steps ends up used as six. */
   --t-xs: 0.72rem;
   --t-sm: 0.8rem;
@@ -118,7 +118,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
-    /* Shadow is nearly invisible on a dark page — depth there comes from the
+    /* Shadow is nearly invisible on a dark page; depth there comes from the
        surface being lighter than the page, so the shadow only has to stop the
        edge looking painted on. */
     --lift-1: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -216,7 +216,7 @@ body {
  * rather than on hover: an underline that appears only on hover is a link you
  * have to find first.
  */
-/* No anchors in the app today — every navigation is a button against the hash
+/* No anchors in the app today; every navigation is a button against the hash
    router. These are here so the first one added inherits the same three states
    as everything else rather than arriving unstyled. */
 a {
@@ -261,7 +261,7 @@ button {
 /*
  * A shape while the fleet loads, rather than the word "Opening…".
  *
- * The connect is around a second and a half — a seat fetch and a handshake —
+ * The connect is around a second and a half (a seat fetch and a handshake),
  * which is long enough that a bare word reads as a stall. Blocks in the layout
  * the content will occupy make the same wait read as loading, and the page does
  * not jump when the data lands because the space was already reserved.
@@ -424,8 +424,8 @@ button {
   color: var(--text-secondary);
 }
 
-/* One selection state for both the mouse and the keyboard. Two — a hover tint
-   and a separate cursor — means two rows look chosen at once. */
+/* One selection state for both the mouse and the keyboard. Two (a hover tint
+   and a separate cursor) means two rows look chosen at once. */
 .palette-row.is-selected {
   background: var(--surface-2);
   color: var(--text-primary);
@@ -525,8 +525,8 @@ main {
   border-radius: var(--r-xl);
   padding: var(--s-4);
   box-shadow: var(--lift-1);
-  /* Cards are the objects on this page. Giving them the shadow — and giving
-     nothing else one — is what makes the hierarchy read at a glance rather
+  /* Cards are the objects on this page. Giving them the shadow (and giving
+     nothing else one) is what makes the hierarchy read at a glance rather
      than being spelled out in borders. */
 }
 
@@ -593,7 +593,7 @@ main {
 }
 
 /* Status dot is the first glyph in the row (§4 design rule). It is never the
-   only signal — the status word sits beside it. */
+   only signal; the status word sits beside it. */
 .dot {
   width: 0.55rem;
   height: 0.55rem;
@@ -777,7 +777,7 @@ main {
 }
 
 .turn[data-kind="instruction"] .turn-head {
-  /* Your own turns sit on the right, so their header does too — a label left
+  /* Your own turns sit on the right, so their header does too: a label left
      of a right-aligned bubble reads as belonging to the turn above it. */
   flex-direction: row-reverse;
 }
@@ -845,7 +845,7 @@ main {
 /* ---------------------------------------------------------------- pairing */
 
 /* Inside the pairing card the labels stack above their fields, so `.tile-label`
-   needs to be a block here — everywhere else it sits inline in a stat tile. */
+   needs to be a block here; everywhere else it sits inline in a stat tile. */
 .card .tile-label {
   display: block;
   margin: 0.75rem 0 0.3rem;
@@ -857,7 +857,7 @@ main {
   padding: var(--s-2) var(--s-3);
   font: inherit;
   font-size: var(--t-sm);
-  /* A key blob has no words in it — proportional type turns `l1I` and `O0`
+  /* A key blob has no words in it; proportional type turns `l1I` and `O0`
      into a guessing game when the paste goes wrong. */
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   color: var(--text-primary);
@@ -935,7 +935,7 @@ input.pair-input {
   font-size: 1.55rem;
   font-weight: 640;
   letter-spacing: -0.02em;
-  /* Proportional figures on standalone numbers — tabular is for columns. */
+  /* Proportional figures on standalone numbers; tabular is for columns. */
 }
 
 .tile-note {
@@ -1008,7 +1008,7 @@ input.pair-input {
 .bars {
   display: flex;
   flex-direction: column;
-  /* 2px surface gap between adjacent bars — not borders. */
+  /* 2px surface gap between adjacent bars, not borders. */
   gap: 2px;
 }
 
@@ -1134,7 +1134,7 @@ table.values th:last-child {
   cursor: pointer;
 }
 
-/* Selection is a border weight and a fill, never hue alone — the same rule the
+/* Selection is a border weight and a fill, never hue alone, the same rule the
    status dot follows. */
 .agent-option[data-selected="true"] {
   border-color: var(--series-1);
@@ -1159,7 +1159,7 @@ table.values th:last-child {
 /* ------------------------------------------------------------------ tasks */
 
 /* Status word in a pill. `data-token` maps to the same four states the session
-   dot uses, and the word is always present — colour is never the only signal. */
+   dot uses, and the word is always present; colour is never the only signal. */
 .status-chip {
   padding: 0.1rem 0.45rem;
   font-size: 0.7rem;
@@ -1237,7 +1237,7 @@ textarea.task-input {
 }
 
 /* C10's read of the diff. A left edge and a glyph, matching the approval card's
-   grammar — the glyph is what survives greyscale and a colour-blind reader. */
+   grammar: the glyph is what survives greyscale and a colour-blind reader. */
 .second-opinion {
   margin-top: var(--s-3);
   padding: 0.6rem 0.75rem;
@@ -1273,8 +1273,8 @@ textarea.task-input {
   margin-top: var(--s-1);
 }
 
-/* A waiting change set on the home screen. Borrows `.approval`'s amber edge —
-   both mean "somebody has to decide" — but reads as a row you open. */
+/* A waiting change set on the home screen. Borrows `.approval`'s amber edge
+   (both mean "somebody has to decide") but reads as a row you open. */
 .review-card {
   display: block;
   width: 100%;
@@ -1438,7 +1438,7 @@ textarea.task-input {
 /* =================================================================== account
  *
  * Everything the workspace added: the front door, the machine list, the plan
- * cards. Built from the same tokens as the rest — the goal is that a screen
+ * cards. Built from the same tokens as the rest; the goal is that a screen
  * added today is indistinguishable from one that shipped with M5, not that it
  * announces itself.
  */
@@ -1595,7 +1595,7 @@ textarea.task-input {
 }
 
 /* Online/offline is a status, so it uses the fixed status palette rather than
-   the themed series colour — and it is paired with a word everywhere it is
+   the themed series colour, and it is paired with a word everywhere it is
    used, because a coloured dot alone is not readable to everyone.
    Named `machine-dot`, not `dot`: `.dot` already belongs to the session row's
    liveness indicator further up this file, and redefining it here would have
@@ -1702,7 +1702,7 @@ textarea.task-input {
   border-radius: var(--r-md);
 }
 
-/* At the limit is information, not an error — you are using what you paid for.
+/* At the limit is information, not an error: you are using what you paid for.
    Amber says "worth knowing"; red would say "something broke". */
 .usage-tile.is-full {
   box-shadow: inset 0 0 0 1px
@@ -1850,7 +1850,7 @@ textarea.task-input {
   border-radius: var(--r-sm);
   font-family: var(--mono);
   font-size: 0.72rem;
-  /* A key has no spaces to break at, so it must be told it may wrap — otherwise
+  /* A key has no spaces to break at, so it must be told it may wrap; otherwise
      it overflows and the copy button is the only way to get at it. */
   word-break: break-all;
   white-space: pre-wrap;
@@ -1858,7 +1858,7 @@ textarea.task-input {
 }
 
 /* A command meant for another machine: the text and the one action on it.
-   Laid out as a row on anything wide enough, and stacked below that — the
+   Laid out as a row on anything wide enough, and stacked below that: the
    command is the long element, and a button squeezed beside it on a phone
    leaves neither readable. */
 .copy-command {
@@ -1871,7 +1871,7 @@ textarea.task-input {
 .copy-command .secret-block {
   flex: 1 1 auto;
   margin: 0;
-  /* A shell command breaks at its spaces, unlike a key — so it wraps at word
+  /* A shell command breaks at its spaces, unlike a key, so it wraps at word
      boundaries and stays readable rather than being chopped mid-flag. */
   word-break: normal;
   overflow-wrap: anywhere;
@@ -1943,7 +1943,7 @@ textarea.task-input {
  * Deliberately not a background fill on the whole run: the row already carries
  * a red or green tint for add/remove, and stacking a second block of colour on
  * top makes both harder to read. An underline plus a slightly stronger tint
- * marks the span while leaving the line's own state legible — and it still
+ * marks the span while leaving the line's own state legible, and it still
  * reads when the row is selected or the page is printed.
  */
 .diff-word {
@@ -2034,7 +2034,7 @@ textarea.task-input {
   /*
    * Four headline figures in a row, not two stacked pairs.
    *
-   * They are one reading — spend, cache, savings, budget left — and stacking
+   * They are one reading (spend, cache, savings, budget left), and stacking
    * them into two rows on a column wide enough for four asks the eye to travel
    * twice for a glance that should take once. Two-up is right on a phone and
    * only there.
@@ -2049,7 +2049,7 @@ textarea.task-input {
  * A card that responds to the pointer.
  *
  * The old hover changed the border colour alone, which on a warm page is nearly
- * invisible. Lifting it says "this is a control" — the affordance the card was
+ * invisible. Lifting it says "this is a control", the affordance the card was
  * missing, given that the whole thing is a button.
  */
 .session {

@@ -3,14 +3,14 @@
 -- The old way round was: a human opens the web app, mints an enrolment key,
 -- and copies `frg_…` onto the machine by hand. That works, and it means a
 -- long-lived bearer credential travels through a clipboard, a shell history, a
--- terminal scrollback and quite often a chat message — and it cannot be done at
+-- terminal scrollback and quite often a chat message, and it cannot be done at
 -- all over SSH on a box whose browser is somebody else's laptop.
 --
 -- Here the machine starts the exchange. It generates a device code it keeps,
 -- gets back a short user code a person can read off a console, and waits. The
 -- human approves that code once, signed in, wherever they already are. Only
 -- then is an enrolment key minted, and it is handed to whoever presents the
--- device code — which never left the machine that made it.
+-- device code, which never left the machine that made it.
 --
 -- Two halves, deliberately asymmetric:
 --
@@ -46,14 +46,14 @@ CREATE TABLE device_authorization (
   approved_by      TEXT REFERENCES account(id) ON DELETE SET NULL,
 
   -- The minted enrolment key, in plaintext, from approval until the machine
-  -- collects it — and cleared in the same statement that hands it over.
+  -- collects it, and cleared in the same statement that hands it over.
   --
   -- Every device-authorization flow has this moment: a credential exists that
   -- its owner has not yet fetched, so something must hold it. What bounds the
   -- exposure is that it is single-use, that it lives at most until
   -- `expires_at`, and that reading it requires the device code. The row is the
-  -- narrowest place to put it; the alternative — minting the key at request
-  -- time — would leave a usable credential sitting there before any human had
+  -- narrowest place to put it; the alternative (minting the key at request
+  -- time) would leave a usable credential sitting there before any human had
   -- agreed to anything.
   enrollment_key   TEXT,
 

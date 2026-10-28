@@ -2,7 +2,7 @@
 //!
 //! A quickstart that says "create a unit file, substitute your paths, set your
 //! user, mind the working directory" is a quickstart with four places to get it
-//! wrong — and the failure mode of most of them is a service that starts, looks
+//! wrong, and the failure mode of most of them is a service that starts, looks
 //! healthy, and silently uses the wrong database.
 //!
 //! So the paths are resolved here and printed filled in. The only thing left to
@@ -27,7 +27,7 @@ pub struct ServiceSpec {
     pub binary: String,
     /// The user the service runs as.
     pub user: String,
-    /// Working directory — where `farhelm.db`, `farhelm.key` and
+    /// Working directory: where `farhelm.db`, `farhelm.key` and
     /// `farhelm.policy.toml` are resolved from.
     pub working_dir: String,
     /// `--relay wss://…`, if this machine should be reachable remotely.
@@ -74,7 +74,7 @@ impl ServiceSpec {
 
         format!(
             r#"[Unit]
-Description=Farhelm runner — supervises AI coding agents
+Description=Farhelm runner: supervises AI coding agents
 Documentation=https://github.com/farhelm/farhelm
 # Sessions and the relay link both need the network to be up, not merely
 # configured; `network-online` is the one that means what it says.
@@ -88,7 +88,7 @@ WorkingDirectory={working_dir}
 ExecStart={binary} serve --db {working_dir}/farhelm.db --key {working_dir}/farhelm.key{relay}
 
 # The runner dials out and never listens on a public port, so a restart is
-# always safe — no connection is being held open on its behalf.
+# always safe; no connection is being held open on its behalf.
 Restart=always
 RestartSec=5
 
@@ -122,7 +122,7 @@ WantedBy=multi-user.target
     pub fn relay_unit(&self, binary: &str, port: u16, subject: &str) -> String {
         format!(
             r#"[Unit]
-Description=Farhelm relay — encrypted fan-out, holds no keys
+Description=Farhelm relay: encrypted fan-out, holds no keys
 Documentation=https://github.com/farhelm/farhelm
 After=network-online.target
 Wants=network-online.target
@@ -137,7 +137,7 @@ Restart=always
 RestartSec=5
 
 # The relay keeps nothing across a restart by design, so it is safe to harden
-# much more aggressively than the runner. It reads one file — the VAPID key —
+# much more aggressively than the runner. It reads one file (the VAPID key)
 # and writes it once on first start.
 NoNewPrivileges=true
 PrivateTmp=true
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn the_shell_line_in_the_plist_is_escaped_for_xml() {
         // `&&` inside a <string> is not valid XML, and launchd rejects the whole
-        // file rather than the one element — so the daemon silently never starts
+        // file rather than the one element, so the daemon silently never starts
         // and `launchctl load` is the only place it is mentioned.
         let plist = spec().launchd_plist();
         assert!(plist.contains("&amp;&amp;"));
@@ -290,8 +290,8 @@ mod tests {
 
     #[test]
     fn a_missing_environment_file_does_not_stop_the_service() {
-        // The `-` prefix. Running without a provider is supported — the API and
-        // the app still work — so a missing forge.env must not be fatal.
+        // The `-` prefix. Running without a provider is supported (the API and
+        // the app still work), so a missing forge.env must not be fatal.
         assert!(spec().runner_unit().contains("EnvironmentFile=-"));
     }
 
@@ -314,7 +314,7 @@ mod tests {
         assert!(unit.contains("ProtectSystem=strict"));
         assert!(unit.contains("ProtectHome=true"));
         // But it must still be able to write the VAPID key it mints on first
-        // start — losing that unpairs every push subscription.
+        // start; losing that unpairs every push subscription.
         assert!(unit.contains("ReadWritePaths=/var/lib/farhelm"));
         assert!(unit.contains("--vapid-key /var/lib/farhelm/vapid.key"));
     }
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn both_units_wait_for_the_network_to_be_up() {
         // Not merely `network.target`, which means "configured" and fires before
-        // anything is actually reachable — the relay link would fail its first
+        // anything is actually reachable, so the relay link would fail its first
         // dial on every boot.
         for unit in [
             spec().runner_unit(),
@@ -348,7 +348,7 @@ mod tests {
 /// Which service manager this machine actually has.
 ///
 /// `install-service` printed a systemd unit unconditionally, which on macOS is
-/// a page of text that cannot be used for anything — the platform most likely
+/// a page of text that cannot be used for anything; the platform most likely
 /// to be somebody's laptop was the one told to configure Linux. The answer to
 /// "keep it running" has to be the answer for the machine you are on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,7 +401,7 @@ impl ServiceSpec {
     /// Two details here are the ones that go wrong by hand. launchd starts a job
     /// with a minimal PATH, so an agent installed under a user prefix is
     /// invisible to it and the daemon reports "no agents installed" on a machine
-    /// that plainly has them — so PATH is set explicitly. And the environment
+    /// that plainly has them, so PATH is set explicitly. And the environment
     /// file is sourced by a shell rather than declared, because launchd has no
     /// equivalent of systemd's `EnvironmentFile` and the alternative is a
     /// credential written into the plist, where `launchctl print` will read it

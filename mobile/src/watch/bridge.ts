@@ -5,8 +5,8 @@
  *
  * The obvious design is for the watch to send taps to the phone and let the
  * phone act on them. That would be wrong here, for one specific reason: the
- * runner records `decided_via` on every approval, and the D3 rule — destructive
- * commands cannot be cleared from a wrist — is enforced against the *registered
+ * runner records `decided_via` on every approval, and the D3 rule (destructive
+ * commands cannot be cleared from a wrist) is enforced against the *registered
  * kind of the device that sent the envelope*. A watch proxying through a phone
  * would arrive as `phone`, and the whole rule would quietly evaporate. It would
  * also make the audit trail a lie.
@@ -19,7 +19,7 @@
  * ## What the phone is for, then
  *
  * Exactly one thing: pairing. Claiming a code needs an HTTP request to the
- * runner on its own network, and a watch is often not on that network — it is on
+ * runner on its own network, and a watch is often not on that network: it is on
  * the phone. So the flow is:
  *
  * 1. The watch generates a keypair and sends the **public half** over.
@@ -27,7 +27,7 @@
  *    public key.
  * 3. The phone sends back the relay coordinates and the assigned device id.
  *
- * The watch's secret never leaves the watch — not over WatchConnectivity, not
+ * The watch's secret never leaves the watch: not over WatchConnectivity, not
  * through the phone's memory. The phone is a courier for public data.
  *
  * ## Availability
@@ -50,7 +50,7 @@ export interface WatchPairRequest {
   public_key: string;
 }
 
-/** What the phone sends back. No secret in it — the watch already has its own. */
+/** What the phone sends back. No secret in it; the watch already has its own. */
 export interface WatchPairResponse {
   kind: "pair-response";
   relay_url: string;
@@ -74,7 +74,7 @@ export type WatchMessage =
  * The slice of `react-native-watch-connectivity` this module uses.
  *
  * Declared rather than imported so the logic below can be tested without a
- * simulator, and so the module is optional at runtime — an Android build never
+ * simulator, and so the module is optional at runtime; an Android build never
  * loads it.
  */
 export interface WatchSession {
@@ -118,7 +118,7 @@ export async function loadWatchSession(): Promise<WatchSession | null> {
 /**
  * Answer a watch's pairing request.
  *
- * `runnerApi` must be pointed at a runner this phone can currently reach — the
+ * `runnerApi` must be pointed at a runner this phone can currently reach: the
  * claim is plain HTTP on the local network, the same hop the phone's own pairing
  * uses. Failures come back to the watch as a message rather than a silence.
  */
@@ -157,7 +157,7 @@ export async function handlePairRequest(
 /**
  * Listen for pairing requests from the wrist for as long as the app is up.
  *
- * Returns a teardown. Messages that are not pairing requests are ignored — the
+ * Returns a teardown. Messages that are not pairing requests are ignored; the
  * watch talks to the relay directly for everything else, so there is nothing
  * else for the phone to forward.
  */
@@ -176,7 +176,7 @@ export function servePairing(
       const failure: WatchPairFailure = {
         kind: "pair-failed",
         message:
-          "set the runner address on the phone first — pairing the watch needs to reach it directly",
+          "set the runner address on the phone first: pairing the watch needs to reach it directly",
       };
       session.sendMessage(failure);
       onResult?.(failure);

@@ -1,4 +1,4 @@
-//! Signed capability tokens — the one thing three processes have to agree on.
+//! Signed capability tokens: the one thing three processes have to agree on.
 //!
 //! The control plane ([`farhelm-cloud`]) is the only party that can *mint* a
 //! token. The relay and the runner only ever *verify* one, which is why this is
@@ -12,7 +12,7 @@
 //! second time crate and a general-purpose JOSE parser we would immediately have
 //! to restrict. The restriction *is* the security property here: [`verify`]
 //! accepts exactly one algorithm, refuses `none` structurally (there is no
-//! branch that skips the signature check), and requires `exp` — the three ways
+//! branch that skips the signature check), and requires `exp`: the three ways
 //! JWT libraries are usually misused.
 //!
 //! # What a token is *not*
@@ -89,7 +89,7 @@ pub enum Audience {
     /// A runner's local HTTP API.
     #[serde(rename = "runner")]
     Runner,
-    /// A remote MCP server — the "custom connector" surface.
+    /// A remote MCP server: the "custom connector" surface.
     ///
     /// Its own audience because the bearer is a *third party*: Claude holds
     /// this token, and it must reach the tool surface it was granted and
@@ -121,7 +121,7 @@ pub enum Role {
     #[serde(rename = "viewer")]
     Viewer,
     /// A daemon acting for the organisation, not a person. Publishes on its own
-    /// channel and nothing else — deliberately below `Member`, because a runner
+    /// channel and nothing else, deliberately below `Member`, because a runner
     /// must never be able to approve its own request.
     #[serde(rename = "runner")]
     Runner,
@@ -191,24 +191,24 @@ pub struct Claims {
     /// The channel this token admits the bearer to. `None` on an `api` token.
     ///
     /// A relay token that named no channel would be a token for *every* channel,
-    /// so the relay refuses one — see `farhelm_relay`.
+    /// so the relay refuses one; see `farhelm_relay`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chan: Option<String>,
     /// The plan in force when this was minted. Carried for logging and for the
-    /// client's own "you are on Free" copy — never for an authorisation
+    /// client's own "you are on Free" copy, never for an authorisation
     /// decision, because it is a name and names change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
     /// Envelopes per minute this bearer may publish.
     ///
     /// A *number*, not a plan name, so the relay enforces the ceiling without
-    /// linking the crate that knows what a plan is — and so re-pricing a tier
+    /// linking the crate that knows what a plan is, and so re-pricing a tier
     /// takes effect on the next token rather than on the next relay deploy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate: Option<u32>,
     /// Unix ms.
     pub iat: i64,
-    /// Unix ms. Required — [`verify`] rejects a token without one.
+    /// Unix ms. Required: [`verify`] rejects a token without one.
     pub exp: i64,
 }
 

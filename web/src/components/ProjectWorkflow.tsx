@@ -181,7 +181,7 @@ function WorkflowScope({ transport, projectId, onNavigate }: {
         <label htmlFor="project-attach-repo">Registered repository</label>
         <select id="project-attach-repo" className="pair-input" value={selectedCandidate} onChange={(event) => setRepoId(event.target.value)} disabled={attaching || candidates.pending} required>
           <option value="">Choose a repository</option>
-          {available.map((repo) => <option key={repo.id} value={repo.id}>{repo.name} — {repo.path}</option>)}
+          {available.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}: {repo.path}</option>)}
         </select>
         {candidates.data && available.length === 0 ? <p className="tile-note">No unattached repositories are loaded. Register a repository on this runner first, or load another page.</p> : null}
         <div className="approval-actions">
@@ -261,7 +261,7 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
         <label htmlFor="project-task-repo">Attached repository</label>
         <select id="project-task-repo" className="pair-input" value={selectedRepo} onChange={(event) => setRepoId(event.target.value)} required>
           <option value="">Choose an attached repository</option>
-          {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name} — {repo.path}</option>)}
+          {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}: {repo.path}</option>)}
         </select>
         <label htmlFor="project-task-prompt">Task instruction</label>
         <textarea id="project-task-prompt" className="pair-input" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} required />

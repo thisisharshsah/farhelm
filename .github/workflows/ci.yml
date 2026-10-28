@@ -104,7 +104,7 @@ jobs:
         run: pnpm --filter @farhelm/web build
 
   watch:
-    # The watch's crypto is hand-written — Apple ships no Salsa20 — so it is
+    # The watch's crypto is hand-written (Apple ships no Salsa20), so it is
     # checked against Rust's and TweetNaCl's output on every commit. Needs macOS
     # for CryptoKit; the tests themselves need no watch.
     runs-on: macos-15

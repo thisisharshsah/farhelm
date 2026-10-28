@@ -4,11 +4,11 @@
 //!
 //! The runner accepts a [`Hello`] if one arrives and records what the device
 //! said it can handle. **No client sends one, and nothing reads what is
-//! recorded** — that is step one of three, and it is deliberately inert.
+//! recorded**; that is step one of three, and it is deliberately inert.
 //!
 //! Before this, the protocol version was "whatever both sides happened to be
 //! compiled from". A device one release behind discovered that by receiving a
-//! `ServerEvent` variant it could not parse, in the field, silently — `serde`
+//! `ServerEvent` variant it could not parse, in the field, silently; `serde`
 //! rejects the frame and the phone simply stops updating.
 //!
 //! # Why versioning is needed before it is used
@@ -16,7 +16,7 @@
 //! The wire is already versionable in one direction by accident: every
 //! `ServerEvent` and `Command` is externally tagged, so an unknown `type` is a
 //! clean parse failure rather than a misread. That is enough for *rejecting* the
-//! future, not for *negotiating* with it — the runner cannot tell whether a
+//! future, not for *negotiating* with it; the runner cannot tell whether a
 //! device would understand a new event before it sends one, so no event can
 //! ever be added without breaking old clients.
 //!
@@ -31,14 +31,14 @@
 //!
 //! 1. **Done.** The runner accepts a `Hello` if one arrives and records the
 //!    sender's capabilities, defaulting to [`Capability::BASELINE`] when none
-//!    does. No client sends one, so nothing changes — which is the point: a
+//!    does. No client sends one, so nothing changes, which is the point: a
 //!    runner in the field must understand the frame *before* any client emits
 //!    it.
 //! 2. **Next, and a client change.** Clients start sending a `Hello` on
 //!    connect. A runner older than step one ignores a frame it cannot parse, so
 //!    this is safe against every deployed version.
 //! 3. **Only once (2) has been out long enough.** A capability may finally gate
-//!    something — a new event sent to devices that announced support and
+//!    something: a new event sent to devices that announced support and
 //!    withheld from those that did not. Doing this before (2) has propagated
 //!    silently degrades every device that has not upgraded, because they are
 //!    indistinguishable from devices that cannot cope.
@@ -51,7 +51,7 @@ use serde::{Deserialize, Serialize};
 
 /// The wire contract this build speaks.
 ///
-/// Bumped when a change is not backward compatible — a removed field, a renamed
+/// Bumped when a change is not backward compatible: a removed field, a renamed
 /// variant, a changed meaning. Additive changes get a [`Capability`] instead,
 /// because they do not require anyone to upgrade.
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor: 0 };
@@ -59,7 +59,7 @@ pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion { major: 1, minor:
 /// A two-part protocol version.
 ///
 /// `major` is the compatibility boundary: two peers whose majors differ cannot
-/// usefully talk. `minor` advances with additive change and is informational —
+/// usefully talk. `minor` advances with additive change and is informational:
 /// what a peer can actually do is [`Hello::capabilities`], because a build can
 /// be new and still have a capability compiled out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -99,7 +99,7 @@ impl Capability {
     pub const BASELINE: &'static [&'static str] =
         &["approval", "instruct", "output", "plan_control", "snapshot"];
 
-    /// Reviewing a native agent task's diff — the `task_*` commands and the
+    /// Reviewing a native agent task's diff: the `task_*` commands and the
     /// `task_upsert` event. Named because the watch has no screen for it.
     pub const TASK_REVIEW: &'static str = "task_review";
 
@@ -123,7 +123,7 @@ impl std::fmt::Display for Capability {
 
 /// The first frame a peer would send on a new link.
 ///
-/// Not yet sent by anything — see the module docs.
+/// Not yet sent by anything; see the module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
     pub protocol: ProtocolVersion,
@@ -133,7 +133,7 @@ pub struct Hello {
     /// else is read as baseline-only rather than as a parse error.
     #[serde(default)]
     pub capabilities: Vec<Capability>,
-    /// Free-form build identifier, for logs and support. Never matched on —
+    /// Free-form build identifier, for logs and support. Never matched on;
     /// behaviour keys off `capabilities`, so that a fork or a rebuild is not
     /// accidentally treated as a different client.
     #[serde(default, skip_serializing_if = "Option::is_none")]

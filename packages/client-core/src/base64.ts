@@ -1,11 +1,11 @@
 /**
- * base64url, unpadded — the form `farhelm-crypto` emits and expects.
+ * base64url, unpadded: the form `farhelm-crypto` emits and expects.
  *
  * Written out by hand rather than delegating to `atob`/`btoa` or `Buffer`.
  * `atob` is a DOM API and `Buffer` is Node's; this package runs in a browser, in
  * Node under vitest, and on Hermes in React Native, where neither is reliably
  * present. Twenty lines of table lookup is cheaper than a polyfill decision that
- * differs per platform — and it makes the failure mode explicit: a bad character
+ * differs per platform, and it makes the failure mode explicit: a bad character
  * is a [`CryptoError`], not a DOMException from somewhere far away.
  */
 

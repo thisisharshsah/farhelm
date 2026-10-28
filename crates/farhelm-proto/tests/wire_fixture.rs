@@ -2,8 +2,8 @@
 //!
 //! `packages/client-core/src/api.ts` declares TypeScript interfaces mirroring
 //! these types **by hand**. Nothing generates that file and, until this fixture,
-//! nothing checked it. A renamed field in Rust reached the phone as `undefined`
-//! — no error on either side, just a screen that stopped showing a number.
+//! nothing checked it. A renamed field in Rust reached the phone as `undefined`,
+//! with no error on either side, just a screen that stopped showing a number.
 //!
 //! This is the same trick `farhelm-crypto`'s `interop.rs` plays with envelopes,
 //! for the same reason: the failure is silent, in the field, and cheap to catch
@@ -13,7 +13,7 @@
 //! Regenerate with `cargo test -p farhelm-proto --test wire_fixture -- --ignored`
 //! after changing any wire type, then re-run `pnpm -r test`. A change that
 //! renames a field will regenerate happily and fail on the TypeScript side,
-//! which is exactly the intent — the fixture is not the contract, the two
+//! which is exactly the intent: the fixture is not the contract, the two
 //! independent readings of it are.
 
 use std::path::PathBuf;
@@ -347,7 +347,7 @@ fn build() -> serde_json::Value {
 #[test]
 fn the_committed_fixture_matches_the_current_types() {
     let raw = std::fs::read_to_string(fixture_path()).expect(
-        "tests/fixtures/wire.json is missing — regenerate with \
+        "tests/fixtures/wire.json is missing; regenerate with \
          `cargo test -p farhelm-proto --test wire_fixture -- --ignored`",
     );
     let committed: serde_json::Value =
@@ -358,7 +358,7 @@ fn the_committed_fixture_matches_the_current_types() {
         build(),
         "a wire type changed. Regenerate with \
          `cargo test -p farhelm-proto --test wire_fixture -- --ignored`, then run \
-         `pnpm -r test` — the TypeScript half is what decides whether the \
+         `pnpm -r test`; the TypeScript half is what decides whether the \
          clients still parse it."
     );
 }
@@ -414,7 +414,7 @@ fn the_fixture_covers_every_variant() {
     );
 }
 
-/// Not a test — the generator. Run with `-- --ignored`.
+/// Not a test: the generator. Run with `-- --ignored`.
 #[test]
 #[ignore = "regenerates the checked-in fixture"]
 fn regenerate() {

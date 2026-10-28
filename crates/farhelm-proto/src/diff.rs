@@ -2,7 +2,7 @@
 //!
 //! The review screen is the product: a task's whole output is a patch a human
 //! reads on a phone and says yes or no to. That makes the diff part of the wire
-//! contract — the clients need per-file counts and per-line tags to render it,
+//! contract: the clients need per-file counts and per-line tags to render it,
 //! and a phone should not be parsing `@@` headers.
 //!
 //! `packages/client-core/src/diff.ts` mirrors these shapes by hand, which is why

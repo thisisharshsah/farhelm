@@ -1,4 +1,4 @@
-//! Draft-then-verify (C10) — the cheap model writes, the expensive one reads.
+//! Draft-then-verify (C10): the cheap model writes, the expensive one reads.
 //!
 //! The loop drafts on the large tier. That is where the tokens are: a dozen
 //! turns, each carrying a repo map, a history and a growing pile of tool
@@ -7,7 +7,7 @@
 //! the part that needs the best model in the world.
 //!
 //! What does need it is the judgement at the end. So exactly one frontier call
-//! happens per task, and it sees **only the diff** — no repo map, no history, no
+//! happens per task, and it sees **only the diff**: no repo map, no history, no
 //! tool results. A patch is a few kilobytes; a twelve-turn session is not.
 //!
 //! ```text
@@ -15,8 +15,8 @@
 //!   verifying  1 turn  × frontier   × the patch alone
 //! ```
 //!
-//! `tests/draft_then_verify.rs` measures that against the alternative — running
-//! the same task on the frontier model throughout — rather than asserting it.
+//! `tests/draft_then_verify.rs` measures that against the alternative (running
+//! the same task on the frontier model throughout) rather than asserting it.
 //!
 //! ## An unreadable answer is never a pass
 //!
@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diff::ChangeSet;
 
-/// Frozen, like the agent's own system prompt — this call caches too.
+/// Frozen, like the agent's own system prompt; this call caches too.
 const VERIFY_SYSTEM: &str = "\
 You review proposed code changes. You are given the task that was asked for and \
 a unified diff, and nothing else: no repository, no conversation, no ability to \
@@ -89,7 +89,7 @@ pub struct Assessment {
     pub notes: String,
     pub cost_usd: f64,
     /// The model that actually judged it, for the ledger's benefit and the
-    /// reviewer's — "Opus 5 says concerns" reads differently from "Haiku says".
+    /// reviewer's: "Opus 5 says concerns" reads differently from "Haiku says".
     pub model: String,
 }
 
@@ -138,7 +138,7 @@ fn instruction(prompt: &str, changes: &ChangeSet) -> String {
             end -= 1;
         }
         patch.truncate(end);
-        patch.push_str("\n[patch truncated — judge what is visible]\n");
+        patch.push_str("\n[patch truncated; judge what is visible]\n");
     }
 
     format!(
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(parse("verdict: Fail").0, Grade::Fail);
         assert_eq!(parse("VERDICT: concerns").0, Grade::Concerns);
         assert_eq!(parse("VERDICT: concern").0, Grade::Concerns);
-        assert_eq!(parse("VERDICT: PASS — looks right").0, Grade::Pass);
+        assert_eq!(parse("VERDICT: PASS, looks right").0, Grade::Pass);
     }
 
     #[test]

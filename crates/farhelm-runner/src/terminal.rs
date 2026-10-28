@@ -1,7 +1,7 @@
 //! tmux, behind an interface (M1).
 //!
 //! The session manager drives agents through tmux so they survive a closed lid
-//! and an ssh disconnect — that is D1's whole mechanism. Everything tmux-shaped
+//! and an ssh disconnect; that is D1's whole mechanism. Everything tmux-shaped
 //! lives here, behind [`Terminal`], so the manager above can be tested without
 //! a terminal multiplexer installed.
 //!
@@ -21,7 +21,7 @@
 //! ## What is not verified
 //!
 //! The argv construction and the manager's logic are tested. The calls to tmux
-//! itself are not exercised anywhere — tmux is not installed in the development
+//! itself are not exercised anywhere: tmux is not installed in the development
 //! environment this was written in. Treat [`TmuxTerminal`] as unproven against a
 //! real tmux until someone runs it against one.
 
@@ -30,13 +30,13 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 /// The tmux session every agent window lives in. One session, one window per
-/// agent — `farhelm:3.1` in the schema is `session:window.pane`.
+/// agent: `farhelm:3.1` in the schema is `session:window.pane`.
 ///
 /// This was `forge`, and an agent started before the rename is still sitting in
 /// a session by that name. Nothing has to be done about it: a target is stored
 /// verbatim and used verbatim, so `send_line`, `capture` and `kill` keep
 /// reaching those panes, and `list-panes -a` still sees them as live. Only new
-/// agents land in the session named here — the old one empties out as its
+/// agents land in the session named here; the old one empties out as its
 /// sessions end.
 pub const TMUX_SESSION: &str = "farhelm";
 
@@ -51,7 +51,7 @@ pub enum TerminalError {
     /// The *agent's* binary is not on this machine.
     ///
     /// Separate from [`TerminalError::TmuxMissing`] because both used to be one
-    /// variant whose message named tmux — so a runner on the PTY backend, which
+    /// variant whose message named tmux, so a runner on the PTY backend, which
     /// does not use tmux at all, answered a missing agent binary with "tmux is
     /// not installed". That sends someone to install the one thing that would
     /// not have helped.
@@ -68,7 +68,7 @@ impl std::fmt::Display for TerminalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TerminalError::TmuxMissing => {
-                f.write_str("tmux is not installed — the runner needs it to host agent sessions")
+                f.write_str("tmux is not installed; the runner needs it to host agent sessions")
             }
             TerminalError::BinaryMissing(binary) => {
                 write!(f, "{binary} is not installed on this machine")
@@ -291,7 +291,7 @@ impl Terminal for TmuxTerminal {
     }
 
     async fn live_targets(&self) -> Result<Vec<String>, TerminalError> {
-        // No tmux server running at all means no panes, not an error — that is
+        // No tmux server running at all means no panes, not an error; that is
         // the normal state before the first agent starts.
         match self.run(&argv_live_targets()).await {
             Ok(output) => Ok(output
@@ -412,7 +412,7 @@ impl Terminal for FakeTerminal {
 ///
 /// [`Terminal`] uses return-position `impl Trait`, so it is not object safe and
 /// cannot be a `Box<dyn Terminal>`. An enum costs one match per call and keeps
-/// the trait as it is — worth it, because the alternative is boxing every future
+/// the trait as it is, worth it, because the alternative is boxing every future
 /// in the hot output path.
 pub enum AnyTerminal {
     /// tmux. Panes outlive the runner and can be attached to by hand.
@@ -425,7 +425,7 @@ impl AnyTerminal {
     /// Pick a backend by name, or by what is actually available.
     ///
     /// `auto` prefers tmux when it is installed, because surviving a runner
-    /// restart is worth more than anything the PTY backend offers — an agent
+    /// restart is worth more than anything the PTY backend offers: an agent
     /// mid-task should not die because you upgraded the daemon.
     pub async fn select(requested: Option<&str>) -> Self {
         match requested {
@@ -496,7 +496,7 @@ impl Terminal for AnyTerminal {
 
 /// A [`Terminal`] shared by every call site.
 ///
-/// The PTY backend owns its panes, so there can only be one of it — unlike
+/// The PTY backend owns its panes, so there can only be one of it, unlike
 /// `TmuxTerminal`, which is stateless because tmux holds the state. Call sites
 /// take this rather than constructing a backend.
 impl Terminal for std::sync::Arc<AnyTerminal> {
@@ -582,7 +582,7 @@ mod tests {
         let dash = text.iter().position(|arg| arg == "--").unwrap();
         assert_eq!(text[dash + 1], "please stop C-c and retry");
 
-        // The newline is a separate, non-literal call — that is what makes it
+        // The newline is a separate, non-literal call; that is what makes it
         // an Enter keypress rather than five characters.
         assert!(!newline.contains(&"-l".to_owned()));
         assert_eq!(newline.last().unwrap(), "Enter");

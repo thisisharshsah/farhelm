@@ -157,7 +157,7 @@ impl CloudStore {
     /* ------------------------------------------------------------ accounts */
 
     /// Create an account, its organisation, its owner membership and its free
-    /// subscription — in one transaction, because an account with no
+    /// subscription, in one transaction, because an account with no
     /// organisation is an account that cannot do anything and cannot be fixed
     /// through the API.
     pub fn create_account(
@@ -267,7 +267,7 @@ impl CloudStore {
     ///
     /// Returns `None` for both "no such account" and "wrong password", and
     /// spends the Argon2 verification either way. A caller that could tell the
-    /// two apart — by the answer or by the timing — is an account enumeration
+    /// two apart (by the answer or by the timing) is an account enumeration
     /// oracle, which is how credential-stuffing lists get built.
     pub fn authenticate(&self, email: &str, password: &str) -> Result<Option<Account>> {
         let normalized = normalize_email(email);
@@ -376,7 +376,7 @@ impl CloudStore {
     ///
     /// Every authenticated handler funnels through this. It is the single point
     /// where "you asked about an organisation" becomes "you may ask about this
-    /// organisation" — a tenancy check in one place rather than in thirty.
+    /// organisation": a tenancy check in one place rather than in thirty.
     pub fn role_in(&self, org_id: &str, account_id: &str) -> Result<Option<Role>> {
         Ok(self
             .lock()?
@@ -440,7 +440,7 @@ impl CloudStore {
     /// Remove someone from an organisation.
     ///
     /// Refuses to remove the last owner. An organisation nobody can administer
-    /// is one that can never be billed, upgraded, or deleted — recoverable only
+    /// is one that can never be billed, upgraded, or deleted, recoverable only
     /// by hand, in the database.
     pub fn remove_member(&self, org_id: &str, account_id: &str) -> Result<()> {
         let mut conn = self.lock()?;
@@ -573,7 +573,7 @@ impl CloudStore {
 
     /// Every workspace in this deployment.
     ///
-    /// For the operator's diagnostic and nothing else — the API is always
+    /// For the operator's diagnostic and nothing else; the API is always
     /// scoped to a caller's own org, and there is no request that should ever
     /// enumerate the deployment. `farhelm cloud doctor` runs on the box, reads
     /// the database directly, and answers "what is actually in here", which is
@@ -684,7 +684,7 @@ impl CloudStore {
 
     /// Accept a pending key as this runner's new identity.
     ///
-    /// The channel moves with it, because the channel *is* the key — every
+    /// The channel moves with it, because the channel *is* the key: every
     /// device will pick the new one up on its next workspace fetch.
     pub fn approve_pending_key(&self, id: &str) -> Result<Runner> {
         let mut conn = self.lock()?;
@@ -816,7 +816,7 @@ impl CloudStore {
     ///
     /// Deleting the row is the revocation: the next channel token it asks for is
     /// refused, and the one it holds expires within
-    /// [`farhelm_crypto::token::CHANNEL_TOKEN_TTL_MS`]. Nothing has to be told —
+    /// [`farhelm_crypto::token::CHANNEL_TOKEN_TTL_MS`]. Nothing has to be told:
     /// which is exactly why the tokens are short-lived.
     pub fn delete_device(&self, id: &str) -> Result<()> {
         let removed = self
@@ -877,7 +877,7 @@ impl CloudStore {
 
     /* ------------------------------------------------- device authorization */
 
-    /// Record a machine's request to join, and return nothing — the caller
+    /// Record a machine's request to join, and return nothing; the caller
     /// already holds both codes, and neither is recoverable from here.
     pub fn insert_device_authorization(
         &self,
@@ -998,7 +998,7 @@ impl CloudStore {
             return Ok(Some((auth, None)));
         }
 
-        // Read, then clear — and the clear is conditional on the key still being
+        // Read, then clear, and the clear is conditional on the key still being
         // there, so the caller that loses the race is told `None` rather than
         // handed a second copy. `conn` is held across both statements (the
         // store is a `Mutex<Connection>`), which is what makes the pair
@@ -1033,7 +1033,7 @@ impl CloudStore {
     /// Drop requests nobody answered.
     ///
     /// Called on the same tick as any other housekeeping. An expired row holds
-    /// no key — it was either collected or never minted — but leaving them
+    /// no key (it was either collected or never minted), but leaving them
     /// accumulating would let the `user_code` space fill up with dead entries
     /// that a fresh request could collide with.
     pub fn purge_device_authorizations(&self, now_ms: i64) -> Result<usize> {
@@ -1595,7 +1595,7 @@ mod tests {
         let (account, org) = signed_up(&store);
         let (device_code, user_code) = requested(&store, "build-server");
 
-        // Nothing to collect while it is pending — and, crucially, no key has
+        // Nothing to collect while it is pending, and, crucially, no key has
         // been minted, so there is nothing sitting there to leak.
         let (auth, key) = store
             .collect_device_authorization(&device_code, NOW)
@@ -1935,7 +1935,7 @@ mod tests {
             store.runner(&id).unwrap().pending_public_key.as_deref(),
             Some("rotated")
         );
-        // Until approved, the pinned key — and therefore the channel — is
+        // Until approved, the pinned key (and therefore the channel) is
         // unchanged. This is the whole point of pinning.
         assert_eq!(store.runner(&id).unwrap().public_key, "original");
 

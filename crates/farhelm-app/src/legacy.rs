@@ -2,14 +2,14 @@
 //!
 //! Everything a person types or stores was called `forge` something: the
 //! environment variables, the database, the identity key, the policy file. The
-//! product is Farhelm, so those are all `farhelm` now — but a rename that
+//! product is Farhelm, so those are all `farhelm` now, but a rename that
 //! silently stops reading somebody's existing configuration is not a rename,
 //! it is a data-loss bug with a changelog entry.
 //!
 //! So both names work, and this is the only place that knows it. Two rules:
 //!
 //! - The **new name always wins.** If both are present the old one is ignored,
-//!   rather than whichever is checked first deciding — that is how you end up
+//!   rather than whichever is checked first deciding; that is how you end up
 //!   configuring one thing and running another with nothing to say so.
 //! - **Falling back is said out loud, once.** Silent compatibility is how a
 //!   deprecation lasts forever: nobody is ever told there is something to do.

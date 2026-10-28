@@ -5,9 +5,9 @@
  * what wakes a sleeping device, and a device that has not paired has no relay.
  *
  * The screen's real job is explaining the failure modes rather than the success
- * one. Push on iOS fails silently in a specific, well-known way — Safari
+ * one. Push on iOS fails silently in a specific, well-known way: Safari
  * resolves `requestPermission()` to `"denied"` in a browser tab without ever
- * prompting — so "add it to your Home Screen first" is stated up front instead
+ * prompting, so "add it to your Home Screen first" is stated up front instead
  * of after a mysterious refusal.
  */
 
@@ -44,7 +44,7 @@ export function PushSettings({ pairing }: { pairing: Pairing }) {
 
       {state.status === "needs-install" ? (
         <p className="tile-note">
-          Add Farhelm to your Home Screen first — iOS only allows
+          Add Farhelm to your Home Screen first; iOS only allows
           notifications for installed apps, and refuses silently in a browser
           tab. Share → <b>Add to Home Screen</b>, then open it from there.
         </p>
@@ -53,13 +53,13 @@ export function PushSettings({ pairing }: { pairing: Pairing }) {
       ) : state.status === "denied" ? (
         <p className="tile-note">
           Notifications are blocked for this site. The browser will not ask
-          again — turn them back on in its site settings.
+          again; turn them back on in its site settings.
         </p>
       ) : (
         <>
           <p className="tile-note">
             {state.status === "on"
-              ? "This device gets woken when an agent needs you. The notification says nothing about what — the relay cannot read it, so the app decrypts and shows the real card when you open it."
+              ? "This device gets woken when an agent needs you. The notification says nothing about what. The relay cannot read it, so the app decrypts and shows the real card when you open it."
               : "Without this, you only see approvals while the app is open."}
           </p>
 

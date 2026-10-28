@@ -38,7 +38,7 @@ use crate::git::Worktree;
 use crate::tools::{self, Supervisor};
 use crate::workspace::Workspace;
 
-/// Frozen. Nothing in here may vary between calls — a date, a session id, or a
+/// Frozen. Nothing in here may vary between calls: a date, a session id, or a
 /// repo name would move the first cache breakpoint on every single turn.
 pub const SYSTEM_PROMPT: &str = "\
 You are Farhelm's coding agent. You work in one repository and produce a \
@@ -67,7 +67,7 @@ pub const DEFAULT_MAX_STEPS: usize = 24;
 const CONVENTION_FILES: &[&str] = &["CLAUDE.md", "AGENTS.md", ".cursorrules"];
 
 /// Cap on conventions pulled into every prompt. They sit ahead of a breakpoint,
-/// so they are cached — but a 200 KB house-style document is still 200 KB the
+/// so they are cached, but a 200 KB house-style document is still 200 KB the
 /// first call pays for.
 const MAX_CONVENTION_BYTES: usize = 8 * 1024;
 
@@ -92,7 +92,7 @@ pub struct TaskSpec {
     /// Have the frontier model read the finished diff (C10).
     ///
     /// On by default. It is one call on a few kilobytes, and the alternative it
-    /// replaces — drafting on the frontier tier throughout — costs far more.
+    /// replaces (drafting on the frontier tier throughout) costs far more.
     /// See [`crate::verify`].
     pub verify: bool,
 }
@@ -130,7 +130,7 @@ impl TaskSpec {
 pub enum Outcome {
     /// The agent stopped on its own with files changed. The normal ending.
     Proposed,
-    /// It stopped with nothing staged — a question answered, or a task that
+    /// It stopped with nothing staged: a question answered, or a task that
     /// turned out to need no change. Not a failure, and not something to put a
     /// review card in front of somebody for.
     NoChanges,
@@ -158,7 +158,7 @@ impl Outcome {
 pub struct TaskRun {
     pub outcome: Outcome,
     /// The branch and checkout the work is on. `None` only when the task never
-    /// got one — an unusable repository — in which case there is nothing to
+    /// got one (an unusable repository), in which case there is nothing to
     /// review, merge or discard.
     ///
     /// Serialisable, so a task can wait for review across a runner restart. The
@@ -166,11 +166,11 @@ pub struct TaskRun {
     /// touched; this is four strings, because the work itself is in git.
     pub worktree: Option<Worktree>,
     pub changes: ChangeSet,
-    /// The agent's closing message — the first thing a reviewer reads.
+    /// The agent's closing message: the first thing a reviewer reads.
     pub summary: String,
     /// Notes the agent asked to leave for whoever works on this repo next.
     ///
-    /// Proposed, not written — the same shape as the change set beside it. The
+    /// Proposed, not written: the same shape as the change set beside it. The
     /// caller decides whether they land, which keeps persistence out of a crate
     /// whose job is running a loop.
     pub remembered: Vec<(String, String)>,
@@ -188,7 +188,7 @@ pub struct TaskRun {
 ///
 /// Kept apart under a heading rather than blended in: what a human wrote in
 /// `CLAUDE.md` and what an agent inferred last Tuesday deserve different levels
-/// of trust, and a reader — model or person — cannot apply that if the two are
+/// of trust, and a reader (model or person) cannot apply that if the two are
 /// interleaved with no seam.
 fn with_memory(conventions: String, memory: &[(String, String)]) -> String {
     if memory.is_empty() {
@@ -200,7 +200,7 @@ fn with_memory(conventions: String, memory: &[(String, String)]) -> String {
     }
     out.push_str("## What previous sessions left about this repository\n");
     out.push_str(
-        "(Written by agents, not by the repository's owner — treat as a lead, not as law.)\n",
+        "(Written by agents, not by the repository's owner; treat as a lead, not as law.)\n",
     );
     for (key, value) in memory {
         out.push_str(&format!("\n- **{key}**: {value}"));
@@ -234,7 +234,7 @@ fn conventions(root: &Path) -> String {
 /// What a delegated agent is told about its position.
 ///
 /// It is not told it is subordinate, because that is not useful information for
-/// doing the work — it is told the two things that actually change: that it
+/// doing the work. It is told the two things that actually change: that it
 /// shares a checkout with work already done, and that it has to finish, because
 /// nothing downstream will pick up where it stopped.
 const DELEGATE_PROMPT: &str = "\
@@ -244,7 +244,7 @@ way the brief implies. Your tools and test commands see those edits. Commands \
 use the same supervisor approval policy as the larger task.\n\n\
 Finish what you are given, or say plainly that you could not and why. You \
 cannot hand work on, and your reply is the only thing the agent that called \
-you will see — so it has to carry the outcome, not a description of your \
+you will see, so it has to carry the outcome, not a description of your \
 process.";
 
 /// How many steps a delegated agent may take, at most.
@@ -264,7 +264,7 @@ const DELEGATE_MAX_STEPS: usize = 12;
 /// twenty approvals are a captcha, one diff is a decision.
 ///
 /// **The supervisor.** A delegated `run` raises a card exactly like any other,
-/// to the same person. The orchestrator approves nothing on anybody's behalf —
+/// to the same person. The orchestrator approves nothing on anybody's behalf:
 /// it decides who does the work, never whether the work is allowed.
 ///
 /// **The session id.** Spend is billed to the task that started it, so a
@@ -387,8 +387,8 @@ fn truncated(reason: Option<&str>) -> bool {
 
 /// Run a task to completion.
 ///
-/// Never returns `Err`: every ending — refusal, budget stop, step limit, a tool
-/// that could not run — is a [`TaskRun`] carrying whatever was staged before it
+/// Never returns `Err`: every ending (refusal, budget stop, step limit, a tool
+/// that could not run) is a [`TaskRun`] carrying whatever was staged before it
 /// happened. A task that spent money and then returned an error type would have
 /// nothing to show for the spend, which is the one outcome the ledger cannot
 /// justify.
@@ -419,7 +419,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     // sitting in, which is precisely what this crate exists to prevent.
     //
     // Git is required, and the two ways it can be missing are reported apart
-    // because they have different fixes — one is "this is not a repository",
+    // because they have different fixes: one is "this is not a repository",
     // the other is "commit once first".
     let worktree = match Worktree::create(&spec.repo_path, &spec.task_id) {
         Ok(worktree) => worktree,
@@ -566,7 +566,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
             supervisor.note(&format!("▸ {}", tools::summary(call)));
 
             // Handled here rather than in `tools::execute`, which has a
-            // workspace and a supervisor and no gateway — and should not grow
+            // workspace and a supervisor and no gateway, and should not grow
             // one for a single caller. Delegation needs to run a whole loop, so
             // it belongs where the loop already is.
             if call.name == tools::DELEGATE {
@@ -634,7 +634,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     }
 
     // Close the transcript out. Whatever is in `pending` was produced but never
-    // sent — on a normal ending it is the tool results the model replied to, on
+    // sent: on a normal ending it is the tool results the model replied to, on
     // a denial it is the reason it was given. Dropping it would leave the
     // session detail screen showing a conversation with its last exchange
     // missing, which reads as a bug in the runner rather than the end of a task.
@@ -816,7 +816,7 @@ mod tests {
     ///
     /// A task cuts a branch before it does anything, so there is no such thing
     /// as running one outside git any more. These fixtures are therefore real
-    /// repositories rather than bare directories — which also means what they
+    /// repositories rather than bare directories, which also means what they
     /// assert is what actually happens on somebody's machine.
     struct TempRepo(PathBuf);
 
@@ -950,7 +950,7 @@ mod tests {
         // The reason the staging overlay was replaced, asserted directly.
         //
         // Under staging, `run` executed against the repository's working tree,
-        // which by construction did not contain the agent's edits — so the
+        // which by construction did not contain the agent's edits, so the
         // agent wrote a file in step one and `cat` in step two printed the old
         // contents. An agent could not check its own work, which is most of
         // what makes a coding agent worth supervising.
@@ -1438,7 +1438,7 @@ mod tests {
         // reaches the delegate as a refusal.
         //
         // If this ever passes without the supervisor being consulted,
-        // delegation has become a way to launder an approval — which is the one
+        // delegation has become a way to launder an approval, which is the one
         // failure that would make this feature worse than not having it.
         let repo = TempRepo::new("delegate-gated");
         repo.write("a.txt", "x\n");
@@ -1465,7 +1465,7 @@ mod tests {
         run(&gateway, &supervisor, &TaskSpec::new("s", &repo.0, "x")).await;
 
         // The gate was reached, from inside the delegate, with the command the
-        // delegate asked for. That is the assertion — not that it was denied,
+        // delegate asked for. That is the assertion: not that it was denied,
         // but that a person was asked at all.
         let asked = supervisor.seen.lock().unwrap();
         assert_eq!(asked.len(), 1, "the delegated command bypassed the human");
@@ -1665,7 +1665,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_note_the_agent_leaves_comes_back_with_the_run() {
-        // Proposed, not written — the same shape as the change set beside it.
+        // Proposed, not written: the same shape as the change set beside it.
         let repo = TempRepo::new("remember");
         repo.write("a.txt", "x\n");
         repo.commit();

@@ -6,7 +6,7 @@
  * runner told us. The secret key never leaves the device.
  *
  * There is no camera here. Reading a QR in-browser needs either a barcode
- * library or `BarcodeDetector`, which is not on iOS Safari — the platform every
+ * library or `BarcodeDetector`, which is not on iOS Safari, the platform every
  * other part of this design already bends around. Pasting the payload works
  * everywhere today, and the terminal prints it alongside the QR for exactly
  * this reason.
@@ -98,7 +98,7 @@ export function PairingScreen({
         autoCorrect="off"
       />
       <p className="tile-note">
-        Reachable now — pairing happens on your own network, before the relay
+        Reachable now: pairing happens on your own network, before the relay
         takes over.
       </p>
 

@@ -1,8 +1,8 @@
 //! Demo fixtures.
 //!
 //! Builds the fleet from the §4 wireframes so the UI can be developed against
-//! realistic shapes before the tmux session manager (M1) exists. Costs are real
-//! — they run through the actual price table and ledger, not hardcoded strings.
+//! realistic shapes before the tmux session manager (M1) exists. Costs are real:
+//! they run through the actual price table and ledger, not hardcoded strings.
 
 use farhelm_app::id::new_id;
 use farhelm_app::ledger::{Call, Ledger};

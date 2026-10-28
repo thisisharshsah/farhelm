@@ -1,7 +1,7 @@
 /**
  * The phone's half of the control-plane connection.
  *
- * Same client as the web — `@farhelm/client-core` — with the two things a
+ * Same client as the web (`@farhelm/client-core`) with the two things a
  * phone does differently: the session goes in the platform keystore rather than
  * IndexedDB, and the control plane's address has to be typed or built in,
  * because there is no origin to infer it from.
@@ -23,8 +23,8 @@ import { Platform } from "react-native";
  * script to run on and steal the device key, and the refresh token gets the same
  * protection for free.
  *
- * `SecureStore` caps a value at 2 KB on iOS. A session is a few hundred bytes —
- * two base64 keys and four ids — which is comfortably inside that.
+ * `SecureStore` caps a value at 2 KB on iOS. A session is a few hundred bytes
+ * (two base64 keys and four ids), which is comfortably inside that.
  */
 export const secureCloudSessionStore = cloudSessionStore({
   get: (key) => SecureStore.getItemAsync(key),

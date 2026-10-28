@@ -1,4 +1,4 @@
-//! Pipeline stage 7 — dispatch.
+//! Pipeline stage 7: dispatch.
 //!
 //! One trait so the pipeline can be exercised without a network or an API key,
 //! plus the real Anthropic Messages API client. There is no official Rust SDK,
@@ -23,13 +23,13 @@ use serde::{Deserialize, Serialize};
 use crate::prompt::{PromptPlan, approx_tokens};
 
 /// Non-streaming ceiling. Above roughly this, requests risk the provider's HTTP
-/// timeout and must stream instead — a change for when the gateway learns to
+/// timeout and must stream instead, a change for when the gateway learns to
 /// forward a stream to the agent.
 pub const DEFAULT_MAX_TOKENS: u32 = 16_000;
 
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Gates the `fallbacks: "default"` scalar form specifically. The array form
-/// uses an earlier, different header — pairing either with the other is a 400.
+/// uses an earlier, different header; pairing either with the other is a 400.
 pub const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,7 +67,7 @@ pub struct ModelRequest {
     pub purpose: Option<TaskType>,
 }
 
-/// A safety-classifier decline. Not an error in the transport sense — the call
+/// A safety-classifier decline. Not an error in the transport sense: the call
 /// succeeded, the model declined.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refusal {
@@ -92,7 +92,7 @@ pub struct ToolCall {
 pub struct ModelResponse {
     pub text: String,
     pub usage: Usage,
-    /// The model that actually produced the message — may differ from the one
+    /// The model that actually produced the message; may differ from the one
     /// requested when a fallback served the turn.
     pub model: String,
     pub stop_reason: Option<String>,
@@ -112,7 +112,7 @@ pub enum DispatchError {
         message: String,
     },
     Decode(String),
-    /// No API key configured — a setup problem, not a runtime one.
+    /// No API key configured: a setup problem, not a runtime one.
     NotConfigured,
 }
 
@@ -123,7 +123,7 @@ impl std::fmt::Display for DispatchError {
             DispatchError::Api { status, message } => write!(f, "provider {status}: {message}"),
             DispatchError::Decode(msg) => write!(f, "could not decode response: {msg}"),
             DispatchError::NotConfigured => f.write_str(
-                "no model provider configured — set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN",
+                "no model provider configured; set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN",
             ),
         }
     }
@@ -165,8 +165,8 @@ pub trait ModelClient: Send + Sync {
 ///
 /// Shared with the batch queue (C6), which sends the *same* params through
 /// `POST /v1/messages/batches`. Two copies of this would drift, and the way you
-/// would find out is a batched call being assembled differently — and priced
-/// differently — from the live one it was meant to replace.
+/// would find out is a batched call being assembled differently (and priced
+/// differently) from the live one it was meant to replace.
 pub fn messages_params(request: &ModelRequest) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": request.model,
@@ -309,7 +309,7 @@ impl WireResponse {
 
 /* ------------------------------------------------------------- real client */
 
-/// A whitespace-only key is the same as no key — an exported-but-empty variable
+/// A whitespace-only key is the same as no key: an exported-but-empty variable
 /// is a common shell mishap, and treating it as configured turns a setup problem
 /// into a 401 on the first real call.
 fn usable_key(raw: Option<String>) -> Option<String> {
@@ -318,14 +318,14 @@ fn usable_key(raw: Option<String>) -> Option<String> {
 
 /// How a request proves who it is.
 ///
-/// The two forms are different headers, not two spellings of one — a bearer
+/// The two forms are different headers, not two spellings of one: a bearer
 /// token sent as `x-api-key` is a 401, and the OAuth beta header is required
 /// alongside it or `/v1/messages` refuses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Credential {
     /// A `sk-ant-api…` key from the Console, on `x-api-key`.
     ApiKey(String),
-    /// A short-lived bearer token — what `ant auth print-credentials
+    /// A short-lived bearer token: what `ant auth print-credentials
     /// --access-token` prints, or a Workload Identity Federation exchange.
     AuthToken(String),
 }
@@ -335,7 +335,7 @@ pub enum Credential {
 pub const OAUTH_BETA: &str = "oauth-2025-04-20";
 
 pub struct AnthropicClient {
-    /// Not a credential — a way of getting one. See `credential.rs`: a
+    /// Not a credential; a way of getting one. See `credential.rs`: a
     /// subscription token expires within hours, so a value captured at startup
     /// turns into 401s mid-afternoon with no way out but a restart.
     source: crate::credential::CredentialSource,
@@ -348,7 +348,7 @@ pub struct AnthropicClient {
     ///
     /// Learned rather than listed. Which models accept `output_config.effort`
     /// or `fallbacks` is a fact about the provider's current line-up, and a
-    /// table here would be wrong the week it changes — failing every call to a
+    /// table here would be wrong the week it changes, failing every call to a
     /// model with a 400 naming a parameter the caller never set. The provider
     /// already knows and says so plainly, so the first refusal is remembered
     /// and no later call to that model carries the field.
@@ -379,7 +379,7 @@ pub const CONSCIOUS_DEFAULT_COMPONENT: &str = "dispatch";
 
 /// Conscious's settings, read through `get` so they can be tested without
 /// touching the process environment. `None` unless `CONSCIOUS_API_URL` is set
-/// and not blank — and then nothing about the Anthropic path changes.
+/// and not blank, and then nothing about the Anthropic path changes.
 fn conscious_settings(
     get: impl Fn(&str) -> Option<String>,
 ) -> Option<(String, Option<String>, Option<String>)> {
@@ -452,7 +452,7 @@ impl AnthropicClient {
         self.conscious.as_ref()?.model.as_deref()
     }
 
-    /// `"conscious"` or `"anthropic"` — what the banner calls the provider.
+    /// `"conscious"` or `"anthropic"`: what the banner calls the provider.
     pub fn provider_name(&self) -> &'static str {
         match self.conscious {
             Some(_) => CONSCIOUS_PROVIDER,
@@ -465,7 +465,7 @@ impl AnthropicClient {
     ///
     /// Resolution order matches the official SDKs': `ANTHROPIC_API_KEY` first,
     /// then `ANTHROPIC_AUTH_TOKEN`. The second exists because a static Console
-    /// key is not the only credential the API takes — a short-lived bearer token
+    /// key is not the only credential the API takes; a short-lived bearer token
     /// works too, and requiring a key would turn "I am already authenticated"
     /// into "go and mint a secret".
     ///
@@ -473,14 +473,14 @@ impl AnthropicClient {
     /// variable is a common shell mishap, and honouring it turns a setup problem
     /// into a 401 on the first real call.
     ///
-    /// `ANTHROPIC_BASE_URL` redirects to a compatible endpoint — a local
+    /// `ANTHROPIC_BASE_URL` redirects to a compatible endpoint: a local
     /// vLLM/Ollama shim for the self-hosted small tier (§7), or a test server.
     /// Build from the environment, preferring the source that does not expire
     /// into a support ticket.
     ///
     /// `FORGE_CREDENTIAL_COMMAND` is checked first on purpose. If someone has
     /// gone to the trouble of configuring a helper, they want the refreshing
-    /// one — and a stale `ANTHROPIC_API_KEY` left in a file from a previous
+    /// one, and a stale `ANTHROPIC_API_KEY` left in a file from a previous
     /// experiment should not quietly win and start billing them per token.
     ///
     /// `CONSCIOUS_API_URL` comes before all of it: the owner's private gateway
@@ -543,8 +543,8 @@ impl AnthropicClient {
     /// Which optional field a refusal is about, if it is about one.
     ///
     /// Matched on the field name appearing in the provider's own message. The
-    /// wording differs between models — "does not support the effort parameter"
-    /// and "does not support the `fallbacks` parameter" — so the name is what
+    /// wording differs between models ("does not support the effort parameter"
+    /// and "does not support the `fallbacks` parameter"), so the name is what
     /// is looked for rather than any particular sentence around it.
     fn refused_field(body: &serde_json::Value, message: &str) -> Option<&'static str> {
         if !message.contains("does not support") {
@@ -569,7 +569,7 @@ impl AnthropicClient {
     /// that a *source* is configured. With `FORGE_CREDENTIAL_COMMAND` the
     /// command is not run until the first request, so a runner pointed at a
     /// command that cannot produce a token starts cleanly, reports a gateway,
-    /// and then fails every call — which reads as "the model is broken" rather
+    /// and then fails every call, which reads as "the model is broken" rather
     /// than "you have not logged in".
     ///
     /// This runs the source for real, so the answer is the one a request would
@@ -579,7 +579,7 @@ impl AnthropicClient {
         self.source.get().map(|_| ())
     }
 
-    /// Point at a different endpoint — a local vLLM/Ollama shim, or a test server.
+    /// Point at a different endpoint: a local vLLM/Ollama shim, or a test server.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
@@ -718,7 +718,7 @@ impl ModelClient for AnthropicClient {
         let mut response = wire.into_response(&request.model);
         if self.conscious.is_some() {
             // Conscious runs locally. The ledger prices `local/…` at zero, and
-            // the name after the prefix is whichever model actually answered —
+            // the name after the prefix is whichever model actually answered,
             // never an Anthropic price for a call Anthropic did not serve.
             response.model = conscious_ledger_model(&response.model);
         }
@@ -761,7 +761,7 @@ fn conscious_ledger_model(model: &str) -> String {
 /// from the **longest breakpoint prefix it has seen before** and writes the
 /// remainder. So a prompt whose prefix drifts scores zero here exactly as it
 /// would in production, and a conversation that only appends keeps hitting its
-/// earlier breakpoints — which is the behaviour worth verifying.
+/// earlier breakpoints, which is the behaviour worth verifying.
 pub struct StubClient {
     seen_prefixes: Mutex<std::collections::HashSet<String>>,
     reply: String,
@@ -823,7 +823,7 @@ impl ModelClient for StubClient {
 
             let read = approx_tokens(&matched) as u32;
             // Everything cacheable beyond the hit is written this turn. Without
-            // any breakpoints nothing is written *or* read — an uncacheable
+            // any breakpoints nothing is written *or* read; an uncacheable
             // prompt bills its whole prefix as plain input, below.
             let cacheable = breakpoints
                 .last()
@@ -833,7 +833,7 @@ impl ModelClient for StubClient {
         };
 
         // A prefix with no breakpoint is not cached at all, so it lands in
-        // `input_tokens` at full price — exactly what the real API does.
+        // `input_tokens` at full price, exactly what the real API does.
         let uncached_prefix = approx_tokens(&full_prefix) as u32 - (read_tokens + write_tokens);
 
         self.calls

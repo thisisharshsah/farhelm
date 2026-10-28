@@ -14,8 +14,8 @@
 //! 120 lines of well-specified glue.
 //!
 //! **That is only defensible because it is checked against the specification's
-//! own worked example.** RFC 8291 §5 publishes a complete known-answer test —
-//! fixed keys, fixed salt, fixed expected ciphertext — and [`tests`] runs it. An
+//! own worked example.** RFC 8291 §5 publishes a complete known-answer test
+//! (fixed keys, fixed salt, fixed expected ciphertext) and [`tests`] runs it. An
 //! encryption routine verified only by its own decryption routine is verified
 //! against nothing; that lesson cost a day in `mobile/watch`.
 //!
@@ -120,7 +120,7 @@ impl VapidKey {
 
     /// The `applicationServerKey` a browser passes to `pushManager.subscribe`.
     ///
-    /// Uncompressed SEC1 (65 bytes, `0x04` prefix) — the only form the Push API
+    /// Uncompressed SEC1 (65 bytes, `0x04` prefix): the only form the Push API
     /// accepts.
     pub fn public_key_base64url(&self) -> String {
         B64.encode(
@@ -153,7 +153,7 @@ impl VapidKey {
         );
         let signing_input = format!("{header}.{claims}");
 
-        // ES256 is raw r‖s, 64 bytes — *not* the ASN.1 DER encoding `to_der`
+        // ES256 is raw r‖s, 64 bytes, *not* the ASN.1 DER encoding `to_der`
         // would give. A DER signature is accepted by nothing here and rejected
         // with an opaque 401.
         let signature: Signature = self.signing.sign(signing_input.as_bytes());
@@ -333,7 +333,7 @@ mod tests {
     ///
     /// This is the test that makes the module defensible. Every value is fixed
     /// by the specification, so passing it means the implementation agrees with
-    /// something written by somebody else — which a round-trip against my own
+    /// something written by somebody else, which a round-trip against my own
     /// decryptor would not have shown.
     mod rfc8291 {
         pub const PLAINTEXT: &str = "When I grow up, I want to be a watermelon";
@@ -483,7 +483,7 @@ mod tests {
         let signed = parts.next().unwrap();
 
         // `k=` is what the push service verifies with, so it has to be the key
-        // that actually signed — not merely *a* key we happen to own.
+        // that actually signed, not merely *a* key we happen to own.
         let verifying = VerifyingKey::from_sec1_bytes(&B64.decode(advertised).unwrap()).unwrap();
         let signature = Signature::from_slice(&signature).unwrap();
         assert!(verifying.verify(signed.as_bytes(), &signature).is_ok());

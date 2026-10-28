@@ -25,7 +25,7 @@ pub const EXHAUSTED_AT: f64 = 1.0;
 /// An extension trait rather than inherent methods, because [`Budget`] is a wire
 /// type and belongs to `farhelm-proto`. The upside of being forced into this shape
 /// is that `use farhelm_domain::BudgetRules` appears at the top of every file that
-/// consults the policy, which is honest — these are not field reads.
+/// consults the policy, which is honest: these are not field reads.
 pub trait BudgetRules {
     /// Fraction of the cap consumed. `None` when uncapped, so an unlimited
     /// session reads as "no answer" rather than as 0%.
@@ -60,7 +60,7 @@ impl BudgetRules for Budget {
 
 /// The D3 rule: what a wrist is allowed to decide.
 pub trait ApprovalRules {
-    /// Destructive actions never get a one-tap wrist approval — the friction is
+    /// Destructive actions never get a one-tap wrist approval; the friction is
     /// the point.
     ///
     /// Enforced server-side on every transport, because a client that skipped it
@@ -101,7 +101,7 @@ impl ApprovalRules for Approval {
 /// Render a budget for a client.
 ///
 /// A free function rather than `impl From<Budget> for BudgetView`, because both
-/// types belong to `farhelm-proto` and the orphan rule puts that impl there — which
+/// types belong to `farhelm-proto` and the orphan rule puts that impl there, which
 /// is where the thresholds used to leak back in. The mapping is the policy: it
 /// turns two numbers into the one word every client switches on, and it happens
 /// once, here, so that four implementations cannot disagree about where the

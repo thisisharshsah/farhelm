@@ -3,7 +3,7 @@
  *
  * The gap this fills was the biggest one in the product: every screen could
  * *supervise* a session, and nothing could *start* one. The empty state used to
- * say "start one on the runner" — which means open a terminal, which is the
+ * say "start one on the runner", which means open a terminal, which is the
  * thing this exists to avoid.
  *
  * # Two decisions the picker makes for you
@@ -23,7 +23,7 @@ import { getMigratingSync } from "@farhelm/client-core";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentView, FleetView, RepositoryView, Transport } from "@farhelm/client-core";
 
-/** Remembered between visits — nobody wants to retype an absolute path. */
+/** Remembered between visits: nobody wants to retype an absolute path. */
 const RECENT_KEY = "farhelm-recent-repos";
 const LEGACY_RECENT_KEY = "forge-recent-repos";
 
@@ -102,7 +102,7 @@ export function NewSession({
         <div className="chart-title">Start a session</div>
         <p className="tile-note">
           Only from the machine the agent will run on. A paired device supervises
-          work that already exists — starting an agent picks a directory on
+          work that already exists; starting an agent picks a directory on
           somebody's computer and runs a process in it, which is a different kind
           of permission from clearing an approval.
         </p>
@@ -232,7 +232,7 @@ export function NewSession({
             <span>
               Approvals for {chosen.name} are read from its terminal output. A
               prompt it does not recognise means a session that waits, never one
-              that proceeds unwatched — but it has not been checked against the
+              that proceeds unwatched, but it has not been checked against the
               real binary.
             </span>
           </p>

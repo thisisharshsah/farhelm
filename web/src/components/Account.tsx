@@ -7,7 +7,7 @@
  * # The enrolment key is shown once
  *
  * Only its hash is stored, so there is no endpoint that could return it again.
- * The UI has to be honest about that at the moment it matters — a key panel that
+ * The UI has to be honest about that at the moment it matters: a key panel that
  * looks re-openable and is not is how somebody loses one and blames the app.
  */
 
@@ -207,7 +207,7 @@ function Machines({
       <div className="chart-title">Machines</div>
       {runners.length === 0 ? (
         <p className="tile-note">
-          None yet. One command on the machine you want supervised — it is just
+          None yet. One command on the machine you want supervised; it is just
           below.
         </p>
       ) : null}
@@ -265,7 +265,7 @@ function Machines({
                 <b>This machine&rsquo;s identity changed.</b>
                 <p className="tile-note">
                   It is offering a different key from the one on file. That is
-                  what a reinstall looks like — and also what somebody standing
+                  what a reinstall looks like, and also what somebody standing
                   in front of it looks like. Devices cannot connect until you
                   say which.
                 </p>
@@ -274,7 +274,7 @@ function Machines({
                     className="btn btn-approve"
                     onClick={() => onApproveKey(runner.id)}
                   >
-                    That was me — accept the new key
+                    That was me, accept the new key
                   </button>
                 ) : (
                   <p className="tile-note">An admin has to confirm it.</p>
@@ -314,7 +314,7 @@ function Machines({
  * The devices holding a key, and which one you are reading this on.
  *
  * Naming the current browser is not decoration. Two browsers of the same make
- * on the same OS produce two identical rows — "Chrome on macOS" twice — and the
+ * on the same OS produce two identical rows ("Chrome on macOS" twice), and the
  * only difference that matters is that removing one of them signs *you* out
  * while the other does nothing you would notice. A list that cannot answer
  * "which one am I?" makes the destructive choice a coin flip.
@@ -356,7 +356,7 @@ function Devices({
                   {device.account_id === accountId ? " · yours" : ""} · added{" "}
                   {new Date(device.created_at).toLocaleDateString()}
                   {/* Said on the row rather than behind a confirmation: the
-                      consequence is recoverable — sign in again — and a dialog
+                      consequence is recoverable (sign in again), and a dialog
                       on every removal would train people to dismiss it. */}
                   {isThisOne ? " · removing it signs this browser out" : ""}
                 </p>
@@ -427,7 +427,7 @@ function Members({
                 <div>
                   <div className="machine-name">{member.display_name}</div>
                   <p className="tile-note">
-                    {member.email} · {member.role} — {ROLE_BLURB[member.role]}
+                    {member.email} · {member.role}: {ROLE_BLURB[member.role]}
                   </p>
                 </div>
                 {canAdminister ? (
@@ -500,7 +500,7 @@ function Members({
           ) : null}
 
           <p className="tile-note">
-            They need an account first — there is no email being sent from here,
+            They need an account first; there is no email being sent from here,
             and a button that silently does nothing would be worse than saying so.
           </p>
         </>

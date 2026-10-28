@@ -2,7 +2,7 @@
 //!
 //! Not next to the binary. A desktop app is installed to a read-only location on
 //! macOS and to `Program Files` on Windows, so the CLI's habit of writing
-//! `forge.db` into the working directory is not available — and would be the
+//! `forge.db` into the working directory is not available, and would be the
 //! wrong place anyway, because the working directory of a GUI app is arbitrary.
 //!
 //! Everything lives in one per-user directory, so "where is my data" and "how do

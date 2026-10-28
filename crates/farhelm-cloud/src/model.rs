@@ -1,7 +1,7 @@
 //! What the control plane stores, and what it hands back over HTTP.
 //!
 //! One set of types for both, on purpose. A separate "API DTO" layer would be
-//! two places to forget a field — and the interesting invariant here is not
+//! two places to forget a field, and the interesting invariant here is not
 //! shape, it is that **no type in this module carries a secret**. Password
 //! hashes and token hashes never leave [`crate::store`]; there is no field on
 //! [`Account`] for them to leak through.
@@ -46,7 +46,7 @@ pub struct Org {
 }
 
 /// Build a slug from a display name, falling back to the id when the name is
-/// all punctuation — a slug is required to be non-empty and unique, and a user
+/// all punctuation: a slug is required to be non-empty and unique, and a user
 /// named `····` should not be a 500.
 pub fn slugify(name: &str, fallback: &str) -> String {
     let slug: String = name
@@ -82,7 +82,7 @@ pub struct Membership {
 ///
 /// `public_key` is trust-on-first-use. The first enrolment under a runner id
 /// pins the key; a later enrolment presenting a *different* key does not
-/// silently replace it — it lands in `pending_public_key` and the fleet shows a
+/// silently replace it; it lands in `pending_public_key` and the fleet shows a
 /// warning until a human approves the rotation.
 ///
 /// This is the mitigation for the thing that makes account-only enrolment
@@ -176,7 +176,7 @@ impl Subscription {
 ///
 /// This is what makes enrolment codeless: you create one in the web app, paste
 /// it into the runner's config once, and every machine you start with it joins
-/// the fleet by itself. Only the hash is stored — the plaintext is shown once,
+/// the fleet by itself. Only the hash is stored; the plaintext is shown once,
 /// at creation, and cannot be recovered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnrollmentKey {
@@ -204,7 +204,7 @@ impl EnrollmentKey {
 pub enum DeviceAuthStatus {
     /// Nobody has looked at it yet.
     Pending,
-    /// Approved, and the credential is waiting to be collected — or has been.
+    /// Approved, and the credential is waiting to be collected, or has been.
     Approved,
     /// A human said no. Kept rather than deleted so the machine polling is told
     /// "no" and stops, instead of timing out and retrying into a wall.
@@ -235,7 +235,7 @@ impl DeviceAuthStatus {
 /// Carries no secret, in keeping with the rest of this module: neither the
 /// device code (only its hash is stored) nor the enrolment key the approval
 /// mints. What a human needs in order to decide is the machine's name and when
-/// it asked — everything else would be noise on a confirmation screen.
+/// it asked; everything else would be noise on a confirmation screen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceAuthorization {
     /// Normalised: upper case, no dash.
@@ -266,7 +266,7 @@ pub struct Workspace {
     pub org: Org,
     pub role: farhelm_crypto::token::Role,
     pub subscription: Subscription,
-    /// The limits in force — already resolved through
+    /// The limits in force, already resolved through
     /// [`Subscription::effective_plan`], so no client re-implements that rule.
     pub limits: Limits,
     pub usage: Usage,

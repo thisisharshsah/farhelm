@@ -14,7 +14,7 @@ enum Poly1305 {
 
     /// Authenticate `message` under a **one-time** key.
     ///
-    /// Reusing a key across two messages leaks the key — which is why callers
+    /// Reusing a key across two messages leaks the key, which is why callers
     /// here always derive it fresh from the stream cipher, per nonce.
     static func authenticate(message: [UInt8], key: [UInt8]) -> [UInt8] {
         precondition(key.count == keyLength)
@@ -44,7 +44,7 @@ enum Poly1305 {
             // 128, past the 16 bytes, so it is OR'd in. For a short final block
             // it lands *inside* the buffer, right after the last message byte.
             //
-            // The five limbs are 26 bits each, so limb 4 covers bits 104–129 —
+            // The five limbs are 26 bits each, so limb 4 covers bits 104–129,
             // which is the 32-bit word at byte 12, shifted down by 8. Reading it
             // at byte 13 instead is off by one byte and produces a tag that is
             // self-consistent but wrong; short messages hide it, because the
@@ -96,7 +96,7 @@ enum Poly1305 {
         h[0] &= 0x3ff_ffff
         h[1] &+= carry
 
-        // Compute h + -p and pick it if there was no borrow — i.e. reduce once
+        // Compute h + -p and pick it if there was no borrow, i.e. reduce once
         // more if h ≥ p. Done without a branch on the value.
         var g = [UInt32](repeating: 0, count: 5)
         g[0] = h[0] &+ 5

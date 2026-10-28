@@ -2,7 +2,7 @@
 --
 -- One row per tool exchange, inserted before the tool runs and settled after
 -- it. A row with no finished_at belongs to a tool that was running when the
--- process stopped — the one fact a restart could not otherwise recover.
+-- process stopped: the one fact a restart could not otherwise recover.
 -- Payloads are bounded by the writer.
 CREATE TABLE task_step (
   task_id     TEXT NOT NULL REFERENCES agent_task(id),

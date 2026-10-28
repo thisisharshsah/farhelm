@@ -3,8 +3,8 @@
  *
  * The success path is exercised everywhere else. This covers the failure that
  * actually cost an afternoon: a runner at an address nothing is listening on.
- * A TCP connect to a dead host on your own subnet does not fail fast — it hangs
- * for the better part of a minute — and every screen renders a spinner while it
+ * A TCP connect to a dead host on your own subnet does not fail fast. It hangs
+ * for the better part of a minute, and every screen renders a spinner while it
  * does. "Stuck on loading" and "wrong address" look identical from the outside,
  * so the request layer has to draw the distinction itself.
  */
@@ -20,7 +20,7 @@ afterEach(() => {
 describe("a runner that does not answer", () => {
   it("gives up rather than hanging, and says what it tried", async () => {
     vi.useFakeTimers();
-    // A fetch that never settles — a dead host, not a refused connection.
+    // A fetch that never settles: a dead host, not a refused connection.
     vi.stubGlobal(
       "fetch",
       (_url: string, init?: RequestInit) =>
@@ -58,7 +58,7 @@ describe("a runner that does not answer", () => {
     const error = (await pending) as ApiError;
     expect(error).toBeInstanceOf(ApiError);
     expect(error.message).toContain("http://192.168.1.10:7842");
-    // Status 0 is "never reached a server" — distinct from any HTTP failure.
+    // Status 0 is "never reached a server", distinct from any HTTP failure.
     expect(error.status).toBe(0);
   });
 
@@ -84,7 +84,7 @@ describe("a runner that does not answer", () => {
     );
 
     // `.then` with both branches, so the resolved type is `ApiError` rather
-    // than a union with the success shape — and a call that wrongly *succeeds*
+    // than a union with the success shape, and a call that wrongly *succeeds*
     // fails the test loudly instead of silently skipping the assertions.
     const error = await createRunnerApi("")
       .session("nope")

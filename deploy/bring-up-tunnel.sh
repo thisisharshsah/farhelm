@@ -4,7 +4,7 @@
 # hostnames at it, write the config, and start it.
 #
 # Split out from the login because that step opens a browser and picks which
-# Cloudflare zone this machine may manage — and picking the wrong one is how
+# Cloudflare zone this machine may manage, and picking the wrong one is how
 # `route dns` silently creates `farhelm.aurovie.com.someotherdomain.com`
 # instead of failing. Which is exactly what happened the first time.
 #
@@ -21,14 +21,14 @@ step() { printf '\n\033[1m▸ %s\033[0m\n' "$1"; }
 
 step "Check the login covers $ZONE"
 # `tunnel login` writes cert.pem scoped to the zone that was chosen. If it does
-# not cover $ZONE, `route dns` will not fail — it will append. Catch that here,
+# not cover $ZONE, `route dns` will not fail; it will append. Catch that here,
 # where the message can say what to do about it.
 if ! cloudflared tunnel route dns --help >/dev/null 2>&1; then
   echo "  cloudflared is not on PATH" >&2
   exit 1
 fi
 if [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
-  echo "  no cert.pem — run: cloudflared tunnel login   (and pick $ZONE)" >&2
+  echo "  no cert.pem; run: cloudflared tunnel login   (and pick $ZONE)" >&2
   exit 1
 fi
 echo "  cert.pem present"
@@ -51,7 +51,7 @@ for host in "$APEX" "$RELAY"; do
   out=$(cloudflared tunnel route dns "$TUNNEL" "$host" 2>&1 || true)
   echo "  $out" | tail -1
   if echo "$out" | grep -q "$host\."; then
-    echo "  ✗ that created a record under the wrong zone — the login does not cover $ZONE" >&2
+    echo "  ✗ that created a record under the wrong zone: the login does not cover $ZONE" >&2
     echo "    run: cloudflared tunnel login   and pick $ZONE" >&2
     exit 1
   fi

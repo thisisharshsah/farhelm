@@ -1,7 +1,7 @@
 /**
  * The relay transport, driven against a fake socket and a real runner identity.
  *
- * The interesting behaviour is not the crypto — `crypto.test.ts` covers that —
+ * The interesting behaviour is not the crypto (`crypto.test.ts` covers that)
  * but the correlation: the relay is a fan-out channel with no request/response,
  * so a reply is matched to a waiting call by its *shape*. Getting that wrong is
  * silent: the fleet promise resolves with a session detail, or a live event gets
@@ -500,12 +500,12 @@ describe("reviewing a change set", () => {
  * A relay transport is not usable the moment it is constructed: it fetches a
  * seat and completes a handshake first. A screen that mounts and immediately
  * asks for the fleet used to lose that race and report "not connected to the
- * relay" within a millisecond — which on screen read as "Cannot reach the
+ * relay" within a millisecond, which on screen read as "Cannot reach the
  * runner" for a machine that was online the whole time.
  */
 describe("a command issued before the link is up", () => {
   it("waits for the socket instead of failing", async () => {
-    // Not accepted yet — exactly the state React mounts into.
+    // Not accepted yet: exactly the state React mounts into.
     expect(socket().readyState).not.toBe(FakeSocket.OPEN);
 
     const pending = transport.fleet();

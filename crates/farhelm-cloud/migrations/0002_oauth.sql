@@ -1,7 +1,7 @@
 -- The OAuth authorization server that backs the MCP connectors.
 --
 -- Separate from `refresh_token`, which is the first-party app's session. These
--- grants belong to a *third party* — Claude — acting with a user's authority,
+-- grants belong to a *third party* (Claude) acting with a user's authority,
 -- and they are revoked independently: signing out of the web app should not
 -- disconnect a connector, and disconnecting a connector should not sign the
 -- user out of their own phone.

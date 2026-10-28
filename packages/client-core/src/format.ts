@@ -7,11 +7,11 @@ export function usd(value: number, precise = false): string {
 }
 
 export function pct(value: number | null | undefined, digits = 0): string {
-  if (value == null || Number.isNaN(value)) return "—";
+  if (value == null || Number.isNaN(value)) return "n/a";
   return `${(value * 100).toFixed(digits)}%`;
 }
 
-/** Compact relative time — "2h ago", "just now". */
+/** Compact relative time: "2h ago", "just now". */
 export function since(atMs: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - atMs) / 1000));
   if (seconds < 45) return "just now";
@@ -43,7 +43,7 @@ export function statusLabel(status: string): string {
 
 /**
  * Status colour token for a session dot. Always rendered alongside the status
- * word — hue never carries the meaning by itself.
+ * word; hue never carries the meaning by itself.
  */
 export function statusToken(status: string): string {
   switch (status) {

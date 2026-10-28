@@ -55,7 +55,7 @@ const POLL_INTERVAL_MS = 3_000;
  *
  * Only used on the runner's own network, where a request costs nothing and the
  * alternative is adding an SSE library for a path the relay replaces anyway. It
- * emits `session_upsert` rather than real events, which is enough — every screen
+ * emits `session_upsert` rather than real events, which is enough: every screen
  * re-reads state on any event; the events only ever say *that* something moved.
  *
  * The cost is that the output tail updates on the poll rather than line by line.

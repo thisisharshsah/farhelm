@@ -44,7 +44,7 @@ build_and_swap() {
       && npx vite build --outDir .dist-next --emptyOutDir 2>&1 \
       && npx vite build --config vite.sw.config.ts --outDir .dist-next 2>&1)"; then
     printf '%s\n' "$out" | grep -E 'error|Error' | head -12
-    log "${RED}✗ build failed — the live site is unchanged${OFF}"
+    log "${RED}✗ build failed; the live site is unchanged${OFF}"
     rm -rf "$STAGE"
     return 1
   fi
@@ -80,7 +80,7 @@ build_and_swap() {
   if [[ -n "$built" && "$served" == "$built" ]]; then
     log "${GREEN}✓ live${OFF} ${DIM}$LIVE_URL serving $built${OFF}"
   else
-    log "${RED}✗ built $built but $LIVE_URL serves ${served:-nothing}${OFF} — is farhelm cloud running with --app-dir web/dist?"
+    log "${RED}✗ built $built but $LIVE_URL serves ${served:-nothing}${OFF}. Is farhelm cloud running with --app-dir web/dist?"
     return 1
   fi
 }

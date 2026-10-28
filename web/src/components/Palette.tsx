@@ -1,8 +1,8 @@
 /**
- * ⌘K — jump anywhere, do anything.
+ * ⌘K: jump anywhere, do anything.
  *
  * The reason to build one is not that Cursor and Linear have one. It is that
- * this app's navigation is a *tree* — fleet → session → cost, tasks → task —
+ * this app's navigation is a *tree* (fleet → session → cost, tasks → task)
  * and a tree costs a click per level in each direction. Someone watching four
  * sessions spends most of their clicks going back up. A palette flattens that:
  * every session, every change set and every screen is two keystrokes away from
@@ -13,7 +13,7 @@
  * Subsequence, not substring: `bgt` finds "Billing → budget" the way an editor
  * finds files. Ranking prefers matches that start on a word boundary, so typing
  * `co` puts **co**st above dis**co**nnect, and the run is scored tighter when
- * the matched characters sit close together — the difference between a palette
+ * the matched characters sit close together: the difference between a palette
  * that feels like it read your mind and one you fight.
  *
  * # What it does not do
@@ -21,7 +21,7 @@
  * Decide approvals. A palette is a place for fast, reversible motion, and every
  * fast interface eventually gets a stray Enter. Approving a command an agent
  * wants to run on a real machine is neither fast nor reversible, so it stays on
- * a card with its diff visible — the same reason the destructive rule keeps
+ * a card with its diff visible, the same reason the destructive rule keeps
  * `DecidedVia::Connector` out. Navigating *to* the approval is offered; the
  * decision is made where it can be read.
  */
@@ -65,7 +65,7 @@ function score(query: string, text: string): number | null {
     if (found === -1) return null;
 
     const boundary =
-      found === 0 || /[\s\-–—/·:]/.test(haystack[found - 1] ?? "");
+      found === 0 || /[\s\-\u2013\u2014/·:]/.test(haystack[found - 1] ?? "");
     total += boundary ? 12 : 3;
     // Adjacent characters score better than a match spread across the string.
     if (previous >= 0) total += found === previous + 1 ? 6 : -Math.min(found - previous, 6);
@@ -85,7 +85,7 @@ export function rank(query: string, actions: Action[]): Action[] {
 
   const hits: Scored[] = [];
   for (const action of actions) {
-    // The hint is searchable too — a repository name is often what someone
+    // The hint is searchable too: a repository name is often what someone
     // actually remembers about a session, not the words in its title.
     const direct = score(trimmed, action.label);
     const viaHint = action.hint ? score(trimmed, `${action.label} ${action.hint}`) : null;

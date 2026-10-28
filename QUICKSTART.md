@@ -13,7 +13,7 @@ curl -fsSL https://farhelm.aurovie.com/install.sh | bash
 farhelm setup
 ```
 
-The first installs Farhelm and asks to join your workspace — you approve it in
+The first installs Farhelm and asks to join your workspace; you approve it in
 the app, and the machine appears in your fleet. The second walks everything
 still undone, one question at a time, explaining what each one costs to skip.
 
@@ -30,12 +30,12 @@ rather type it. Running `farhelm` on its own shows the same list at any time,
 with whatever is still outstanding:
 
 ```
-  farhelm 0.1.0 — supervise your coding agents from anywhere
+  farhelm 0.1.0: supervise your coding agents from anywhere
 
   ✓ model        a credential is stored
-  ✗ supervision  not installed — an agent's tool calls reach nothing
+  ✗ supervision  not installed: an agent's tool calls reach nothing
   ✓ fleet        enrolled
-  ✗ at login     no — supervision stops at the next reboot
+  ✗ at login     no: supervision stops at the next reboot
 
   2 things left. farhelm setup walks them, or do this one:
     farhelm install-hooks --global
@@ -49,7 +49,7 @@ with whatever is still outstanding:
 | Run at login | `farhelm install-service` | Supervision stops at the next reboot |
 
 `setup` is safe to re-run: it does what is missing and skips what is not. Under
-a pipe or a service manager — anywhere there is nobody to ask — it prints the
+a pipe or a service manager (anywhere there is nobody to ask) it prints the
 commands it would have run rather than guessing on your behalf.
 
 ### Building it yourself
@@ -83,13 +83,13 @@ This is the part worth knowing before you rely on it:
 | You approve | `allow` | |
 | You deny | `deny`, with your reason | |
 | Nobody answers in 15 min | `deny`, recorded as `timeout` | An unanswered request must never become an allow |
-| The daemon is down | `defer` | Falls back to Claude Code's own prompt — Farhelm being down degrades to plain Claude Code, not to an unsupervised agent |
+| The daemon is down | `defer` | Falls back to Claude Code's own prompt; Farhelm being down degrades to plain Claude Code, not to an unsupervised agent |
 | The bridge itself errors | `defer` | A bug here must not block your work |
 
 ### Rules for your own stack
 
-The built-in destructive list is broad — `rm -rf`, force pushes, `DROP TABLE`,
-`mkfs`, `sudo`, `curl | sh`, `terraform destroy`, `kubectl delete` — but it
+The built-in destructive list is broad (`rm -rf`, force pushes, `DROP TABLE`,
+`mkfs`, `sudo`, `curl | sh`, `terraform destroy`, `kubectl delete`), but it
 cannot know that `make reset-staging` drops your staging database.
 
 ```sh
@@ -103,7 +103,7 @@ Write `~/.farhelm/farhelm.policy.toml`:
 destructive = ["make reset-staging", "flyctl apps destroy"]
 ```
 
-Anything destructive can only be cleared **from a phone** — never a watch, never
+Anything destructive can only be cleared **from a phone**, never a watch, never
 a notification button. Check your rule fires before you rely on it; `policy
 <command>` exists so you don't have to find out by asking an agent to run
 something drastic.
@@ -115,7 +115,7 @@ something drastic.
 The daemon never listens on a public port. It dials **out** to a relay, and the
 relay forwards ciphertext it cannot read.
 
-`farhelm login --cloud <url>` — which `setup` runs for you — is the whole of it.
+`farhelm login --cloud <url>`, which `setup` runs for you, is the whole of it.
 It prints a short code, waits while you approve it in the app, and stores what
 it is given. Nothing is copied by hand, and it works over SSH on a box whose
 browser belongs to somebody else.
@@ -125,7 +125,7 @@ and everything still travels sealed between a device and your machine; what the
 control plane provides is a directory and a permission, not a way in.
 
 > **Running your own?** `farhelm cloud` is the control plane and `farhelm relay`
-> is the fan-out — both subcommands of the same binary. See
+> is the fan-out, both subcommands of the same binary. See
 > [deploy/README.md](deploy/README.md).
 
 ### Without an account at all
@@ -133,7 +133,7 @@ control plane provides is a directory and a permission, not a way in.
 One machine, one phone, no control plane: run a relay, point the daemon at it
 with `--relay`, and pair the phone from a QR code with `farhelm pair`. It is
 more to hold, which is why it is not the default, but nothing about it is
-second-class — the encryption is identical.
+second-class: the encryption is identical.
 
 ---
 
@@ -143,8 +143,8 @@ second-class — the encryption is identical.
 farhelm install-service
 ```
 
-Writes the definition your machine's own service manager understands — a launchd
-agent on macOS, a systemd unit on Linux — with this machine's paths filled in,
+Writes the definition your machine's own service manager understands (a launchd
+agent on macOS, a systemd unit on Linux) with this machine's paths filled in,
 and prints the one line that loads it. It writes the file but does not start it:
 starting a background service that executes agents is worth typing yourself.
 
@@ -157,13 +157,13 @@ and so does the startup banner.
 
 | Agent | How approvals reach it | Confidence |
 |---|---|---|
-| Farhelm's own agent | Native — the daemon *is* the agent, and hands you a diff | Verified end to end |
-| Claude Code | Hook bridge — the agent calls the daemon and **blocks** | Verified end to end |
+| Farhelm's own agent | Native: the daemon *is* the agent, and hands you a diff | Verified end to end |
+| Claude Code | Hook bridge: the agent calls the daemon and **blocks** | Verified end to end |
 | Codex, OpenCode, Aider, Gemini, Cursor | The daemon reads the question out of the terminal and types the answer | **Unverified** |
 
 The terminal path is pattern matching on output. It is tuned so that an
 unrecognised prompt means a session that **sits there**, never one that proceeds
-unwatched — but the patterns for those five agents were written from
+unwatched, but the patterns for those five agents were written from
 documentation and have not been checked against the real binaries.
 `/v1/agents` reports `verified: false` for all of them.
 
@@ -189,12 +189,12 @@ Past that, in rough order of likelihood:
 **The app says "cannot reach the daemon".** It is served by the daemon itself,
 so this means it is down or on another port. `curl 127.0.0.1:7842/v1/health`.
 
-**An agent starts and immediately dies.** Usually the binary is not installed —
+**An agent starts and immediately dies.** Usually the binary is not installed;
 the banner's `agents` line says which ones it found. Starting a session for a
 missing agent returns a 503 that names it.
 
 **Approvals never appear.** For Claude Code, the hook block is not in that
-repo's `.claude/settings.json` — `farhelm install-hooks --global` covers every
+repo's `.claude/settings.json`; `farhelm install-hooks --global` covers every
 repo at once. For the others, the prompt was not recognised; see above.
 
 **Push never arrives.** In order of likelihood: the app is not installed to the
@@ -206,7 +206,7 @@ or regenerated. Every device is paired against its public half; there is no
 recovery but re-pairing.
 
 **Something says `forge` rather than `farhelm`.** That is the old name, and it
-still works — files, environment variables and settings under either spelling
+still works: files, environment variables and settings under either spelling
 are read, and the one being used says so once. `deploy/migrate-to-farhelm.sh`
 moves a deployment across when you want it tidy.
 

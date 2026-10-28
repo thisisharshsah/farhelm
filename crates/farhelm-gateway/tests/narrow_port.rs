@@ -7,7 +7,7 @@
 //! wrote one and every gateway test went through real SQLite instead.
 //!
 //! It also pins the claim in `GatewayStore`'s doc comment. If someone adds a
-//! `store.list_devices()` to the pipeline, this file stops compiling — which is
+//! `store.list_devices()` to the pipeline, this file stops compiling, which is
 //! the point. Widening what the gateway may touch should be a decision, not
 //! something that happens because the bound already allowed it.
 
@@ -30,7 +30,7 @@ struct FakeStore {
 }
 
 /// Uncapped and empty. Written out rather than derived because `Budget` has no
-/// `Default` — and should not grow one for a test's convenience, since "an
+/// `Default`, and should not grow one for a test's convenience, since "an
 /// unconfigured budget" is a decision the wire type has deliberately declined to
 /// make.
 impl Default for FakeStore {
@@ -150,7 +150,7 @@ impl BatchStore for FakeStore {
     }
 }
 
-/// The fake satisfies the gateway's bound — which is the assertion.
+/// The fake satisfies the gateway's bound, which is the assertion.
 ///
 /// It implements four of the nine role ports. It does not implement
 /// `ApprovalStore`, `DeviceStore`, `PlanStore`, `TaskStore` or `FleetStore`, so

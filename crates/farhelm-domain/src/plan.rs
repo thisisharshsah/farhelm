@@ -1,7 +1,7 @@
 //! `PLAN.md` parsing and the plan-step state machine (B1, B3).
 //!
 //! The file is the source of truth; the database is a mirror. That is why
-//! [`ParsedPlan::content_hash`] exists — if the hash on disk stops matching the
+//! [`ParsedPlan::content_hash`] exists: if the hash on disk stops matching the
 //! hash in `plan.content_hash`, someone edited the file behind the executor's
 //! back and the mirror must be rebuilt rather than trusted.
 //!
@@ -110,7 +110,7 @@ fn split_attributes(title: &str) -> (String, BTreeMap<String, String>) {
     let mut attributes = BTreeMap::new();
     for pair in body.split(',') {
         let Some((key, value)) = pair.split_once('=') else {
-            // Not an attribute block after all — a title may legitimately end
+            // Not an attribute block after all; a title may legitimately end
             // in braces. Leave it alone.
             return (trimmed.to_owned(), BTreeMap::new());
         };
@@ -178,7 +178,7 @@ pub fn parse(source: &str) -> Result<ParsedPlan, PlanParseError> {
             return Err(PlanParseError {
                 line: index + 1,
                 message: format!(
-                    "unknown checklist marker {marker:?} — expected one of ' ', 'x', '>', '-', '!'"
+                    "unknown checklist marker {marker:?}; expected one of ' ', 'x', '>', '-', '!'"
                 ),
             });
         };
@@ -193,7 +193,7 @@ pub fn parse(source: &str) -> Result<ParsedPlan, PlanParseError> {
         let tier = match attributes.get("tier") {
             Some(raw) => Some(raw.parse().map_err(|_| PlanParseError {
                 line: index + 1,
-                message: format!("unknown tier {raw:?} — expected small, large, or batch"),
+                message: format!("unknown tier {raw:?}; expected small, large, or batch"),
             })?),
             None => None,
         };
@@ -235,7 +235,7 @@ pub fn render(steps: &[PlanStep]) -> String {
     out
 }
 
-/// The glance shape lives in `farhelm-proto` — the clients render it — along with
+/// The glance shape lives in `farhelm-proto` (the clients render it), along with
 /// the fold that produces it. What stays here is the state machine below: which
 /// transitions are legal, and what pausing a plan actually does.
 pub use farhelm_proto::views::PlanProgress;
@@ -243,7 +243,7 @@ pub use farhelm_proto::views::PlanProgress;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
     NoSuchStep(i64),
-    /// Another step is already in flight — one active step at a time.
+    /// Another step is already in flight: one active step at a time.
     AlreadyActive(i64),
     /// The transition does not make sense from the step's current status.
     BadTransition {
@@ -372,7 +372,7 @@ pub fn fail(steps: &mut [PlanStep], ordinal: i64) -> Result<(), PlanError> {
     }
 }
 
-/// Return the running step to `Todo` — what a remote pause does, so the step is
+/// Return the running step to `Todo`: what a remote pause does, so the step is
 /// picked up cleanly on resume rather than resuming mid-flight.
 pub fn pause(steps: &mut [PlanStep]) -> Option<i64> {
     let active = steps

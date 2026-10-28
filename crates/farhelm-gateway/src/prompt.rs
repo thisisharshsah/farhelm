@@ -1,4 +1,4 @@
-//! Pipeline stage 6 — cache-shaped prompt assembly (C1/M1).
+//! Pipeline stage 6: cache-shaped prompt assembly (C1/M1).
 //!
 //! Prompt caching is a **prefix match**: one changed byte anywhere invalidates
 //! everything after it. So the gateway, not the agent, owns prompt order, and
@@ -8,7 +8,7 @@
 //! [tools] ⟂ [system + conventions] ⟂ [repo map] ⟂ [compacted history] | dynamic tail
 //! ```
 //!
-//! `⟂` is a `cache_control` breakpoint. Nothing dynamic ever precedes one —
+//! `⟂` is a `cache_control` breakpoint. Nothing dynamic ever precedes one;
 //! that single rule is what makes the difference between a 78% cache-read ratio
 //! and 0%, and it is the property the tests below pin down.
 //!
@@ -17,7 +17,7 @@
 //!    last *system* block also caches the tools ahead of it. There is no need
 //!    to spend one of the four breakpoints on tools.
 //!  - A prefix shorter than the model's minimum silently does not cache at all.
-//!    Placing a breakpoint there is not an error, it just achieves nothing — so
+//!    Placing a breakpoint there is not an error, it just achieves nothing, so
 //!    the assembler skips it and says why, rather than reporting a cache that
 //!    was never created.
 
@@ -100,7 +100,7 @@ impl Turn {
 /// into the stable half, because the dynamic half is a separate argument.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StableContext {
-    /// Tool definitions, already serialised. Must be in a deterministic order —
+    /// Tool definitions, already serialised. Must be in a deterministic order;
     /// reordering the tool list invalidates every cache tier.
     pub tools: Vec<serde_json::Value>,
     /// The frozen system prompt. No dates, no session ids, no user names.
@@ -352,7 +352,7 @@ impl PromptPlan {
         prefixes
     }
 
-    /// The dynamic tail — the only part that legitimately changes per turn.
+    /// The dynamic tail: the only part that legitimately changes per turn.
     pub fn dynamic_tail(&self) -> &str {
         self.messages
             .last()
@@ -419,7 +419,7 @@ pub fn assemble_with_results(
     if !system_text.is_empty() {
         running += approx_tokens(&system_text);
         let mut block = TextBlock::new(system_text);
-        // This breakpoint covers the tools too — they render ahead of system.
+        // This breakpoint covers the tools too; they render ahead of system.
         let placed = running >= minimum;
         if placed {
             block.cache_control = Some(CacheControl::EPHEMERAL);
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(
             first.stable_prefix(),
             second.stable_prefix(),
-            "the cached prefix moved between turns — caching would be worthless"
+            "the cached prefix moved between turns; caching would be worthless"
         );
         assert_ne!(first.dynamic_tail(), second.dynamic_tail());
     }
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn a_changed_repo_map_leaves_the_system_prefix_intact() {
-        // The first breakpoint must still hit when only retrieval changed —
+        // The first breakpoint must still hit when only retrieval changed;
         // that is the whole reason the repo map sits after the system prompt.
         let mut a = stable();
         let mut b = stable();

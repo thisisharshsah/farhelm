@@ -1,6 +1,6 @@
 //! Everything a *device* can ask the runner to do.
 //!
-//! There are two ways in — the localhost HTTP API and the relay link — and they
+//! There are two ways in (the localhost HTTP API and the relay link), and they
 //! must not be able to diverge. The D3 rule that a destructive command cannot be
 //! cleared from a watch is enforced here, once, so a new transport cannot
 //! accidentally ship without it.
@@ -29,7 +29,7 @@ pub use farhelm_proto::commands::{Command, PlanAction};
 #[derive(Debug)]
 pub enum CommandError {
     NotFound(String),
-    /// The device is not allowed to do this — the destructive-approval rule.
+    /// The device is not allowed to do this: the destructive-approval rule.
     Forbidden(String),
     /// Valid request, wrong state.
     Conflict(String),
@@ -80,7 +80,7 @@ pub enum Outcome {
         steps: Vec<farhelm_proto::types::PlanStep>,
     },
     /// The answer to [`Command::Snapshot`]. Goes back to the asking device only,
-    /// not to every paired device — nobody else asked.
+    /// not to every paired device; nobody else asked.
     Snapshot(Box<farhelm_proto::views::FleetView>),
     /// The answer to [`Command::SessionSnapshot`], likewise addressed.
     SessionSnapshot(Box<farhelm_proto::views::SessionDetail>),
@@ -246,8 +246,8 @@ pub async fn execute(
                 .store
                 .set_repo_auto_approve(&repo_id, level, now_ms())?;
 
-            // Every session in the repository that now reads a wider level —
-            // which excludes any with its own row — gets the same sweep a
+            // Every session in the repository that now reads a wider level
+            // (which excludes any with its own row) gets the same sweep a
             // session-level change does, and is announced so clients re-read.
             let sessions: Vec<String> = state
                 .store
@@ -316,7 +316,7 @@ pub async fn execute(
 /// Start an agent in a repository, registering the repository if it is new.
 ///
 /// Lives here rather than in the HTTP handler so the relay path cannot diverge
-/// from it — the same reason [`execute`] exists at all. Every check below is a
+/// from it, the same reason [`execute`] exists at all. Every check below is a
 /// failure somebody would otherwise see as an unexplained dead session.
 pub async fn start_session(
     state: &Arc<AppState>,
@@ -366,7 +366,7 @@ pub async fn start_session(
     let spec = farhelm_domain::agent::spec(agent);
     if !spec.binary.is_empty() && !crate::pty::binary_exists(spec.binary) {
         return Err(CommandError::Forbidden(format!(
-            "{} is not installed on the runner — `{}` is not on its PATH",
+            "{} is not installed on the runner; `{}` is not on its PATH",
             spec.display_name, spec.binary
         )));
     }
@@ -409,7 +409,7 @@ pub async fn stop_session(
 ///
 /// `Conflict` becomes `Forbidden` rather than `Conflict` on purpose: over the
 /// relay these all come back as one `command_error`, and "you cannot do that"
-/// is the honest summary of every conflict a device can hit here — a watch, an
+/// is the honest summary of every conflict a device can hit here: a watch, an
 /// already-decided task, a change set that never landed.
 fn task_error(err: crate::task::TaskError) -> CommandError {
     use crate::task::TaskError;
@@ -423,8 +423,8 @@ fn task_error(err: crate::task::TaskError) -> CommandError {
 
 /// Approve or reject a change set from a device.
 ///
-/// Thin on purpose: every rule — the watch refusal, the two-devices race, the
-/// stale-file check, the write itself — lives in [`crate::task::review`], so the
+/// Thin on purpose: every rule (the watch refusal, the two-devices race, the
+/// stale-file check, the write itself) lives in [`crate::task::review`], so the
 /// relay and the localhost API cannot enforce different ones.
 fn review_task(
     state: &Arc<AppState>,
@@ -466,7 +466,7 @@ async fn decide(
     if !existing.allows_decision_from(via) {
         return Err(CommandError::Forbidden(match via {
             DecidedVia::Connector => "a destructive command has to be cleared by a person, \
-                 not by a connector — approve it from the phone or the web app"
+                 not by a connector; approve it from the phone or the web app"
                 .to_owned(),
             _ => "destructive commands must be approved from the phone".to_owned(),
         }));
@@ -482,7 +482,7 @@ async fn decide(
 
         // For an agent with a hook, the bridge is already blocked on this and
         // picks the decision up itself. For one that asked in its terminal,
-        // nothing happens until somebody types the answer — so type it.
+        // nothing happens until somebody types the answer, so type it.
         if let Ok(Some(session)) = state.store.get_session(&approval.session_id) {
             let _ = crate::watcher::answer(
                 state,
@@ -784,7 +784,7 @@ mod tests {
         assert!(matches!(raised, crate::state::Raised::AutoApproved(_)));
         assert!(state.store.list_pending_approvals().unwrap().is_empty());
 
-        // Clients hear a decision, not a request — nothing to tap.
+        // Clients hear a decision, not a request; nothing to tap.
         let mut saw_decision = false;
         while let Ok(event) = events.try_recv() {
             match event {
@@ -1033,7 +1033,7 @@ mod tests {
         assert_eq!(
             calls_since(&state, Some(NOW - hour)).await,
             1,
-            "the window was ignored — a phone asking for the last hour got all of history"
+            "the window was ignored: a phone asking for the last hour got all of history"
         );
     }
 

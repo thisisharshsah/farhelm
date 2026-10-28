@@ -1,7 +1,7 @@
 //! The session manager (M1/D1/D4).
 //!
 //! Agents run in tmux on an always-on box, so closing a laptop lid does not end
-//! a session — the runner reattaches to a pane that never stopped. This module
+//! a session; the runner reattaches to a pane that never stopped. This module
 //! owns that mapping: a Farhelm session row on one side, a tmux target on the
 //! other, and the polling that keeps the two honest.
 
@@ -36,7 +36,7 @@ impl std::fmt::Display for ManagerError {
             ManagerError::Terminal(err) => write!(f, "{err}"),
             ManagerError::Store(err) => write!(f, "{err}"),
             ManagerError::NoTarget => {
-                f.write_str("this session has no terminal — it was not started by the runner")
+                f.write_str("this session has no terminal; it was not started by the runner")
             }
         }
     }
@@ -78,7 +78,7 @@ pub fn agent_command(agent: Agent) -> Vec<String> {
 /// `Agent::Shell` carries an empty binary in the spec table, because there is no
 /// one answer: it is `$SHELL`, and that is a property of the machine rather than
 /// of the agent. Before this resolved, starting a shell session produced
-/// "tmux is not installed" — the empty string failed a PATH lookup, and the
+/// "tmux is not installed": the empty string failed a PATH lookup, and the
 /// resulting error had tmux's message on it.
 fn login_shell() -> String {
     std::env::var("SHELL")
@@ -156,7 +156,7 @@ impl<T: Terminal> SessionManager<T> {
             .ok_or(ManagerError::NoTarget)?;
 
         if let Some(target) = &session.tmux_target {
-            // A pane that has already exited is not an error here — the goal is
+            // A pane that has already exited is not an error here; the goal is
             // "this session is stopped", and it is.
             let _ = self.terminal.kill(target).await;
         }
@@ -195,7 +195,7 @@ impl<T: Terminal> SessionManager<T> {
             // The same snapshot, read for a question the agent is waiting on.
             // Agents without a hook system ask in their terminal and block on a
             // keystroke; this is what turns that into an approval. A failure
-            // here must not stop the poll — the output above is still useful.
+            // here must not stop the poll; the output above is still useful.
             let _ = crate::watcher::scan_session(
                 &self.state,
                 &self.terminal,
@@ -257,8 +257,8 @@ mod agent_command_tests {
 
     /// The plain shell resolves to a real program.
     ///
-    /// It is advertised by `/v1/agents` as installed — `spec.binary.is_empty()`
-    /// counts as installed, deliberately, because there is nothing to look up —
+    /// It is advertised by `/v1/agents` as installed (`spec.binary.is_empty()`
+    /// counts as installed, deliberately, because there is nothing to look up),
     /// so a client offers it. Starting it has to work, and it did not: the empty
     /// binary failed a PATH lookup and the error that came back said "tmux is
     /// not installed", on a runner that was not using tmux.
@@ -425,7 +425,7 @@ mod tests {
         let session = manager.start(&repo, Agent::ClaudeCode).await.unwrap();
         manager.stop(&session.id).await.unwrap();
 
-        // Its pane is gone, but it is `done`, not `dead` — the distinction is
+        // Its pane is gone, but it is `done`, not `dead`; the distinction is
         // what the fleet view shows as "complete" rather than "offline".
         assert_eq!(manager.garbage_collect().await.unwrap(), 0);
         assert_eq!(

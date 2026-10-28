@@ -2,8 +2,8 @@
 --
 -- The loop drafts on the large tier; one call at the end judges the patch alone.
 -- That verdict is worth keeping next to the change set it judged, so a review
--- card can lead with it and so a later question — "did anything warn us about
--- this?" — has an answer that is not "read the logs".
+-- card can lead with it and so a later question ("did anything warn us about
+-- this?") has an answer that is not "read the logs".
 --
 -- Nullable throughout: verification can be switched off, a task with no change
 -- set has nothing to judge, and a task that failed before producing one never

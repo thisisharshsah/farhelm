@@ -2,12 +2,12 @@
 //!
 //! Two things are separated here on purpose:
 //!
-//! - **Deciding what a webhook means** — [`interpret`] and
-//!   [`verify_signature`] — is pure. No network, no clock beyond a passed-in
+//! - **Deciding what a webhook means** ([`interpret`] and
+//!   [`verify_signature`]) is pure. No network, no clock beyond a passed-in
 //!   `now_ms`. That is what makes the billing state machine testable without a
 //!   Stripe account, which matters because billing bugs are discovered by users
 //!   and paid for in refunds.
-//! - **Talking to Stripe** — [`Stripe`] — is a thin form-encoded client. No SDK:
+//! - **Talking to Stripe** ([`Stripe`]) is a thin form-encoded client. No SDK:
 //!   this uses four endpoints, and an SDK would be a large dependency plus its
 //!   own opinion about async runtimes.
 //!
@@ -62,7 +62,7 @@ pub enum Billing {
 }
 
 impl Billing {
-    /// Read the environment. Absent keys mean [`Billing::Disabled`] — an
+    /// Read the environment. Absent keys mean [`Billing::Disabled`]: an
     /// explicit, supported configuration rather than a misconfiguration.
     pub fn from_env() -> Self {
         let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
@@ -177,7 +177,7 @@ const WEBHOOK_TOLERANCE_MS: i64 = 5 * 60 * 1_000;
 
 /// Check the `Stripe-Signature` header against the raw body.
 ///
-/// The body must be the **exact bytes received** — deserialising and
+/// The body must be the **exact bytes received**; deserialising and
 /// re-serialising changes key order and whitespace and breaks the signature,
 /// which is why the handler takes `Bytes` rather than `Json`.
 pub fn verify_signature(
@@ -250,8 +250,8 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
 
 /// Turn a Stripe event into a [`SubscriptionChange`], or `None`.
 ///
-/// Only four event types matter. Everything else — invoices, payment intents,
-/// charges — is Stripe's business, and reacting to it here would mean two
+/// Only four event types matter. Everything else (invoices, payment intents,
+/// charges) is Stripe's business, and reacting to it here would mean two
 /// sources of truth for what plan someone is on.
 pub fn interpret(
     event: &serde_json::Value,
@@ -262,7 +262,7 @@ pub fn interpret(
 
     match kind {
         // The user finished paying. `client_reference_id` is the org, set when
-        // the session was created — the only point in the flow where this
+        // the session was created, the only point in the flow where this
         // server knows both sides.
         "checkout.session.completed" => Some(SubscriptionChange {
             org_id: object
@@ -355,7 +355,7 @@ fn plan_of(subscription: &serde_json::Value, prices: &HashMap<Plan, String>) -> 
 
 /// Stripe's dozen statuses, collapsed to the three this system acts on.
 ///
-/// `trialing` counts as active — a trial that does not work is not a trial.
+/// `trialing` counts as active: a trial that does not work is not a trial.
 /// `unpaid` counts as cancelled: past_due is the grace period, unpaid is what
 /// Stripe says after the grace period has run out.
 fn status_of(status: Option<&str>) -> SubscriptionStatus {

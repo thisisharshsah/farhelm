@@ -1,7 +1,7 @@
 //! Where the runner's long-term secret key lives.
 //!
 //! §7 says keys go in platform keystores on the *devices*. The runner is a
-//! headless daemon on a VPS with no keychain, so its key is a file — which makes
+//! headless daemon on a VPS with no keychain, so its key is a file, which makes
 //! the file's permissions the entire access control. Two rules follow:
 //!
 //! 1. The file is created `0600` **before** any key material is written to it,
@@ -39,8 +39,8 @@ impl std::fmt::Display for KeystoreError {
             KeystoreError::Crypto(err) => write!(f, "keystore: {err}"),
             KeystoreError::TooPermissive { path, mode } => write!(
                 f,
-                "{} is mode {mode:o}; the runner's secret key must be readable only by its owner \
-                 — fix with `chmod 600 {}`",
+                "{} is mode {mode:o}; the runner's secret key must be readable only by its owner. \
+                 Fix with `chmod 600 {}`",
                 path.display(),
                 path.display()
             ),
@@ -89,7 +89,7 @@ pub fn save(path: impl AsRef<Path>, identity: &Identity) -> Result<(), KeystoreE
 /// Read a secret from a key file, refusing one anybody else can read.
 ///
 /// Exposed because the runner's X25519 identity is not the only long-lived
-/// secret on a Farhelm box — the relay's VAPID signing key is another, and it
+/// secret on a Farhelm box; the relay's VAPID signing key is another, and it
 /// deserves exactly the same two guarantees rather than a second, subtly
 /// different implementation of them.
 pub fn read_secret(path: impl AsRef<Path>) -> Result<String, KeystoreError> {
@@ -111,7 +111,7 @@ pub fn write_secret(path: impl AsRef<Path>, secret: &str) -> Result<(), Keystore
     options.write(true).create(true).truncate(true);
 
     // The mode is part of the create call, so the file never exists in a
-    // readable state — not even for the instant between create and chmod.
+    // readable state, not even for the instant between create and chmod.
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(
             first.public_key(),
             second.public_key(),
-            "the runner changed identity on restart — every paired device would break"
+            "the runner changed identity on restart; every paired device would break"
         );
     }
 

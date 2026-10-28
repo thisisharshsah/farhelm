@@ -2,7 +2,7 @@
 //!
 //! `farhelm-crypto` (RustCrypto `crypto_box`) and the PWA (TweetNaCl `nacl.box`)
 //! have to produce bytes each other can open. Both are NaCl `crypto_box`, so
-//! they should — but a silent incompatibility here would look like "the phone
+//! they should, but a silent incompatibility here would look like "the phone
 //! can't approve anything" with no error pointing at the cause.
 //!
 //! So a fixture is checked in and *both* languages open it: this test, and
@@ -39,7 +39,7 @@ fn fixture_path() -> PathBuf {
 
 fn load() -> Fixture {
     let raw = std::fs::read_to_string(fixture_path()).expect(
-        "tests/fixtures/interop.json is missing — regenerate it with \
+        "tests/fixtures/interop.json is missing; regenerate it with \
          `cargo test -p farhelm-crypto --test interop -- --ignored`",
     );
     serde_json::from_str(&raw).expect("fixture is not valid JSON")

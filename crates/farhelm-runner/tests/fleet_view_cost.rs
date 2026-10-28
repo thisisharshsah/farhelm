@@ -130,7 +130,7 @@ fn repeated_rows_are_read_once_per_assembly() {
 /// Reads that are not per-session must not grow when the fleet does.
 ///
 /// This is the regression that matters. Before the memo, `view_of` called
-/// `list_pending_approvals` — a read of the whole pending table — *inside* the
+/// `list_pending_approvals` (a read of the whole pending table) *inside* the
 /// per-session builder, and then scanned the result in Rust for the one approval
 /// belonging to that session. Twenty sessions meant twenty full reads of the
 /// table to answer twenty questions that one read answers.
@@ -301,8 +301,8 @@ fn totals_over_an_empty_window_are_zero() {
 /// Worth pinning because `view_of` has a `not_found` branch for exactly that
 /// case, and this is why it has never fired: the foreign key refuses the write
 /// first. The branch is a belt-and-braces guard for a store that does not
-/// enforce referential integrity — a Postgres backend for the team tier would,
-/// but an in-memory test double might not — so it stays.
+/// enforce referential integrity (a Postgres backend for the team tier would,
+/// but an in-memory test double might not), so it stays.
 #[test]
 fn the_schema_refuses_a_session_whose_repo_is_gone() {
     let state = fixture(1, 0);

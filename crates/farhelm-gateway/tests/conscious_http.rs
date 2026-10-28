@@ -4,7 +4,7 @@
 //! differences, each checked on the wire here because each fails only against
 //! the real thing: the URL already names the project, the component rides on
 //! `X-Conscious-Client`, `CONSCIOUS_MODEL` replaces the routed name, and there
-//! is no Batch API — so a deferrable call runs live and says so, and a local
+//! is no Batch API, so a deferrable call runs live and says so, and a local
 //! model is never billed at Anthropic's rates.
 //!
 //! The last test talks to the live gateway and is `#[ignore]`d: run it with the

@@ -11,7 +11,7 @@
 #   bin/{forge-cloud,forge-relay,forge-runner}  →  bin/farhelm  (one binary)
 #   com.relayforge.{cloud,relay,runner,tunnel}  →  com.farhelm.*
 #
-# The daemon reads the old *file* names by itself — forge.db, forge.key,
+# The daemon reads the old *file* names by itself: forge.db, forge.key,
 # forge.cloud.json and the rest keep working wherever they lie, and are left
 # alone here. What it cannot do by itself is notice that its own launchd job
 # points at a binary that is no longer built under that name, which is the one
@@ -20,8 +20,8 @@
 # Three properties worth knowing before running it:
 #
 #   Nothing is deleted. The old directory becomes a symlink to the new one, so
-#   anything still pointing at `~/.relayforge` — a shell alias, a checked-in
-#   path, a plist this script did not find — keeps working rather than failing
+#   anything still pointing at `~/.relayforge` (a shell alias, a checked-in
+#   path, a plist this script did not find) keeps working rather than failing
 #   at the least convenient moment. The old plists are moved aside, not removed.
 #
 #   It is idempotent. Re-running it after a partial failure finishes the job
@@ -49,7 +49,7 @@ run() {
   if [ "$DRY" = yes ]; then printf '  %swould:%s %s\n' "$DIM" "$OFF" "$*"; else "$@"; fi
 }
 
-[ "$DRY" = yes ] && printf '\n%sDry run — nothing will be changed.%s\n' "$BOLD" "$OFF"
+[ "$DRY" = yes ] && printf '\n%sDry run: nothing will be changed.%s\n' "$BOLD" "$OFF"
 
 # ------------------------------------------------------------------ build ---
 #
@@ -69,10 +69,10 @@ fi
 
 step "The state directory"
 if [ -L "$OLD_HOME" ]; then
-  ok "already migrated — $OLD_HOME is a link to $(readlink "$OLD_HOME")"
+  ok "already migrated: $OLD_HOME is a link to $(readlink "$OLD_HOME")"
 elif [ -d "$NEW_HOME" ] && [ -d "$OLD_HOME" ]; then
   bad "both $OLD_HOME and $NEW_HOME exist and neither is a link."
-  echo "     Merge them by hand — refusing to guess which one is live."
+  echo "     Merge them by hand; refusing to guess which one is live."
   exit 1
 elif [ -d "$OLD_HOME" ]; then
   run mv "$OLD_HOME" "$NEW_HOME"
@@ -108,13 +108,13 @@ for job in cloud relay runner tunnel; do
   old_plist="$AGENTS/$old_label.plist"
   target="$AGENTS/$new_label.plist"
 
-  [ -f "$old_plist" ] || { note "$new_label — nothing to migrate from, skipped"; continue; }
+  [ -f "$old_plist" ] || { note "$new_label: nothing to migrate from, skipped"; continue; }
 
   # Derived from the job that is *running*, never regenerated from the
   # checked-in template.
   #
   # The first version of this script wrote the template out instead, and that
-  # is not a stylistic difference — a template is what the next machine should
+  # is not a stylistic difference; a template is what the next machine should
   # get, and it drifts from what this one actually has. On the deployment this
   # was written for it drifted twice: the template named a `cloudflared` at a
   # path that does not exist here, so the tunnel died with a config error and
@@ -124,8 +124,8 @@ for job in cloud relay runner tunnel; do
   #
   # Neither failed loudly. Both looked like the migration having broken the
   # system rather than having pointed it somewhere new. So the only things
-  # changed here are the three that genuinely have to change — the label, the
-  # binary, and the home directory — and every other value is carried across
+  # changed here are the three that genuinely have to change (the label, the
+  # binary, and the home directory) and every other value is carried across
   # exactly as it was found.
   if [ "$DRY" = no ]; then
     sed -e "s|$old_label|$new_label|g" \
@@ -134,9 +134,9 @@ for job in cloud relay runner tunnel; do
         -e "s|$NEW_HOME/bin/forge-cloud|$NEW_HOME/bin/farhelm</string>\n\t\t<string>cloud|g" \
         -e "s|$NEW_HOME/bin/forge-relay|$NEW_HOME/bin/farhelm</string>\n\t\t<string>relay|g" \
         "$old_plist" > "$target"
-    plutil -lint "$target" >/dev/null || { bad "$target is not valid — left unloaded"; continue; }
+    plutil -lint "$target" >/dev/null || { bad "$target is not valid; left unloaded"; continue; }
   else
-    note "$new_label — rewritten from $old_plist, keeping its own paths"
+    note "$new_label: rewritten from $old_plist, keeping its own paths"
   fi
 
   # Unload the old job before loading the new one: both bind the same port, and
@@ -153,7 +153,7 @@ for job in cloud relay runner tunnel; do
   ok "$new_label"
 done
 
-[ "$migrated_any" = no ] && note "no old jobs were loaded — nothing to take over from"
+[ "$migrated_any" = no ] && note "no old jobs were loaded; nothing to take over from"
 
 # ------------------------------------------------------------------ prove ---
 
@@ -170,7 +170,7 @@ check() {
     [ "$code" = "200" ] && { ok "$name"; return 0; }
     sleep 1
   done
-  bad "$name — $code from $url"
+  bad "$name: $code from $url"
   return 1
 }
 

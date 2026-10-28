@@ -35,7 +35,7 @@ export function numberedLines(hunk: Hunk): NumberedLine[] {
   }));
 }
 
-/** `@@ -1,3 +1,4 @@` — the header, for anyone who wants to see it. */
+/** `@@ -1,3 +1,4 @@`: the header, for anyone who wants to see it. */
 export function hunkHeader(hunk: Hunk): string {
   return `@@ -${hunk.old_start},${hunk.old_len} +${hunk.new_start},${hunk.new_len} @@`;
 }
@@ -72,14 +72,14 @@ export function changeMark(kind: FileDiff["kind"]): string {
  *
  * A line diff tells you *that* a line was replaced. It does not tell you a
  * variable was renamed rather than the logic rewritten, and on a long line
- * those look identical — the reviewer re-reads both sides and compares by eye,
+ * those look identical. The reviewer re-reads both sides and compares by eye,
  * which is exactly the work a reviewer is worst at and most likely to skip.
  *
  * # Prefix and suffix, not a full LCS
  *
  * Trimming the common head and tail off a token sequence catches the
- * overwhelming majority of real edits — a renamed identifier, a changed
- * argument, an added condition — in linear time and with no configuration.
+ * overwhelming majority of real edits (a renamed identifier, a changed
+ * argument, an added condition) in linear time and with no configuration.
  *
  * A full longest-common-subsequence would mark less, but it also finds matches
  * that are real to the algorithm and meaningless to a person: single brackets
@@ -111,7 +111,7 @@ function tokenize(text: string): string[] {
  *
  * Two lines that merely occupy the same position in a hunk are not necessarily
  * versions of each other. Highlighting them as though they were produces a
- * confident, wrong story about an edit that never happened — worse than the
+ * confident, wrong story about an edit that never happened, worse than the
  * plain line diff, which at least claims nothing.
  */
 const RELATED_ENOUGH = 0.25;

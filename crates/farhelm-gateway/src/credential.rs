@@ -5,7 +5,7 @@
 //! A Console API key is a long-lived secret: read it from the environment at
 //! startup, hold it forever, done. A *subscription* token is not. It expires in
 //! hours, and a client that captured one at startup begins returning 401s in
-//! the middle of an afternoon with no explanation on screen — and the fix is to
+//! the middle of an afternoon with no explanation on screen, and the fix is to
 //! paste a new token and restart, which is precisely the chore nobody should be
 //! doing twice.
 //!
@@ -15,8 +15,8 @@
 //!
 //! # Why a command rather than a built-in login
 //!
-//! Because the token already exists. Whatever tool the person signed in with —
-//! Claude Code, `ant`, a Workload Identity Federation exchange in CI — owns the
+//! Because the token already exists. Whatever tool the person signed in with
+//! (Claude Code, `ant`, a Workload Identity Federation exchange in CI) owns the
 //! refresh flow, holds the refresh token, and stores it wherever that platform
 //! thinks secrets belong. Re-implementing that here would mean a second copy of
 //! an OAuth client, a second place a refresh token is written, and a second
@@ -54,7 +54,7 @@ const ASSUMED_LIFETIME: Duration = Duration::from_secs(15 * 60);
 
 /// Written out by hand, like every other error in this crate.
 ///
-/// Each variant names the *program* — the first word of the command — because
+/// Each variant names the *program* (the first word of the command) because
 /// the first question on a credential failure is always "which helper".
 ///
 /// Not the whole command line, and not the helper's output. Both can hold a
@@ -162,7 +162,7 @@ impl CredentialSource {
 
     /// Drop what is held, so the next `get` re-runs the command.
     ///
-    /// Called when the provider rejects a token the source still believed in —
+    /// Called when the provider rejects a token the source still believed in:
     /// a revoked session, or a clock further out than the refresh margin. One
     /// forced refresh is a better answer than failing every request until the
     /// stated expiry passes.
@@ -245,7 +245,7 @@ fn from_json(value: &serde_json::Value) -> Option<Held> {
     token_of(value).or_else(|| value.as_object()?.values().find_map(token_of))
 }
 
-/// The first word of a command line — enough to say which helper, without
+/// The first word of a command line: enough to say which helper, without
 /// repeating arguments that may hold a secret.
 fn program_of(command: &str) -> String {
     command
@@ -280,7 +280,7 @@ mod tests {
     fn trailing_whitespace_does_not_become_part_of_the_token() {
         // A helper that ends with a newline is the normal case, and a header
         // containing one is rejected by the provider as malformed rather than
-        // as unauthorised — which sends the reader hunting the wrong bug.
+        // as unauthorised, which sends the reader hunting the wrong bug.
         let source = CredentialSource::command("echo 'tok-nl'");
         let credential = source.get().unwrap();
         assert!(matches!(
@@ -366,7 +366,7 @@ mod tests {
     fn a_failing_helper_names_its_program_and_leaks_nothing_else() {
         // The secret appears twice on purpose: once in the command's arguments
         // and once on its stderr. Neither may reach the message. The first of
-        // those is why this test exists — the original version reported the
+        // those is why this test exists: the original version reported the
         // whole command line, so a helper written as `echo sk-ant-…` printed
         // its own credential into the log.
         let source = CredentialSource::command("printf 'sk-ant-leaked' >&2; exit 3");

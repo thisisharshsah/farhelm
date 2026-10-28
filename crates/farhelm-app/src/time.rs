@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Milliseconds since the unix epoch.
 ///
-/// Saturates at 0 if the system clock is set before 1970 — a nonsense clock
+/// Saturates at 0 if the system clock is set before 1970; a nonsense clock
 /// should not panic a long-running daemon.
 pub fn now_ms() -> i64 {
     SystemTime::now()

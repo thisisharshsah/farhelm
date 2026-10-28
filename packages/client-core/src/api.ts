@@ -12,12 +12,12 @@ import {
  *
  * The types mirror the Rust DTOs in `crates/farhelm-runner/src/api.rs`. They are
  * hand-written rather than generated because there are a dozen of them and the
- * wire contract is in the design doc — worth revisiting with a schema generator
+ * wire contract is in the design doc; worth revisiting with a schema generator
  * if the relay protocol grows.
  *
  * The HTTP path only works where the runner is directly reachable: the same
  * machine, or the same network. Off that network everything goes through the
- * relay instead — see `transport.ts`. Both are behind one interface so no screen
+ * relay instead (see `transport.ts`). Both are behind one interface so no screen
  * has to know which it is using.
  */
 
@@ -120,7 +120,7 @@ export type TaskStatus =
  * Whether an applied change set is still on disk and could be taken off again.
  *
  * Only `applied`. A rejected task never landed and a reverted one is already
- * undone — offering "undo" on either offers to do nothing, which reads as a bug
+ * undone; offering "undo" on either offers to do nothing, which reads as a bug
  * the first time somebody presses it.
  */
 export function canRevert(status: TaskStatus): boolean {
@@ -160,7 +160,7 @@ export interface ChangeSet {
 
 /**
  * A task in a list. Mirrors `TaskView` in Rust, and deliberately carries no
- * diff — a list of twenty tasks would otherwise ship twenty change sets to a
+ * diff: a list of twenty tasks would otherwise ship twenty change sets to a
  * phone showing one line each.
  */
 export interface TaskView {
@@ -184,7 +184,7 @@ export interface TaskView {
   error: string | null;
   review_note: string | null;
   /**
-   * C10's verdict on the diff. `null` means **not judged** — never render it as
+   * C10's verdict on the diff. `null` means **not judged**; never render it as
    * a pass. A reassuring line with nothing behind it is worse than no line.
    */
   verify_grade: Grade | null;
@@ -228,10 +228,10 @@ export interface AgentView {
   installed: boolean;
   /**
    * How a decision reaches it. `native` is Farhelm's own agent, which has no
-   * bridge and no pane to parse — the loop calls the approval queue in-process.
+   * bridge and no pane to parse: the loop calls the approval queue in-process.
    */
   approvals: "hook" | "prompt" | "native" | "none";
-  /** False when nothing is gated — a plain shell, for instance. */
+  /** False when nothing is gated, a plain shell, for instance. */
   supervised: boolean;
   /** True when the approval path has been checked against the real binary. */
   verified: boolean;
@@ -252,7 +252,7 @@ export interface FleetView {
   /**
    * Change sets waiting on a human, oldest first. Carried here rather than
    * behind a second request so a phone that has just been woken can render the
-   * thing it was woken for in one round trip. No diffs — those are fetched.
+   * thing it was woken for in one round trip. No diffs; those are fetched.
    */
   tasks_awaiting_review: TaskView[];
   today_usd: number;
@@ -295,7 +295,7 @@ export type ServerEvent =
     }
   | { type: "budget_alert"; session_id: string; pct: number; hard_stop: boolean }
   /**
-   * A native agent task changed state. `summary` is the headline — the diff
+   * A native agent task changed state. `summary` is the headline; the diff
    * itself is fetched, because this goes to every connected device on every
    * state change and a change set can be megabytes.
    */
@@ -308,7 +308,7 @@ export type ServerEvent =
     }
   /**
    * A command this device sent was refused. Relay-only: over loopback the same
-   * failure comes back as an HTTP status on the call itself. Never broadcast —
+   * failure comes back as an HTTP status on the call itself. Never broadcast:
    * the runner seals it to the device that sent the failing command.
    */
   | { type: "command_error"; message: string };
@@ -460,7 +460,7 @@ async function request<T>(
       abort.signal.aborted
         ? `no answer from ${baseUrl || "the runner"} within ${
             REQUEST_TIMEOUT_MS / 1000
-          }s — is it running, and is the address right?`
+          }s. Is it running, and is the address right?`
         : cause instanceof Error
           ? cause.message
           : String(cause),
@@ -636,7 +636,7 @@ export function createRunnerApi(baseUrl = "") {
     tasks: () => request<TaskView[]>(base, "/v1/tasks"),
     task: (id: string) => request<TaskDetail>(base, `/v1/tasks/${id}`),
     /**
-     * Start the native agent on a repo. Returns as soon as the row exists —
+     * Start the native agent on a repo. Returns as soon as the row exists:
      * the loop runs detached, and progress arrives over the event stream.
      */
     startTask: (

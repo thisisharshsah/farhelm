@@ -7,7 +7,7 @@
 //! **This is not a sandbox.** It is a speed bump on the *approval UX*, and it
 //! is trivially evadable by an adversary (`r''m -rf`, base64, a shell variable).
 //! That is acceptable because the threat model is a well-meaning agent doing
-//! something drastic, not a hostile one hiding from us — an agent that wanted to
+//! something drastic, not a hostile one hiding from us; an agent that wanted to
 //! evade this could simply write a script and run that instead. Real containment
 //! is the runner's own sandboxing, which this does not replace.
 //!
@@ -18,7 +18,7 @@ use farhelm_proto::types::Risk;
 
 /// Local additions to the built-in rules.
 ///
-/// The built-in list is broad — `rm -rf`, force pushes, `DROP TABLE`, `mkfs`,
+/// The built-in list is broad: `rm -rf`, force pushes, `DROP TABLE`, `mkfs`,
 /// `sudo`, `curl | sh`, and the common cloud verbs including `terraform destroy`
 /// and `kubectl delete`. It still cannot know about *your* stack: the deploy
 /// tool your team uses, the one make target that drops the staging database.
@@ -29,12 +29,12 @@ use farhelm_proto::types::Risk;
 /// The built-ins always apply unless a pattern is *individually* named in
 /// [`Policy::allow`]. There is no blanket off switch, because a single
 /// `enabled = false` is the setting somebody reaches for while debugging at
-/// 2am and never puts back — and D3 is the only thing standing between a
+/// 2am and never puts back, and D3 is the only thing standing between a
 /// half-awake wrist tap and a force-push.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
-    /// Extra patterns, matched case-insensitively against the squeezed command —
+    /// Extra patterns, matched case-insensitively against the squeezed command,
     /// the same treatment the built-ins get.
     pub destructive: Vec<String>,
     /// Extra patterns matched with case preserved, for flags where case *is* the
@@ -51,14 +51,14 @@ pub struct Policy {
 /// What a policy file looks like when nobody has written one.
 pub const EXAMPLE_POLICY: &str = r#"# What counts as destructive on this machine.
 #
-# A destructive command can only be approved from a phone — never from a watch,
+# A destructive command can only be approved from a phone, never from a watch,
 # and never from a notification action. That is the whole effect of this file.
 #
 # The built-in rules already cover a lot: rm -rf, git push --force,
 # git reset --hard, git clean -fd, git filter-branch, DROP TABLE / TRUNCATE /
 # DELETE FROM, FLUSHALL, mkfs, dd if=, shred, chmod -R 777, chown -R, sudo,
 # curl | sh, npm publish, terraform destroy, kubectl delete, docker system
-# prune, and aws s3 rb. Check before adding — you may not need to.
+# prune, and aws s3 rb. Check before adding; you may not need to.
 #
 # What they cannot know is your stack: the deploy script your team wrote, the
 # make target that drops the staging database.
@@ -79,7 +79,7 @@ destructive_exact = [
 # Built-in patterns to stop treating as destructive.
 #
 # Narrow on purpose: there is no way to switch the classifier off, only to
-# retire individual rules. If `sudo` is routine on this box, name it here —
+# retire individual rules. If `sudo` is routine on this box, name it here;
 # do not reach for a blanket disable that never gets put back.
 allow = [
   # "sudo",
@@ -107,7 +107,7 @@ impl Policy {
     /// Parse a policy from the text of a policy file.
     ///
     /// Takes the text rather than a path: reading the file is I/O and belongs to
-    /// whoever has a filesystem — see `farhelm_runner`'s `load_policy`. This half
+    /// whoever has a filesystem (see `farhelm_runner`'s `load_policy`). This half
     /// is the part with a decision in it, and it is testable without one.
     ///
     /// A malformed policy is an error, never a silent fallback to the built-ins:
@@ -123,7 +123,7 @@ impl Policy {
             .any(|allowed| allowed.eq_ignore_ascii_case(pattern))
     }
 
-    /// How many rules this policy adds or retires — for the startup banner.
+    /// How many rules this policy adds or retires, for the startup banner.
     pub fn rule_count(&self) -> (usize, usize) {
         (
             self.destructive.len() + self.destructive_exact.len(),
@@ -174,7 +174,7 @@ const DESTRUCTIVE_PATTERNS: &[&str] = &[
     "aws s3 rb",
     "aws s3 rm",
     "gcloud projects delete",
-    // Publishing — outward-facing and effectively irreversible.
+    // Publishing: outward-facing and effectively irreversible.
     "npm publish",
     "cargo publish",
     "pypi upload",
@@ -314,7 +314,7 @@ pub fn is_destructive_command_with(policy: &Policy, command: &str) -> bool {
 /// Classify a tool call.
 ///
 /// `tool` is the agent's tool name (`Bash`, `Write`, …); `payload` is the text
-/// the human will see on the approval card — for Bash that is the command, for
+/// the human will see on the approval card: for Bash that is the command, for
 /// an edit the file path and a summary.
 pub fn classify(tool: &str, payload: &str) -> Risk {
     classify_with(&Policy::default(), tool, payload)
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn ordinary_edits_and_commands_are_medium() {
         assert_eq!(
-            classify("Edit", "src/retry.rs — 3 lines changed"),
+            classify("Edit", "src/retry.rs: 3 lines changed"),
             Risk::Medium
         );
         assert_eq!(classify("Write", "docs/README.md"), Risk::Medium);
@@ -543,7 +543,7 @@ mod policy_tests {
     #[test]
     fn a_local_rule_makes_a_command_destructive() {
         // The whole point: the built-in list cannot know about your stack.
-        // `flyctl` is deliberately chosen — the built-ins cover `terraform
+        // `flyctl` is deliberately chosen: the built-ins cover `terraform
         // destroy` and `kubectl delete` already, so using those would test
         // nothing.
         let policy = policy(r#"destructive = ["flyctl apps destroy"]"#);

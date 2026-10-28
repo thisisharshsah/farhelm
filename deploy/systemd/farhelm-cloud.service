@@ -30,7 +30,7 @@ Restart=on-failure
 RestartSec=5
 
 # This process holds every account in the deployment. It reads two files, writes
-# two files, and talks to Stripe. Nothing below is theoretical hardening — each
+# two files, and talks to Stripe. Nothing below is theoretical hardening: each
 # line removes something it demonstrably does not use.
 NoNewPrivileges=true
 PrivateTmp=true

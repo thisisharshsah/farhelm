@@ -1,15 +1,15 @@
 //! The read models a client renders.
 //!
 //! These are what `GET /v1/fleet` returns and what a `Command::Snapshot` reply
-//! carries — the same bytes either way, which is the point. They are mirrored by
+//! carries: the same bytes either way, which is the point. They are mirrored by
 //! hand in `packages/client-core/src/api.ts` and, for the subset a wrist can
 //! show, in the watch's Swift.
 //!
 //! # Why they are not in the HTTP module any more
 //!
 //! They used to live in `farhelm-runner/src/api.rs`, beside the axum handlers, and
-//! that put a dependency in backwards. `commands::execute` — the transport
-//! independent path that both the localhost API and the relay link run through —
+//! that put a dependency in backwards. `commands::execute` (the transport
+//! independent path that both the localhost API and the relay link run through)
 //! had to name `crate::api::FleetView` for its reply type and call
 //! `crate::api::build_fleet_view` to produce it. The layer whose whole job is to
 //! not know about transports could not be compiled without the HTTP one.
@@ -22,8 +22,8 @@
 //!
 //! A view is denormalised on purpose: [`SessionView`] carries `repo_name` and
 //! `machine_name` because the screen shows them and a phone should not issue
-//! three requests to render one row. That is also why they are `Serialize` only
-//! — nothing sends one *to* the runner, so a `Deserialize` impl would just be an
+//! three requests to render one row. That is also why they are `Serialize` only:
+//! nothing sends one *to* the runner, so a `Deserialize` impl would just be an
 //! invitation to start.
 
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ use crate::types::{
 /// Budget as the UI needs it: the bar, the number, and the traffic light.
 ///
 /// `state` is computed server-side so that four client implementations cannot
-/// disagree about where the line is. This type only names the three answers —
+/// disagree about where the line is. This type only names the three answers;
 /// the thresholds, and the mapping that picks between them, are policy and live
 /// in `farhelm_domain::budget`.
 #[derive(Debug, Clone, Serialize)]
@@ -52,7 +52,7 @@ impl PlanProgress {
     /// Fold a plan's steps into the glance.
     ///
     /// A projection of one wire shape onto another, which is why it is here. The
-    /// plan *state machine* — which transitions are legal, what pausing does —
+    /// plan *state machine* (which transitions are legal, what pausing does)
     /// is a rule and lives in `farhelm-domain`.
     pub fn of(steps: &[PlanStep]) -> Self {
         let current = steps
@@ -112,7 +112,7 @@ pub struct SessionView {
     pub machine_name: String,
     pub agent: String,
     pub status: SessionStatus,
-    /// True when the session is live enough to act on — the ● / ○ glyph.
+    /// True when the session is live enough to act on: the ● / ○ glyph.
     pub is_live: bool,
     pub plan: Option<PlanProgress>,
     pub budget: BudgetView,
@@ -136,7 +136,7 @@ pub struct PlanStepView {
 }
 
 /// An approval card. Carries the budget because §4's wireframe review found the
-/// moment of approval is the moment of spend — the bar belongs on the card.
+/// moment of approval is the moment of spend; the bar belongs on the card.
 #[derive(Debug, Clone, Serialize)]
 pub struct ApprovalView {
     #[serde(flatten)]
@@ -164,7 +164,7 @@ pub struct FleetView {
     /// Change sets waiting on a human, oldest first.
     ///
     /// Carried on the fleet snapshot rather than behind a second request so a
-    /// relayed device gets them for free — a phone that has just been woken has
+    /// relayed device gets them for free: a phone that has just been woken has
     /// one round trip's patience, and this is the thing it was woken *for*.
     /// `TaskView` has no diff in it, so this stays a few hundred bytes however
     /// large the change sets are.
@@ -180,7 +180,7 @@ pub struct TierSlice {
     pub share: f64,
 }
 
-/// Flow 4 — the cost dashboard.
+/// Flow 4: the cost dashboard.
 #[derive(Debug, Clone, Serialize)]
 pub struct DashboardView {
     pub session_id: String,
@@ -190,7 +190,7 @@ pub struct DashboardView {
     pub cache_hit_ratio: Option<f64>,
     pub by_tier: Vec<TierSlice>,
     pub avoided_calls: usize,
-    /// Spend per hour over the requested window, oldest first — the sparkline.
+    /// Spend per hour over the requested window, oldest first: the sparkline.
     pub spend_series: Vec<SpendBucket>,
     pub budget: BudgetView,
 }
@@ -204,7 +204,7 @@ pub struct SpendBucket {
 /// One line of an agent's live output.
 ///
 /// Not persisted: §6 sends `output_chunk` over the wire and forgets it. `seq` is
-/// monotonic per session so a reconnecting client can tell what it missed — and,
+/// monotonic per session so a reconnecting client can tell what it missed, and,
 /// because the in-memory tail is bounded, tell that lines were dropped rather
 /// than silently missing them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,7 +225,7 @@ pub struct TaskView {
     pub session_id: String,
     pub repo_id: String,
     pub repo_name: String,
-    /// The absolute path on this machine. Needed to retry a rejected task —
+    /// The absolute path on this machine. Needed to retry a rejected task:
     /// `repo_name` is a display label and would resolve to nothing.
     pub repo_path: String,
     pub prompt: String,
@@ -264,7 +264,7 @@ pub struct ProjectTaskPage {
 pub struct TaskDetail {
     #[serde(flatten)]
     pub task: TaskView,
-    /// Parsed, not the stored string — a client should not have to JSON-decode
+    /// Parsed, not the stored string; a client should not have to JSON-decode
     /// a field it just JSON-decoded.
     pub changes: ChangeSet,
     /// The patch as text, for copying out or piping to `git apply`.
@@ -290,7 +290,7 @@ pub struct AgentView {
     pub installed: bool,
     /// `hook` | `prompt` | `none`. How a decision reaches the agent.
     pub approvals: &'static str,
-    /// False when nothing is gated — a plain shell, for instance.
+    /// False when nothing is gated: a plain shell, for instance.
     pub supervised: bool,
     /// True when the approval path has been checked against the real binary.
     /// The prompt dialects are pattern matching on terminal output and say so.

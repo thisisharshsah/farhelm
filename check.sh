@@ -10,7 +10,7 @@ step() { printf '\n\033[1m▸ %s\033[0m\n' "$1"; }
 
 step "Web app + service worker build"
 # First, not last. The desktop crate's `frontendDist` points at `web/dist`, and
-# `tauri::generate_context!` reads it at macro-expansion time — so every cargo
+# `tauri::generate_context!` reads it at macro-expansion time, so every cargo
 # command below wants it to exist. The build script writes a placeholder when it
 # is missing, which keeps a bare `cargo test --workspace` working; running the
 # real build here means the rest of this script lints and tests what ships.
@@ -32,7 +32,7 @@ step "farhelm-domain stays pure"
 # which is how a claim nobody checks ends up false.
 if grep -rnE '(^|[^a-z_])(std::fs|std::io|std::net|std::process|tokio|reqwest|rusqlite|SystemTime|Instant::now)' \
      crates/farhelm-domain/src --include='*.rs' | grep -v '^\S*:[0-9]*://'; then
-  echo "  farhelm-domain must stay free of I/O, async and the clock — see the hits above"
+  echo "  farhelm-domain must stay free of I/O, async and the clock; see the hits above"
   exit 1
 fi
 echo "  no I/O, async, clock or network"
@@ -60,7 +60,7 @@ cargo test -q -p farhelm-proto --test wire_fixture
 step "No circular imports"
 # `App.tsx` and `screens/Pairing.tsx` were a cycle: a shared text field lived in
 # the entry point and the screen imported it back out. Bundlers resolve that, so
-# nothing broke — it just meant a screen could not be read, or tested, without
+# nothing broke; it just meant a screen could not be read, or tested, without
 # dragging the whole app in.
 npx --yes madge@8 --circular --extensions ts,tsx \
   packages/client-core/src web/src mobile/src
@@ -75,7 +75,7 @@ step "Swift: the watch"
 if command -v swift >/dev/null; then
   swift test --package-path mobile/watch
 else
-  echo "  skipped — no Swift toolchain (macOS only)"
+  echo "  skipped: no Swift toolchain (macOS only)"
 fi
 
 printf '\n\033[32m✓ everything green\033[0m\n'

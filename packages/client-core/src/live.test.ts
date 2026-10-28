@@ -17,7 +17,7 @@
  * ```
  *
  * The destructive-approval assertions need something destructive to be pending,
- * which the demo seed does not include. Create one — this is also the honest way
+ * which the demo seed does not include. Create one; this is also the honest way
  * to exercise the hook, since it blocks exactly as Claude Code's would:
  *
  * ```sh
@@ -27,7 +27,7 @@
  *        "payload":"git push --force origin main","wait_ms":45000}'
  * ```
  *
- * Those two tests skip rather than fail if nothing destructive is pending —
+ * Those two tests skip rather than fail if nothing destructive is pending:
  * a passing run that quietly checked nothing is worse than a skipped one.
  */
 
@@ -46,7 +46,7 @@ const RUNNER = "http://127.0.0.1:7842";
  *
  * Checking only `/v1/health` was not enough: a runner started *without*
  * `--relay` answers it happily, so this suite ran and then threw at the first
- * `pair()` — turning "there is nothing to test against" into a red build. That
+ * `pair()`, turning "there is nothing to test against" into a red build. That
  * is the exact failure mode the header above says to avoid, in the other
  * direction.
  */
@@ -63,17 +63,17 @@ const hasRelay =
 
 if (running && !hasRelay) {
   console.warn(
-    "live: a runner is up on 7842 but has no relay — skipping. " +
+    "live: a runner is up on 7842 but has no relay; skipping. " +
       "Start it with --relay ws://127.0.0.1:7843 to run these.",
   );
 }
 
-/** Mint an offer and redeem it — exactly what the pairing screen does. */
+/** Mint an offer and redeem it, exactly what the pairing screen does. */
 async function pair(kind: "phone" | "watch"): Promise<Pairing> {
   const offered = await fetch(`${RUNNER}/v1/pair/offer`, { method: "POST" });
   const offer = parseOffer(JSON.stringify(await offered.json()));
   if (!offer.relay_url) {
-    throw new Error("the runner has no relay — start it with --relay");
+    throw new Error("the runner has no relay; start it with --relay");
   }
 
   const identity = Identity.generate();
@@ -159,7 +159,7 @@ describe.skipIf(!hasRelay)("live: a phone against a real relay", () => {
 
 /**
  * D3 over the relay. Separated so it can skip on its own when the seed has
- * nothing destructive in it — see the header for how to create one.
+ * nothing destructive in it; see the header for how to create one.
  */
 describe.skipIf(!hasRelay)("live: the destructive-command rule", () => {
   let phone: RelayTransport;
@@ -172,7 +172,7 @@ describe.skipIf(!hasRelay)("live: the destructive-command rule", () => {
       fleet.pending_approvals.find((a) => !a.allows_watch_decision)?.id ?? null;
     if (!destructiveId) {
       console.warn(
-        "live: nothing destructive is pending — the D3 checks are skipping. " +
+        "live: nothing destructive is pending; the D3 checks are skipping. " +
           "See this file's header to create one.",
       );
     }

@@ -3,7 +3,7 @@
  *
  * A service worker handling a push is awake for seconds, not minutes. It cannot
  * use [`RelayTransport`], which is built to stay connected and reconnect
- * forever — in a worker that is a socket the browser kills mid-retry, and a
+ * forever; in a worker that is a socket the browser kills mid-retry, and a
  * `waitUntil` that never settles.
  *
  * These open a connection, do exactly one thing, and close. Every one of them
@@ -11,7 +11,7 @@
  * to `event.waitUntil`.
  *
  * Same envelopes, same channel, same runner-side command handling as the
- * long-lived transport — the difference is entirely lifecycle.
+ * long-lived transport. The difference is entirely lifecycle.
  */
 
 import { ApiError, type FleetView } from "./api.ts";
@@ -26,7 +26,7 @@ function channelUrl(pairing: Pairing): string {
 }
 
 /**
- * Open a socket, run `exchange`, and close — whatever happens.
+ * Open a socket, run `exchange`, and close, whatever happens.
  *
  * The socket is closed in a `finally`, including on timeout. A service worker
  * that leaks sockets gets killed with them still open, which on some browsers
@@ -80,7 +80,7 @@ async function withSocket<T>(
         try {
           payload = identity.openJson(pairing.runnerPublicKey, envelope);
         } catch {
-          // Traffic for another paired device. Not an error — the isolation
+          // Traffic for another paired device. Not an error; the isolation
           // working.
           return;
         }
@@ -117,8 +117,8 @@ async function withSocket<T>(
 /**
  * Ask the runner for the current fleet, once.
  *
- * This is what makes a wake-up specific. The push itself carries nothing — the
- * relay cannot read what triggered it — so the only way to say *which* approval
+ * This is what makes a wake-up specific. The push itself carries nothing (the
+ * relay cannot read what triggered it), so the only way to say *which* approval
  * is waiting is to go and decrypt it. Locally, in the worker, with the device's
  * own key.
  */
@@ -148,7 +148,7 @@ export function fetchFleetOnce(
  *
  * The relay has no acknowledgement, so a successful command produces silence.
  * Waiting `graceMs` for a `command_error` is the difference between "approved"
- * and "the runner said no and you never found out" — which, from a notification
+ * and "the runner said no and you never found out", which, from a notification
  * the user has already dismissed, is unrecoverable.
  */
 export function sendCommandOnce(

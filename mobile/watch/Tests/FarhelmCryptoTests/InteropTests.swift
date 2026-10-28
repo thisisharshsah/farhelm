@@ -7,7 +7,7 @@ import Testing
 ///
 /// Salsa20, Poly1305, and the HSalsa20 key derivation in this package are all
 /// hand-written, because Apple ships none of them. Hand-written crypto that
-/// only ever talks to itself is indistinguishable from correct — it round-trips
+/// only ever talks to itself is indistinguishable from correct: it round-trips
 /// beautifully and interoperates with nothing. So the real assertion is this
 /// one: open envelopes that **RustCrypto's audited `crypto_box`** sealed, and
 /// produce ones it can open back.
@@ -42,7 +42,7 @@ struct Fixture: Decodable {
     ///
     /// `#filePath` is this file's location at compile time; the repo root is
     /// four directories up. Reading the canonical file rather than a copied
-    /// resource means the fixture can never silently go stale — which is the one
+    /// resource means the fixture can never silently go stale, which is the one
     /// failure mode that would make every test in this file meaningless.
     static func load() throws -> Fixture {
         let url = URL(fileURLWithPath: #filePath)
@@ -56,7 +56,7 @@ struct Fixture: Decodable {
         guard FileManager.default.fileExists(atPath: url.path) else {
             Issue.record(
                 """
-                the interop fixture is missing at \(url.path) — regenerate it with
+                the interop fixture is missing at \(url.path); regenerate it with
                   cargo test -p farhelm-crypto --test interop -- --ignored
                   node packages/client-core/scripts/seal-fixture.mjs
                 """
@@ -105,7 +105,7 @@ struct InteropTests {
     @Test("derives the same shared key in both directions")
     func sharedKeyAgrees() throws {
         // If HSalsa20 were skipped after the X25519 agreement, this would still
-        // pass — but `opensRustEnvelope` would not. Both matter.
+        // pass, but `opensRustEnvelope` would not. Both matter.
         let fixture = try Fixture.load()
         let runnerSecret = try Base64URL.decode(fixture.runnerSecret)
         let deviceSecret = try Base64URL.decode(fixture.deviceSecret)

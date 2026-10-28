@@ -3,7 +3,7 @@
 //! Every step here is one Claude actually performs when someone pastes the URL
 //! into "Add custom connector" and leaves both Advanced fields blank: discover,
 //! register, authorize, exchange, then speak MCP. A unit test can check each
-//! piece; only this can check that the chain *joins up* — and a broken link
+//! piece; only this can check that the chain *joins up*, and a broken link
 //! anywhere in it shows up to a user as a connector that silently will not
 //! connect.
 
@@ -130,7 +130,7 @@ async fn connect(world: &World) -> String {
         .get_json("/.well-known/oauth-authorization-server")
         .await;
 
-    // 4. Register — this is what makes the Advanced fields optional.
+    // 4. Register: this is what makes the Advanced fields optional.
     let registration = world
         .client
         .post(server["registration_endpoint"].as_str().unwrap())
@@ -403,7 +403,7 @@ async fn a_code_works_once() {
 
 #[tokio::test]
 async fn a_code_is_never_sent_to_an_unregistered_redirect() {
-    // Without this, a client id — which is public — would be enough to aim a
+    // Without this, a client id (which is public) would be enough to aim a
     // code at a server the attacker controls.
     let world = spawn().await;
     world.sign_up("harsh@example.com").await;
@@ -444,7 +444,7 @@ async fn a_code_is_never_sent_to_an_unregistered_redirect() {
 #[tokio::test]
 async fn a_connector_token_cannot_be_replayed_against_the_control_plane_api() {
     // Claude is a third party. Its token must reach the tool surface it was
-    // granted and nothing else — which is why `mcp` is its own audience.
+    // granted and nothing else, which is why `mcp` is its own audience.
     let world = spawn().await;
     world.sign_up("harsh@example.com").await;
     let access = connect(&world).await;

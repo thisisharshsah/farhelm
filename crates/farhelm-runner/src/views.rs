@@ -4,7 +4,7 @@
 //! did not belong. Two transports need these: `GET /v1/fleet` for a browser on
 //! loopback, and `Command::Snapshot` for a phone on the relay. Because the
 //! builders sat beside the axum handlers, the transport-independent command
-//! layer had to reach *up* into the HTTP module to call them — and take an
+//! layer had to reach *up* into the HTTP module to call them, and take an
 //! error type carrying a `StatusCode` for the trouble. The relay has no status
 //! codes; it was constructing 404s in order to discard them.
 //!
@@ -15,7 +15,7 @@
 //!
 //! Assembly issues a handful of small reads per row rather than one join, which
 //! keeps the `Store` port narrow enough to reimplement. That is a real
-//! trade-off and it is not free — see the note on [`build_fleet_view`].
+//! trade-off and it is not free; see the note on [`build_fleet_view`].
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -112,7 +112,7 @@ impl<'a, S: Store> Lookups<'a, S> {
         self.reads.get()
     }
 
-    /// Every approval still waiting, oldest first — the list read at construction.
+    /// Every approval still waiting, oldest first: the list read at construction.
     pub fn pending(&self) -> &[Approval] {
         &self.pending
     }
@@ -164,7 +164,7 @@ impl<'a, S: Store> Lookups<'a, S> {
 }
 
 /// Builds a [`SessionView`]. Issues a handful of small reads per session rather
-/// than one join, keeping the `Store` port narrow enough to reimplement — with
+/// than one join, keeping the `Store` port narrow enough to reimplement, with
 /// the repeated ones served from [`Lookups`].
 pub fn view_of<S: Store>(
     state: &AppState,
@@ -291,7 +291,7 @@ pub fn build_fleet_view(state: &Arc<AppState>) -> Result<FleetView, ViewError> {
     //
     // Summed by the store. This used to be `list_usage` per session folded in
     // Rust, which pulled the entire 24-hour ledger across the boundary to
-    // produce three numbers — on every home-screen fetch, and again for every
+    // produce three numbers, on every home-screen fetch, and again for every
     // phone that woke up.
     let today = state
         .store
@@ -352,7 +352,7 @@ pub fn build_session_detail(state: &Arc<AppState>, id: &str) -> Result<SessionDe
 
 /// Flow 4, assembled.
 ///
-/// Shared with the relay link — the third snapshot type. Until this existed the
+/// Shared with the relay link, the third snapshot type. Until this existed the
 /// cost dashboard was the one screen a paired phone could not open, because a
 /// remote device has no request/response channel and there was nothing for it to
 /// ask for. Both surfaces now render the same bytes.
@@ -443,8 +443,8 @@ pub(crate) fn detail_for_task(
     task: farhelm_proto::types::AgentTask,
 ) -> Result<TaskDetail, ViewError> {
     // A change set that will not parse is reported as an empty one rather than
-    // a 500: the rest of the row — what it cost, what went wrong, the output
-    // tail — is exactly what somebody debugging that would want to see.
+    // a 500: the rest of the row (what it cost, what went wrong, the output
+    // tail) is exactly what somebody debugging that would want to see.
     let changes: farhelm_agent::ChangeSet =
         serde_json::from_str(&task.diff_json).unwrap_or_default();
     let output = state.output_tail(&task.session_id, 200);
@@ -460,7 +460,7 @@ pub(crate) fn detail_for_task(
 /// Which agents this machine can actually drive.
 ///
 /// Lives here rather than in the HTTP handler because the relay answers the
-/// same question, and "installed" is a property of *this* machine — a client
+/// same question, and "installed" is a property of *this* machine: a client
 /// cannot infer it, and two runners in one fleet legitimately differ.
 pub fn build_agent_list() -> Vec<farhelm_proto::views::AgentView> {
     use farhelm_domain::agent::{ApprovalChannel, Confidence};

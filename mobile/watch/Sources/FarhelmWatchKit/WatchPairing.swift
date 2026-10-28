@@ -5,7 +5,7 @@ import FarhelmCrypto
 ///
 /// The watch generates its own keypair and sends only the **public** half over
 /// WatchConnectivity. The phone claims a pairing code on its behalf and sends
-/// back the relay coordinates. The secret never leaves the wrist — not over the
+/// back the relay coordinates. The secret never leaves the wrist: not over the
 /// link, not through the phone's memory, not into a backup.
 ///
 /// The message shapes mirror `mobile/src/watch/bridge.ts`. They are plain
@@ -39,7 +39,7 @@ public enum WatchPairing {
 
     /// Turn the phone's reply into a pairing, or explain what went wrong.
     ///
-    /// The identity is supplied by the caller — it is the one this watch just
+    /// The identity is supplied by the caller: it is the one this watch just
     /// generated, and the phone never saw its secret half.
     public static func complete(
         reply: [String: Any],

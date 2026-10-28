@@ -15,7 +15,7 @@ Group=farhelm
 WorkingDirectory=/var/lib/farhelm
 
 # --auth-from is what makes this relay refuse a connection that cannot prove it
-# belongs on the channel. Without it, knowing a channel id is a permanent seat —
+# belongs on the channel. Without it, knowing a channel id is a permanent seat,
 # fine for one person on their own network, wrong for anything shared.
 #
 # The key is fetched once at startup, not per request: a relay that asked the

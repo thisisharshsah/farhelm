@@ -2,7 +2,7 @@
 --
 -- Until now the only channel between two sessions was you: read what one said,
 -- retype it into the other. That is fine for two and impossible for four, and
--- it means the useful half of a long session — what it *learned* — dies with
+-- it means the useful half of a long session (what it *learned*) dies with
 -- the pane.
 --
 -- Two tables, because agents need to say two different kinds of thing.

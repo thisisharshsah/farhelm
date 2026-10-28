@@ -21,7 +21,7 @@ import { StatusPill, TASK_GROUPS, TASK_STATUS } from "./status";
 const GRADE_LABEL = { pass: "Pass", concerns: "Concerns", fail: "Fail" } as const;
 
 function Changes({ task }: { task: TaskView }) {
-  if (task.files_changed === 0) return <span className="muted">—</span>;
+  if (task.files_changed === 0) return <span className="muted">None</span>;
   return (
     <span className="changes" title={task.change_summary}>
       <span className="changes-files">{task.files_changed} file{task.files_changed === 1 ? "" : "s"}</span>
@@ -57,7 +57,7 @@ export function TaskBoard({
         // Two checkouts of the same project are different repositories; their
         // names alone would make the filter lie about which one you picked.
         label: values.some((other) => other.id !== repo.id && other.name === repo.name)
-          ? `${repo.name} — ${repo.path}`
+          ? `${repo.name}: ${repo.path}`
           : repo.name,
       }))
       .sort((a, b) => a.label.localeCompare(b.label));

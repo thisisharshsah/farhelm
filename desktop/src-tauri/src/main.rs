@@ -11,8 +11,8 @@
 //! That is the right shape for a VPS and the wrong shape for the laptop you
 //! actually write code on, and it is unavailable on Windows.
 //!
-//! This is the same daemon — literally the same library, the same API, the same
-//! approval rules — hosted in a window. Install it on a machine and that machine
+//! This is the same daemon: literally the same library, the same API, the same
+//! approval rules, hosted in a window. Install it on a machine and that machine
 //! becomes a supervised agent host you can reach from your phone.
 //!
 //! # What it deliberately is not
@@ -23,7 +23,7 @@
 //! uses: approvals are answered, not issued; instructions are typed into an
 //! agent's own terminal; destructive commands still cannot be cleared from a
 //! wrist. A device must be explicitly paired, on your own network, before it can
-//! say anything at all — and unpairing revokes it.
+//! say anything at all, and unpairing revokes it.
 //!
 //! That boundary is the point. "Control your computer from your phone" is only
 //! worth having if it cannot become "control your computer from anyone's phone".
@@ -37,15 +37,15 @@
 //! would read "cannot reach the runner".
 //!
 //! Loading `http://127.0.0.1:<port>` instead makes the desktop app the same
-//! deployment the browser already uses — same origin, same SSE stream, no
+//! deployment the browser already uses: same origin, same SSE stream, no
 //! Tauri-specific code in the client at all. Desktop-only controls are HTTP
 //! routes merged onto the same router rather than IPC commands, for the same
 //! reason: one path, not two.
 //!
 //! # Why the PTY backend
 //!
-//! A desktop app is the process you are looking at. tmux's advantage — panes
-//! that outlive the daemon — is worth little here, and requiring it would put an
+//! A desktop app is the process you are looking at. tmux's advantage (panes
+//! that outlive the daemon) is worth little here, and requiring it would put an
 //! install step in front of the first run on macOS and make Windows impossible.
 //! Sessions live and die with the window, which is what a window implies.
 //! `--terminal tmux` on the CLI runner is still there for a server.
@@ -69,7 +69,7 @@ use settings::Settings;
 /// The port the embedded runner prefers.
 ///
 /// The same default the CLI uses, so a phone already paired with
-/// `farhelm serve` on this machine keeps working. Loopback only — anything
+/// `farhelm serve` on this machine keeps working. Loopback only: anything
 /// remote comes through the relay.
 const PREFERRED_PORT: u16 = 7842;
 
@@ -171,7 +171,7 @@ fn main() {
         .expect("could not configure model providers");
 
     // Bound *before* the window exists, so the page cannot load against a port
-    // nothing is listening on yet — and so the URL can name the port we actually
+    // nothing is listening on yet, and so the URL can name the port we actually
     // got if the preferred one was taken.
     let listener = runtime
         .block_on(bind())
@@ -191,7 +191,7 @@ fn main() {
         }
     });
 
-    println!("Farhelm desktop — serving http://{addr}");
+    println!("Farhelm desktop: serving http://{addr}");
     println!("  data       {}", Settings::directory().display());
     println!(
         "  terminal   {} (sessions end with this app)",
@@ -203,7 +203,7 @@ fn main() {
         .setup(move |app| {
             // The window is a browser on the embedded server. Same origin as the
             // API, so `/v1/*` and the SSE stream work exactly as they do under
-            // `farhelm serve` — see the module docs.
+            // `farhelm serve`; see the module docs.
             let url = format!("http://{addr}")
                 .parse()
                 .expect("a loopback URL is always valid");
@@ -233,7 +233,7 @@ async fn bind() -> std::io::Result<tokio::net::TcpListener> {
         Ok(listener) => Ok(listener),
         Err(err) => {
             eprintln!(
-                "port {PREFERRED_PORT} is in use ({err}) — is a `farhelm serve` \
+                "port {PREFERRED_PORT} is in use ({err}). Is a `farhelm serve` \
                  already running? Falling back to a free port."
             );
             tokio::net::TcpListener::bind(("127.0.0.1", 0)).await
@@ -262,7 +262,7 @@ async fn build_state(
     });
 
     // A desktop app is the process you are looking at, so PTYs it owns are the
-    // right backend — and the only one available on Windows.
+    // right backend, and the only one available on Windows.
     let terminal = Arc::new(AnyTerminal::Pty(farhelm_runner::pty::PtyTerminal::new()));
 
     let state = AppState::build_with_terminal(
@@ -317,14 +317,14 @@ fn channel_for(identity: &farhelm_crypto::Identity) -> String {
 /// The tray icon.
 ///
 /// A supervised agent host is a thing you want running without a window in the
-/// way — the whole point is that you walk away from it. Closing the window hides
+/// way; the whole point is that you walk away from it. Closing the window hides
 /// it; quitting is deliberate, from here.
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Open Farhelm", true, None::<&str>)?;
     let quit = MenuItem::with_id(
         app,
         "quit",
-        "Quit — stops every session",
+        "Quit (stops every session)",
         true,
         None::<&str>,
     )?;
@@ -365,7 +365,7 @@ mod tests {
     /// `farhelm-runner`'s binary derives the same string from the same key with
     /// its own copy of this rule, and asserts the same constant. The two must
     /// agree: a desktop app and a CLI runner sharing `forge.key` publish on one
-    /// channel, and if they disagree the paired phone hears nothing — no error,
+    /// channel, and if they disagree the paired phone hears nothing: no error,
     /// anywhere, just silence.
     ///
     /// Asserting only `starts_with("forge-")`, as the test above does, would let

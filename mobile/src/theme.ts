@@ -5,7 +5,7 @@
  * properties and React Native's style objects have no common representation, and
  * a generator for eleven colours would be more machinery than the colours. What
  * matters is that the *values* match, so a session that is `awaiting_approval`
- * is the same amber on both — the status ramp is checked against the palette
+ * is the same amber on both; the status ramp is checked against the palette
  * validator once and used verbatim in both places.
  */
 

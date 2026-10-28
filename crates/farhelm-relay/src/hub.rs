@@ -2,7 +2,7 @@
 //!
 //! The relay's entire job: everything one member of a channel sends goes to
 //! every *other* member of that channel, and to nobody else. It never inspects
-//! an envelope's ciphertext because it cannot — see `farhelm_crypto`.
+//! an envelope's ciphertext because it cannot; see `farhelm_crypto`.
 //!
 //! Deliberately stateless beyond live connections. There is no message store, so
 //! there is nothing to subpoena, nothing to leak in a backup, and nothing to
@@ -22,7 +22,7 @@ const CHANNEL_BUFFER: usize = 128;
 /// An envelope plus who sent it, so the hub can avoid echoing to the sender.
 #[derive(Debug, Clone)]
 pub struct Delivery {
-    /// Connection that published it. Not the cryptographic sender — this is a
+    /// Connection that published it. Not the cryptographic sender; this is a
     /// per-connection id, used only to skip the echo.
     pub from_connection: u64,
     pub envelope: Arc<Envelope>,
@@ -79,7 +79,7 @@ impl Hub {
 
     /// Publish to a channel. Returns how many connections it reached.
     ///
-    /// The sender does not receive its own envelope — a runner that echoed its
+    /// The sender does not receive its own envelope: a runner that echoed its
     /// own `session_upsert` back to itself would loop.
     pub fn publish(&self, from_connection: u64, envelope: Envelope) -> usize {
         let mut channels = self.channels.lock().expect("hub poisoned");
@@ -215,7 +215,7 @@ mod tests {
         hub.publish(mine.connection_id, envelope("mine", "private"));
 
         // Nothing crossed over. A different channel's traffic is not merely
-        // unreadable — it never arrives.
+        // unreadable; it never arrives.
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(50), theirs.next())
                 .await

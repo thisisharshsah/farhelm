@@ -5,7 +5,7 @@ node_modules/
 *.db-shm
 .DS_Store
 
-# Secrets — never commit.
+# Secrets: never commit.
 #
 # forge.key is the runner's long-lived Ed25519 identity (farhelm-crypto's
 # keystore writes it 0600). Every paired device trusts that public key, so
@@ -32,7 +32,7 @@ web/public/dl/
 # Swift Package Manager
 .build/
 
-# Expo prebuild output — generated from app.config.ts, never hand-edited.
+# Expo prebuild output: generated from app.config.ts, never hand-edited.
 # The watch target's *sources* live in mobile/watch and are checked in; the
 # Xcode project that hosts them is not.
 mobile/ios/

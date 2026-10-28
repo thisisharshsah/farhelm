@@ -4,7 +4,7 @@
 //! working tree only once somebody approves. That gets the review property
 //! right and pays for it three times over: it reimplements diffing, it caps a
 //! change set at a few megabytes because the whole thing lives in a database
-//! row, and — the expensive one — **the agent cannot run its own tests**. The
+//! row, and (the expensive one) **the agent cannot run its own tests**. The
 //! `run` tool executes against the working tree, which by construction does not
 //! contain the agent's staged edits, so `cargo test` in step nine tests the code
 //! as it was in step one.
@@ -20,7 +20,7 @@
 //! **It cuts from `HEAD`, not from your uncommitted work.** A worktree created
 //! here contains the last commit, so an agent asked to "finish what I was
 //! editing" will not see what you were editing. That is the reproducible
-//! choice, and it is what a cloud agent working from a pushed ref would do —
+//! choice, and it is what a cloud agent working from a pushed ref would do,
 //! but it is a real behavioural difference from the overlay, which reads the
 //! live working tree. Carrying dirty state across is a decision worth making
 //! deliberately rather than defaulting into, so it is not implemented here.
@@ -78,7 +78,7 @@ impl std::fmt::Display for GitError {
             }
             GitError::NoCommits(path) => write!(
                 f,
-                "{} has no commits yet — commit once before running a task here",
+                "{} has no commits yet; commit once before running a task here",
                 path.display()
             ),
             GitError::Failed { command, message } => write!(f, "`{command}` failed: {message}"),
@@ -143,7 +143,7 @@ fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Whether `root` is inside a git repository — the question that decides
+/// Whether `root` is inside a git repository: the question that decides
 /// whether a task can have a branch at all.
 pub fn is_repository(root: &Path) -> bool {
     git(root, &["rev-parse", "--is-inside-work-tree"])
@@ -154,7 +154,7 @@ pub fn is_repository(root: &Path) -> bool {
 /// A file the task changed, as git sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Change {
-    /// `A`, `M`, `D`, `R`… — git's own status letter.
+    /// `A`, `M`, `D`, `R`…: git's own status letter.
     pub status: char,
     pub path: String,
 }
@@ -165,7 +165,7 @@ pub enum Merge {
     /// The base had not moved; the branch is now part of it.
     FastForwarded { commit: String },
     /// The base moved while the task was running. Nothing was merged and the
-    /// branch is still there — the mirror of the overlay refusing to apply over
+    /// branch is still there: the mirror of the overlay refusing to apply over
     /// somebody's later edit, except the work survives and can be merged by
     /// hand.
     Diverged,
@@ -175,7 +175,7 @@ pub enum Merge {
 ///
 /// Serialisable, because a task awaiting review has to survive a runner
 /// restart. What is stored is only the four strings needed to find the work
-/// again — the work itself is on disk in git, which is the point. The overlay
+/// again; the work itself is on disk in git, which is the point. The overlay
 /// this replaced had to serialise both sides of every file it touched.
 ///
 /// Three of the four could in principle be recomputed (the path is derived from
@@ -285,7 +285,7 @@ impl Worktree {
 
     /// What the file looked like before the task touched it.
     ///
-    /// `None` for a file the task created — there is no blob to ask for, and
+    /// `None` for a file the task created: there is no blob to ask for, and
     /// asking anyway is an error rather than an empty answer.
     fn blob_at_base(&self, path: &str) -> Result<Vec<u8>> {
         git_bytes(&self.path, &["show", &format!("{}:{}", self.base, path)])
@@ -297,7 +297,7 @@ impl Worktree {
     /// lifecycle; [`crate::diff`] still decides presentation, so the bytes that
     /// reach a phone are produced by the same differ, with the same line
     /// numbering the clients have unit tests for. The switch from an overlay to
-    /// a branch is then invisible to every screen — which is the only reason it
+    /// a branch is then invisible to every screen, which is the only reason it
     /// can be made without touching three clients.
     ///
     /// Renames are detected off (`--no-renames`) so one arrives as a delete plus
@@ -416,7 +416,7 @@ impl Worktree {
 
     /// Throw the task away: remove the checkout and delete the branch.
     ///
-    /// This is the whole of "reject" — there is no half-written state to clean
+    /// This is the whole of "reject": there is no half-written state to clean
     /// up, because nothing was ever written anywhere the user was looking.
     pub fn discard(self) -> Result<()> {
         git(
@@ -445,12 +445,12 @@ impl Worktree {
     /// Whether the checkout is still on disk.
     ///
     /// A worktree survives a runner restart, which is the whole reason this
-    /// type is serialisable — but it does not survive somebody deleting it, or
+    /// type is serialisable, but it does not survive somebody deleting it, or
     /// a `git worktree prune`. Asking before using one turns a confusing git
     /// error into a sentence that says what happened.
     pub fn is_present(&self) -> bool {
         // In a linked worktree `.git` is a file pointing at the real git dir,
-        // not a directory — so this is `exists`, not `is_dir`.
+        // not a directory, so this is `exists`, not `is_dir`.
         self.path.join(".git").exists()
     }
 
@@ -465,14 +465,14 @@ impl Worktree {
     /// **revert commit** rather than a rewind. The overlay could put the old
     /// bytes back because it was holding them; git can do better, but only by
     /// moving history, and moving history under somebody who has since
-    /// committed — or pushed — is the one way this could destroy work it was
+    /// committed (or pushed) is the one way this could destroy work it was
     /// never shown. So the undo is additive: a commit that takes the change
     /// back out, which is what `git revert` is for.
     ///
     /// Refuses in the two cases where undoing would be a lie:
     ///
     /// - the change is not in the current branch at all, so there is nothing to
-    ///   take out — the mirror of the overlay's staleness check; and
+    ///   take out: the mirror of the overlay's staleness check; and
     /// - the revert does not apply cleanly, which means somebody edited the same
     ///   lines afterwards and rewinding would throw *their* work away.
     ///
@@ -544,7 +544,7 @@ fn path_str(path: &Path) -> String {
 
 /// Reduce a task id to something git will accept as a branch component.
 ///
-/// Task ids are generated, so this is a guard rather than a transformation —
+/// Task ids are generated, so this is a guard rather than a transformation,
 /// but a branch name is a path, and one built from an id nobody validated is a
 /// way to write outside `refs/heads/forge/`.
 fn slug(task_id: &str) -> String {
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn a_base_that_moved_underneath_the_task_refuses_to_merge() {
-        // The mirror of the overlay's staleness check — except the work is not
+        // The mirror of the overlay's staleness check, except the work is not
         // lost, it is sitting on a branch somebody can merge by hand.
         let repo = TempRepo::new("diverged");
         let tree = Worktree::create(&repo.0, "task-6").unwrap();

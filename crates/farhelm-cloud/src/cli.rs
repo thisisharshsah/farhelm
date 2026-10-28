@@ -1,4 +1,4 @@
-//! `farhelm cloud` — the control-plane half of the single command.
+//! `farhelm cloud`: the control-plane half of the single command.
 //!
 //! Was a binary of its own; see the note in `farhelm_relay::cli` for why it
 //! is a subcommand now.
@@ -9,18 +9,18 @@ use crate::{CloudConfig, CloudState, DEFAULT_PORT, api, billing::Billing, store:
 use farhelm_crypto::token::TokenSigner;
 
 pub const USAGE: &str = "\
-farhelm cloud — accounts, workspaces and the fleet registry
+farhelm cloud: accounts, workspaces and the fleet registry
 
 USAGE:
     farhelm cloud [--port <port>] [--bind <addr>] [--db <path>] [--key <path>]
                   [--relay-url <ws-url>] [--public-url <https-url>]
                   [--app-dir <path>]
 
-`doctor` says what is actually in this deployment — workspaces, machines and\nwhether anything can reach them — by reading the database directly, so it\nstill answers when the service will not start.\n\nAccounts, organisations, roles, plans, and the runner/device registry. Devices
+`doctor` says what is actually in this deployment (workspaces, machines and\nwhether anything can reach them) by reading the database directly, so it\nstill answers when the service will not start.\n\nAccounts, organisations, roles, plans, and the runner/device registry. Devices
 sign in here and get a short-lived token for a relay channel; runners enrol here
 with an enrolment key and appear in the fleet by themselves.
 
-It never sees a session, an approval or a diff — those stay sealed between a
+It never sees a session, an approval or a diff; those stay sealed between a
 runner and its devices, which is why a compromise here is an access problem and
 not a content one.
 
@@ -36,7 +36,7 @@ DEFAULTS:
 
 ENVIRONMENT (billing is off unless STRIPE_SECRET_KEY is set):
     STRIPE_SECRET_KEY      a restricted or secret key
-    STRIPE_WEBHOOK_SECRET  whsec_… — without it every webhook is refused
+    STRIPE_WEBHOOK_SECRET  whsec_…; without it every webhook is refused
     STRIPE_PRICE_PRO       the recurring price id for the Pro plan
     STRIPE_PRICE_TEAM      the recurring price id for the Team plan
 
@@ -56,7 +56,7 @@ fn defaulted(flag: Option<String>, new: &str, old: &str) -> String {
     }
 }
 
-/// `farhelm cloud doctor` — what is actually in this deployment.
+/// `farhelm cloud doctor`: what is actually in this deployment.
 ///
 /// Written the day an outage was diagnosed by opening two SQLite files by hand
 /// and reading a request log. Everything below is a check that investigation
@@ -86,7 +86,7 @@ fn doctor(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if !std::path::Path::new(&db).exists() {
         bad("database", &format!("{db} does not exist"));
         println!();
-        println!("  A control plane started here would create an empty one — no accounts,");
+        println!("  A control plane started here would create an empty one: no accounts,");
         println!("  no workspaces, and every machine told its enrolment key is invalid.");
         println!("  If this deployment has data, it is under another path or another name.");
         println!();
@@ -103,7 +103,7 @@ fn doctor(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         true => good("signing key", &key_path),
         false => {
             bad("signing key", &format!("{key_path} is missing"));
-            fix("it is minted on first start — but a *new* one signs everyone out");
+            fix("it is minted on first start, but a *new* one signs everyone out");
         }
     }
 
@@ -112,7 +112,7 @@ fn doctor(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if orgs.is_empty() {
         note(
             "workspaces",
-            "none — nobody has signed up on this deployment",
+            "none: nobody has signed up on this deployment",
         );
         println!();
         return Ok(());
@@ -131,10 +131,7 @@ fn doctor(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
         if runners.is_empty() {
             problems += 1;
-            bad(
-                "  machines",
-                "none enrolled — there is nothing to supervise",
-            );
+            bad("  machines", "none enrolled: there is nothing to supervise");
             fix("run the install one-liner on the machine you want supervised");
         }
 
@@ -170,7 +167,7 @@ fn doctor(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             problems += 1;
             bad(
                 "  devices",
-                "none registered — nothing can reach these machines",
+                "none registered: nothing can reach these machines",
             );
             fix("open the app and sign in on the phone or browser you want to use");
         } else if !devices.is_empty() {
@@ -188,7 +185,7 @@ fn doctor(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// "3 minutes", "2 days" — enough to tell "just now" from "since Tuesday".
+/// "3 minutes", "2 days": enough to tell "just now" from "since Tuesday".
 fn human_age(seconds: i64) -> String {
     match seconds {
         s if s < 90 => format!("{s}s ago"),
@@ -220,12 +217,12 @@ pub fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|raw| raw.parse().ok())
         .unwrap_or(DEFAULT_PORT);
     // Loopback by default. This process is expected to sit behind a Cloudflare
-    // tunnel, which reaches it over loopback — binding 0.0.0.0 by default would
+    // tunnel, which reaches it over loopback; binding 0.0.0.0 by default would
     // put accounts and billing on the local network for no reason.
     let bind = value_of("--bind").unwrap_or_else(|| "127.0.0.1".to_owned());
     // Through `legacy`, not a bare default. These two files are every account,
     // workspace and enrolment key in the deployment, and SQLite creates a
-    // missing database rather than complaining — so a renamed default does not
+    // missing database rather than complaining, so a renamed default does not
     // fail, it comes up *empty*, and the first thing anybody notices is their
     // own machines being told their enrolment key is not valid.
     //
@@ -324,7 +321,7 @@ fn serve(
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            false => println!("  billing    off — every workspace is on the Free plan"),
+            false => println!("  billing    off: every workspace is on the Free plan"),
         }
 
         axum::serve(listener, router)
@@ -354,7 +351,7 @@ mod tests {
 
     #[test]
     fn a_control_plane_that_predates_the_rename_opens_its_own_database() {
-        // The failure this pins is not a missing file — it is a *created* one.
+        // The failure this pins is not a missing file; it is a *created* one.
         // SQLite makes a database that is not there, so pointing the control
         // plane at the post-rename name on a deployment that has the old one
         // does not error: it comes up with no accounts, no workspaces and no
@@ -411,7 +408,7 @@ mod doctor_tests {
 
     #[test]
     fn an_age_reads_as_a_person_would_say_it() {
-        // The distinction that matters is "just now" versus "since Tuesday" —
+        // The distinction that matters is "just now" versus "since Tuesday":
         // a raw epoch or a seconds count makes the reader do that arithmetic at
         // the moment they are least inclined to.
         assert_eq!(human_age(12), "12s ago");

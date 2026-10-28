@@ -1,10 +1,10 @@
-//! `farhelm hook` — the process Claude Code spawns per hook event.
+//! `farhelm hook`: the process Claude Code spawns per hook event.
 //!
 //! Reads the event on stdin, asks the running daemon what to do, writes the
 //! reply on stdout. All the policy lives in the daemon; this is a courier.
 //!
 //! Every failure path here ends in exit 0 with a permissive-to-Claude-Code
-//! answer (`defer`), never exit 2 — see [`crate::hook`] for why.
+//! answer (`defer`), never exit 2; see [`crate::hook`] for why.
 
 use std::io::Read;
 use std::time::Duration;
@@ -19,7 +19,7 @@ use crate::hook::{self, Decision, HookEvent, RequestKind};
 /// have, and a daemon on a non-default port used to be reachable only by an
 /// environment variable that had to be set in a process nobody controls. The
 /// result was a hook that connected to nothing, deferred, and supervised
-/// nothing — without a word anywhere, because deferring is what a healthy hook
+/// nothing, without a word anywhere, because deferring is what a healthy hook
 /// does when the daemon is legitimately down.
 fn runner_url_from(args: &[String]) -> String {
     if let Some(index) = args.iter().position(|arg| arg == "--url")
@@ -33,7 +33,7 @@ fn runner_url_from(args: &[String]) -> String {
 
 /// Ceiling on the whole round trip. Slightly above the daemon's own approval
 /// wait so the daemon, which can record a proper `timeout` decision, is the one
-/// that decides — this only fires if the daemon itself wedges.
+/// that decides; this only fires if the daemon itself wedges.
 fn client_timeout() -> Duration {
     Duration::from_secs(16 * 60)
 }
@@ -149,7 +149,7 @@ async fn tool_request(
             return hook::decision_json(
                 kind,
                 Decision::Defer,
-                &format!("Farhelm returned {status} — falling back to the normal prompt"),
+                &format!("Farhelm returned {status}; falling back to the normal prompt"),
             );
         }
         Err(err) => {
@@ -159,7 +159,7 @@ async fn tool_request(
             return hook::decision_json(
                 kind,
                 Decision::Defer,
-                "Farhelm is unreachable — falling back to the normal prompt",
+                "Farhelm is unreachable; falling back to the normal prompt",
             );
         }
     };
@@ -179,7 +179,7 @@ async fn tool_request(
             hook::decision_json(
                 kind,
                 Decision::Defer,
-                "Farhelm sent an unreadable decision — falling back to the normal prompt",
+                "Farhelm sent an unreadable decision; falling back to the normal prompt",
             )
         }
     }
@@ -257,12 +257,12 @@ pub enum Installed {
 /// Merge Farhelm's hooks into a Claude Code settings file.
 ///
 /// Printing a block for somebody to paste was the original design, and it is a
-/// step that has to be repeated per repository and can be done wrong in silence
-/// — a stray comma, or pasting into the object above the one you meant. This
+/// step that has to be repeated per repository and can be done wrong in silence:
+/// a stray comma, or pasting into the object above the one you meant. This
 /// writes it.
 ///
 /// **Merging, never replacing the file.** A settings file usually has other
-/// things in it — permissions, a model choice, environment — and losing those
+/// things in it (permissions, a model choice, environment), and losing those
 /// would be a far worse outcome than a hook that has to be pasted. Only the
 /// `hooks` key is touched.
 ///
@@ -288,7 +288,7 @@ pub fn install_into(path: &std::path::Path, binary: &str) -> std::io::Result<Ins
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
-                        "{} is not valid JSON ({err}) — fix or move it first",
+                        "{} is not valid JSON ({err}); fix or move it first",
                         path.display()
                     ),
                 )
@@ -479,7 +479,7 @@ mod url_tests {
 
     #[test]
     fn a_url_flag_with_nothing_after_it_does_not_panic() {
-        // A truncated registration is a bad day, not a crash — and a crash here
+        // A truncated registration is a bad day, not a crash, and a crash here
         // blocks the agent, which is the one thing the bridge must never do.
         let args = vec!["--url".to_owned()];
         assert!(runner_url_from(&args).starts_with("http://"));

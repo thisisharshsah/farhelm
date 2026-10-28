@@ -19,7 +19,7 @@ ingress:
   - hostname: farhelm-relay.aurovie.com
     service: http://127.0.0.1:7843
     originRequest:
-      # A relay connection is idle by design — a phone holds one open for hours
+      # A relay connection is idle by design: a phone holds one open for hours
       # and says nothing. Cloudflare's default would cut it; the relay's own
       # 120-second idle timeout and WebSocket pings are what actually decide
       # when a dead connection goes.

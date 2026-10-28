@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 // notification policy. The logic that must work without a DOM lives in
 // `@farhelm/client-core` and is tested there, under Node.
 //
-// jsdom has no IndexedDB, which the pairing store now needs — `fake-indexeddb`
+// jsdom has no IndexedDB, which the pairing store now needs; `fake-indexeddb`
 // supplies a real implementation rather than a stub, so the migration path is
 // exercised against something that behaves like the browser's.
 export default defineConfig({

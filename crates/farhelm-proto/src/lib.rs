@@ -1,7 +1,7 @@
 //! The Farhelm wire contract.
 //!
 //! This crate is the answer to one question: *what do the runner and a client
-//! have to agree on?* It holds the shapes and nothing else — no rules, no
+//! have to agree on?* It holds the shapes and nothing else: no rules, no
 //! storage, no I/O, no async, and no dependency on any other crate in this
 //! workspace. That is what makes it safe for everything else to depend on.
 //!
@@ -10,9 +10,9 @@
 //! Four implementations parse these bytes, and three of them are not compiled
 //! here: the web PWA and the React Native app share
 //! `packages/client-core/src/api.ts`, and the watch has a hand-written Swift
-//! version. When the shapes lived next to the code that produced them — the
+//! version. When the shapes lived next to the code that produced them (the
 //! event enum inside the runner's `state` module, the read models inside its
-//! axum handlers — "what is on the wire" was only answerable by reading a web
+//! axum handlers), "what is on the wire" was only answerable by reading a web
 //! server. Now it is answerable by reading this crate.
 //!
 //! It also breaks a dependency that pointed the wrong way. The command layer
@@ -38,7 +38,7 @@
 //! [`Budget::is_exhausted`] carry the 80%/100% thresholds, and
 //! `From<Budget> for BudgetView` turns them into the string clients switch on.
 //! Those are policy. They arrived here with the verbatim move of the type they
-//! hang off and are the next thing out — see `farhelm-domain`.
+//! hang off and are the next thing out; see `farhelm-domain`.
 
 pub mod chat;
 pub mod commands;
@@ -78,7 +78,7 @@ pub use views::{
 /// watching ciphertext go past.
 ///
 /// This lives here, in the crate both binaries already depend on, because it was
-/// previously derived twice — once in `farhelm-runner`'s binary and once in the
+/// previously derived twice: once in `farhelm-runner`'s binary and once in the
 /// Tauri app. The two agreed, but nothing made them: they can be pointed at the
 /// same `forge.key`, and a drift would have published on a channel no paired
 /// device listens to, with no error anywhere to say so.

@@ -72,7 +72,7 @@ pub const MAX_CONCURRENT_TASKS: usize = 3;
 /// rewrote two hundred of them would put a row in SQLite that the fleet query
 /// then reads, and produce a diff no human is going to review on a phone.
 /// Refusing to *store* it would throw the work away, so instead the change set
-/// is kept and flagged — the task is still reviewable, one file at a time.
+/// is kept and flagged; the task is still reviewable, one file at a time.
 pub const MAX_CHANGE_SET_BYTES: usize = 4 * 1024 * 1024;
 
 /// Holds one of [`MAX_CONCURRENT_TASKS`] slots for as long as a loop runs.
@@ -118,7 +118,7 @@ pub enum TaskError {
     NotFound(String),
     /// Already at [`MAX_CONCURRENT_TASKS`].
     TooBusy(usize),
-    /// The task is not in a state where this makes sense — already decided,
+    /// The task is not in a state where this makes sense: already decided,
     /// still running.
     Conflict(String),
     /// No credential in the environment, so there is no agent to run.
@@ -137,12 +137,12 @@ impl std::fmt::Display for TaskError {
             TaskError::NotFound(what) => write!(f, "not found: {what}"),
             TaskError::TooBusy(running) => write!(
                 f,
-                "{running} tasks are already running, which is the limit — \
+                "{running} tasks are already running, which is the limit; \
                  wait for one to finish, or review a diff that is waiting"
             ),
             TaskError::Conflict(why) => f.write_str(why),
             TaskError::NoProvider => f.write_str(
-                "no model provider configured — configure FARHELM_MODELS_CONFIG or \
+                "no model provider configured; configure FARHELM_MODELS_CONFIG or \
                  an authorized provider credential to run agent tasks",
             ),
             TaskError::Apply(why) => write!(f, "could not apply the change set: {why}"),
@@ -174,7 +174,7 @@ pub struct StartTask {
     /// A rejected task to try again, differently.
     ///
     /// Its prompt, its change set, and the reason it was refused are composed
-    /// into this task's instruction — see [`retry_prompt`]. The original row is
+    /// into this task's instruction; see [`retry_prompt`]. The original row is
     /// never touched: a rejection is a permanent record, and a retry is a new
     /// attempt beside it rather than an edit to the one that failed.
     #[serde(default)]
@@ -234,8 +234,8 @@ pub fn retry_prompt(previous: &AgentTask) -> String {
     out
 }
 
-/// A reviewer's answer. Part of the wire contract — it arrives inside a
-/// `Command::ReviewTask` — so it lives in `farhelm-proto`.
+/// A reviewer's answer. Part of the wire contract (it arrives inside a
+/// `Command::ReviewTask`), so it lives in `farhelm-proto`.
 pub use farhelm_proto::commands::Review;
 
 /* ------------------------------------------------------------- supervisor */
@@ -277,7 +277,7 @@ impl RunnerSupervisor {
 
 impl farhelm_agent::Supervisor for RunnerSupervisor {
     async fn request(&self, tool: &str, payload: &str) -> Verdict {
-        // Server-side, with the local policy file layered on — the same call
+        // Server-side, with the local policy file layered on, the same call
         // the hook bridge makes. A native agent gets no dispensation.
         let risk = farhelm_domain::risk::classify_with(&self.state.policy, tool, payload);
 
@@ -295,7 +295,7 @@ impl farhelm_agent::Supervisor for RunnerSupervisor {
 
         let approval = match self.state.raise_approval(approval) {
             // The queue is how a human says yes. If it cannot be written to,
-            // the answer is no — an unrecordable approval must never become an
+            // the answer is no: an unrecordable approval must never become an
             // approval.
             Err(err) => {
                 return Verdict::Denied(format!("the approval could not be recorded: {err}"));
@@ -682,14 +682,14 @@ fn launch(
 ///
 /// A task is a spawned loop and a database row. The loop does not survive a
 /// restart; the row does. Without this, every crash leaves a task that says
-/// "working…" forever, holding a place in the fleet view and — once the cap
-/// existed — potentially a slot it can never give back.
+/// "working…" forever, holding a place in the fleet view and (once the cap
+/// existed) potentially a slot it can never give back.
 ///
 /// Never retried: the work was interrupted at an unknown point, and re-running
 /// it automatically would spend money nobody asked for at startup. But not
 /// thrown away either. The branch was written down before the first model
 /// call, so if its checkout is still on disk with edits on it, those edits
-/// become a change set awaiting review — interrupted work the reviewer can
+/// become a change set awaiting review: interrupted work the reviewer can
 /// read, apply or discard, exactly like finished work. Only a task with no
 /// checkout or no edits is marked failed.
 ///
@@ -762,7 +762,7 @@ pub fn reconcile_after_restart(state: &Arc<AppState>) -> usize {
 /// The edits an interrupted task left on its branch, if the checkout survived.
 ///
 /// `None` when the task never recorded a branch, the checkout is gone, or git
-/// cannot be asked — every case where the honest answer is "nothing to show".
+/// cannot be asked: every case where the honest answer is "nothing to show".
 fn surviving_changes(task: &AgentTask) -> Option<farhelm_proto::ChangeSet> {
     if task.worktree_json.trim().is_empty() {
         return None;
@@ -787,7 +787,7 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     };
 
     // Persisted whatever the outcome. A note is what the agent *learned*, and
-    // a task that failed usually learned the most — refusing to keep it because
+    // a task that failed usually learned the most; refusing to keep it because
     // the diff was rejected would throw away the reason it was rejected.
     if !outcome.remembered.is_empty() {
         let now = now_ms();
@@ -814,7 +814,7 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     task.lines_removed = outcome.changes.removed() as i64;
     task.updated_at = now_ms();
 
-    // C10's verdict, if one was obtained. Left null otherwise — "not judged" and
+    // C10's verdict, if one was obtained. Left null otherwise: "not judged" and
     // "judged and found fine" are different answers and must not collapse.
     if let Some(assessment) = &outcome.assessment {
         task.verify_grade = Some(assessment.grade.as_str().to_owned());
@@ -823,11 +823,11 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     }
 
     // Which branch the work is on is what lets a review card survive a restart.
-    // If it cannot be written the task is still *reviewable* — the diff is
-    // separate — but it could not be merged, so say so now rather than at
+    // If it cannot be written the task is still *reviewable* (the diff is
+    // separate), but it could not be merged, so say so now rather than at
     // approval time.
     // No branch at all means the task failed before it had one, and
-    // `outcome.outcome` already carries why — so there is nothing to record and
+    // `outcome.outcome` already carries why, so there is nothing to record and
     // nothing to say.
     if let Some(worktree) = &outcome.worktree {
         match serde_json::to_string(worktree) {
@@ -850,7 +850,7 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     if task.diff_json.len() > MAX_CHANGE_SET_BYTES {
         task.error = Some(format!(
             "the change set renders to {} bytes across {} files, over the \
-             {MAX_CHANGE_SET_BYTES}-byte limit — it is on branch {} if you want it, \
+             {MAX_CHANGE_SET_BYTES}-byte limit; it is on branch {} if you want it, \
              but it is too large to review here. Ask for a narrower change.",
             task.diff_json.len(),
             outcome.changes.files.len(),
@@ -885,7 +885,7 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
 
     let closing = match task.status {
         TaskStatus::AwaitingReview => {
-            format!("✅ proposed {} — waiting for review", task.change_summary())
+            format!("✅ proposed {}, waiting for review", task.change_summary())
         }
         TaskStatus::NoChanges => "• finished with no changes".to_owned(),
         _ => format!(
@@ -916,7 +916,7 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
 ///
 /// Approving writes the files. That is the only place in this crate that does,
 /// and it happens after [`farhelm_app::store::Store::decide_task`] has already
-/// won the race against every other device looking at the same card — so two
+/// won the race against every other device looking at the same card, so two
 /// phones tapping at once apply the change set once.
 pub fn review(
     state: &Arc<AppState>,
@@ -938,11 +938,11 @@ pub fn review(
     }
 
     // D3, applied to diffs. A change set is not a shell command, but approving
-    // one from a wrist is still a decision made without reading it — and the
+    // one from a wrist is still a decision made without reading it, and the
     // whole point of a diff is that somebody read it.
     if via == DecidedVia::Watch {
         return Err(TaskError::Conflict(
-            "a change set cannot be approved from a watch — open it on a phone".into(),
+            "a change set cannot be approved from a watch; open it on a phone".into(),
         ));
     }
 
@@ -972,7 +972,7 @@ pub fn review(
                 );
             }
             Err(err) => {
-                // The decision stands — a reviewer said yes — but the write did
+                // The decision stands (a reviewer said yes), but the write did
                 // not happen. Recording it as `failed` with the reason is more
                 // honest than reporting a change set that is not on disk.
                 decided.status = TaskStatus::Failed;
@@ -987,7 +987,7 @@ pub fn review(
     } else {
         // Rejecting throws the work away: the checkout goes, the branch goes,
         // and nothing was ever written where the human was looking. That is the
-        // whole of "reject" — there is no half-applied state to clean up.
+        // whole of "reject": there is no half-applied state to clean up.
         //
         // Best-effort, and after the decision is recorded. A branch that could
         // not be deleted is disk to reclaim, not a reason to tell somebody
@@ -1005,7 +1005,7 @@ pub fn review(
             &decided.session_id,
             format!(
                 "✗ change set rejected{}",
-                note.map(|note| format!(" — {note}")).unwrap_or_default()
+                note.map(|note| format!(": {note}")).unwrap_or_default()
             ),
             now_ms(),
         );
@@ -1019,7 +1019,7 @@ pub fn review(
 ///
 /// Fast-forward only. If the base moved while the task was waiting to be
 /// reviewed, this refuses and says so rather than resolving somebody else's
-/// conflict for them — and the work survives on its branch either way, which is
+/// conflict for them, and the work survives on its branch either way, which is
 /// the improvement over the overlay, where a stale change set was simply stuck.
 ///
 /// The checkout is released on success: the commits stay reachable, the disk
@@ -1053,7 +1053,7 @@ fn apply(task: &AgentTask) -> Result<Vec<String>, TaskError> {
         }
         Merge::Diverged => Err(TaskError::Apply(format!(
             "the branch you are on has moved since this task was reviewed, so its \
-             change set no longer applies cleanly. The work is on {} — merge it by \
+             change set no longer applies cleanly. The work is on {}; merge it by \
              hand, or reject this and retry.",
             worktree.branch()
         ))),
@@ -1097,7 +1097,7 @@ fn discard_branch(task: &AgentTask) -> Result<bool, TaskError> {
 fn branch_of(task: &AgentTask) -> Result<Worktree, TaskError> {
     if task.worktree_json.trim().is_empty() {
         return Err(TaskError::Apply(
-            "this task has no branch recorded — it predates the move to worktrees, \
+            "this task has no branch recorded; it predates the move to worktrees, \
              or it failed before it had one. Retry it."
                 .into(),
         ));
@@ -1110,7 +1110,7 @@ fn branch_of(task: &AgentTask) -> Result<Worktree, TaskError> {
         // a `git worktree prune`. Saying which is better than letting git raise a
         // confusing error three calls later.
         return Err(TaskError::Apply(format!(
-            "the checkout for branch {} is gone — nothing here can be merged. \
+            "the checkout for branch {} is gone; nothing here can be merged. \
              The commits may still be on the branch.",
             worktree.branch()
         )));
@@ -1123,7 +1123,7 @@ fn branch_of(task: &AgentTask) -> Result<Worktree, TaskError> {
 /// This is what keeps "applied" from being the one irreversible step in a
 /// system where every other one is undone by doing nothing.
 ///
-/// A **revert commit**, not a rewind — see [`farhelm_agent::Worktree::undo`]. The
+/// A **revert commit**, not a rewind; see [`farhelm_agent::Worktree::undo`]. The
 /// overlay could put the old bytes back because it was holding them; moving
 /// history instead would be tidier and is exactly what must not happen once a
 /// commit may have been pushed.
@@ -1167,7 +1167,7 @@ pub fn revert(
 
     state.push_output(
         &task.session_id,
-        format!("↶ undone — {} file(s) put back", written.len()),
+        format!("↶ undone: {} file(s) put back", written.len()),
         now_ms(),
     );
     publish(state, &task);
@@ -1192,7 +1192,7 @@ mod tests {
         AppState::with_gateway(SqliteStore::open_in_memory().unwrap(), |_| None)
     }
 
-    /// A real repository with one commit — a task cannot run without one.
+    /// A real repository with one commit: a task cannot run without one.
     struct TempRepo(PathBuf);
 
     impl TempRepo {
@@ -1393,7 +1393,7 @@ mod tests {
         // The guarantee is unchanged; what enforces it moved. The overlay
         // compared each file against what it captured and said "changed on
         // disk". Git refuses a fast-forward that would overwrite uncommitted
-        // work, and says so in its own words — so the assertion is on the
+        // work, and says so in its own words, so the assertion is on the
         // property, which is that somebody's edit survived and the failure was
         // reported rather than swallowed.
         let error = stored.error.unwrap();
@@ -1670,7 +1670,7 @@ mod tests {
             .collect();
         assert!(
             TaskSlot::claim(&state).is_none(),
-            "the cap did not hold — an unbounded spawn is an unbounded bill"
+            "the cap did not hold; an unbounded spawn is an unbounded bill"
         );
 
         drop(slots);
@@ -1688,7 +1688,7 @@ mod tests {
             .map(|_| TaskSlot::claim(&state).unwrap())
             .collect();
 
-        // No provider here, so this cannot reach the loop — what matters is
+        // No provider here, so this cannot reach the loop; what matters is
         // that a refusal at any stage writes nothing.
         let _ = start(
             &state,

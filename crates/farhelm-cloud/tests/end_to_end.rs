@@ -1,4 +1,4 @@
-//! Sign up, enrol a machine, connect a device — over real HTTP and a real
+//! Sign up, enrol a machine, connect a device, over real HTTP and a real
 //! WebSocket, against the same routers the binaries serve.
 //!
 //! This is the test that would have caught every wiring mistake the unit tests
@@ -171,7 +171,7 @@ async fn a_machine_and_a_phone_find_each_other_with_no_pairing_code() {
     assert_eq!(status, 200, "heartbeat failed: {beat}");
     let runner_channel_token = beat["channel_token"].as_str().unwrap().to_owned();
 
-    // 4. The phone registers its own key — generated on the phone, as before.
+    // 4. The phone registers its own key, generated on the phone, as before.
     let device_key = public_key();
     let (status, device) = world
         .post(
@@ -281,7 +281,7 @@ async fn a_refusal_says_which_of_the_two_things_is_missing() {
     // `POST /v1/channel-token` looks up a machine and a device, and either can
     // be gone. Both answered a bare 404, which left a client unable to tell
     // "that machine was removed" from "this browser's registration was
-    // removed" — two failures whose recoveries are opposite: pick another
+    // removed": two failures whose recoveries are opposite: pick another
     // machine, versus re-register this browser.
     //
     // On a real deployment that ambiguity meant 244 identical refusals in a log
@@ -320,8 +320,8 @@ async fn a_refusal_says_which_of_the_two_things_is_missing() {
         "a missing machine must say so: {said}"
     );
 
-    // A device that is not there names the device, and names it *differently*
-    // — a client discriminates on this, so the two must not read alike.
+    // A device that is not there names the device, and names it *differently*:
+    // a client discriminates on this, so the two must not read alike.
     let (status, body) = world
         .post(
             "/v1/channel-token",
@@ -346,7 +346,7 @@ async fn the_relay_accepts_the_wake_up_the_control_plane_mints() {
     // The fleet watch tells devices their machine went quiet by asking the
     // relay to buzz that machine's channel. The relay gates that endpoint
     // exactly as it gates the socket, so the whole feature rests on a token
-    // minted by the *control plane* — a different caller, a different role —
+    // minted by the *control plane* (a different caller, a different role)
     // being accepted for a channel nobody is connected to.
     //
     // Every part of that is a claim the two sides have to agree on: audience,
@@ -391,7 +391,7 @@ async fn the_relay_accepts_the_wake_up_the_control_plane_mints() {
         "the relay refused a wake-up for a channel the control plane vouched for"
     );
 
-    // No devices have subscribed, so nothing was woken — and that is the
+    // No devices have subscribed, so nothing was woken, and that is the
     // honest answer rather than an error. A machine going offline before
     // anybody installed the app is not a failure to report it.
     let body: Value = woken.json().await.unwrap();
@@ -737,7 +737,7 @@ async fn a_machine_enrols_itself_after_a_human_approves_the_code() {
     let world = spawn().await;
     let (access, _) = world.sign_up("harsh@example.com").await;
 
-    // 1. The machine asks. Unauthenticated — it has no credential yet.
+    // 1. The machine asks. Unauthenticated: it has no credential yet.
     let (status, issued) = world
         .post(
             "/v1/device/code",
@@ -802,7 +802,7 @@ async fn a_machine_enrols_itself_after_a_human_approves_the_code() {
     let key = answer["enrollment_key"].as_str().unwrap().to_owned();
     assert!(key.starts_with("frg_"), "{key}");
 
-    // 6. And that key actually enrols it — the whole flow is worth nothing if
+    // 6. And that key actually enrols it; the whole flow is worth nothing if
     //    what it hands back is not the credential the enrol route accepts.
     let (status, enrolled) = world
         .post(
@@ -917,7 +917,7 @@ async fn a_code_cannot_be_approved_by_somebody_who_is_not_signed_in() {
 
 #[tokio::test]
 async fn one_workspace_cannot_approve_a_code_and_have_another_pay_for_it() {
-    // The code carries no workspace of its own — it belongs to whoever approves
+    // The code carries no workspace of its own; it belongs to whoever approves
     // it. What must not happen is a machine landing anywhere but in the
     // approver's fleet.
     let world = spawn().await;

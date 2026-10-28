@@ -95,7 +95,7 @@ export function SignInScreen({
             lineHeight: 20,
           }}
         >
-          Approve a command, review a diff, see what it cost — while the work
+          Approve a command, review a diff, see what it cost, while the work
           keeps running on your own machine.
         </Text>
       </View>
@@ -148,7 +148,7 @@ export function SignInScreen({
         {tooShort ? (
           <Text style={{ color: palette.textMuted, fontSize: 12 }}>
             {10 - password.length} more character
-            {10 - password.length === 1 ? "" : "s"} — length is what actually
+            {10 - password.length === 1 ? "" : "s"}. Length is what actually
             makes a password hard to guess.
           </Text>
         ) : null}
@@ -194,7 +194,7 @@ export function SignInScreen({
             />
           </Labelled>
           <Text style={{ color: palette.textMuted, fontSize: 12 }}>
-            Where your accounts live. Your code never goes there — this phone and
+            Where your accounts live. Your code never goes there: this phone and
             your machine exchange keys directly and the server carries ciphertext
             it cannot read.
           </Text>
@@ -232,7 +232,7 @@ export function MachinePickerScreen({
           </Text>
           <Text style={{ color: palette.textSecondary, fontSize: 13 }}>
             A machine joins your workspace by running the daemon with an
-            enrolment key. Create one in the web app — it takes one command on
+            enrolment key. Create one in the web app; it takes one command on
             the machine and nothing on this phone.
           </Text>
           <Button palette={palette} label="How" onPress={onAddMachine} tone="quiet" />
@@ -386,7 +386,7 @@ export function WorkspaceScreen({
         </View>
 
         <Text style={{ color: palette.textMuted, fontSize: 12 }}>
-          Plans and people are managed in the web app — those are decisions worth
+          Plans and people are managed in the web app; those are decisions worth
           making sitting down.
         </Text>
       </Card>
@@ -449,13 +449,13 @@ export function WorkspaceScreen({
                 </Text>
                 <Text style={{ color: palette.textSecondary, fontSize: 12 }}>
                   It is offering a different key from the one on file. That is
-                  what a reinstall looks like — and also what somebody standing
+                  what a reinstall looks like, and also what somebody standing
                   in front of it looks like.
                 </Text>
                 {workspace.role === "admin" || workspace.role === "owner" ? (
                   <Button
                     palette={palette}
-                    label="That was me — accept it"
+                    label="That was me, accept it"
                     busy={busy === runner.id}
                     disabled={busy !== null}
                     onPress={() => approveKey(runner.id)}
@@ -539,7 +539,7 @@ function Labelled({
  * A text field for words rather than keys.
  *
  * `Field` in `components/pieces` is monospace, which is right for a pasted key
- * and wrong for an email address — proportional type is what makes a name look
+ * and wrong for an email address; proportional type is what makes a name look
  * like a name.
  */
 function Input({

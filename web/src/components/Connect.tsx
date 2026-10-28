@@ -6,7 +6,7 @@
  * are turned into a decision.
  *
  * The screen is deliberately small and says one thing: **which machine**. That
- * is the only fact a person can actually check — everything else on the request
+ * is the only fact a person can actually check; everything else on the request
  * came from the machine itself and would be reassurance rather than evidence.
  */
 
@@ -99,7 +99,7 @@ export function Connect({
             <p className="tile-note">
               <b>{outcome.name}</b> is enrolling now and will appear in your
               fleet within about thirty seconds. It reconnects by itself from
-              here on — there is nothing to keep or copy.
+              here on. There is nothing to keep or copy.
             </p>
             <button className="btn btn-primary" onClick={onDone}>
               Go to the fleet
@@ -125,7 +125,7 @@ export function Connect({
       <h2 className="chart-title">Connect a machine</h2>
       <p className="tile-note">
         Run <code>farhelm login</code> on the machine you want to add. It
-        prints a code — type it here.
+        prints a code; type it here.
       </p>
 
       <div className="inline-form">
@@ -170,7 +170,7 @@ export function Connect({
           <p className="tile-note">
             Approving adds it to your fleet and lets any device signed into this
             workspace reach it. If that name is not a machine you just ran{" "}
-            <code>login</code> on, refuse — somebody else is asking.
+            <code>login</code> on, refuse: somebody else is asking.
           </p>
           <div className="inline-form">
             <button

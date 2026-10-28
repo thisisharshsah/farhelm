@@ -1,6 +1,6 @@
-# 0006 — Configurable model providers: initial implementation
+# 0006: Configurable model providers: initial implementation
 
-Status: implemented increment, 2026-10-23. This narrows the rollout of [0003 — provider-neutral inference](0003-provider-neutral-inference-layer.md); it does not claim that ADR's full hosted registry, multimodal, streaming or compute-metering target exists.
+Status: implemented increment, 2026-10-23. This narrows the rollout of [0003: provider-neutral inference](0003-provider-neutral-inference-layer.md); it does not claim that ADR's full hosted registry, multimodal, streaming or compute-metering target exists.
 
 ## Context
 

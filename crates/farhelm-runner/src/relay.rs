@@ -2,14 +2,14 @@
 //!
 //! This is what turns a loopback-only daemon into something reachable from a
 //! phone on cellular. It dials **outbound** to the relay and keeps the socket
-//! open — the runner never listens on a public port, which is the §6 posture.
+//! open; the runner never listens on a public port, which is the §6 posture.
 //!
 //! Two directions, both encrypted end to end:
 //!
 //! - **Out:** every [`ServerEvent`] the runner publishes is sealed once per
 //!   paired device and sent. The relay forwards ciphertext.
 //! - **In:** envelopes arrive, are opened with the sending device's public key,
-//!   and dispatched through [`crate::commands`] — the same path the localhost
+//!   and dispatched through [`crate::commands`], the same path the localhost
 //!   API uses, so the destructive-approval rule cannot be skipped by coming in
 //!   this way.
 //!
@@ -53,7 +53,7 @@ const RUNNER_SENDER_ID: &str = "runner";
 ///
 /// **This decision has to live here, not in the relay.** The relay only sees
 /// ciphertext, so it cannot tell an approval request from a line of build
-/// output — and a relay that pushed on every publish would buzz every phone on
+/// output, and a relay that pushed on every publish would buzz every phone on
 /// the channel for as long as an agent kept printing. The runner knows what
 /// happened, so the runner asks.
 ///
@@ -63,7 +63,7 @@ const RUNNER_SENDER_ID: &str = "runner";
 ///
 /// A **task** is the strongest case of the three. An approval stalls one tool
 /// call; a change set nobody has looked at stalls the whole task, and the work
-/// is already paid for. But only when it is *waiting* — a task row changes state
+/// is already paid for. But only when it is *waiting*: a task row changes state
 /// several times on its way there, and buzzing on `running` then again on
 /// `applied` would train people to ignore the one that mattered.
 fn deserves_a_wake_up(event: &ServerEvent) -> bool {
@@ -107,7 +107,7 @@ async fn request_wake_up(config: &RelayConfig) {
 pub struct RelayConfig {
     /// `ws://…` or `wss://…`, without a path.
     pub url: String,
-    /// The fan-out group. Public — knowing it grants a seat, not a key.
+    /// The fan-out group. Public: knowing it grants a seat, not a key.
     pub channel: String,
     /// The control-plane session, when this runner is enrolled.
     ///
@@ -144,7 +144,7 @@ impl RelayConfig {
 
     /// Wait for the first channel token, up to a bound.
     ///
-    /// Enrolment does not mint one — the first heartbeat does, a moment later.
+    /// Enrolment does not mint one; the first heartbeat does, a moment later.
     /// Without this the link dialled immediately, was refused 401, and recovered
     /// on its own a second later. Harmless, and still wrong to ship: an
     /// `Unauthorized` in the log on every single start is exactly the kind of
@@ -183,11 +183,11 @@ pub fn spawn(state: Arc<AppState>, identity: Arc<Identity>, config: RelayConfig)
             match outcome {
                 Ok(()) => {
                     // A clean close still means reconnecting, just without the
-                    // penalty — the relay may simply have been redeployed.
+                    // penalty; the relay may simply have been redeployed.
                     //
                     // Said out loud, which it was not. This branch is the
-                    // ordinary way the link ends — a relay restart, an idle
-                    // timeout — and logging nothing meant a machine could drop
+                    // ordinary way the link ends (a relay restart, an idle
+                    // timeout), and logging nothing meant a machine could drop
                     // off the fleet and reconnect all afternoon with not one
                     // line anywhere to show it had happened. The failure branch
                     // below was loud; the common one was silent.
@@ -239,7 +239,7 @@ async fn run_once(
     // describes: a device that reconnects from an older build must not be
     // treated as still having the capabilities its previous connection
     // announced. A device absent from this map is assumed
-    // `Capability::BASELINE` — which is every client shipped today, since none
+    // `Capability::BASELINE`, which is every client shipped today, since none
     // of them send a `Hello` yet.
     //
     // Nothing reads this yet. See `farhelm_proto::hello` for why that is the
@@ -281,7 +281,7 @@ async fn run_once(
                         let Ok(envelope) = serde_json::from_str::<Envelope>(&text) else {
                             continue;
                         };
-                        // A reply goes back to the asking device only — a
+                        // A reply goes back to the asking device only; a
                         // snapshot nobody else requested is noise on their link.
                         if let Some(reply) =
                             handle_envelope(state, identity, config, &mut capabilities, envelope).await
@@ -303,7 +303,7 @@ async fn run_once(
 ///
 /// Per-device sealing is the cost of authenticated boxes: there is no single
 /// ciphertext every device can read. At one runner and a handful of devices that
-/// is a rounding error, and it buys per-device revocation — unpair a phone and
+/// is a rounding error, and it buys per-device revocation: unpair a phone and
 /// it stops receiving, with no key rotation.
 fn seal_for_devices(
     state: &Arc<AppState>,
@@ -339,7 +339,7 @@ async fn handle_envelope(
     // The envelope names its sender; that is a *hint*, not a credential. It
     // selects which public key to verify against, and verification is what
     // actually decides whether this is a paired device.
-    // A sender this runner has never heard of is usually not an intruder — it is
+    // A sender this runner has never heard of is usually not an intruder; it is
     // a device that signed in seconds ago, and the heartbeat that would tell us
     // about it is up to thirty seconds away. Ask the control plane now rather
     // than dropping the request and letting the user watch a spinner fail.
@@ -360,8 +360,8 @@ async fn handle_envelope(
             // symptom is a client saying "the runner did not answer" ten
             // seconds later while the runner looks perfectly healthy.
             //
-            // Naming the sender is safe — it is an id the sender just told us,
-            // not a secret — and it is the difference between "which device is
+            // Naming the sender is safe (it is an id the sender just told us,
+            // not a secret), and it is the difference between "which device is
             // this" and reading two databases by hand.
             eprintln!(
                 "relay link: ignoring a command from {}, which is not a device this runner \
@@ -396,7 +396,7 @@ async fn handle_envelope(
         Ok(frame) => frame,
         Err(_) => {
             // Either a forgery or a device whose key rotated. Either way there
-            // is nothing to do and nothing worth telling the sender — a decrypt
+            // is nothing to do and nothing worth telling the sender: a decrypt
             // oracle is a real attack surface.
             eprintln!(
                 "relay link: rejected an unverifiable envelope from {}",
@@ -410,7 +410,7 @@ async fn handle_envelope(
         // Announcing what you can handle is not a command and produces no reply:
         // it changes what this runner will send *later*, once anything gates on
         // it. Recorded and acknowledged by silence, which is also what an older
-        // runner does with a frame it cannot parse — so a client may start
+        // runner does with a frame it cannot parse, so a client may start
         // sending one before every runner understands it.
         DeviceFrame::Hello(hello) => {
             if !hello
@@ -438,14 +438,14 @@ async fn handle_envelope(
     };
 
     // A query's answer is *addressed* to the device that asked, rather than
-    // broadcast — nobody else asked for it.
+    // broadcast; nobody else asked for it.
     //
     // Every outcome the caller `await`s has to appear here. It used to be two
     // of them, with `Ok(_) => None` swallowing the rest, so the cost dashboard,
     // the task list and a task's diff each sent a request over the relay and
     // waited ten seconds for a reply that was never sent. The symptom is a
     // screen that says the runner cannot be reached while the runner is
-    // connected and perfectly healthy — which is exactly what it looked like.
+    // connected and perfectly healthy, which is exactly what it looked like.
     //
     // The `Ok(_)` arm is gone deliberately: with it, adding a command and
     // forgetting its reply compiles and fails at runtime. Now it does not
@@ -793,7 +793,7 @@ mod tests {
             .unwrap();
 
         // It worked, so the client hears about it as the event the change
-        // produced — not as a second, redundant answer on the same socket.
+        // produced, not as a second, redundant answer on the same socket.
         assert!(
             handle_envelope(&state, &identity, &config, &mut HashMap::new(), request)
                 .await

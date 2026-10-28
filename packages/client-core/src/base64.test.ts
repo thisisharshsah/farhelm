@@ -2,7 +2,7 @@
  * The base64url codec, checked against Node's.
  *
  * This is hand-written because no single base64 API exists across the browser,
- * Node, and Hermes — which means it is also the one place in this package where
+ * Node, and Hermes, which means it is also the one place in this package where
  * a subtle off-by-one would corrupt keys silently. Node's `Buffer` is the oracle
  * here; it is not available on the platforms this code exists for, but it is
  * available in the test runner, which is the whole point.
@@ -71,7 +71,7 @@ describe("decoding", () => {
   });
 
   it("rejects a length that cannot be a whole number of bytes", () => {
-    // A 4n+1 group carries 6 bits — not enough for a byte, so it is truncation.
+    // A 4n+1 group carries 6 bits, not enough for a byte, so it is truncation.
     expect(() => fromBase64Url("AAAAA")).toThrow(/truncated/);
   });
 

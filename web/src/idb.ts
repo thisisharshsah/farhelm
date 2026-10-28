@@ -3,7 +3,7 @@
  *
  * It used to be in `localStorage`, which was fine while only the page needed
  * it. The service worker changed that: **a service worker cannot read
- * `localStorage`** — the API is synchronous and simply is not exposed to
+ * `localStorage`**: the API is synchronous and simply is not exposed to
  * workers. Without a store both can reach, the worker handling a push has no
  * key, so it cannot decrypt anything, so the notification can only say
  * "something happened" and the Approve button cannot exist.
@@ -14,7 +14,7 @@
  * origin-scoped storage in the clear. Any XSS on this origin steals the device
  * key and can approve as this device. The mitigations are that the app loads no
  * third-party script, the service worker caches only the app shell, and a stolen
- * key is revoked by unpairing — without rotating the runner's key or disturbing
+ * key is revoked by unpairing, without rotating the runner's key or disturbing
  * any other device. The React Native client does better, using the platform
  * keystore; a browser has no equivalent a PWA can actually benefit from.
  */
@@ -70,7 +70,7 @@ export const idbBackend = {
 /**
  * Move a pairing left in `localStorage` by an earlier version.
  *
- * Runs once, from the page — the worker never sees `localStorage` at all, which
+ * Runs once, from the page; the worker never sees `localStorage` at all, which
  * is the whole problem. Without this, upgrading would silently unpair every
  * device: the app would find nothing, fall back to loopback, and ask you to pair
  * again from a network you are probably not on.

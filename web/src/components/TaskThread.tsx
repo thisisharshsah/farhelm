@@ -314,7 +314,7 @@ function TaskComposer({
 const UNSCOPED_REPO_CACHES = ["farhelm-known-repos", "farhelm-recent-repos", "forge-recent-repos"];
 
 /**
- * "What should we build?" — the start of every task.
+ * "What should we build?": the start of every task.
  *
  * Repositories come from the runner (its registered repos plus the ones its
  * tasks ran in), never from browser storage: a list of paths remembered by

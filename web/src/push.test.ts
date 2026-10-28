@@ -3,7 +3,7 @@
  *
  * Almost all of the value here is in one case. On iOS, Safari resolves
  * `Notification.requestPermission()` to `"denied"` in a browser tab **without
- * ever prompting** — no dialog, no error, nothing in the console. A user who
+ * ever prompting**: no dialog, no error, nothing in the console. A user who
  * hits that concludes the feature is broken. So "you have to install it to the
  * Home Screen first" has to be detected and said before the attempt, and these
  * tests pin that down.

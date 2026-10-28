@@ -3,7 +3,7 @@
 //!
 //! - **Passwords** are low-entropy and chosen by humans, so they get Argon2id
 //!   with a memory cost that makes offline guessing expensive.
-//! - **Bearer tokens** — enrolment keys, refresh tokens — are 256 bits from the
+//! - **Bearer tokens** (enrolment keys, refresh tokens) are 256 bits from the
 //!   OS CSPRNG. There is nothing to guess, so the only requirement is that a
 //!   database dump does not yield usable credentials, and that lookup is a
 //!   single indexed query. SHA-256 gives both; Argon2 here would mean a
@@ -23,7 +23,7 @@ pub enum SecretError {
     /// The password did not meet [`MIN_PASSWORD_LEN`].
     TooShort,
     /// A stored hash could not be parsed. Corruption, or a hash written by a
-    /// different algorithm — either way, not a login.
+    /// different algorithm; either way, not a login.
     Unusable,
 }
 
@@ -46,7 +46,7 @@ pub const MIN_PASSWORD_LEN: usize = 10;
 
 /// Argon2id, tuned for a server that also does other things.
 ///
-/// 19 MiB / t=2 / p=1 is the OWASP second-choice profile — chosen over the
+/// 19 MiB / t=2 / p=1 is the OWASP second-choice profile, chosen over the
 /// 46 MiB one because this is expected to run on a small VPS alongside the
 /// relay, and a login that swaps is a login that times out.
 fn argon2() -> Argon2<'static> {
@@ -112,7 +112,7 @@ pub fn hash_token(token: &str) -> String {
 /// The alphabet a user code is drawn from.
 ///
 /// Chosen for someone reading a code off a server's console and typing it into
-/// a phone. No `0`/`O`, no `1`/`I`/`L`, and no vowels — the first two because
+/// a phone. No `0`/`O`, no `1`/`I`/`L`, and no vowels: the first two because
 /// they are misread, the third because a code that spells a word is a code
 /// somebody will report as offensive. Twenty-eight symbols, so eight of them
 /// carry a shade over 38 bits.
@@ -124,7 +124,7 @@ const USER_CODE_LEN: usize = 8;
 /// A short code a human reads aloud or types, in `XXXX-XXXX` form.
 ///
 /// Deliberately *not* [`random_secret`]. This one is transcribed by a person, so
-/// it trades entropy for legibility — which is safe only because it is useless
+/// it trades entropy for legibility, which is safe only because it is useless
 /// on its own: approving a code grants nothing to whoever typed it, it releases
 /// a credential to whoever holds the matching device code, and that is 256 bits
 /// that never left the machine. The user code's job is to stop somebody
@@ -184,8 +184,8 @@ pub fn format_user_code(code: &str) -> String {
     }
 }
 
-/// The prefix a device code carries. Never shown to a human — this is the half
-/// that stays on the machine — but the prefix makes one recognisable in a log.
+/// The prefix a device code carries. Never shown to a human (this is the half
+/// that stays on the machine), but the prefix makes one recognisable in a log.
 pub const DEVICE_CODE_PREFIX: &str = "frgd_";
 
 /// Mint a device code: 256 bits, held only by the machine that asked.

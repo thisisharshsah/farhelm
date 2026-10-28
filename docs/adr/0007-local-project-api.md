@@ -1,4 +1,4 @@
-# 0007 — Local project metadata API
+# 0007: Local project metadata API
 
 Status: implemented initial resource slice, 2026-10-24. This delivers create, list and detail for the project foundation in [ADR 0002](0002-unified-workspace-object-model.md). Hosted authorization, repository/task associations and the rest of that workspace model remain separate work.
 

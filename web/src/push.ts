@@ -5,7 +5,7 @@
  * quietly if you let them:
  *
  * 1. **The app must be installed to the home screen on iOS.** Safari refuses
- *    `Notification.requestPermission()` from a browser tab — it does not prompt
+ *    `Notification.requestPermission()` from a browser tab. It does not prompt
  *    and does not throw, it just resolves `"denied"`. That is the single most
  *    common reason push "doesn't work", so it is detected and named.
  * 2. **Permission must be granted from a user gesture.** Asking on load is both
@@ -60,7 +60,7 @@ export async function pushState(): Promise<PushState> {
 /**
  * Ask for permission and register. Call this from a click, never on load.
  *
- * Returns the state afterwards rather than throwing for the ordinary refusals —
+ * Returns the state afterwards rather than throwing for the ordinary refusals:
  * a denied prompt is a choice, not an error.
  */
 export async function enablePush(pairing: Pairing): Promise<PushState> {
@@ -110,8 +110,8 @@ export async function enablePush(pairing: Pairing): Promise<PushState> {
  * Stop being woken.
  *
  * Only unsubscribes locally. The relay keeps subscriptions in memory and drops
- * them on the push service's first 410, so there is nothing durable to clean up
- * — which is the same reason it has no endpoint to ask.
+ * them on the push service's first 410, so there is nothing durable to clean up,
+ * which is the same reason it has no endpoint to ask.
  */
 export async function disablePush(): Promise<PushState> {
   const registration = await navigator.serviceWorker.ready;

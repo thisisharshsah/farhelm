@@ -1,7 +1,7 @@
 //! The Farhelm runner, as a library.
 //!
 //! The binary is a thin CLI over this. Splitting them lets the integration tests
-//! drive the real relay link and command layer in-process — the alternative was
+//! drive the real relay link and command layer in-process; the alternative was
 //! spawning the daemon and poking it over HTTP, which tests the transport rather
 //! than the behaviour.
 

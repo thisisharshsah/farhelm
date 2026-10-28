@@ -2,11 +2,11 @@
 //!
 //! Farhelm started around Claude Code, which has a hook system: it calls out
 //! to a binary before every tool use and waits for an answer. That is the ideal
-//! integration and it is why the approval path is trustworthy — the agent is
+//! integration and it is why the approval path is trustworthy: the agent is
 //! *blocked* until a human decides, in-process, with no polling.
 //!
-//! Most agents have nothing like it. They ask in their own terminal —
-//! `Run shell command? (y/n)` — and wait for a keystroke. Supervising those
+//! Most agents have nothing like it. They ask in their own terminal
+//! (`Run shell command? (y/n)`) and wait for a keystroke. Supervising those
 //! means reading the question out of the pane and typing the answer back.
 //!
 //! # Two channels, one queue
@@ -20,7 +20,7 @@
 //!
 //! The hook channel is exact: Claude Code's payload schema is documented and the
 //! bridge is verified end to end. The prompt channel is **pattern matching on
-//! terminal output**, which is inherently a heuristic — agents reword their
+//! terminal output**, which is inherently a heuristic: agents reword their
 //! prompts between releases, and a missed prompt means a session that looks
 //! stalled rather than one that silently proceeds.
 //!
@@ -40,7 +40,7 @@ pub enum ApprovalChannel {
     /// can refuse a tool call the agent never announced.
     Hook,
     /// The agent asks in its terminal; the runner reads the question and types
-    /// the answer. A heuristic — see the module docs.
+    /// the answer. A heuristic; see the module docs.
     Prompt(&'static PromptDialect),
     /// The runner *is* the agent. No bridge, no pane, nothing to parse: the
     /// loop calls the approval queue directly and awaits the answer in-process.
@@ -129,7 +129,7 @@ const CLAUDE_PROMPT: PromptDialect = PromptDialect {
     confidence: Confidence::Unverified,
 };
 
-/// `y`/`n` — the most common shape by far.
+/// `y`/`n`: the most common shape by far.
 const YES_NO: PromptDialect = PromptDialect {
     triggers: &[
         "(y/n)",
@@ -175,7 +175,7 @@ pub const AGENTS: &[AgentSpec] = &[
         // That is the whole point of the integration: an interactive prompt
         // would block the agent behind a terminal nobody is sitting at.
         approvals: ApprovalChannel::Hook,
-        note: "Hook bridge — every tool call blocks until you answer.",
+        note: "Hook bridge: every tool call blocks until you answer.",
     },
     AgentSpec {
         agent: Agent::Codex,
@@ -240,7 +240,7 @@ pub const AGENTS: &[AgentSpec] = &[
         args: &[],
         resume_flag: None,
         // A shell is not an agent and has nothing to approve. It exists so the
-        // desktop app can hold a plain terminal on the same footing — visible
+        // desktop app can hold a plain terminal on the same footing: visible
         // from the phone, killable, with its output in the tail.
         approvals: ApprovalChannel::None,
         note: "A plain shell. Nothing is gated; you are the one typing.",
@@ -252,7 +252,7 @@ pub fn spec(agent: Agent) -> &'static AgentSpec {
     AGENTS
         .iter()
         .find(|candidate| candidate.agent == agent)
-        .expect("every Agent variant has a spec — see the exhaustiveness test")
+        .expect("every Agent variant has a spec; see the exhaustiveness test")
 }
 
 /// The dialect Claude Code falls back to without its hook bridge.
@@ -265,7 +265,7 @@ pub const CLAUDE_FALLBACK: &PromptDialect = &CLAUDE_PROMPT;
 pub struct DetectedPrompt {
     /// The line that asked.
     pub question: String,
-    /// The command or change being asked about — what a human decides on.
+    /// The command or change being asked about: what a human decides on.
     pub payload: String,
 }
 
@@ -285,7 +285,7 @@ const TAIL_LINES: usize = 12;
 /// This rule was learned the hard way. tmux's `capture-pane` returns the current
 /// *screen*, so an answered question is simply overwritten and disappears. A raw
 /// PTY has only append-only scrollback, where the question stays visible
-/// forever — so without this check the watcher re-raised an approval for a
+/// forever, so without this check the watcher re-raised an approval for a
 /// command that had already run, every few seconds, indefinitely.
 const MAX_LINES_AFTER: usize = 1;
 
@@ -465,7 +465,7 @@ Proceed? (y/n)";
 Proceed? (y/n)
 y
 
-APPROVED — running it";
+APPROVED, running it";
         assert_eq!(detect_prompt(pane, &YES_NO), None);
     }
 

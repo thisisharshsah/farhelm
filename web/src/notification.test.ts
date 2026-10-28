@@ -2,7 +2,7 @@
  * What a wake-up says, and which buttons it offers.
  *
  * The one that really matters is `allowsOneTap`. A notification action can be
- * hit from a lock screen without the app ever coming to the front — it is the
+ * hit from a lock screen without the app ever coming to the front; it is the
  * least deliberate surface in the whole system, less so than the wrist tap D3
  * already refuses. Offering Approve on `rm -rf` there would quietly undo the
  * most important safety property in the product.
@@ -151,7 +151,7 @@ describe("a wake-up with an approval waiting", () => {
 
 describe("a wake-up with nothing specific to say", () => {
   it("is quiet when a window is already in front", () => {
-    // Interrupting someone about something they are looking at is noise — but
+    // Interrupting someone about something they are looking at is noise, but
     // a push with no notification is a "silent push" and gets the permission
     // revoked. Quiet, not absent.
     const shown = wakeUpNotification({ kind: "focused" });
@@ -166,7 +166,7 @@ describe("a wake-up with nothing specific to say", () => {
   });
 
   it("says it could not get through, rather than guessing why it was woken", () => {
-    // This shared its wording with `unpaired` — "An agent needs you" — until
+    // This shared its wording with `unpaired` ("An agent needs you") until
     // the control plane began sending a wake-up *because* a machine went
     // quiet. Then the fetch fails precisely because nothing is there, and the
     // old line sent somebody hunting for an approval that does not exist.
@@ -179,7 +179,7 @@ describe("a wake-up with nothing specific to say", () => {
   it("still guesses when there is no key, because there is nothing else to say", () => {
     // `unpaired` genuinely knows nothing: no key, nothing decrypted. A wake-up
     // is only ever sent because something wants a person, so that guess is the
-    // honest one *here* — the distinction is that `unreachable` knows more.
+    // honest one *here*; the distinction is that `unreachable` knows more.
     const shown = wakeUpNotification({ kind: "unpaired" });
     expect(shown.options.body).toBe("An agent needs you.");
   });

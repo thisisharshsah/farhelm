@@ -2,8 +2,8 @@
 //!
 //! These exist to make a refactor safe, not to argue that the current behaviour
 //! is right. Each one records an observable that something outside this
-//! workspace already depends on — a byte on the wire, a field a phone reads, a
-//! rule a device relies on — so that moving the code that produces it cannot
+//! workspace already depends on (a byte on the wire, a field a phone reads, a
+//! rule a device relies on), so that moving the code that produces it cannot
 //! change it silently.
 //!
 //! Three kinds of observable are pinned here:
@@ -102,7 +102,7 @@ fn approval(state: &Arc<AppState>, id: &str, risk: Risk) {
 /// Every `ServerEvent` variant, as the bytes a client actually parses.
 ///
 /// Externally tagged on `type`, snake_case. `OutputChunk` flattens its line, so
-/// `seq`/`text`/`at_ms` sit at the top level rather than under `line` — that
+/// `seq`/`text`/`at_ms` sit at the top level rather than under `line`; that
 /// flattening is load-bearing for the Swift client and is easy to lose in a
 /// move.
 #[test]
@@ -407,7 +407,7 @@ async fn fleet_view_shape_is_stable() {
 ///
 /// Asserted against the `Budget` → `BudgetView` mapping rather than by moving a
 /// session's spend, because `upsert_session` deliberately refuses to overwrite
-/// `spent_usd` — that column is owned by `record_usage`, so that a stale
+/// `spent_usd`: that column is owned by `record_usage`, so that a stale
 /// in-memory copy can never roll the ledger back. Writing this test the obvious
 /// way silently measured nothing.
 #[test]
@@ -439,7 +439,7 @@ fn budget_state_thresholds_are_stable() {
     }
 }
 
-/// An uncapped session reports `ok` with a null percentage — never `stop`,
+/// An uncapped session reports `ok` with a null percentage, never `stop`,
 /// however much it has spent.
 #[test]
 fn an_uncapped_budget_never_stops() {
@@ -460,7 +460,7 @@ fn an_uncapped_budget_never_stops() {
 ///
 /// Derived independently in `farhelm-runner`'s binary and in the Tauri app. Each
 /// has its own copy of this assertion; if they ever disagree, one of the two
-/// fails. A drift here does not error anywhere — the runner simply publishes on
+/// fails. A drift here does not error anywhere; the runner simply publishes on
 /// a channel no paired device is listening to.
 #[test]
 fn channel_derivation_agrees_across_binaries() {

@@ -5,7 +5,7 @@
  * conversation and had drifted into rendering it differently: the web app
  * grouped lines into turns while the phone showed a flat run of monospace, so
  * the device this product exists for had the worse transcript of the two. The
- * README's rule — everything that is not a screen is shared — is what stops
+ * README's rule (everything that is not a screen is shared) is what stops
  * that happening again.
  *
  * What stays in the screens is layout. What is here is the reading of the tail:
@@ -28,7 +28,7 @@ export const INSTRUCTION_MARKER = "\u203a";
  * How much of one agent turn to show before folding it.
  *
  * A build log is thousands of lines and arrives as a single turn. Rendered
- * whole it buries the conversation it is part of — you scroll past a test suite
+ * whole it buries the conversation it is part of: you scroll past a test suite
  * to find the sentence that says what happened, and on a phone you scroll past
  * it twice. The tail is the part that says how it ended, so the tail is what
  * stays.
@@ -48,7 +48,7 @@ export function clockOf(at?: number): string {
  * The text as a person should read it.
  *
  * `›` is how the runner marks an instruction in the tail, and it is what
- * `turnsOf` groups on — so by the time a line is rendered the marker has
+ * `turnsOf` groups on, so by the time a line is rendered the marker has
  * already done its whole job. It was still being printed, which put a stray
  * glyph in front of every message you had typed. Grouping consumed it; the
  * display should not repeat it.
@@ -64,7 +64,7 @@ export function displayText(text: string): string {
  * Not taken from the wire: `SessionView` carries the agent's *id*, and the
  * display names live in `farhelm_domain::agent::AGENTS`. Adding a name field
  * would mean a wire change across three clients for a label, so the closed set
- * is spelled here — with a fallback that still reads properly for an agent this
+ * is spelled here, with a fallback that still reads properly for an agent this
  * build has not heard of, which is what keeps a new entry in the registry from
  * rendering as an empty header.
  */

@@ -1,10 +1,10 @@
-//! Pipeline stage 5 — retrieval, not dumping (C4).
+//! Pipeline stage 5: retrieval, not dumping (C4).
 //!
 //! The single biggest source of wasted input tokens is pasting whole files into
 //! a prompt so the model can read three lines of one of them. This stage walks
 //! the repo, scores files against the terms the task actually mentions, and
-//! emits a *skeleton* — declaration lines plus the matched line ranges with a
-//! little context — under hard byte caps.
+//! emits a *skeleton* (declaration lines plus the matched line ranges with a
+//! little context) under hard byte caps.
 //!
 //! The symbol extraction is heuristic (declaration-shaped line prefixes) rather
 //! than a parse. That is a deliberate v1: it is language-agnostic, has no build
@@ -28,7 +28,7 @@ pub struct ContextBudget {
     pub max_total_bytes: usize,
     /// Lines of context kept either side of a match.
     pub context_lines: usize,
-    /// Files larger than this are not read at all — a lockfile or a vendored
+    /// Files larger than this are not read at all; a lockfile or a vendored
     /// bundle will match half the terms in the query and teach nothing.
     pub max_file_size_bytes: u64,
 }
@@ -58,7 +58,7 @@ pub struct RepoContext {
     pub files: Vec<FileSlice>,
     /// How many files were read and scored.
     pub scanned: usize,
-    /// True when the byte cap cut the result short — the dashboard should show
+    /// True when the byte cap cut the result short; the dashboard should show
     /// this, because a silently truncated context is how retries start.
     pub truncated: bool,
 }
@@ -136,7 +136,7 @@ fn is_declaration(line: &str) -> bool {
 }
 
 /// Function words that would match nearly every file. Scoring on these is the
-/// same as scoring on nothing, but they cannot be dropped by length alone —
+/// same as scoring on nothing, but they cannot be dropped by length alone:
 /// `fmt`, `api`, `sql` and `env` are all three letters and all meaningful.
 const STOPWORDS: &[&str] = &[
     "the", "and", "for", "but", "not", "you", "all", "can", "its", "this", "that", "with", "from",
@@ -284,7 +284,7 @@ pub fn build(root: &Path, query: &str, budget: &ContextBudget) -> RepoContext {
     }
 
     // Highest score first; ties broken by path so the prompt prefix is stable
-    // across runs — an unstable ordering would invalidate the cache every turn.
+    // across runs; an unstable ordering would invalidate the cache every turn.
     candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
 
     let mut files = Vec::new();

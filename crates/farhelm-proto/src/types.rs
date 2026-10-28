@@ -2,12 +2,12 @@
 //!
 //! Every enum that lands in a `TEXT` column has an explicit `as_str` /
 //! `FromStr` pair. The string form is the storage and wire format, so it is
-//! part of the schema contract — do not change a variant's string without a
+//! part of the schema contract; do not change a variant's string without a
 //! migration.
 //!
-//! Nothing here decides anything. The rules that read these shapes — what makes
+//! Nothing here decides anything. The rules that read these shapes (what makes
 //! a command destructive, when a budget is exhausted, what a step transition is
-//! allowed to be — live in `farhelm-domain`, so that a client can depend on the
+//! allowed to be) live in `farhelm-domain`, so that a client can depend on the
 //! contract without linking the policy.
 
 use std::fmt;
@@ -39,7 +39,7 @@ impl std::error::Error for ParseEnumError {}
 /// ```
 ///
 /// They parse and deserialize; only the first is ever written. That is what lets
-/// a value be renamed without a database migration — rows already on disk keep
+/// a value be renamed without a database migration; rows already on disk keep
 /// reading, and every row written from now on carries the new name.
 macro_rules! text_enum {
     (
@@ -136,13 +136,13 @@ text_enum! {
     /// # `Batch` is legacy here, and still current as a pin
     ///
     /// This column used to carry `batch`, which conflated *which model ran* with
-    /// *how the call was dispatched* — a batched call lost its model tier, and
+    /// *how the call was dispatched*: a batched call lost its model tier, and
     /// with it the tier split in the dashboard for exactly the work most worth
     /// splitting. [`UsageEvent::dispatch`] now carries the second thing, and this
     /// carries only the first.
     ///
     /// The variant stays for two reasons. Rows written before that migration
-    /// still read `batch`, and their real tier is not recoverable — the model
+    /// still read `batch`, and their real tier is not recoverable; the model
     /// name is in the row but the router's configuration has moved on since. And
     /// `{tier=batch}` in a `PLAN.md` step is user-facing syntax meaning "defer
     /// this one", which is a pin rather than a stored tier.
@@ -157,7 +157,7 @@ text_enum! {
     /// How a call reached the provider.
     ///
     /// Orthogonal to [`Tier`], which is *which model*. Batching halves the price
-    /// of any model, so this is what the ledger prices against — and keeping the
+    /// of any model, so this is what the ledger prices against, and keeping the
     /// two apart is what lets the dashboard say "the deferred work was mostly
     /// Haiku" instead of just "the deferred work was deferred".
     Dispatch {
@@ -204,7 +204,7 @@ text_enum! {
     ///
     /// Chosen by a person at a full screen (phone or web) for one session, and
     /// bounded by [`Risk`]: `Low` clears low-risk commands on its own, `Medium`
-    /// clears low and medium, and nothing ever clears a destructive one — that
+    /// clears low and medium, and nothing ever clears a destructive one; that
     /// rule has no setting, because a setting is what somebody reaches for at
     /// 2am and never puts back.
     AutoApprove {
@@ -227,7 +227,7 @@ text_enum! {
         Watch => "watch",
         Phone => "phone",
         Web => "web",
-        /// An MCP connector — Claude, acting for the account that authorised it.
+        /// An MCP connector: Claude, acting for the account that authorised it.
         ///
         /// Its own variant rather than reusing `Web` because the audit trail
         /// answers "who cleared this", and "a language model did" is a
@@ -259,7 +259,7 @@ text_enum! {
 
 impl Default for Dispatch {
     /// Live. A row that predates the column was a live call, or was a batched
-    /// one whose `tier` still says `batch` — the migration backfills those, so
+    /// one whose `tier` still says `batch`; the migration backfills those, so
     /// this default only ever applies to a payload from an older peer.
     fn default() -> Self {
         Dispatch::Live
@@ -412,7 +412,7 @@ pub struct Message {
     pub id: String,
     /// Who it is for.
     pub session_id: String,
-    /// Who sent it. A session, not a person — anything a *person* says arrives
+    /// Who sent it. A session, not a person; anything a *person* says arrives
     /// as an instruction and is already in the transcript.
     pub from_session_id: String,
     pub body: String,
@@ -424,7 +424,7 @@ pub struct Message {
 /// A fact left where every agent on a repository can see it.
 ///
 /// The blackboard. Messages are for "you specifically, now"; this is for
-/// "whoever works on this next" — the migration is half-done, the flaky test is
+/// "whoever works on this next": the migration is half-done, the flaky test is
 /// flaky for this reason, do not touch that file. Keyed rather than appended so
 /// that a later answer replaces an earlier one instead of both being true.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -488,7 +488,7 @@ mod tests {
     fn a_row_written_before_the_rename_still_reads() {
         // Every session this system has ever started with its own agent has
         // `forge` in that column. Failing to parse it would not be a cosmetic
-        // regression — it is the whole session history going unreadable.
+        // regression; it is the whole session history going unreadable.
         assert_eq!("forge".parse::<Agent>().unwrap(), Agent::Farhelm);
         assert_eq!(
             serde_json::from_str::<Agent>("\"forge\"").unwrap(),
@@ -742,7 +742,7 @@ impl BatchStatus {
 text_enum! {
     /// Where a native agent task is in its life.
     ///
-    /// `AwaitingReview` is the state a human acts on — the diff equivalent of
+    /// `AwaitingReview` is the state a human acts on: the diff equivalent of
     /// [`SessionStatus::AwaitingApproval`]. Everything after it is terminal:
     /// a rejected task is never re-decided, it is re-run as a *new* task, so
     /// the audit trail keeps both the change set that was refused and the one
@@ -767,7 +767,7 @@ impl TaskStatus {
     /// True when the change set is on disk and could be taken off again.
     ///
     /// Only `Applied`. A rejected task never landed, and a reverted one has
-    /// already been undone — offering "undo" on either would be offering to do
+    /// already been undone; offering "undo" on either would be offering to do
     /// nothing, which reads as a bug the first time somebody presses it.
     pub fn can_revert(self) -> bool {
         matches!(self, TaskStatus::Applied)
@@ -779,7 +779,7 @@ impl TaskStatus {
 /// `worktree_json` is an opaque string here, like `BatchItem::request_json`: it
 /// describes the branch `farhelm-agent` did the work on, which is that crate's
 /// business and nobody else's. `diff_json` is a serialised
-/// [`crate::diff::ChangeSet`] — a shape this crate does own — and is stored as
+/// [`crate::diff::ChangeSet`] (a shape this crate does own) and is stored as
 /// text because it is written once and read whole, never queried into.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentTask {
@@ -797,7 +797,7 @@ pub struct AgentTask {
     /// The serialised [`farhelm_agent::Worktree`]-shaped descriptor: which branch
     /// this task's work is on, where its checkout is, and what it was cut from.
     /// Held separately from the diff so a phone can render a review card
-    /// without being sent it, and never handed to a client at all — see
+    /// without being sent it, and never handed to a client at all; see
     /// [`crate::views::TaskView`].
     ///
     /// Four strings. The staging overlay this replaced stored both sides of
@@ -814,7 +814,7 @@ pub struct AgentTask {
     pub review_note: Option<String>,
     /// The frontier model's verdict on the diff (C10): `pass` | `concerns` |
     /// `fail`. `None` means **not judged**, which is a different thing from
-    /// judged and found fine — a card must never render one as the other.
+    /// judged and found fine; a card must never render one as the other.
     pub verify_grade: Option<String>,
     pub verify_notes: Option<String>,
     /// Which model judged it. The router's configuration changes between tasks,
@@ -845,7 +845,7 @@ impl AgentTask {
 
 /// What an in-flight batch item is assumed to have been routed to, when it was
 /// queued before the tier was recorded. Deferrable work is overwhelmingly the
-/// cheap tier — triage, titles, commit messages — so this is the guess that is
+/// cheap tier (triage, titles, commit messages), so this is the guess that is
 /// least often wrong, and it stops being used a day after the upgrade.
 fn batch_item_default_tier() -> Tier {
     Tier::Small
@@ -857,7 +857,7 @@ pub struct BatchItem {
     pub id: String,
     pub session_id: String,
     /// What the provider echoes back on each result. The only thing tying an
-    /// answer — and its cost — to the row that asked for it.
+    /// answer (and its cost) to the row that asked for it.
     pub custom_id: String,
     pub task_type: TaskType,
     pub model: String,
@@ -867,7 +867,7 @@ pub struct BatchItem {
     /// can change between queueing a call and its batch coming back a day later,
     /// and the ledger should say which model actually ran.
     ///
-    /// `#[serde(default)]` — `Tier::Small` — for rows queued before the column
+    /// `#[serde(default)]` (`Tier::Small`) for rows queued before the column
     /// existed. Those settle within a day of the upgrade at most.
     #[serde(default = "batch_item_default_tier")]
     pub tier: Tier,
@@ -984,7 +984,7 @@ pub struct Conversation {
 /// One tool exchange in a native agent task, written before the tool runs and
 /// settled after it (ADR 0004's step ledger, first form).
 ///
-/// `finished_at` is `None` while the tool is running — and stays `None` for a
+/// `finished_at` is `None` while the tool is running, and stays `None` for a
 /// run the process never finished, which is exactly the row a restart needs
 /// to find. Payloads are bounded by the writer; this is a record of what was
 /// attempted, not a transcript.

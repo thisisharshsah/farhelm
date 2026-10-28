@@ -18,7 +18,7 @@
  *
  * A relay seat lives fifteen minutes. A phone reconnects for days. So the
  * transport is handed a *function* rather than a token, and calls it each time
- * it dials — which is also what makes removing a device take effect without
+ * it dials, which is also what makes removing a device take effect without
  * anything having to tell the relay.
  */
 
@@ -61,7 +61,7 @@ export interface Connection {
   cloud: CloudClient | null;
   workspace: Workspace | null;
   activeRunnerId: string | null;
-  /** Set when the workspace could not be loaded — an expired session, usually. */
+  /** Set when the workspace could not be loaded: an expired session, usually. */
   error: string | null;
   /**
    * Set when this surface is signed in but holds no device seat. It can read
@@ -113,7 +113,7 @@ export function useConnection(
     () => localStorage.getItem(ACTIVE_RUNNER_KEY),
   );
   const [error, setError] = useState<string | null>(null);
-  /// Signed in, but this surface has no device seat — it can manage the
+  /// Signed in, but this surface has no device seat. It can manage the
   /// workspace but cannot open an encrypted link to a machine.
   const [deviceProblem, setDeviceProblem] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -125,7 +125,7 @@ export function useConnection(
   const [transportRevision, setTransportRevision] = useState(0);
 
   // The listener is held in a ref so a re-render does not tear the transport
-  // down — reconnecting on every keystroke in a text field is a real bug this
+  // down; reconnecting on every keystroke in a text field is a real bug this
   // shape avoids.
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
@@ -149,7 +149,7 @@ export function useConnection(
         cloudRef.current = cloudClient(session);
         // Checked on load and not only after signing in: a session saved by a
         // build that could not register a device is still on disk, and its
-        // owner has no reason to sign out — so the screen has to say what is
+        // owner has no reason to sign out, so the screen has to say what is
         // wrong the next time the app opens, not the next time they log in.
         if (!session.deviceId) {
           setDeviceProblem("this browser holds no device slot.");
@@ -190,7 +190,7 @@ export function useConnection(
           const stillThere = next.runners.some((runner) => runner.id === current);
           if (current && stillThere) return current;
 
-          // The remembered machine is gone — forgotten from the fleet, or
+          // The remembered machine is gone: forgotten from the fleet, or
           // re-enrolled under a new id. Clear it *unconditionally*: this used
           // to write only when there was exactly one machine to fall back to,
           // so with none or several the dead id stayed in storage and was
@@ -239,7 +239,7 @@ export function useConnection(
       const runner = workspace?.runners.find((item) => item.id === activeRunnerId);
       // No machine chosen yet, or none enrolled: there is nothing to dial, and
       // the screen shows the picker instead.
-      // No device seat means no key the runner would seal to — the screen
+      // No device seat means no key the runner would seal to; the screen
       // says so rather than the transport retrying forever.
       if (!cloud || !session || !runner || !session.deviceId) return;
 
@@ -259,7 +259,7 @@ export function useConnection(
           // A 404 here means the control plane has no such machine, and no
           // amount of retrying will change that. Without this the transport
           // asks again on every reconnection attempt and the screen sits on
-          // "connecting" — which is what a browser pinned to a machine that
+          // "connecting", which is what a browser pinned to a machine that
           // had been forgotten from the fleet actually did: the same refusal,
           // hundreds of times, with nothing on screen to say the machine it
           // was asking for no longer existed.
@@ -272,7 +272,7 @@ export function useConnection(
               localStorage.removeItem(ACTIVE_RUNNER_KEY);
               setActiveRunnerId(null);
               setError(
-                "That machine is no longer in this workspace — it was removed, " +
+                "That machine is no longer in this workspace. It was removed, " +
                   "or it re-enrolled and came back with a new identity. Pick it " +
                   "again below.",
               );
@@ -338,7 +338,7 @@ export function useConnection(
           });
 
     // This browser's long-term key, created once and reused. Only its public
-    // half is ever sent — the control plane still cannot read anything.
+    // half is ever sent; the control plane still cannot read anything.
     //
     // Reused rather than regenerated because a device seat belongs to the
     // device, not to the sign-in: generating a fresh key on every sign-in
@@ -347,8 +347,8 @@ export function useConnection(
     const identity = await deviceIdentity(idbBackend);
 
     // Registration failing must not fail the sign-in. Being over the device
-    // limit is precisely when someone needs to get in — to remove a device they
-    // no longer use — and refusing the whole sign-in makes that impossible from
+    // limit is precisely when someone needs to get in (to remove a device they
+    // no longer use), and refusing the whole sign-in makes that impossible from
     // every surface at once.
     let deviceId = "";
     let deviceProblem: string | null = null;
@@ -392,7 +392,7 @@ export function useConnection(
     const session = sessionRef.current;
     if (!cloud || !session) return;
 
-    // The same key as the failed attempt — this is a retry, not a new device.
+    // The same key as the failed attempt; this is a retry, not a new device.
     const identity = await deviceIdentity(idbBackend);
     const device = await cloud.registerDevice({
       kind: deviceKind(),
@@ -445,7 +445,7 @@ export function useConnection(
     setActiveRunnerId(runnerId);
   }, []);
 
-  // `transportRevision` is never read for its value — bumping it is what makes
+  // `transportRevision` is never read for its value; bumping it is what makes
   // this hook re-render after the effect below swaps the transport, so that the
   // fresh `transportRef.current` is what a consumer sees. Named and referenced
   // here rather than left as a mystery `useState` nothing appears to use.

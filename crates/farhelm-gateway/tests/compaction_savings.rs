@@ -4,14 +4,14 @@
 //! compaction would cost *more*, on the reasoning that rewriting the history
 //! invalidates the prompt cache. The measurement said otherwise, and the
 //! measurement was right: history sits after the stable breakpoints, so only the
-//! history segment is invalidated — everything ahead of it still reads at 0.1×,
+//! history segment is invalidated; everything ahead of it still reads at 0.1×,
 //! and the saving on the routed call's input dwarfs the penalty.
 //!
 //! So the tests below record what is true rather than what was assumed:
 //! compaction saves money, and compacting *harder* saves more. The defaults
 //! deliberately leave some of that on the table, because the real cost of
-//! frequent compaction is fidelity — each pass re-summarises text that already
-//! went through a summary — and that is a currency this ledger cannot see.
+//! frequent compaction is fidelity (each pass re-summarises text that already
+//! went through a summary), and that is a currency this ledger cannot see.
 
 use farhelm_app::store::{TimeRange, prelude::*};
 use farhelm_gateway::compaction::CompactionPolicy;
@@ -117,7 +117,7 @@ async fn replay(compaction: Option<CompactionPolicy>) -> Outcome {
             .await
             .expect("turn should succeed");
 
-        // The caller owns the history — including whatever compaction handed
+        // The caller owns the history, including whatever compaction handed
         // back. Not storing it is the mistake that makes compaction a pure loss.
         if let Some(compacted) = response.compacted_history {
             history = compacted;
@@ -146,8 +146,8 @@ async fn compaction_pays_for_itself_over_a_long_session() {
     let pct = saved / uncompacted.total_usd * 100.0;
 
     println!(
-        "over {TURNS} turns: ${:.4} uncompacted ({} calls) vs ${:.4} compacted ({} calls) \
-         — {pct:.1}% saved",
+        "over {TURNS} turns: ${:.4} uncompacted ({} calls) vs ${:.4} compacted ({} calls): \
+         {pct:.1}% saved",
         uncompacted.total_usd, uncompacted.calls, compacted.total_usd, compacted.calls
     );
     println!(
@@ -192,7 +192,7 @@ async fn compaction_keeps_the_history_bounded() {
 #[tokio::test]
 async fn the_defaults_leave_money_on_the_table_on_purpose() {
     // The finding that corrected the design. Compacting every turn and keeping
-    // one is *cheaper* than the defaults — the routed call ends up with almost
+    // one is *cheaper* than the defaults: the routed call ends up with almost
     // no input to pay for, and the cache penalty is confined to the history
     // segment.
     //
@@ -200,7 +200,7 @@ async fn the_defaults_leave_money_on_the_table_on_purpose() {
     // fidelity: every pass re-summarises text that already went through a
     // summary, so an aggressive policy has rewritten turn 3 a dozen times by the
     // end of a session. An agent that has forgotten what it already tried costs
-    // far more than the tokens saved — in a currency this ledger cannot see.
+    // far more than the tokens saved, in a currency this ledger cannot see.
     //
     // If this assertion ever flips, the defaults have become the cost-minimising
     // setting, and the fidelity argument for them no longer holds.
@@ -214,7 +214,7 @@ async fn the_defaults_leave_money_on_the_table_on_purpose() {
 
     let gap = (sensible.total_usd - frantic.total_usd) / sensible.total_usd * 100.0;
     println!(
-        "defaults ${:.4} ({} calls) vs aggressive ${:.4} ({} calls) —          {gap:.0}% given up for fidelity",
+        "defaults ${:.4} ({} calls) vs aggressive ${:.4} ({} calls):          {gap:.0}% given up for fidelity",
         sensible.total_usd, sensible.calls, frantic.total_usd, frantic.calls
     );
 

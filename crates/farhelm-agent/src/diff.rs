@@ -2,7 +2,7 @@
 //!
 //! The review screen is the product: a task's whole output is a patch a human
 //! reads on a phone and says yes or no to. That makes the diff a *structured
-//! type*, not a string a subprocess printed — the clients need per-file counts
+//! type*, not a string a subprocess printed: the clients need per-file counts
 //! and per-line tags to render it, and a phone should not be parsing `@@`
 //! headers. The types themselves live in [`farhelm_proto::diff`], because three
 //! client implementations mirror them; what is left here is the computation.
@@ -13,7 +13,7 @@
 //!
 //! ## The algorithm, and where it gives up
 //!
-//! Common prefix and suffix are trimmed first — the usual case is a few changed
+//! Common prefix and suffix are trimmed first; the usual case is a few changed
 //! lines in an otherwise identical file, and trimming turns that into a tiny
 //! problem. What is left goes through an LCS table, which is `O(n·m)` in the
 //! *remaining* lines.
@@ -21,7 +21,7 @@
 //! Above [`MAX_LCS_CELLS`] the table is abandoned and the differing middle is
 //! emitted as one delete-then-insert block. That is a worse-looking diff, never
 //! a wrong one: the reconstructed "after" text is identical either way. The
-//! alternative — quadratic memory on a machine-generated 200k-line file — is a
+//! alternative (quadratic memory on a machine-generated 200k-line file) is a
 //! runner that gets OOM-killed while its user waits for a review card.
 
 /// The shapes a diff is *described* in live in `farhelm-proto`, because three
@@ -78,7 +78,7 @@ fn align(a: &[&str], b: &[&str]) -> Vec<Op> {
 
     // table[i][j] = LCS length of a[i..] and b[j..]. Filled backwards so the
     // walk that follows moves forwards, which keeps deletions ahead of
-    // insertions at the same position — the order a reviewer expects.
+    // insertions at the same position, the order a reviewer expects.
     let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
     for i in (0..a.len()).rev() {
         for j in (0..b.len()).rev() {
@@ -185,7 +185,7 @@ fn hunks(lines: &[DiffLine], context: usize) -> Vec<Hunk> {
         let high = (index + context).min(lines.len() - 1);
         match ranges.last_mut() {
             // `+ 1` merges two hunks separated by a single context line, which
-            // is what every diff tool does — a lone ` ` line between two `@@`
+            // is what every diff tool does: a lone ` ` line between two `@@`
             // headers is noise, not structure.
             Some(last) if low <= last.1 + 1 => last.1 = last.1.max(high),
             _ => ranges.push((low, high)),
@@ -239,7 +239,7 @@ fn hunks(lines: &[DiffLine], context: usize) -> Vec<Hunk> {
         .collect()
 }
 
-/// Diff one file. `None` when nothing changed — an unchanged file must not
+/// Diff one file. `None` when nothing changed; an unchanged file must not
 /// appear on a review card at all.
 pub fn file_diff(path: &str, before: Option<&str>, after: Option<&str>) -> Option<FileDiff> {
     let kind = match (before, after) {

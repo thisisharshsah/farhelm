@@ -4,7 +4,7 @@
  * What matters here is a security property, not a feature: the phone is a
  * courier for the watch's *public* key and must never be in a position to know
  * or invent the secret half. These tests assert that the only key material
- * crossing the bridge is public, and that the device is claimed as `watch` — if
+ * crossing the bridge is public, and that the device is claimed as `watch`; if
  * it were ever claimed as `phone`, the D3 destructive-command rule would silently
  * stop applying to the wrist.
  */

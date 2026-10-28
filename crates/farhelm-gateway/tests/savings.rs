@@ -86,7 +86,7 @@ fn base_context() -> StableContext {
     }
 }
 
-/// The two questions asked over and over — C8's motivating case.
+/// The two questions asked over and over: C8's motivating case.
 fn repeated_question(index: usize) -> &'static str {
     if index.is_multiple_of(2) {
         "Explain what retry_backoff does."
@@ -118,7 +118,7 @@ async fn replay() -> Replay {
 
     for turn in 0..TURNS {
         // The repeated questions are asked without conversation history, the way
-        // a standalone "explain this" would be — which is what lets them hit the
+        // a standalone "explain this" would be, which is what lets them hit the
         // exact-response cache.
         let repeat = turn.is_multiple_of(TURNS / REPEATED_QUESTIONS);
 
@@ -229,7 +229,7 @@ async fn cost_per_turn_beats_direct_calls_by_at_least_half() {
 
     let reduction = 1.0 - replay.gateway_usd / replay.baseline_usd;
     println!(
-        "gateway ${:.4} vs baseline ${:.4} over {TURNS} turns — {:.1}% reduction \
+        "gateway ${:.4} vs baseline ${:.4} over {TURNS} turns: {:.1}% reduction \
          ({} live calls, {} cache hits)",
         replay.gateway_usd,
         replay.baseline_usd,

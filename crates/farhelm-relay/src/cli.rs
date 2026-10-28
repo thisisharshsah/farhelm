@@ -1,4 +1,4 @@
-//! `farhelm relay` — the relay half of the single command.
+//! `farhelm relay`: the relay half of the single command.
 //!
 //! This was a binary of its own. It is a module now because a person
 //! setting the system up should have one name to remember and one thing on
@@ -12,7 +12,7 @@ use farhelm_crypto::token::TokenVerifier;
 /// Ask a running `farhelm cloud` for the key it signs with.
 ///
 /// Saves copying a base64 string between two machines, which is the step an
-/// operator gets wrong — and getting it wrong means every client is refused with
+/// operator gets wrong, and getting it wrong means every client is refused with
 /// a signature error that looks nothing like "you pasted the key badly".
 async fn fetch_auth_key(base_url: &str) -> Result<TokenVerifier, Box<dyn std::error::Error>> {
     let url = format!("{}/v1/auth/public-key", base_url.trim_end_matches('/'));
@@ -33,7 +33,7 @@ async fn fetch_auth_key(base_url: &str) -> Result<TokenVerifier, Box<dyn std::er
 }
 
 pub const USAGE: &str = "\
-farhelm relay — ciphertext fan-out
+farhelm relay: ciphertext fan-out
 
 USAGE:
     farhelm relay [--port <port>] [--bind <addr>]
@@ -57,7 +57,7 @@ The wake-up carries no payload: the relay cannot read what triggered it, so it
 has nothing truthful to put in a notification. The device wakes, connects, and
 decrypts locally.
 
-The key file is created 0600 on first start and reused. Do not delete it —
+The key file is created 0600 on first start and reused. Do not delete it:
 every subscription a browser made is bound to the public half it saw, so a new
 key silently stops waking every device that ever subscribed.
 
@@ -145,7 +145,7 @@ fn serve(
         println!("farhelm relay listening on {addr}");
         println!("  channel    ws://{addr}/v1/channel/{{channel}}");
         println!("  push       POST http://{addr}/v1/push/{{channel}}");
-        println!("  storage    none — envelopes are forwarded, never kept");
+        println!("  storage    none: envelopes are forwarded, never kept");
 
         match &vapid {
             Some(key) => {
@@ -165,7 +165,7 @@ fn serve(
         match &auth {
             Some(verifier) => println!("  auth       on · control-plane key {}", verifier.key_id()),
             None => println!(
-                "  auth       OPEN — anyone who knows a channel id may join it. \
+                "  auth       OPEN: anyone who knows a channel id may join it. \
                  Pass --auth-key for a shared deployment."
             ),
         }

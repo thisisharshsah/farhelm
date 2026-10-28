@@ -2,8 +2,8 @@
  * The browser-specific layer.
  *
  * Everything portable is tested in `@farhelm/client-core` under Node. What is
- * left here is the three things a browser does differently — `localStorage`,
- * `EventSource`, and `matchMedia` — and the failure modes that only exist
+ * left here is the three things a browser does differently (`localStorage`,
+ * `EventSource`, and `matchMedia`) and the failure modes that only exist
  * because of them.
  */
 
@@ -73,7 +73,7 @@ describe("the pairing store", () => {
 
   it("is readable by a service worker, which localStorage is not", async () => {
     // The whole reason for IndexedDB here. A worker has no `localStorage`, so a
-    // pairing kept there means a push it cannot decrypt — no command in the
+    // pairing kept there means a push it cannot decrypt: no command in the
     // notification, and no Approve button.
     const saved = pairing();
     await webPairingStore.save(saved);
@@ -181,7 +181,7 @@ describe("the event stream", () => {
     const seen: unknown[] = [];
     eventSourceStream({ onEvent: (e) => seen.push(e), onState: () => {} });
 
-    // One bad frame must not take the stream down — the next one still lands.
+    // One bad frame must not take the stream down; the next one still lands.
     expect(() =>
       FakeEventSource.last!.onmessage!({ data: "not json" }),
     ).not.toThrow();

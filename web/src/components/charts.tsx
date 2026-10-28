@@ -75,7 +75,7 @@ export function BudgetMeter({
         aria-valuenow={Math.round(fraction * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={`Budget used: ${pct(fraction)} — ${copy.word}`}
+        aria-label={`Budget used: ${pct(fraction)}, ${copy.word}`}
       >
         <div
           className="meter-fill"
@@ -178,11 +178,11 @@ export function Sparkline({ series }: { series: SpendBucket[] }) {
   }
 
   if (series.length === 1) {
-    // A one-point line is not a chart — say the number instead.
+    // A one-point line is not a chart; say the number instead.
     const only = series[0]!;
     return (
       <div className="tile-note">
-        {usd(only.usd)} at {clockTime(only.at_ms)} — a single data point so far.
+        {usd(only.usd)} at {clockTime(only.at_ms)}: a single data point so far.
       </div>
     );
   }

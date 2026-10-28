@@ -2,7 +2,7 @@
  * Tasks: starting the native agent, and reviewing the diff it proposes.
  *
  * This is the screen the rest of the product exists to make possible. Every
- * other view *supervises* — it shows you a command and asks yes or no. This one
+ * other view *supervises*: it shows you a command and asks yes or no. This one
  * shows you a change, which is the decision that actually matters, and it has to
  * be readable on a phone held one-handed.
  *
@@ -54,7 +54,7 @@ function HunkView({ hunk }: { hunk: Hunk }) {
    *
    * Computed per line and memo-free: a hunk is tens of lines, the work is a
    * single pass over tokens, and caching it would cost more in complexity than
-   * it saves. `null` — unpaired, or too dissimilar to compare — falls back to
+   * it saves. `null` (unpaired, or too dissimilar to compare) falls back to
    * the plain text, which is the honest rendering rather than a guess.
    */
   const segmentsFor = (index: number): Segment[] | null => {
@@ -148,7 +148,7 @@ function FileDiffView({ file, index }: { file: FileDiff; index: number }) {
       {open ? (
         file.binary ? (
           <p className="tile-note diff-binary">
-            Binary file — not shown. Nothing here can be reviewed on a screen,
+            Binary file, not shown. Nothing here can be reviewed on a screen,
             so it is reported rather than rendered.
           </p>
         ) : (
@@ -201,7 +201,7 @@ export function DiffView({ changes }: { changes: ChangeSet }) {
  *
  * A task with no verdict renders nothing at all rather than a reassuring
  * placeholder. "Not judged" and "judged and found fine" are different answers,
- * and a card that blurred them would be actively misleading — the one place in
+ * and a card that blurred them would be actively misleading: the one place in
  * this UI where being silent is the honest option.
  */
 export function SecondOpinion({ task }: { task: TaskDetail }) {
@@ -341,7 +341,7 @@ export function RetryButton({
   if (!transport?.supportsTaskControl) {
     return (
       <p className="tile-note">
-        Retry it from the runner's own machine — starting an agent is not
+        Retry it from the runner's own machine; starting an agent is not
         something a paired device does.
       </p>
     );
@@ -390,7 +390,7 @@ export function RetryButton({
  * Undo an applied change set.
  *
  * The one thing that makes "Apply to disk" a comfortable button to press. It is
- * offered plainly rather than buried, and it says what it will do — the runner
+ * offered plainly rather than buried, and it says what it will do: the runner
  * refuses if anything has moved since, so the promise is real.
  */
 export function UndoButton({

@@ -2,7 +2,7 @@
 //! fleet-level tool set.
 //!
 //! This is the URL that goes in Claude's "Add custom connector" dialog. Both
-//! Advanced fields stay blank — Claude discovers this server, registers itself,
+//! Advanced fields stay blank: Claude discovers this server, registers itself,
 //! and runs an authorization code flow with PKCE. See [`farhelm_mcp::oauth`] for
 //! the discovery chain.
 //!
@@ -15,8 +15,8 @@
 //! being an access problem. Those tools live on the runner's own MCP server,
 //! where the content already is.
 //!
-//! What is here is what the control plane legitimately knows — the fleet, its
-//! health, the plan, and spend — plus the ability to *start* work, which needs
+//! What is here is what the control plane legitimately knows (the fleet, its
+//! health, the plan, and spend) plus the ability to *start* work, which needs
 //! no plaintext.
 
 use std::sync::Arc;
@@ -37,7 +37,7 @@ use crate::{CloudState, now_ms};
 
 pub fn router(state: Arc<CloudState>) -> Router {
     Router::new()
-        // Discovery. Both are unauthenticated by definition — they are how a
+        // Discovery. Both are unauthenticated by definition; they are how a
         // client learns where to authenticate.
         .route(
             "/.well-known/oauth-authorization-server",
@@ -144,7 +144,7 @@ pub struct AuthorizeQuery {
 /// Sign-in and consent are the same form on purpose. Claude opens this in a
 /// browser that has no session here, so splitting them would mean two round
 /// trips and a redirect to preserve the authorization parameters across the
-/// first one — more moving parts guarding nothing.
+/// first one: more moving parts guarding nothing.
 async fn authorize_page(
     State(state): State<Arc<CloudState>>,
     Query(query): Query<AuthorizeQuery>,
@@ -423,7 +423,7 @@ async fn token(State(state): State<Arc<CloudState>>, Form(form): Form<TokenForm>
 
 /// Reject an unauthenticated call *and point at the discovery document*.
 ///
-/// The `WWW-Authenticate` header is the first link in the chain — without it
+/// The `WWW-Authenticate` header is the first link in the chain; without it
 /// Claude has nothing to discover from and the connector fails with no way to
 /// see why.
 fn unauthorized(state: &CloudState) -> Response {
@@ -475,7 +475,7 @@ async fn mcp(
         }
     };
 
-    // A notification gets no body at all — answering one breaks the handshake.
+    // A notification gets no body at all; answering one breaks the handshake.
     if request.is_notification() {
         return StatusCode::ACCEPTED.into_response();
     }
@@ -649,7 +649,7 @@ async fn call_tool(
                 candidate.id == machine || candidate.name.eq_ignore_ascii_case(&machine)
             }) else {
                 return ToolOutcome::error(format!(
-                    "no machine called {machine} in this workspace — call list_machines to see them"
+                    "no machine called {machine} in this workspace; call list_machines to see them"
                 ));
             };
             if !runner.is_online(now_ms()) {
@@ -663,7 +663,7 @@ async fn call_tool(
             // travel the relay sealed to that machine's key, which only a
             // registered device can do. Saying so plainly beats a timeout.
             ToolOutcome::error(format!(
-                "queuing work on {} from this connector is not wired up yet — the control plane \
+                "queuing work on {} from this connector is not wired up yet: the control plane \
                  has no device key and cannot seal a command to a machine. Start it from the \
                  machine's own connector, or from the web app. (repo {repo_path}, prompt {prompt}{})",
                 runner.name,
@@ -705,7 +705,7 @@ fn consent_page(state: &CloudState, query: &AuthorizeQuery, error: Option<&str>)
 <main>
   <div class="mark">◈</div>
   <h1>Connect {client}</h1>
-  <p class="sub">It will be able to see your machines, their status, and your plan — and to start
+  <p class="sub">It will be able to see your machines, their status, and your plan, and to start
   work on a machine. It <strong>cannot</strong> read your sessions, approvals, or diffs: this
   server has no key that could decrypt them.</p>
   {error}
@@ -746,7 +746,7 @@ fn error_page(message: &str) -> String {
 /// Escape text destined for HTML.
 ///
 /// Every interpolation on these pages goes through this. `client_name` in
-/// particular is attacker-supplied — anyone may register a client and choose
+/// particular is attacker-supplied: anyone may register a client and choose
 /// its name, and that name is rendered on a page where the user types a
 /// password.
 fn escape(raw: &str) -> String {

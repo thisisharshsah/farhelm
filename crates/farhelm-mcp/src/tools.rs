@@ -2,8 +2,8 @@
 //!
 //! `farhelm-cloud` and `farhelm-runner` expose different tool sets over the same
 //! protocol, so the protocol layer takes a registry rather than knowing about
-//! either. A host implements [`ToolSet`]; everything else — dispatch, the error
-//! shapes, the handshake — is shared.
+//! either. A host implements [`ToolSet`]; everything else (dispatch, the error
+//! shapes, the handshake) is shared.
 //!
 //! # Descriptions are the interface
 //!
@@ -17,12 +17,12 @@ use crate::protocol::{ToolOutcome, ToolSpec};
 
 /// A set of tools one server exposes.
 pub trait ToolSet: Send + Sync {
-    /// What `tools/list` returns. Stable for the life of the process — the
+    /// What `tools/list` returns. Stable for the life of the process; the
     /// handshake advertises `listChanged: false`.
     fn specs(&self) -> Vec<ToolSpec>;
 
     /// Run one tool. `account_id` and `org_id` come from the verified token, not
-    /// from the arguments — a tool that took its own tenant id from Claude would
+    /// from the arguments: a tool that took its own tenant id from Claude would
     /// be one prompt injection away from reading another workspace.
     fn call(
         &self,
@@ -54,7 +54,7 @@ impl Caller {
 /// Build a JSON Schema object for a tool with named string properties.
 ///
 /// A helper because every schema here has the same shape and writing them by
-/// hand is how `inputSchema` ends up subtly wrong — a missing `type`, a
+/// hand is how `inputSchema` ends up subtly wrong: a missing `type`, a
 /// property with no description, a `required` naming a field that is not there.
 pub fn object_schema(properties: &[(&str, &str, bool)]) -> serde_json::Value {
     let mut fields = serde_json::Map::new();

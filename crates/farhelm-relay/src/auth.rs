@@ -2,7 +2,7 @@
 //!
 //! The relay used to answer both questions with "anyone, as fast as they like",
 //! and said so in a comment: *the channel id gets you a seat, not a key*. That
-//! is still true of **confidentiality** — everything on a channel is sealed to a
+//! is still true of **confidentiality**: everything on a channel is sealed to a
 //! device key this process has never seen, and that has not changed. What it was
 //! not true of is everything else:
 //!
@@ -42,7 +42,7 @@ pub enum Denied {
 impl Denied {
     pub fn message(&self) -> String {
         match self {
-            Denied::Missing => "this relay requires a token — sign in and reconnect".to_owned(),
+            Denied::Missing => "this relay requires a token; sign in and reconnect".to_owned(),
             Denied::Invalid(why) => why.clone(),
             Denied::WrongChannel => "that token is not for this channel".to_owned(),
         }
@@ -52,7 +52,7 @@ impl Denied {
 /// What a verified connection is allowed to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pass {
-    /// Who, for the rate limiter and for logs. A device id or a runner id —
+    /// Who, for the rate limiter and for logs. A device id or a runner id,
     /// never an account, because two phones on one account should be metered
     /// separately.
     pub subject: String,
@@ -74,7 +74,7 @@ impl Pass {
 }
 
 /// Applied when a relay runs without a control plane, and when a token somehow
-/// carries no rate. Generous — this is a runaway guard, not a product tier.
+/// carries no rate. Generous: this is a runaway guard, not a product tier.
 pub const DEFAULT_RATE: u32 = 6_000;
 
 /// Check a presented token against the channel being joined.
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn a_zero_rate_still_lets_one_message_through() {
         // A misconfigured plan must not produce a connection that is silently
-        // mute — that is indistinguishable from the relay being broken.
+        // mute; that is indistinguishable from the relay being broken.
         let mut limiter = RateLimiter::new(0);
         assert!(limiter.allow(Instant::now()));
     }

@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// The design constraint that shapes all of them: a wrist is a *glance and a
 /// tap*. Anything that needs reading belongs on the phone. So there is no output
-/// tail, no diff, no cost dashboard — an approval card with two big buttons, and
+/// tail, no diff, no cost dashboard: an approval card with two big buttons, and
 /// a list that answers "where is it up to" without scrolling.
 
 public struct RootView: View {
@@ -44,7 +44,7 @@ struct PairingView: View {
 
                 Text(
                     "Open Farhelm on your iPhone, go to Watch, and tap below. "
-                        + "This watch makes its own key — the phone only carries the public half."
+                        + "This watch makes its own key. The phone only carries the public half."
                 )
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -281,7 +281,7 @@ struct ApprovalDetail: View {
                         ) { act(.denied) }
                     }
                 } else {
-                    // Deliberate friction, not an oversight — say which.
+                    // Deliberate friction, not an oversight; say which.
                     Label(
                         "Destructive. Approve this one from your phone.",
                         systemImage: "iphone"

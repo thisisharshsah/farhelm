@@ -9,7 +9,7 @@ or deleting the checkout stops the control plane.
 | `com.farhelm.cloud` | control plane: accounts, plans, the PWA, the fleet connector. Runs from the repository checkout (its binary, `farhelm-cloud.db`, `farhelm-cloud.key` and `web/dist`) so `deploy/live-web.sh` updates the live site | 7844 |
 | `com.farhelm.relay` | ciphertext fan-out, gated by the control plane's key | 7843 |
 | `com.farhelm.runner` | the daemon, plus this machine's own connector | 7852 |
-| `com.farhelm.tunnel` | `cloudflared`, mapping all three to public hostnames | — |
+| `com.farhelm.tunnel` | `cloudflared`, mapping all three to public hostnames | none |
 
 ## Install
 
@@ -38,11 +38,11 @@ chmod 600 ~/.farhelm/runner.env
 
 The enrolment key is a credential, which is why it is in that file and not in
 the plist: `~/Library/LaunchAgents` is not a secret store. The runner job is
-`/bin/sh -c` for exactly one reason — to source it, which `launchd` cannot do.
+`/bin/sh -c` for exactly one reason: to source it, which `launchd` cannot do.
 
 ## Two things that will bite you
 
-### `runner.key` is this machine's identity — never lose it
+### `runner.key` is this machine's identity: never lose it
 
 The runner's key file *is* what the control plane pins at first enrolment.
 Start the runner with a different one and it enrols as a stranger under the same
@@ -61,11 +61,11 @@ control plane's verifying key at startup, and at boot they reliably ask before
 it is listening.
 
 The relay handles this by exiting, so `KeepAlive` restarts it. The runner does
-**not** exit — it falls back to loopback-only and keeps running — so `KeepAlive`
+**not** exit (it falls back to loopback-only and keeps running), so `KeepAlive`
 cannot help, and a single failed attempt would leave it healthy but unenrolled
 until somebody noticed. That is why enrolment retries with backoff for two
-minutes (`ENROLL_DEADLINE` in `crates/farhelm-runner/src/cloud.rs`). A *refusal* —
-a revoked key, a machine removed from the workspace — is not retried, because
+minutes (`ENROLL_DEADLINE` in `crates/farhelm-runner/src/cloud.rs`). A *refusal*
+(a revoked key, a machine removed from the workspace) is not retried, because
 that is an answer rather than a race.
 
 ## Check it
@@ -84,7 +84,7 @@ connector  https://farhelm-mac.aurovie.com/mcp  (org org_…)
 relay link: connected to wss://farhelm-relay.aurovie.com/…
 ```
 
-And the relay's should say `auth on`, never `auth OPEN` — `OPEN` means it could
+And the relay's should say `auth on`, never `auth OPEN`; `OPEN` means it could
 not reach the control plane and started ungated, which is the one failure here
 that is invisible from outside.
 

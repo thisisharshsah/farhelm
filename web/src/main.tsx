@@ -13,7 +13,7 @@ createRoot(root).render(
   </StrictMode>,
 );
 
-// The service worker only caches the app shell — session data is live and must
+// The service worker only caches the app shell; session data is live and must
 // never be served stale. Registered in production builds only so dev reloads
 // are not intercepted.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {

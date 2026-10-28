@@ -58,7 +58,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   // ⌘K on a Mac, Ctrl-K elsewhere, and `/` when the caret is not already in a
-  // field — the three bindings people try without being told.
+  // field: the three bindings people try without being told.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -82,7 +82,7 @@ export default function App() {
   /**
    * One counter drives every refetch. The SSE stream tells us *that* something
    * changed; the client re-reads the authoritative state rather than trying to
-   * patch its own copy — far fewer ways to drift out of sync.
+   * patch its own copy: far fewer ways to drift out of sync.
    */
   const [revision, setRevision] = useState(0);
   const bump = useCallback(() => setRevision((value) => value + 1), []);
@@ -179,7 +179,7 @@ export default function App() {
    * Nothing to fetch until there is a transport.
    *
    * A never-resolving promise renders as "loading", which is what is actually
-   * happening — an empty fleet would render as "no sessions", which is a lie.
+   * happening; an empty fleet would render as "no sessions", which is a lie.
    */
   const idle = <T,>() => new Promise<T>(() => {});
   const deps = [revision, connection.mode, connection.activeRunnerId] as const;
@@ -537,7 +537,7 @@ export default function App() {
 
         {/* A machine has to be chosen before there is anything to render.
             With none enrolled there is nothing to choose *between*, so the
-            question is not "which machine" — it is "how do I get one", and the
+            question is not "which machine"; it is "how do I get one", and the
             answer is a command to run rather than a screen to navigate to. */}
         {needsMachine && route.view === "fleet" ? (
           (connection.workspace?.runners ?? []).length === 0 && connection.cloud ? (
@@ -568,7 +568,7 @@ export default function App() {
             <section className="card" aria-label="Connect a machine">
               <h2 className="chart-title">Connect a machine</h2>
               <p className="tile-note">
-                Sign in to this workspace first — approving a machine is a
+                Sign in to this workspace first: approving a machine is a
                 decision only a member of it can make. The code stays valid for
                 fifteen minutes.
               </p>

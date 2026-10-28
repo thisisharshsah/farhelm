@@ -1,4 +1,4 @@
-//! The request pipeline — every model-bound call passes through here.
+//! The request pipeline: every model-bound call passes through here.
 //!
 //! §6's stages, in the order they are actually computable:
 //!
@@ -14,7 +14,7 @@
 //! ```
 //!
 //! Stage 3 runs after 4–6 rather than before, because an exact-prompt cache key
-//! cannot exist until the prompt does — the key has to include the routed model
+//! cannot exist until the prompt does: the key has to include the routed model
 //! and the retrieved context, or it would collide across genuinely different
 //! calls. The property that matters is preserved: the zero-cost exits (2 and 3)
 //! both still happen before any spend.
@@ -58,7 +58,7 @@ pub struct GatewayConfig {
     pub pregate_timeout: Duration,
     pub cache_ttl_ms: i64,
     /// The Batch API queue (C6). Until it exists, a deferrable call is dispatched
-    /// live and billed at live rates — the ledger never claims a discount that
+    /// live and billed at live rates; the ledger never claims a discount that
     /// was not applied.
     pub batch_enabled: bool,
     /// When and how much conversation history to compact (C7). `None` never
@@ -99,7 +99,7 @@ pub struct CompleteRequest {
     /// Enables retrieval and, when allowed by gateway configuration, the pre-gate.
     /// Supplying a repository path alone never authorizes process execution.
     pub repo_path: Option<PathBuf>,
-    /// True when the whole point of the call is "is this correct?" — a green
+    /// True when the whole point of the call is "is this correct?"; a green
     /// pre-gate answers that for free.
     pub verify_only: bool,
     /// Caller is willing to wait for the nightly batch flush.
@@ -139,7 +139,7 @@ pub enum Served {
     /// Stage 7a: queued for the Batch API instead of dispatched (C6).
     ///
     /// There is no text yet. `batch_item_id` on the response is how the caller
-    /// collects it later — usually hours later.
+    /// collects it later, usually hours later.
     Queued,
 }
 
@@ -168,7 +168,7 @@ pub struct CompleteResponse {
     /// Callers retaining history must append this rather than their original
     /// instruction, or earlier prompt bytes change on the next tool turn.
     pub submitted_instruction: String,
-    /// The model that produced the answer — may differ from the routed one when
+    /// The model that produced the answer; may differ from the routed one when
     /// a server-side fallback served the turn.
     pub model: String,
     /// Which model tier ran it.
@@ -192,7 +192,7 @@ pub struct CompleteResponse {
     /// Set when history was compacted (C7): **use this from now on**.
     ///
     /// The gateway holds no session state, so the caller owns the history. Not
-    /// storing this means re-summarising the same turns every turn — paying for
+    /// storing this means re-summarising the same turns every turn, paying for
     /// the summary repeatedly *and* throwing away the prompt cache each time,
     /// which is worse than never compacting at all.
     pub compacted_history: Option<Vec<Turn>>,
@@ -279,7 +279,7 @@ const fn effort_for(slot: Slot) -> Effort {
 ///
 /// Four of the nine role ports. The gateway consults budgets, reads and writes
 /// the response cache, queues deferrable calls, and looks up a session to find
-/// its repo for the outer budget ring — it never touches approvals, devices,
+/// its repo for the outer budget ring; it never touches approvals, devices,
 /// plans or tasks.
 ///
 /// Worth naming because the bound *is* the documentation: it used to be
@@ -353,7 +353,7 @@ fn pressure_instruction(request: &CompleteRequest) -> String {
 /// has no credential to be unready, and putting it on the trait would make
 /// every double implement a method describing a problem it cannot have.
 impl<S> Gateway<S, crate::dispatch::AnthropicClient> {
-    /// Whether a credential can be obtained right now — see
+    /// Whether a credential can be obtained right now; see
     /// [`crate::dispatch::AnthropicClient::credential_ready`].
     pub fn credential_ready(&self) -> Result<(), crate::credential::CredentialError> {
         self.client.credential_ready()
@@ -499,7 +499,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         // The two hard stops keep their exact shape and their exact threshold:
         // a session or repo that has spent its cap is refused, as it always
         // was. What is new is everything *below* the cap. This stage used to be
-        // binary, so 80% — where the wrist already warns — changed nothing
+        // binary, so 80% (where the wrist already warns) changed nothing
         // about how the call was served, and the only available intervention
         // was the one that ends the work.
         let session_budget = self.store.session_budget(&request.session_id)?;
@@ -528,12 +528,12 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
 
         match restraint {
             // Reached by a session that is looping or failing rather than
-            // overspending — the budget stops above have already returned.
+            // overspending; the budget stops above have already returned.
             Restraint::Stop => {
                 self.note_outcome(&request.session_id, &pressure_instruction, true);
                 return Err(GatewayError::Contained {
                     why: format!(
-                        "stopped after {} failed calls and {} identical repeats — \
+                        "stopped after {} failed calls and {} identical repeats; \
                          the session is not making progress",
                         pressure.consecutive_errors, pressure.repeated_calls
                     ),
@@ -577,7 +577,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 submitted_instruction: request.instruction.clone(),
                 model: event.model,
                 tier: event.tier,
-                // Never dispatched at all — the compiler answered.
+                // Never dispatched at all: the compiler answered.
                 dispatch: Dispatch::Live,
                 usage: Usage::default(),
                 cost_usd: 0.0,
@@ -630,7 +630,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         // ---- stage 5a: history compaction (C7) ------------------------------
         //
         // Before assembly, because a compacted history is what gets assembled.
-        // The summary call is billed like any other — it is a real call — and
+        // The summary call is billed like any other (it is a real call), and
         // the caller is handed the new history to store, because re-summarising
         // the same turns every turn would cost more than never compacting.
         let mut stable = request.stable.clone();
@@ -682,7 +682,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         }
 
         // Pre-gate failures and skips enter the prompt in the dynamic
-        // tail — never ahead of a breakpoint.
+        // tail, never ahead of a breakpoint.
         //
         // A breaker correction rides in the same place and for the same reason:
         // it is about this turn, so putting it ahead of a cache breakpoint
@@ -774,7 +774,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 custom_id: format!("forge-{item_id}"),
                 task_type: request.task_type,
                 model: route.model.clone(),
-                // Exactly what a live dispatch would have sent — same function,
+                // Exactly what a live dispatch would have sent: same function,
                 // so the batched call cannot be assembled differently from the
                 // live one it replaces. No `fallbacks`: a refused batch item is
                 // resubmittable, and that path is unverified against the real
@@ -878,7 +878,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             at_ms,
         )?;
 
-        // A refused turn is never cached — the next attempt should get a real
+        // A refused turn is never cached; the next attempt should get a real
         // answer rather than a replayed decline.
         //
         // Nor is a turn that asked for tools. The cache stores text, so a hit
@@ -1054,7 +1054,7 @@ mod tests {
     #[tokio::test]
     async fn a_looping_session_is_stopped_before_it_is_expensive() {
         // The reason the breaker takes more than a budget. This session has
-        // spent almost nothing and is uncapped, so every budget check passes —
+        // spent almost nothing and is uncapped, so every budget check passes,
         // and it has asked the identical question nine times running.
         let gw = gateway(store_with(None, None), StubClient::new("same answer"));
 
@@ -1104,12 +1104,12 @@ mod tests {
     #[tokio::test]
     async fn a_session_near_its_cap_is_served_on_the_cheap_tier() {
         // The rung that did not exist. Past the warning threshold the call is
-        // still served — but small, rather than at frontier rates right up to
+        // still served, but small, rather than at frontier rates right up to
         // the cliff.
         // The cap is chosen against the real cost of the first call below, so
         // that one call lands between the warning threshold and the cap rather
         // than past it. If pricing moves this fails loudly, which is the right
-        // outcome — the rung being tested only exists between those two lines.
+        // outcome: the rung being tested only exists between those two lines.
         let store = store_with(Some(0.022), None);
         let gw = gateway(store, StubClient::new("answer"));
 
@@ -1622,7 +1622,7 @@ mod compaction_tests {
     #[tokio::test]
     async fn a_compacted_history_does_not_compact_again_next_turn() {
         // The failure this rules out: re-summarising every turn, paying for the
-        // summary repeatedly *and* invalidating the prompt cache each time —
+        // summary repeatedly *and* invalidating the prompt cache each time,
         // strictly worse than never compacting.
         let gw = compacting_gateway();
         let mut first = CompleteRequest::new("s1", TaskType::Edit, "keep going");

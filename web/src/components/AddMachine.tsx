@@ -8,7 +8,7 @@
  *
  * It is no longer the *answer*, because it stopped being the shortest path a
  * while ago and nothing in the app said so. `farhelm login` asks to join, and
- * the install script does the installing and the asking in one line — neither
+ * the install script does the installing and the asking in one line. Neither
  * puts a bearer credential through a clipboard, and both work on a box whose
  * browser belongs to somebody else. An empty workspace that recommends the long
  * way is the same failure as a diagnostic that recommends the setup it
@@ -31,7 +31,7 @@ import { readableError } from "./Auth";
 /**
  * A command with a copy button.
  *
- * Copying is the whole interaction — the command is going to a different
+ * Copying is the whole interaction: the command is going to a different
  * machine, and retyping a URL by hand is where the typo goes. The button keeps
  * its confirmation for a moment and then returns, so the state is legible
  * without becoming a thing to dismiss.
@@ -82,7 +82,7 @@ export function AddMachine({
     <>
       <p className="tile-note">
         Run this on the machine you want supervised. It installs Farhelm, then
-        asks to join — you approve it here, and it appears in this list.
+        asks to join; you approve it here, and it appears in this list.
       </p>
       <CopyCommand command={`curl -fsSL ${base}/install.sh | bash`} label="the install command" />
 
@@ -181,7 +181,7 @@ function ScriptedFleet({
 
           {minted ? (
             <div className="notice success-panel">
-              <b>Your key — copy it now.</b>
+              <b>Your key: copy it now.</b>
               <p className="tile-note">
                 Only a hash of it is stored, so this is the one time it can be
                 shown.
@@ -201,7 +201,7 @@ function ScriptedFleet({
                 {`FARHELM_CLOUD_KEY=${minted.slice(0, 12)}… \\\n  farhelm serve --cloud ${base}`}
               </code>
               <p className="tile-note">
-                In the environment rather than on the command line — a credential
+                In the environment rather than on the command line: a credential
                 in an argument is in every <code className="key-fragment">ps</code>.
               </p>
               <button className="btn btn-small" onClick={() => setMinted(null)}>

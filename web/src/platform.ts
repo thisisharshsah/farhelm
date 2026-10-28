@@ -47,7 +47,7 @@ export const eventSourceStream: EventStream = ({ onEvent, onState }) => {
   return () => source.close();
 };
 
-/** The runner over same-origin HTTP — the PWA is served by the runner itself. */
+/** The runner over same-origin HTTP; the PWA is served by the runner itself. */
 export function loopbackTransport(): HttpTransport {
   return new HttpTransport(
     createRunnerApi(),

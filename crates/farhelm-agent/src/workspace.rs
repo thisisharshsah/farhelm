@@ -2,7 +2,7 @@
 //!
 //! This used to be a staging overlay: every write the agent made was held in
 //! memory and flushed to the working tree only once somebody approved. That got
-//! the review property right — nothing reaches your files until you say yes —
+//! the review property right (nothing reaches your files until you say yes)
 //! and paid for it three times over. [`crate::git`] has the full account; the
 //! expensive one was that the `run` tool executed against a working tree which
 //! by construction did not contain the agent's own edits, so an agent could not
@@ -10,8 +10,8 @@
 //!
 //! Isolation now comes from [`crate::git::Worktree`]: the task gets its own
 //! branch and its own checkout, so writing a file is just writing a file. What
-//! is left here is the part that was never about staging — resolving a path
-//! safely, reading, listing and searching — with the write methods doing what
+//! is left here is the part that was never about staging: resolving a path
+//! safely, reading, listing and searching, with the write methods doing what
 //! they say.
 //!
 //! ## The invariant that survived
@@ -180,7 +180,7 @@ impl IgnoreRules {
 ///
 /// Not serialisable, and deliberately so. When this held staged edits it had to
 /// survive a runner restart, because the edits existed nowhere else. They are
-/// now committed to a branch, so there is nothing here worth writing down — a
+/// now committed to a branch, so there is nothing here worth writing down; a
 /// `Workspace` is reconstructed from a path whenever one is needed.
 #[derive(Debug, Clone)]
 pub struct Workspace {
@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn an_edit_lands_on_disk_so_the_agent_can_test_it() {
         // The whole reason the overlay was replaced. Under staging this
-        // assertion was the opposite — the working tree was untouched, and a
+        // assertion was the opposite: the working tree was untouched, and a
         // `cargo test` in the next step read the unedited file.
         let repo = TempRepo::new("writes");
         repo.write("a.txt", "one\n");

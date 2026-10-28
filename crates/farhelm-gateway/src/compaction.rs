@@ -1,7 +1,7 @@
 //! C7: compacting conversation history.
 //!
 //! A long session re-sends its whole history every turn. Prompt caching makes
-//! that cheap — a cache read is a tenth of the input rate — but "cheap" is not
+//! that cheap (a cache read is a tenth of the input rate), but "cheap" is not
 //! "free", and the context window is finite. Eventually the history has to be
 //! summarised.
 //!
@@ -11,15 +11,15 @@
 //! it invalidates the prompt cache, and that the policy should therefore be
 //! "rare and large". **The benchmark disagreed, and it was right.**
 //!
-//! History sits *after* the stable breakpoints in the assembled prefix — tools
+//! History sits *after* the stable breakpoints in the assembled prefix: tools
 //! and system, then conventions, then the repo map, then history. So rewriting
 //! the history invalidates only the **history segment**, not the whole prefix.
 //! Everything ahead of it still reads from cache at 0.1×. The cache penalty is
 //! real but small, and it is dwarfed by the saving on the routed call's input.
 //!
 //! `tests/compaction_savings.rs` measures it: over 40 turns the default policy
-//! saves **42%**, and a deliberately aggressive policy — compact every turn, keep
-//! one — is cheaper still, by a further **84%**, because the expensive routed
+//! saves **42%**, and a deliberately aggressive policy (compact every turn, keep
+//! one) is cheaper still, by a further **84%**, because the expensive routed
 //! call ends up with almost no input to pay for.
 //!
 //! # So why not compact constantly?
@@ -28,7 +28,7 @@
 //! of a transcript that already contains a summary, and detail decays
 //! geometrically: after ten passes what survives from turn 3 has been through ten
 //! lossy rewrites. The agent stops knowing what it already tried, and starts
-//! repeating work — which costs far more than the tokens saved, in a currency
+//! repeating work, which costs far more than the tokens saved, in a currency
 //! this ledger cannot see.
 //!
 //! That is the actual justification for [`CompactionPolicy::min_turns`] and a
@@ -39,8 +39,8 @@
 //!
 //! # What is kept verbatim
 //!
-//! The most recent turns. Recency is where the detail matters — what the agent
-//! just tried and what just failed — and a summary of "we discussed the retry
+//! The most recent turns. Recency is where the detail matters (what the agent
+//! just tried and what just failed), and a summary of "we discussed the retry
 //! backoff" is useless for the next edit. Older turns compress well because what
 //! survives from them is decisions, not transcript.
 
@@ -51,7 +51,7 @@ use crate::prompt::{Role, Turn};
 pub struct CompactionPolicy {
     /// Compact once the history is at least this many bytes.
     ///
-    /// Deliberately large — larger than the cost-minimising value. Every pass
+    /// Deliberately large, larger than the cost-minimising value. Every pass
     /// re-summarises text that already went through a summary, so this bounds
     /// how many lossy rewrites any given fact accumulates.
     pub trigger_bytes: usize,
@@ -59,8 +59,8 @@ pub struct CompactionPolicy {
     pub keep_recent: usize,
     /// Never compact fewer turns than this.
     ///
-    /// The guard against death by a thousand compactions. Not a cost guard —
-    /// measurement showed frequent compaction is *cheaper* — but a fidelity one:
+    /// The guard against death by a thousand compactions. Not a cost guard
+    /// (measurement showed frequent compaction is *cheaper*) but a fidelity one:
     /// cutting two turns at a time means everything older has been rewritten
     /// dozens of times by the end of a session.
     pub min_turns: usize,
@@ -95,7 +95,7 @@ impl CompactionPlan {
     /// The transcript handed to the summariser.
     ///
     /// Roles are spelled out because a summary that loses track of who proposed
-    /// what is worse than no summary — the next turn would attribute the agent's
+    /// what is worse than no summary: the next turn would attribute the agent's
     /// rejected idea to the human.
     pub fn transcript(&self) -> String {
         self.compact
@@ -115,7 +115,7 @@ impl CompactionPlan {
 /// Decide whether to compact, and what.
 ///
 /// `None` means leave it alone, which is the answer most of the time. The bar is
-/// not "would this save money" — it usually would — but "is this history long
+/// not "would this save money" (it usually would) but "is this history long
 /// enough that summarising it loses less than carrying it costs".
 pub fn plan(history: &[Turn], policy: &CompactionPolicy) -> Option<CompactionPlan> {
     // Until compaction can preserve complete tool exchanges atomically, keep
@@ -155,7 +155,7 @@ pub fn summarise_instruction(transcript: &str) -> String {
          functions changed; what is still failing or unresolved; anything the \
          user asked for that has not been done. Drop pleasantries, restated \
          code, and anything superseded later in the transcript. Be terse and \
-         concrete — this replaces the transcript, it does not describe it.\n\n\
+         concrete; this replaces the transcript, it does not describe it.\n\n\
          {transcript}"
     )
 }
@@ -163,7 +163,7 @@ pub fn summarise_instruction(transcript: &str) -> String {
 /// The history to use after compaction.
 ///
 /// The summary becomes a single user turn, because a fabricated *assistant* turn
-/// would be a statement the model never made — and later turns would treat it as
+/// would be a statement the model never made, and later turns would treat it as
 /// its own prior reasoning.
 pub fn apply(summary: &str, plan: CompactionPlan) -> Vec<Turn> {
     let mut history = Vec::with_capacity(plan.keep.len() + 1);
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn a_short_history_is_left_alone() {
-        // The common case. Not because it would cost more — it would not — but
+        // The common case. Not because it would cost more (it would not), but
         // because summarising four turns loses detail for no meaningful gain.
         assert_eq!(plan(&history(4, 100), &CompactionPolicy::default()), None);
     }

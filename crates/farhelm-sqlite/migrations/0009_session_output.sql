@@ -3,7 +3,7 @@
 -- Session output lived in a 200-line ring buffer in memory, keyed by session id
 -- and lost on restart. Two consequences, both felt rather than reported:
 --
---   * restarting the runner — a deploy, a crash, a laptop lid — emptied every
+--   * restarting the runner (a deploy, a crash, a laptop lid) emptied every
 --     session's transcript, and the screen you steer from came back blank; and
 --   * a session busier than 200 lines dropped its own beginning, so the
 --     instruction that started the work scrolled out of existence while the
@@ -20,8 +20,8 @@
 -- No foreign key to `session`, deliberately.
 --
 -- Output is a log, and a log must never be the thing that fails. Lines are
--- pushed by whatever is producing them — a hook callback, a pane watcher, the
--- agent loop — and some of those run before or alongside the write that creates
+-- pushed by whatever is producing them (a hook callback, a pane watcher, the
+-- agent loop), and some of those run before or alongside the write that creates
 -- the session row. Under a foreign key that ordering becomes a constraint
 -- violation, and because a failed write here is logged rather than propagated
 -- (refusing to show somebody the line already on their screen would be worse),
@@ -41,5 +41,5 @@ CREATE TABLE session_output (
 
 -- Reading a transcript is always "the newest N lines of one session", and
 -- pruning is always "everything below a sequence number for one session". The
--- primary key already orders by (session_id, seq), which serves both — so there
+-- primary key already orders by (session_id, seq), which serves both, so there
 -- is no second index to keep current.

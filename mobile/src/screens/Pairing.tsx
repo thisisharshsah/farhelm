@@ -7,7 +7,7 @@
  * place this client is meaningfully safer than the PWA.
  *
  * No camera here either, for a different reason than the web's. A QR scanner
- * would work on a phone — but the runner prints the payload as text beside the
+ * would work on a phone, but the runner prints the payload as text beside the
  * QR, one paste covers both clients, and a camera permission prompt on first run
  * is a worse trade than a paste for an app whose entire job is approving things.
  * `expo-camera` is a two-line addition if that turns out to be wrong.
@@ -121,7 +121,7 @@ export function PairingScreen({
           placeholder="http://192.168.1.10:7842"
         />
         <Text style={{ color: palette.textMuted, fontSize: 12 }}>
-          Reachable right now — pairing happens on your own network, before the
+          Reachable right now: pairing happens on your own network, before the
           relay takes over. It is also what the watch needs to pair through.
         </Text>
 

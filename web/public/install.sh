@@ -7,7 +7,7 @@
 # Served by the control plane it enrols you into, which is the property worth
 # having: the TLS connection that hands you this script is the same one the
 # machine will authenticate against afterwards. There is no second origin to
-# trust, and no credential to copy — installing and connecting are one step.
+# trust, and no credential to copy; installing and connecting are one step.
 #
 # Read before you run, as with anything of this shape:
 #   curl -fsSL https://farhelm.aurovie.com/install.sh | less
@@ -28,7 +28,7 @@ say()  { printf '  %s\n' "$*"; }
 bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die()  { printf '\n\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-bold "Farhelm — installing from $CLOUD"
+bold "Farhelm: installing from $CLOUD"
 
 # ---------------------------------------------------------------- platform ---
 
@@ -39,7 +39,7 @@ case "$os-$arch" in
   Darwin-x86_64) target="x86_64-apple-darwin" ;;
   Linux-x86_64)  target="x86_64-unknown-linux-gnu" ;;
   Linux-aarch64) target="aarch64-unknown-linux-gnu" ;;
-  *) die "unsupported platform $os $arch — build it yourself:
+  *) die "unsupported platform $os $arch; build it yourself:
        git clone https://github.com/thisisharshsah/farhelm.git
        cargo build --release -p farhelm-runner   # the binary is called farhelm" ;;
 esac
@@ -56,7 +56,7 @@ trap 'rm -rf "$tmp"' EXIT
 # The control plane serves a single-page app, so an unknown path comes back as
 # index.html with status 200 rather than a 404. `curl -f` cannot see that. So
 # whatever arrives is checked for being an actual executable before it is
-# allowed anywhere near $BIN_DIR — otherwise a missing build for this platform
+# allowed anywhere near $BIN_DIR; otherwise a missing build for this platform
 # installs an HTML page named `farhelm`.
 looks_executable() {
   local file="$1"
@@ -73,14 +73,14 @@ if curl -fsSL "$CLOUD/dl/$target/farhelm" -o "$tmp/farhelm" 2>/dev/null \
   say "runner     downloaded a prebuilt binary"
 
   # Best-effort integrity check. A checksum served beside the binary by the same
-  # host is not a supply-chain guarantee — it catches a truncated or corrupted
+  # host is not a supply-chain guarantee; it catches a truncated or corrupted
   # download, which is the failure that actually happens.
   if curl -fsSL "$CLOUD/dl/$target/farhelm.sha256" -o "$tmp/sum" 2>/dev/null \
      && grep -qE '^[0-9a-f]{64}' "$tmp/sum"; then
     want="$(tr -d ' \n' < "$tmp/sum" | cut -c1-64)"
     if command -v shasum >/dev/null; then got="$(shasum -a 256 "$tmp/farhelm" | cut -d' ' -f1)"
     else got="$(sha256sum "$tmp/farhelm" | cut -d' ' -f1)"; fi
-    [ "$want" = "$got" ] || die "checksum mismatch — refusing to install"
+    [ "$want" = "$got" ] || die "checksum mismatch, refusing to install"
     say "checksum   verified"
   fi
 else
@@ -91,12 +91,12 @@ else
        Install Rust (https://rustup.rs) and re-run, or build farhelm elsewhere
        and copy it to $BIN_DIR/farhelm"
 
-  say "runner     no prebuilt binary for $target — building from source"
+  say "runner     no prebuilt binary for $target, building from source"
   src="${FARHELM_SRC:-${FORGE_SRC:-$tmp/src}}"
   if [ ! -d "$src" ]; then
     command -v git >/dev/null || die "git is required to build from source"
     git clone --depth 1 "${FARHELM_REPO:-${FORGE_REPO:-https://github.com/thisisharshsah/farhelm.git}}" "$src" \
-      || die "could not clone the source — set FARHELM_SRC to a local checkout"
+      || die "could not clone the source; set FARHELM_SRC to a local checkout"
   fi
   ( cd "$src" && cargo build --release -p farhelm-runner ) || die "the build failed"
   cp "$src/target/release/farhelm" "$tmp/farhelm"
@@ -120,7 +120,7 @@ for f in "$HOME_DIR/farhelm.cloud.json" "$HOME_DIR/farhelm.cloud.json"; do
 done
 if [ -n "$joined" ]; then
   bold "Already joined"
-  say "$joined exists — this machine has enrolled before."
+  say "$joined exists; this machine has enrolled before."
   say "If it is not in your fleet, the daemon needs restarting to read it:"
   say "  launchctl kickstart -k gui/\$(id -u)/com.farhelm.runner"
   say "Or start one:   cd $HOME_DIR && $BIN_DIR/farhelm serve"
@@ -134,7 +134,7 @@ say "A code will appear. Approve it where you are already signed in."
 cd "$HOME_DIR"
 # Safe under a pipe: `login` prints a code and polls, and never reads stdin.
 # Anything here that did would consume the rest of this script, because piped
-# into bash the script *is* stdin — so if a prompt is ever added, it has to read
+# into bash the script *is* stdin, so if a prompt is ever added, it has to read
 # from /dev/tty explicitly.
 "$BIN_DIR/farhelm" login --cloud "$CLOUD"
 
@@ -147,7 +147,7 @@ cd "$HOME_DIR"
 # never restarted.
 #
 # So if this machine runs the daemon as a service, restart it here rather than
-# printing advice to start one by hand — which on a machine that already has
+# printing advice to start one by hand, which on a machine that already has
 # one would mean two processes fighting for the same port.
 
 restarted=no
@@ -176,5 +176,5 @@ case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) say "Add to PATH:        export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
-[ "$installed_from_source" = yes ] && say "(built from source — re-run this script to update)"
+[ "$installed_from_source" = yes ] && say "(built from source; re-run this script to update)"
 exit 0

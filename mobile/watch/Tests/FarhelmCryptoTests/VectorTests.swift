@@ -6,7 +6,7 @@ import Testing
 /// Reference vectors from TweetNaCl, checked at every block boundary.
 ///
 /// These exist because of a specific bug. The first version of `Poly1305` read
-/// the top 26-bit limb from byte 13 instead of byte 12 — off by one byte. Every
+/// the top 26-bit limb from byte 13 instead of byte 12: off by one byte. Every
 /// Swift-only test still passed: sealing and opening shared the same wrong
 /// arithmetic, so round-trips were perfect, tampering was still detected, and
 /// the block-boundary sweep was green. It was only wrong when talking to
@@ -35,7 +35,7 @@ struct VectorTests {
     static let vectors: [(Int, String)] = [
         (0, "9JVy1hlCgePIf7tOIQaTLA"),
         (1, "nGbr54M12800hw6TZzGkHwk"),
-        // 12 and 13 straddle the limb-4 boundary — the exact pair that separates
+        // 12 and 13 straddle the limb-4 boundary: the exact pair that separates
         // a correct Poly1305 from the off-by-one one.
         (12, "JEYqr4wy_SxdUR8XZ28dvAmJzLOlcifng6VeNg"),
         (13, "VyZk2Kbf4CXS-CH6hesgmQmJzLOlcifng6VeNvA"),

@@ -30,7 +30,7 @@ fn ensure_frontend_dist() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let Some(dist) = frontend_dist(&manifest) else {
         // No `frontendDist` configured, or the config could not be read. Say so
-        // and let `tauri_build` produce the real error — guessing a path here
+        // and let `tauri_build` produce the real error; guessing a path here
         // would create a directory nothing is looking for.
         println!("cargo:warning=could not read frontendDist from tauri.conf.json");
         return;
@@ -60,14 +60,14 @@ fn frontend_dist(manifest: &Path) -> Option<PathBuf> {
 
 /// What you get at `/` when the web app has not been built.
 ///
-/// Self-contained by necessity — it is served by a runner that has no assets,
+/// Self-contained by necessity: it is served by a runner that has no assets,
 /// to a browser that may be offline. It states the one command that fixes it.
 const PLACEHOLDER: &str = r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Farhelm — web app not built</title>
+<title>Farhelm: web app not built</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -91,7 +91,7 @@ const PLACEHOLDER: &str = r#"<!doctype html>
 </head>
 <body>
   <h1>The web app has not been built</h1>
-  <p>The runner is up — its API is answering on <code>/v1</code>. What is missing
+  <p>The runner is up; its API is answering on <code>/v1</code>. What is missing
      is the built front end it serves at this address.</p>
   <pre>pnpm install
 pnpm --filter @farhelm/web build</pre>

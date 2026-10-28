@@ -13,8 +13,8 @@
 //! this system in one direction and dangerous in the other:
 //!
 //! - The runner's public key travels in a pairing QR code. Anyone who
-//!   photographs that QR — over a shoulder, out of a screenshot, from a chat
-//!   backlog — could seal a valid `approval_decision` to the runner. Sealed
+//!   photographs that QR (over a shoulder, out of a screenshot, from a chat
+//!   backlog) could seal a valid `approval_decision` to the runner. Sealed
 //!   boxes have no sender to check, so the runner would have no way to tell that
 //!   message from the paired phone's.
 //! - The whole point of the approval flow is knowing *who* approved. The
@@ -31,7 +31,7 @@
 //!
 //! [`Envelope`] deliberately exposes the routing metadata a dumb relay needs and
 //! nothing else: which channel, which sender, a nonce, and a byte string. Those
-//! leak that *a* device is talking to *a* runner and roughly how much — which is
+//! leak that *a* device is talking to *a* runner and roughly how much, which is
 //! the documented, accepted residual.
 
 pub mod keystore;
@@ -50,7 +50,7 @@ pub const PAIRING_TTL_MS: i64 = 10 * 60 * 1_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CryptoError {
     /// The ciphertext did not authenticate: wrong key, wrong sender, or
-    /// tampered bytes. Deliberately does not say which — a decrypt oracle that
+    /// tampered bytes. Deliberately does not say which: a decrypt oracle that
     /// distinguishes those is a real attack surface.
     Undecryptable,
     MalformedKey(String),
@@ -116,7 +116,7 @@ impl std::fmt::Display for PublicKey {
 
 /// A long-term keypair: one per runner, one per paired device.
 ///
-/// The secret half is never serialised by any `Serialize` impl — writing it out
+/// The secret half is never serialised by any `Serialize` impl; writing it out
 /// is [`Identity::to_secret_base64`], which is deliberately awkward to call by
 /// accident and used in exactly one place.
 pub struct Identity {
@@ -235,7 +235,7 @@ impl Identity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
     /// Which runner's fan-out group this belongs to. A public identifier, not a
-    /// secret — knowing it lets you connect, not read.
+    /// secret: knowing it lets you connect, not read.
     pub channel: String,
     /// Who sealed it, so the receiver knows whose public key to verify against.
     pub sender_id: String,
@@ -261,7 +261,7 @@ pub struct PairingOffer {
     pub relay_url: String,
     /// The runner's fan-out channel.
     pub channel: String,
-    /// The runner's long-term public key — what the device will encrypt to.
+    /// The runner's long-term public key: what the device will encrypt to.
     pub runner_public_key: PublicKey,
     /// Single-use code proving the device saw this QR.
     pub code: String,
@@ -282,7 +282,7 @@ impl PairingOffer {
 /// Issues and redeems pairing codes.
 ///
 /// A code is good for one device, once, before it expires. That is what stops a
-/// photographed QR from being a standing invitation — the second use fails even
+/// photographed QR from being a standing invitation: the second use fails even
 /// with the correct code.
 #[derive(Debug, Default)]
 pub struct PairingBroker {
@@ -417,8 +417,8 @@ mod tests {
             .seal("chan", "runner", phone.public_key(), b"private")
             .unwrap();
 
-        // The relay knows both public keys — they are in the QR and the device
-        // table — and its own secret. That is not enough.
+        // The relay knows both public keys (they are in the QR and the device
+        // table) and its own secret. That is not enough.
         assert_eq!(
             eavesdropper.open(runner.public_key(), &envelope),
             Err(CryptoError::Undecryptable)
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn rewriting_the_routing_metadata_does_not_help_an_attacker_read_it() {
-        // The relay can freely rewrite channel and sender_id — they are outside
+        // The relay can freely rewrite channel and sender_id; they are outside
         // the AEAD. That must not affect confidentiality, only routing.
         let (runner, phone) = pair();
         let mut envelope = runner

@@ -4,10 +4,10 @@
 //! app, make a directory, `cd` into it, pick route A or route B, export a
 //! credential, paste a settings block, write a unit file. Every one of those is
 //! something the program knows how to do, and every one of them is a place to
-//! get it wrong quietly — the failure mode of most of them is a daemon that
+//! get it wrong quietly: the failure mode of most of them is a daemon that
 //! starts, looks healthy, and supervises nothing.
 //!
-//! So this module answers one question — *what is not set up here yet* — and
+//! So this module answers one question (*what is not set up here yet*), and
 //! everything user-facing is a rendering of that answer:
 //!
 //! - `farhelm` with no arguments shows where you stand and the one command that
@@ -35,7 +35,7 @@ pub enum HookScope {
     None,
     /// One repository. Fine, and quietly surprising in every other repository.
     Repo,
-    /// `~/.claude/settings.json` — every repo on this machine.
+    /// `~/.claude/settings.json`: every repo on this machine.
     Global,
 }
 
@@ -43,7 +43,7 @@ impl HookScope {
     /// How to say it in one line.
     pub fn describe(self) -> &'static str {
         match self {
-            HookScope::None => "not installed — an agent's tool calls reach nothing",
+            HookScope::None => "not installed: an agent's tool calls reach nothing",
             HookScope::Repo => "this repo only",
             HookScope::Global => "every repo on this machine",
         }
@@ -172,13 +172,13 @@ impl Standing {
 ///
 /// Public because `doctor` asks the same question, and asked it with its own
 /// slightly different rule until this existed. Two checks that must agree and
-/// are written twice are two checks that will eventually disagree — and the
+/// are written twice are two checks that will eventually disagree, and the
 /// disagreement here reads as "your supervision is broken" to somebody whose
 /// supervision is fine.
 ///
 /// Both spellings count. A machine set up before the rename has
 /// `forge-runner hook` in its settings, and reporting that as "no hooks" would
-/// send somebody to reinstall supervision they already have — and, worse, make
+/// send somebody to reinstall supervision they already have and, worse, make
 /// them doubt the supervision that is working.
 pub fn hook_scope() -> HookScope {
     let mentions_the_bridge = |path: PathBuf| {
@@ -203,7 +203,7 @@ pub fn hook_scope() -> HookScope {
 /// A file test rather than `launchctl list` or `systemctl is-enabled`: this runs
 /// on the front door, where shelling out twice to answer a line of text is a
 /// visible pause for no gain. A stale unit file reads as "installed", which is
-/// the answer that sends someone to look at it — which is where the truth is.
+/// the answer that sends someone to look at it, which is where the truth is.
 ///
 /// The pre-rename labels count. A machine set up before this system had one
 /// name is running `com.relayforge.runner` right now, and telling its owner to
@@ -239,17 +239,17 @@ fn runs_at_login() -> bool {
 pub fn front_door(standing: &Standing, version: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "\n  \u{1b}[1mfarhelm\u{1b}[0m {version} — supervise your coding agents from anywhere\n\n"
+        "\n  \u{1b}[1mfarhelm\u{1b}[0m {version}: supervise your coding agents from anywhere\n\n"
     ));
 
     let remaining = standing.remaining();
 
     if !standing.started_before && remaining.len() == 4 {
         // A genuinely fresh directory. Nothing to report about it, so do not
-        // print a status block of four crosses — that reads as breakage rather
+        // print a status block of four crosses; that reads as breakage rather
         // than as a beginning.
         out.push_str("  Nothing is set up here yet.\n\n");
-        out.push_str("    \u{1b}[1mfarhelm setup\u{1b}[0m    do it now — a few questions, and it explains each one\n");
+        out.push_str("    \u{1b}[1mfarhelm setup\u{1b}[0m    do it now: a few questions, and it explains each one\n");
         out.push_str("    farhelm serve    skip all of it and start on loopback\n");
         out.push_str("    farhelm help     every command\n\n");
         return out;
@@ -284,7 +284,7 @@ pub fn front_door(standing: &Standing, version: &str) -> String {
         if standing.runs_at_login {
             "yes"
         } else {
-            "no — supervision stops at the next reboot"
+            "no: supervision stops at the next reboot"
         },
     ));
 

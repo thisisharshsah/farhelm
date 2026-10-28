@@ -3,14 +3,14 @@
 /// Written out rather than imported because Apple ships no Salsa20: CryptoKit
 /// has ChaChaPoly and AES-GCM, neither of which is what NaCl `crypto_box` is
 /// built from. The alternative would be changing Farhelm's wire format so the
-/// watch could use CryptoKit — but the format is already spoken by Rust
+/// watch could use CryptoKit, but the format is already spoken by Rust
 /// (`crates/farhelm-crypto`) and TweetNaCl (`packages/client-core`), and a third
 /// dialect for the sake of one client is how "the phone can't approve anything"
 /// bugs get made.
 ///
 /// Correctness here is not a matter of reading the code. `InteropTests` opens
 /// envelopes sealed by RustCrypto's audited implementation and seals ones it
-/// opens back — byte-for-byte, in both directions.
+/// opens back, byte-for-byte, in both directions.
 ///
 /// Reference: Bernstein, *The Salsa20 family of stream ciphers* (2007), and
 /// *Extending the Salsa20 nonce* (2011) for HSalsa20.
@@ -115,7 +115,7 @@ enum Salsa20 {
         let z = core(state, feedForward: false)
 
         // The output words are the ones a plain Salsa20 block would *not* have
-        // fed forward — positions 0, 5, 10, 15 and 6, 7, 8, 9.
+        // fed forward: positions 0, 5, 10, 15 and 6, 7, 8, 9.
         var out: [UInt8] = []
         out.reserveCapacity(32)
         for index in [0, 5, 10, 15, 6, 7, 8, 9] { append(z[index], to: &out) }

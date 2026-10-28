@@ -1,6 +1,6 @@
 //! C6: the Batch API queue.
 //!
-//! Deferrable work — test generation, doc sweeps, lint fixes — does not need an
+//! Deferrable work (test generation, doc sweeps, lint fixes) does not need an
 //! answer now. The Batch API charges half price for exactly that trade, and the
 //! discount stacks with prompt caching, so this is the cheapest tokens the
 //! gateway can buy.
@@ -15,14 +15,14 @@
 //!
 //! # Paying twice is the failure mode to design against
 //!
-//! Every other failure here is recoverable — a batch that errors can be
+//! Every other failure here is recoverable: a batch that errors can be
 //! resubmitted, one that expires can be rebuilt. Being billed twice for the same
 //! work cannot be undone, and it is the one thing a cost gateway must not do. So:
 //!
 //! - Submitting moves the whole batch in one transaction. A crash partway
 //!   through cannot leave half the items looking queued.
 //! - `settle_batch_item` only acts on an item still marked `submitted`, so
-//!   fetching results twice — a poll overlapping a retry — writes one ledger row.
+//!   fetching results twice (a poll overlapping a retry) writes one ledger row.
 //! - A `custom_id` is unique in the database, so a result can never be
 //!   attributed to the wrong session.
 //!
@@ -30,8 +30,8 @@
 //!
 //! The request and response shapes are built to the documented Batches API and
 //! exercised end to end against a fake provider that speaks it, including the
-//! JSONL results format. **No request has been sent to the real endpoint** — no
-//! API key here — so treat the first real flush as the proving run. The queue
+//! JSONL results format. **No request has been sent to the real endpoint** (no
+//! API key here), so treat the first real flush as the proving run. The queue
 //! itself, the double-billing guards, and the ledger arithmetic are all covered.
 
 use std::time::Duration;
@@ -170,7 +170,7 @@ pub fn parse_result_line(line: &str) -> Option<BatchResult> {
             text: None,
             usage: None,
             // Expiry means the 24-hour ceiling was hit. Resubmitting is a new
-            // item, never a mutation of this one — see `BatchStatus`.
+            // item, never a mutation of this one; see `BatchStatus`.
             error: Some("the batch expired before this request ran".into()),
         }),
         "canceled" => Some(BatchResult {
@@ -320,7 +320,7 @@ impl<S: BatchStore + LedgerStore, C: BatchClient> BatchQueue<S, C> {
                     .find(|candidate| candidate.custom_id == result.custom_id)
                 else {
                     // A result for something this runner did not queue. Not an
-                    // error — the API key may be shared with another tool — but
+                    // error (the API key may be shared with another tool), but
                     // definitely not ours to bill.
                     continue;
                 };
@@ -731,7 +731,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_submit_leaves_the_work_queued() {
-        // The other order — record then send — would strand these as
+        // The other order (record then send) would strand these as
         // `submitted`, waiting forever on a batch that was never created.
         let store = store();
         queued(&store, "b1", "c1");
@@ -880,7 +880,7 @@ mod tests {
         );
     }
 
-    /// Exceeding the cap is a rejected batch, not a partial one — so this is a
+    /// Exceeding the cap is a rejected batch, not a partial one, so this is a
     /// compile-time invariant rather than a test that could be skipped.
     const _: () = assert!(FLUSH_SIZE < MAX_REQUESTS_PER_BATCH);
 }

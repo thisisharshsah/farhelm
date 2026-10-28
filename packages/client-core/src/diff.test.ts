@@ -94,7 +94,7 @@ describe("numbering a hunk", () => {
       }),
     );
 
-    // The last context line is line 2 before and line 4 after — which is the
+    // The last context line is line 2 before and line 4 after, which is the
     // whole reason both numbers are shown.
     expect(numbered.at(-1)).toMatchObject({ oldNo: 2, newNo: 4 });
   });
@@ -181,7 +181,7 @@ describe("summarising a change set", () => {
 /**
  * Intra-line highlighting.
  *
- * The risk here is not missing a change — it is inventing one. Two lines that
+ * The risk here is not missing a change; it is inventing one. Two lines that
  * merely sit in the same position get highlighted as though one became the
  * other, telling a confident and wrong story about an edit. These pin the
  * boundary between "related enough to compare" and "leave it alone".

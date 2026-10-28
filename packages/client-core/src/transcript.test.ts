@@ -4,7 +4,7 @@
  * Every case here is something that was actually wrong on screen, not a
  * hypothetical. The marker bug in particular survived a rewrite of this view
  * *and* a commit whose message was about making the tail read as a
- * conversation — because nothing anywhere asserted what a line looks like by
+ * conversation, because nothing anywhere asserted what a line looks like by
  * the time it reaches the reader.
  */
 
@@ -16,7 +16,7 @@ const line = (seq: number, text: string, at_ms = 1_700_000_000_000) => ({ seq, t
 describe("what a line says once it is rendered", () => {
   it("drops the marker that only ever existed to group turns", () => {
     // `›` is how the runner tags an instruction in the tail. It is consumed by
-    // `turnsOf`, so by render time it has done its whole job — and was still
+    // `turnsOf`, so by render time it has done its whole job, and was still
     // being printed, putting a stray glyph in front of everything you typed.
     expect(displayText("› fix the failing test")).toBe("fix the failing test");
   });
@@ -45,7 +45,7 @@ describe("grouping lines into turns", () => {
   });
 
   it("starts a new turn each time the speaker changes back", () => {
-    // Two instructions with output between them are three turns, not two —
+    // Two instructions with output between them are three turns, not two;
     // otherwise a reply and the question after it merge into one block.
     const turns = turnsOf([
       line(1, "› first"),

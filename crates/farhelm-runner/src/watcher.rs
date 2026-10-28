@@ -1,7 +1,7 @@
 //! Supervising an agent that has no hook system.
 //!
 //! Claude Code calls the runner and blocks. Everything else asks in its own
-//! terminal and waits for a keystroke — which nobody is there to press. This
+//! terminal and waits for a keystroke, which nobody is there to press. This
 //! module closes that loop: it reads the question out of the pane, raises an
 //! ordinary [`Approval`], and types the answer back when a human decides.
 //!
@@ -9,8 +9,8 @@
 //!
 //! An approval raised here is indistinguishable downstream from one Claude Code
 //! blocked on: the same destructive-command classifier, the same D3 rule about
-//! watches, the same budget meter, the same push notification. That is the point
-//! — supporting a new agent must not mean a second, weaker approval path.
+//! watches, the same budget meter, the same push notification. That is the point:
+//! supporting a new agent must not mean a second, weaker approval path.
 //!
 //! # The one thing it will not do is guess
 //!
@@ -21,7 +21,7 @@
 //! - Nothing is ever answered automatically. A prompt raises an approval and
 //!   waits, exactly as the hook path does.
 //! - A prompt that does not match any dialect is simply not seen, and the
-//!   session sits there — which is what would have happened without Farhelm.
+//!   session sits there, which is what would have happened without Farhelm.
 //! - The same question is raised once. Re-detecting it while it is still on
 //!   screen must not produce a second approval, or one decision would leave the
 //!   other pending forever.
@@ -111,7 +111,7 @@ pub async fn scan_session<T: Terminal>(
 
     // A pending approval is answered on decision, not here. One the session's
     // policy already cleared has nobody left to wait for, so the key is typed
-    // now — the same path a person's tap takes.
+    // now, the same path a person's tap takes.
     if let crate::state::Raised::AutoApproved(_) = raised {
         answer(state, terminal, seen, session, Decision::Approved).await?;
     }
@@ -165,7 +165,7 @@ fn raise(
 
 /// Type a decision into the agent's terminal.
 ///
-/// Called after a decision is recorded, for prompt-supervised agents only —
+/// Called after a decision is recorded, for prompt-supervised agents only;
 /// Claude Code's hook is already blocked on the answer and needs nothing typed.
 /// Returns `false` when there was nothing to type into, which is not an error:
 /// a session adopted from a hook callback has no pane the runner owns.
@@ -264,8 +264,8 @@ Proceed? (y/n)";
     #[tokio::test]
     async fn a_covered_prompt_is_answered_without_waiting_for_anyone() {
         let (state, session, terminal, seen) = fixture(Agent::OpenCode);
-        // A shell command is medium risk by the classifier's rules — `low` is
-        // the band for read-only tools — so this is the level that covers it.
+        // A shell command is medium risk by the classifier's rules (`low` is
+        // the band for read-only tools), so this is the level that covers it.
         state
             .store
             .set_auto_approve("s1", farhelm_proto::types::AutoApprove::Medium, NOW)
@@ -531,7 +531,7 @@ Proceed? (y/n)";
             .await
             .unwrap();
 
-        // The agent moved on without us — the question is gone.
+        // The agent moved on without us; the question is gone.
         let moved_on = "compiling\ncompiling\ncompiling\ndone";
         scan_session(&state, &terminal, &seen, &session, moved_on)
             .await

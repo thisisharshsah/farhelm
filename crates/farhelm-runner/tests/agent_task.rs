@@ -110,7 +110,7 @@ fn state_for(provider_addr: SocketAddr) -> Arc<AppState> {
 struct TempRepo(PathBuf);
 
 impl TempRepo {
-    /// A real repository — a task cuts a branch before it does anything, so
+    /// A real repository: a task cuts a branch before it does anything, so
     /// there is no running one outside git.
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("forge-e2e-{name}"));
@@ -261,7 +261,7 @@ async fn a_task_proposes_a_diff_and_only_writes_it_once_approved() {
     assert_eq!(task["summary"], "Replaced the greeting string.");
     assert!(
         task["cost_usd"].as_f64().unwrap() > 0.0,
-        "the task was billed nothing — the ledger never saw it"
+        "the task was billed nothing; the ledger never saw it"
     );
 
     // The diff is structured, not a blob the client has to parse.
@@ -414,7 +414,7 @@ async fn the_prompt_sent_to_the_provider_is_cache_shaped() {
     //
     // The repo below is deliberately *realistic* rather than minimal. Tools
     // plus the frozen system prompt come to roughly 875 tokens, and Sonnet 5
-    // will not cache a prefix under 1024 — so a one-file fixture produces no
+    // will not cache a prefix under 1024, so a one-file fixture produces no
     // breakpoint, correctly, and would have tested nothing. The repo map is
     // what carries the prefix over the line in real use, and it only exists if
     // there is something to retrieve.
@@ -472,7 +472,7 @@ async fn the_prompt_sent_to_the_provider_is_cache_shaped() {
 
     let first = &seen[0];
     // Tools are sent, and in the order `farhelm_agent::tools` fixes. A new tool
-    // is appended, never inserted — the block sits in the cached prefix, so
+    // is appended, never inserted: the block sits in the cached prefix, so
     // reordering it would invalidate every stored prompt.
     //
     // A top-level task is an orchestrator, so it gets the leaf list plus
@@ -495,7 +495,7 @@ async fn the_prompt_sent_to_the_provider_is_cache_shaped() {
     // The second turn's system half is byte-identical to the first's. That is
     // the whole property: a prefix that moved would be rewritten rather than
     // read, and every breakpoint ahead of the change would score zero. It is
-    // also why step 2 does not re-run retrieval — a repo map recomputed from a
+    // also why step 2 does not re-run retrieval: a repo map recomputed from a
     // different instruction would land here as different bytes.
     assert_eq!(first["system"], seen[1]["system"]);
     assert_eq!(first["tools"], seen[1]["tools"]);
@@ -603,7 +603,7 @@ async fn a_rejected_change_set_comes_back_carrying_the_reason_it_was_refused() {
     wait_for_status(&http, &base, &retry_id, TaskStatus::AwaitingReview).await;
 
     // The reason, the previous summary, and the refused patch all reached the
-    // model — which is the entire point of storing `review_note`.
+    // model, which is the entire point of storing `review_note`.
     //
     // Request 0 and 1 are the first attempt's drafting turns, 2 is its
     // verification, so 3 is the retry's opening instruction.
@@ -957,7 +957,7 @@ async fn the_runner_refuses_to_draft_more_tasks_than_its_ceiling() {
             assert!(response.status().is_success());
             accepted += 1;
         }
-        // The slot is claimed inside `start`, but the loop is spawned — give it
+        // The slot is claimed inside `start`, but the loop is spawned; give it
         // a moment to actually be running before the next request.
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -1059,7 +1059,7 @@ async fn reviewing_over_the_command_layer_enforces_the_same_rules() {
     let task_id = started["id"].as_str().unwrap().to_owned();
     wait_for_status(&http, &base, &task_id, TaskStatus::AwaitingReview).await;
 
-    // A watch is refused here too — the rule lives in one place.
+    // A watch is refused here too; the rule lives in one place.
     assert!(
         execute(
             &state,
@@ -1118,8 +1118,8 @@ async fn reviewing_over_the_command_layer_enforces_the_same_rules() {
 
 /// What one task learned reaches the next one, through the real daemon.
 ///
-/// The pieces were unit-tested on both sides — the tool collects, the runner
-/// persists, the spec carries, the prompt renders — and none of that proves the
+/// The pieces were unit-tested on both sides (the tool collects, the runner
+/// persists, the spec carries, the prompt renders), and none of that proves the
 /// loop closes. This is the only test that runs a note the whole way: an agent
 /// calls `remember`, the runner writes it against the repo, a *second* task on
 /// the same repo starts, and the note is in the prompt the provider receives.

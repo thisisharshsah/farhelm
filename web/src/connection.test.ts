@@ -6,7 +6,7 @@
  * from the fleet; it later re-enrolled and came back under a new id. The
  * browser had the old id in `localStorage`, asked the control plane for a
  * channel token against it on every reconnection attempt, and was answered 404
- * every time — 244 of them in one log — while the screen sat on "connecting"
+ * every time (244 of them in one log) while the screen sat on "connecting"
  * and said nothing at all.
  *
  * Two things had to be true for that to happen, and both are pinned here: the
@@ -48,7 +48,7 @@ describe("a remembered machine that is no longer in the workspace", () => {
 
   it("is cleared from storage even when there is nothing to fall back to", () => {
     // The actual bug. The write happened only when a single machine was there
-    // to adopt, so a workspace with none — or with several — left the dead id
+    // to adopt, so a workspace with none (or with several) left the dead id
     // in storage, and the next load asked for it again. Forever.
     localStorage.setItem(ACTIVE_RUNNER_KEY, "run_deleted");
     expect(reconcile("run_deleted", [])).toBeNull();

@@ -3,7 +3,7 @@
 //! Rates are dollars per million tokens, from the Anthropic pricing table as of
 //! 2026-07-30. Cache and batch rates are *derived* from the base input rate
 //! rather than typed out per model, because the multipliers are uniform across
-//! the family — one fewer place for a transcription error.
+//! the family: one fewer place for a transcription error.
 //!
 //! `cost_usd` is computed once, at ledger-write time, and never recomputed.
 //! That is what makes `usage_event` append-only: editing this table changes
@@ -21,7 +21,7 @@ pub const CACHE_READ_MULTIPLIER: f64 = 0.1;
 pub const BATCH_MULTIPLIER: f64 = 0.5;
 
 /// Models whose id starts with this prefix are self-hosted (vLLM/Ollama) and
-/// bill at zero — §7's "my own model" small tier, where cost is electricity.
+/// bill at zero: §7's "my own model" small tier, where cost is electricity.
 pub const LOCAL_MODEL_PREFIX: &str = "local/";
 
 /// Time-boxed promotional pricing. Applied when the event timestamp is before
@@ -60,7 +60,7 @@ pub struct ModelPrice {
     pub tier: Tier,
     pub input_per_mtok: f64,
     pub output_per_mtok: f64,
-    /// Prompts shorter than this silently do not cache — the cache-shaped
+    /// Prompts shorter than this silently do not cache; the cache-shaped
     /// prefix (M1) must clear it or the whole mechanism is a no-op.
     pub min_cacheable_tokens: u32,
     pub promo: Option<Promo>,
@@ -145,7 +145,7 @@ impl TokenRates {
     }
 }
 
-/// 2026-09-01T00:00:00Z — when Claude Sonnet 5's introductory pricing lapses.
+/// 2026-09-01T00:00:00Z: when Claude Sonnet 5's introductory pricing lapses.
 const SONNET_5_PROMO_UNTIL_MS: i64 = 1_788_220_800_000;
 
 /// The price table. Add a model here and the router, ledger, and dashboard all
@@ -196,7 +196,7 @@ impl fmt::Display for UnknownModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "no price-table entry for model {:?} — add one to farhelm_domain::price::PRICES \
+            "no price-table entry for model {:?}; add one to farhelm_domain::price::PRICES \
              or prefix the id with {LOCAL_MODEL_PREFIX:?} if it is self-hosted",
             self.0
         )
@@ -230,7 +230,7 @@ pub fn price_of(model: &str) -> Result<ModelPrice, UnknownModel> {
 
     // A dated id resolved from the alias we asked for.
     //
-    // Requests are sent with an alias — `claude-haiku-4-5` — and the provider
+    // Requests are sent with an alias (`claude-haiku-4-5`) and the provider
     // answers naming the snapshot it actually ran, `claude-haiku-4-5-20251001`.
     // Insisting on an exact match meant every successful call died at the
     // ledger: the model had already answered and been paid for, and the only
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn a_dated_snapshot_is_priced_as_the_alias_it_came_from() {
         // The provider answers with the snapshot it ran, not the alias asked
-        // for. Without this every successful call failed at the ledger — after
+        // for. Without this every successful call failed at the ledger, after
         // the model had answered and the money was already spent.
         let dated = price_of("claude-haiku-4-5-20251001").unwrap();
         assert_eq!(dated.model, "claude-haiku-4-5");

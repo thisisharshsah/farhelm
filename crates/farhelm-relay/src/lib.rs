@@ -3,14 +3,14 @@
 //! Deliberately dumb, and that is the security property. It fans encrypted
 //! envelopes out to the other members of a channel and triggers push
 //! notifications. It holds no keys, stores no messages, and could not read one
-//! if it wanted to — see `farhelm_crypto` for why.
+//! if it wanted to; see `farhelm_crypto` for why.
 //!
 //! Self-hostable in the literal sense: one binary, no database, no state
 //! surviving a restart. The worst a compromised relay learns is that *someone*
 //! is talking on a channel and roughly how much.
 //!
 //! Exposed as a library so the end-to-end tests drive the *same* router the
-//! binary serves, in-process — no subprocess to leak, and no second
+//! binary serves, in-process: no subprocess to leak, and no second
 //! implementation to drift.
 
 pub mod auth;
@@ -49,7 +49,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// How often the relay pings an otherwise silent connection.
 ///
 /// Comfortably under Cloudflare's ~100-second idle cut, and under
-/// [`IDLE_TIMEOUT`] — the pong counts as inbound traffic, so a peer that is
+/// [`IDLE_TIMEOUT`]: the pong counts as inbound traffic, so a peer that is
 /// alive but quiet is no longer indistinguishable from one that has gone away.
 const KEEPALIVE: Duration = Duration::from_secs(30);
 
@@ -59,7 +59,7 @@ pub struct RelayState {
     /// The control plane's public key, when this relay is gated. `None` keeps
     /// the original behaviour: anyone who knows a channel id may join it.
     ///
-    /// Verifying only — this process cannot mint a token, which is why a
+    /// Verifying only: this process cannot mint a token, which is why a
     /// compromised relay cannot grant itself access to anything.
     pub auth: Option<TokenVerifier>,
     /// Absent when the relay was started without one. Everything still works;
@@ -145,7 +145,7 @@ async fn health(State(state): State<Arc<RelayState>>) -> Json<serde_json::Value>
 
 /// Clients that cannot set headers put the token here.
 ///
-/// The browser `WebSocket` constructor takes a URL and nothing else — no
+/// The browser `WebSocket` constructor takes a URL and nothing else: no
 /// headers, no body. A query parameter is the only place a token can go, which
 /// is why these tokens live fifteen minutes: a URL ends up in more logs than a
 /// header does, and the mitigation for that is that a captured one expires
@@ -181,7 +181,7 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// `GET /v1/channel/{channel}/stats` — connection counts for one channel.
+/// `GET /v1/channel/{channel}/stats`: connection counts for one channel.
 ///
 /// Not a privacy leak: knowing the channel id already lets you join it and see
 /// the same traffic (as ciphertext). It exists so an operator can tell "nobody
@@ -199,7 +199,7 @@ async fn channel_stats(
     }))
 }
 
-/// `GET /v1/channel/{channel}` — the WebSocket every party connects to.
+/// `GET /v1/channel/{channel}`: the WebSocket every party connects to.
 ///
 /// The token is checked **before** the upgrade, so a refusal is an HTTP status a
 /// client can read. Refusing after the upgrade would close the socket with no
@@ -236,7 +236,7 @@ async fn pump(mut socket: WebSocket, channel: String, pass: Pass, state: Arc<Rel
     let mut limiter = RateLimiter::new(pass.messages_per_minute);
 
     // Keepalive. Every proxy between here and a phone has an idle timeout, and
-    // Cloudflare's is about a hundred seconds — well under the two minutes a
+    // Cloudflare's is about a hundred seconds, well under the two minutes a
     // quiet fleet routinely goes without saying anything. Without this the
     // connection is cut roughly every two minutes, the runner reconnects, and
     // any request in flight during the gap dies as "the runner did not answer".
@@ -278,7 +278,7 @@ async fn pump(mut socket: WebSocket, channel: String, pass: Pass, state: Arc<Rel
                             continue;
                         }
                         // Parsed only to route it. A malformed envelope is
-                        // dropped rather than forwarded — the relay is not a
+                        // dropped rather than forwarded; the relay is not a
                         // general-purpose message bus.
                         let Ok(envelope) = serde_json::from_str::<Envelope>(&text) else {
                             continue;
@@ -290,7 +290,7 @@ async fn pump(mut socket: WebSocket, channel: String, pass: Pass, state: Arc<Rel
                         }
                         // Over the ceiling: dropped, not disconnected. A burst
                         // is usually an agent looping, and tearing the socket
-                        // down would take the *approval* offline too — the one
+                        // down would take the *approval* offline too, the one
                         // message the human is waiting for.
                         if !limiter.allow(std::time::Instant::now()) {
                             continue;
@@ -298,7 +298,7 @@ async fn pump(mut socket: WebSocket, channel: String, pass: Pass, state: Arc<Rel
                         state.hub.publish(connection_id, envelope);
                         // Deliberately no push here. The relay cannot read the
                         // envelope, so it cannot tell an approval from a log
-                        // line — and an agent streaming output would buzz every
+                        // line, and an agent streaming output would buzz every
                         // phone on the channel every ten seconds, forever. The
                         // runner knows what happened and asks for a wake-up
                         // explicitly via `POST /v1/push/{channel}`.
@@ -320,7 +320,7 @@ async fn pump(mut socket: WebSocket, channel: String, pass: Pass, state: Arc<Rel
 }
 
 /// The envelope cap is a compile-time invariant, not a runtime one: a tail chunk
-/// is a few KB, so a quarter megabyte is generous — but there has to be a
+/// is a few KB, so a quarter megabyte is generous, but there has to be a
 /// ceiling, or the relay is a free file host.
 const _: () = {
     assert!(MAX_ENVELOPE_BYTES >= 64 * 1024);

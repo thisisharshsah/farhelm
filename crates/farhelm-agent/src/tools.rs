@@ -1,7 +1,7 @@
 //! The agent's tools: their schemas, and what happens when one is called.
 //!
 //! Six of the seven only touch the task's own checkout, so they need no
-//! permission and raise no card — reading a file and editing one inside a
+//! permission and raise no card: reading a file and editing one inside a
 //! throwaway branch are both reversible by throwing the branch away. The
 //! seventh, `run`, executes a real command, and it is the only one that goes
 //! through the approval queue.
@@ -13,15 +13,15 @@
 //!
 //! That asymmetry is the design. Approving twelve individual edits is not
 //! supervision, it is a captcha; the edits are reviewed *once*, together, as a
-//! diff. What genuinely cannot be un-done — a command — is gated one at a time,
+//! diff. What genuinely cannot be un-done (a command) is gated one at a time,
 //! by the same classifier and the same phone-only rule that already govern
 //! every other agent the runner supervises.
 //!
 //! ## Tool order is part of the cache contract
 //!
 //! [`definitions`] returns a fixed slice in a fixed order. Tool definitions
-//! render ahead of the system prompt, so reordering them — or generating them
-//! from a `HashMap` — moves every byte of the cached prefix and silently costs
+//! render ahead of the system prompt, so reordering them (or generating them
+//! from a `HashMap`) moves every byte of the cached prefix and silently costs
 //! full input rates on every call from then on.
 
 use std::time::Duration;
@@ -139,7 +139,7 @@ pub enum Verdict {
 /// The runner, seen from inside the loop.
 ///
 /// The agent crate knows nothing about approval rows, push notifications, or
-/// WebSockets — it knows that some actions have to be asked about and that
+/// WebSockets; it knows that some actions have to be asked about and that
 /// progress is worth narrating. Tests implement this with a struct that always
 /// says yes, or always says no, and get the whole loop under test without a
 /// database.
@@ -177,14 +177,14 @@ fn cap(text: String) -> String {
     if text.len() <= MAX_RESULT_BYTES {
         return text;
     }
-    // Cut on a char boundary — a tool result sliced through a multi-byte
+    // Cut on a char boundary: a tool result sliced through a multi-byte
     // sequence would panic here rather than at the provider.
     let mut end = MAX_RESULT_BYTES;
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
     format!(
-        "{}\n\n[truncated at {MAX_RESULT_BYTES} bytes of {} — narrow the request]",
+        "{}\n\n[truncated at {MAX_RESULT_BYTES} bytes of {}; narrow the request]",
         &text[..end],
         text.len()
     )
@@ -239,7 +239,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
         serde_json::json!({
             "name": EDIT_FILE,
             "description": "Replace an exact string in a file. old_string must appear exactly \
-                once — include surrounding lines to make it unique. You are working on your own \
+                once; include surrounding lines to make it unique. You are working on your own \
                 branch, so this writes immediately; the whole change set is reviewed at the end.",
             "input_schema": {
                 "type": "object",
@@ -277,7 +277,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "name": RUN,
-            "description": "Run a shell command — tests, a build, a linter. This one needs \
+            "description": "Run a shell command: tests, a build, a linter. This one needs \
                 human approval before it executes. It runs in your own checkout, so it sees \
                 every edit you have made: run the tests before you finish.",
             "input_schema": {
@@ -291,7 +291,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
         serde_json::json!({
             "name": REMEMBER,
             "description": "Record something about this repository that the next \
-                agent to work on it should know — a half-finished migration, why a \
+                agent to work on it should know: a half-finished migration, why a \
                 test is flaky, a file not to touch. Keyed: writing the same key \
                 again replaces the earlier note. Use it for what you learned, not \
                 for what you did; the diff already says what you did.",
@@ -314,7 +314,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
 /// Execute one call against the workspace.
 ///
 /// Errors come back as `Err`; the loop turns them into a tool result the model
-/// reads and retries from. A tool error is not a task failure — an agent that
+/// reads and retries from. A tool error is not a task failure; an agent that
 /// guessed a filename wrong should get told so and try again, which is exactly
 /// what a human would do.
 pub async fn execute<S: Supervisor>(
@@ -342,7 +342,7 @@ async fn execute_inner<S: Supervisor>(
 ) -> Result<String, ToolError> {
     match call.name.as_str() {
         // Collected rather than written. The agent proposes a note the same way
-        // it proposes an edit, and the caller persists it — which is what keeps
+        // it proposes an edit, and the caller persists it, which is what keeps
         // this module free of a storage dependency it otherwise has no use for.
         REMEMBER => {
             let key = str_arg(call, "key")?.trim().to_owned();
@@ -486,7 +486,7 @@ async fn run_command(command: &str, root: &std::path::Path) -> Result<String, To
 /// A separate function rather than a flag on [`definitions`], because the two
 /// lists have different cache lifetimes. A sub-agent's prefix is byte-identical
 /// to what every task sent before delegation existed, so nothing anyone has
-/// cached is invalidated by this feature — only the orchestrator, which is a
+/// cached is invalidated by this feature; only the orchestrator, which is a
 /// new thing anyway, pays for the extra tool.
 pub fn definitions_with_delegate() -> Vec<serde_json::Value> {
     let mut tools = definitions();
@@ -494,7 +494,7 @@ pub fn definitions_with_delegate() -> Vec<serde_json::Value> {
         "name": DELEGATE,
         "description": "Hand one self-contained piece of this task to a fresh agent \
             working in the same checkout. It sees the repository as you have left it, \
-            does the work, and reports back — its edits become part of the single diff \
+            does the work, and reports back; its edits become part of the single diff \
             the human reviews at the end. Use it to keep separate concerns in separate \
             heads, not to parallelise: it runs to completion before you continue. It \
             cannot delegate further, so give it work it can finish.",
@@ -560,12 +560,12 @@ mod tests {
     #[test]
     fn the_tool_order_is_fixed_because_the_prompt_cache_depends_on_it() {
         // The tools block sits in the stable prefix, so reordering it
-        // invalidates every cached prompt — permanently, since the new order
+        // invalidates every cached prompt, permanently, since the new order
         // then becomes the thing that changed last time too.
         //
         // Appending is the one safe edit: the existing prefix is untouched, so
         // the cache is invalidated exactly once, on the upgrade that adds the
-        // tool, and is stable again afterwards. This asserts both halves —
+        // tool, and is stable again afterwards. This asserts both halves:
         // that the original seven still lead, and what the whole list is.
         let names: Vec<String> = definitions()
             .iter()

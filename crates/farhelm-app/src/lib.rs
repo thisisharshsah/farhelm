@@ -2,7 +2,7 @@
 //!
 //! Two things live here: the [`store`] ports, and the use cases written against
 //! them. A use case is a piece of behaviour that outlives any particular way of
-//! reaching it — the cost [`ledger`] is billed identically whether a call
+//! reaching it: the cost [`ledger`] is billed identically whether a call
 //! arrived over loopback HTTP, over the relay, or from the runner's own agent
 //! loop, and none of those transports appear in this crate.
 //!
@@ -20,7 +20,7 @@
 //!
 //! [`store`] declares nine traits rather than one, partitioned by what asks the
 //! question. That is what lets the gateway say it needs budgets, the cache and
-//! the batch queue — and lets a reader believe it, because the bound would stop
+//! the batch queue, and lets a reader believe it, because the bound would stop
 //! compiling if it reached further. `Store` survives as an empty supertrait for
 //! the one caller that genuinely touches everything.
 //!
@@ -36,8 +36,8 @@
 //! threaded explicitly through everything whose behaviour depends on it, which
 //! is the property a `Clock` port exists to buy.
 //!
-//! What remains are calls to [`time::now_ms`] at the edges — HTTP handlers, the
-//! daemon's own loops, the CLI — which is exactly where reading a clock is
+//! What remains are calls to [`time::now_ms`] at the edges (HTTP handlers, the
+//! daemon's own loops, the CLI), which is exactly where reading a clock is
 //! legitimate. Injecting a port there would add a type parameter to every
 //! handler in exchange for determinism the tests already have. So [`time`] and
 //! [`id`] stay concrete, and are the two places in this crate that touch

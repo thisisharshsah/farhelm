@@ -4,8 +4,8 @@ import FarhelmCrypto
 /// The watch's own connection to the relay.
 ///
 /// Not a proxy through the phone. The runner records `decided_via` from the
-/// registered kind of the device whose key sealed the envelope, and the D3 rule —
-/// destructive commands cannot be cleared from a wrist — is enforced against
+/// registered kind of the device whose key sealed the envelope, and the D3 rule
+/// (destructive commands cannot be cleared from a wrist) is enforced against
 /// that. A watch that spoke through the phone would arrive as `phone` and the
 /// rule would quietly stop applying. See `mobile/src/watch/bridge.ts`.
 ///
@@ -13,7 +13,7 @@ import FarhelmCrypto
 ///
 /// The relay is fan-out with no request/response, so a snapshot request is
 /// answered by another envelope arriving. Replies are matched to waiting calls
-/// by shape — the same approach the TypeScript client takes, for the same
+/// by shape, the same approach the TypeScript client takes, for the same
 /// reason: giving the relay correlation state would give it metadata it exists
 /// not to have.
 public actor RelayClient {
@@ -201,7 +201,7 @@ public actor RelayClient {
     /// Approve or deny.
     ///
     /// Fire-and-forget: the relay has no acknowledgement, and the change arrives
-    /// as the event it produced. A *refusal* does come back — as a
+    /// as the event it produced. A *refusal* does come back, as a
     /// `command_error` event, which is why the D3 case shows a reason on the
     /// wrist instead of a tap that appears to do nothing.
     public func decide(approvalID: String, decision: Decision) async throws {

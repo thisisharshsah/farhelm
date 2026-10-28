@@ -78,7 +78,7 @@ public final class WatchStore {
     private func apply(_ event: ServerEvent) {
         switch event {
         case .commandError(let message):
-            // Without this the wrist would show a tap that did nothing at all —
+            // Without this the wrist would show a tap that did nothing at all:
             // the worst failure a remote control surface can have.
             refusal = message
             acted.removeAll()
@@ -165,7 +165,7 @@ public final class WatchStore {
 
 /// The link to the phone, used for one thing only: pairing.
 ///
-/// Everything else the watch does goes straight to the relay — see
+/// Everything else the watch does goes straight to the relay; see
 /// `RelayClient` for why routing decisions through the phone would break the
 /// destructive-command rule.
 @MainActor

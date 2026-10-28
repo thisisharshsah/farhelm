@@ -8,7 +8,7 @@
 //! # What this does
 //!
 //! Records WebPush subscriptions per channel, rate-limits wake-ups, and delivers
-//! them. The wire work — VAPID signing and `aes128gcm` encryption — is in
+//! them. The wire work (VAPID signing and `aes128gcm` encryption) is in
 //! [`crate::webpush`]; this module owns *who* to wake and *how often*.
 //!
 //! # The payload is empty, on purpose
@@ -63,7 +63,7 @@ struct ChannelPush {
 ///
 /// Losing them on restart is deliberate: a subscription is cheap to re-register
 /// on the client's next connect, and persisting them would give the relay a
-/// durable list of who talks to whom — precisely the metadata it is supposed not
+/// durable list of who talks to whom, precisely the metadata it is supposed not
 /// to accumulate.
 pub struct PushRegistry {
     channels: Arc<Mutex<HashMap<String, ChannelPush>>>,
@@ -229,7 +229,7 @@ pub async fn subscribe(
     )
 }
 
-/// `POST /v1/push/{channel}` — wake a channel's devices without publishing.
+/// `POST /v1/push/{channel}`: wake a channel's devices without publishing.
 ///
 /// Used by the runner when something happens that nobody is connected to see.
 pub async fn trigger(
@@ -247,7 +247,7 @@ pub async fn trigger(
     (StatusCode::OK, Json(serde_json::json!({ "woken": woken })))
 }
 
-/// `GET /v1/push/vapid` — the `applicationServerKey` browsers subscribe with.
+/// `GET /v1/push/vapid`: the `applicationServerKey` browsers subscribe with.
 ///
 /// Public by definition: a browser cannot subscribe without it, and it
 /// authenticates the relay to the push service rather than the other way round.
@@ -262,7 +262,7 @@ pub async fn vapid_public_key(
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
-                "error": "this relay has no VAPID key — start it with --vapid-key to enable push"
+                "error": "this relay has no VAPID key; start it with --vapid-key to enable push"
             })),
         ),
     }
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn re_subscribing_replaces_the_keys() {
         // A browser can rotate `p256dh`/`auth` for the same endpoint. Keeping
-        // the old ones would encrypt to a key the device no longer holds — a
+        // the old ones would encrypt to a key the device no longer holds: a
         // push that arrives and cannot be opened.
         let registry = PushRegistry::new();
         registry.subscribe("chan", subscription("https://push.example/a"));
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn subscriptions_carry_no_channel_content() {
-        // The registry holds endpoints and client keys — nothing about what the
+        // The registry holds endpoints and client keys, nothing about what the
         // channel is for, who owns it, or what was said on it.
         let subscription = subscription("https://push.example/a");
         let json = serde_json::to_string(&subscription).unwrap();
@@ -425,7 +425,7 @@ mod tests {
                 .unwrap()
                 .len(),
             3,
-            "the subscription grew a field — check it leaks nothing"
+            "the subscription grew a field; check it leaks nothing"
         );
     }
 }

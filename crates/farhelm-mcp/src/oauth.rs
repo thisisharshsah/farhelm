@@ -22,8 +22,8 @@
 //!
 //! # Why PKCE is required rather than optional
 //!
-//! OAuth 2.1 makes PKCE mandatory for every client, and a public client — which
-//! a dynamically-registered one is — has no secret to fall back on. Without it,
+//! OAuth 2.1 makes PKCE mandatory for every client, and a public client (which
+//! a dynamically-registered one is) has no secret to fall back on. Without it,
 //! an authorization code intercepted on the redirect is enough to mint a token.
 //! [`verify_challenge`] is the check that makes interception useless.
 
@@ -44,7 +44,7 @@ pub const ACCESS_TOKEN_TTL_MS: i64 = 60 * 60 * 1_000;
 
 /* --------------------------------------------------------------- discovery */
 
-/// RFC 9728 — what a *resource* server publishes so a client can find its
+/// RFC 9728: what a *resource* server publishes so a client can find its
 /// authorization server.
 pub fn protected_resource_metadata(resource: &str, issuer: &str) -> serde_json::Value {
     serde_json::json!({
@@ -55,7 +55,7 @@ pub fn protected_resource_metadata(resource: &str, issuer: &str) -> serde_json::
     })
 }
 
-/// RFC 8414 — what the *authorization* server publishes about itself.
+/// RFC 8414: what the *authorization* server publishes about itself.
 pub fn authorization_server_metadata(issuer: &str) -> serde_json::Value {
     serde_json::json!({
         "issuer": issuer,
@@ -66,7 +66,7 @@ pub fn authorization_server_metadata(issuer: &str) -> serde_json::Value {
         "registration_endpoint": format!("{issuer}/oauth/register"),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
-        // S256 only. `plain` is in the RFC and provides no protection at all —
+        // S256 only. `plain` is in the RFC and provides no protection at all;
         // offering it lets a client opt out of the thing PKCE is for.
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
@@ -129,7 +129,7 @@ impl std::fmt::Display for RegistrationError {
 /// Open registration, which is what the specification intends here: the client
 /// id is a public identifier, not a credential, and the security of the flow
 /// rests on the redirect URI and PKCE rather than on who was allowed to
-/// register. What is *not* open is the redirect target — see [`check_redirect`].
+/// register. What is *not* open is the redirect target; see [`check_redirect`].
 pub fn register(
     request: &RegistrationRequest,
     client_id: String,
@@ -272,7 +272,7 @@ impl PendingAuthorization {
 
 /// Build the redirect back to the client after consent.
 ///
-/// `state` is echoed verbatim — it is the client's CSRF defence and mangling it
+/// `state` is echoed verbatim: it is the client's CSRF defence and mangling it
 /// silently breaks the flow.
 pub fn redirect_with_code(redirect_uri: &str, code: &str, state: Option<&str>) -> String {
     let joiner = if redirect_uri.contains('?') { '&' } else { '?' };
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn plain_pkce_is_not_offered() {
-        // `plain` is in the RFC and provides no protection — offering it lets a
+        // `plain` is in the RFC and provides no protection; offering it lets a
         // client opt out of the only thing protecting the code.
         let metadata = authorization_server_metadata("https://x");
         let methods = metadata["code_challenge_methods_supported"]
@@ -497,7 +497,7 @@ mod tests {
         // let a client inject parameters into its own callback.
         let url = redirect_with_code("https://claude.ai/cb", "c", Some("a&code=evil"));
 
-        // The injected text survives as data, escaped — the `&` and `=` that
+        // The injected text survives as data, escaped: the `&` and `=` that
         // would have made it a second parameter are percent-encoded.
         assert!(url.ends_with("&state=a%26code%3Devil"));
         // …so there is still exactly one real `code` parameter, and it is ours.
