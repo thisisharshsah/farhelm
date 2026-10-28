@@ -48,6 +48,9 @@ export function Overview({
   const reviews = fleet.tasks_awaiting_review;
   const needsYou = fleet.pending_approvals.length + reviews.length;
   const working = allTasks.filter((task) => task.status === "running").length;
+  // A live session can be paused; only the ones doing something count as
+  // working, or the tile reads "2 working" beside two "Paused" rows.
+  const busySessions = live.filter((session) => session.status === "running" || session.status === "awaiting_approval").length;
   const applied = allTasks.filter((task) => task.status === "applied").length;
 
   const mix = useMemo(
@@ -96,8 +99,8 @@ export function Overview({
         />
         <StatTile
           label="Agents working"
-          value={String(live.length)}
-          note={`${working} task${working === 1 ? "" : "s"} drafting`}
+          value={String(busySessions + working)}
+          note={`${busySessions} of ${live.length} session${live.length === 1 ? "" : "s"} · ${working} task${working === 1 ? "" : "s"} drafting`}
         />
         <StatTile
           label="Spend today"

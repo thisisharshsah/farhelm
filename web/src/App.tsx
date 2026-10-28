@@ -1,5 +1,5 @@
 import { getMigratingSync } from "@farhelm/client-core";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OutputLine, ServerEvent } from "@farhelm/client-core";
 import { sessionIdOf, useResource, useRoute } from "./hooks";
 import { migratePairing, webPairingStore } from "./platform";
@@ -25,6 +25,9 @@ import { CLOUD_URL } from "./cloud";
 type Theme = "system" | "light" | "dark";
 
 const THEME_KEY = "farhelm-theme";
+
+/** How long a burst of runner events is gathered into one refetch. */
+const EVENT_COALESCE_MS = 120;
 
 function useTheme(): [Theme, () => void] {
   const [theme, setTheme] = useState<Theme>(
@@ -84,6 +87,22 @@ export default function App() {
   const [revision, setRevision] = useState(0);
   const bump = useCallback(() => setRevision((value) => value + 1), []);
 
+  /**
+   * Events arrive in bursts: one approval produces an approval event and two
+   * session updates within a few milliseconds. Refetching once per burst
+   * instead of once per event is the difference between the screen updating
+   * and the screen stuttering. A user action still refreshes at once (`bump`).
+   */
+  const eventBump = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bumpSoon = useCallback(() => {
+    if (eventBump.current !== null) return;
+    eventBump.current = setTimeout(() => {
+      eventBump.current = null;
+      setRevision((value) => value + 1);
+    }, EVENT_COALESCE_MS);
+  }, []);
+  useEffect(() => () => { if (eventBump.current !== null) clearTimeout(eventBump.current); }, []);
+
   /** Output arrives line by line, so it is appended rather than refetched. */
   const [liveOutput, setLiveOutput] = useState<Record<string, OutputLine[]>>({});
   /** A refusal the runner sent back over the relay. */
@@ -108,9 +127,9 @@ export default function App() {
         setRefusal(event.message);
         break;
       default:
-        setRevision((value) => value + 1);
+        bumpSoon();
     }
-  }, []);
+  }, [bumpSoon]);
 
   const connection = useConnection(onEvent);
   const transport = connection.transport;
@@ -599,7 +618,7 @@ export default function App() {
               <p className="tile-note">{billing.error}</p>
             </div>
           ) : (
-            <p className="empty">Loading plans…</p>
+            <PageSkeleton label="Loading plans" />
           )
         ) : null}
 
@@ -674,7 +693,7 @@ export default function App() {
               />
             </div>
           ) : (
-            <p className="empty">Loading tasks…</p>
+            <PageSkeleton label="Loading tasks" />
           )
         ) : null}
 
@@ -703,7 +722,7 @@ export default function App() {
               />
             </div>
           ) : (
-            <p className="empty">Loading task…</p>
+            <PageSkeleton label="Loading task" />
           )
         ) : null}
 
@@ -727,7 +746,7 @@ export default function App() {
               />
             </div>
           ) : (
-            <p className="empty">Loading session…</p>
+            <PageSkeleton label="Loading session" />
           )
         ) : null}
 
@@ -742,7 +761,7 @@ export default function App() {
               <DashboardScreen dashboard={dashboard.data} />
             </div>
           ) : (
-            <p className="empty">Loading cost…</p>
+            <PageSkeleton label="Loading cost" />
           )
         ) : null}
 
@@ -782,6 +801,17 @@ function LegacyPairing({ onUnpair }: { onUnpair: () => void }) {
         Unpair
       </button>
     </section>
+  );
+}
+
+/** The shape of a page while it loads, rather than the word "Loading". */
+function PageSkeleton({ label }: { label: string }) {
+  return (
+    <div className="skeleton" aria-busy="true" aria-label={label}>
+      <div className="skeleton-card" />
+      <div className="skeleton-card" />
+      <div className="skeleton-card" />
+    </div>
   );
 }
 

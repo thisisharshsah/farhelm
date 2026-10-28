@@ -489,11 +489,34 @@ main {
   gap: var(--s-3);
 }
 
-/* Anti-pattern guard: never blank the view on refetch — hold the last render
-   at reduced opacity so nothing jumps. */
+/* Background refreshes keep the page exactly as it is. Dimming it on every
+   refetch made a working agent's screen flicker several times a second; a
+   thin line at the top appears only if a refresh takes noticeably long. */
 .stale {
-  opacity: 0.55;
-  transition: opacity 120ms ease;
+  position: relative;
+}
+
+.stale::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--series-1), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  opacity: 0;
+  animation: refresh-line 1.2s linear 400ms infinite;
+}
+
+@keyframes refresh-line {
+  from { opacity: 0.9; background-position: -40% 0; }
+  to { opacity: 0.9; background-position: 140% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stale::before { animation: none; }
 }
 
 .card {

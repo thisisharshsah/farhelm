@@ -36,7 +36,7 @@ it("decides once, then delegates the level that covers this card's risk", async 
     }),
   };
   const onDecided = await card({ ...base, risk: "medium" }, transport);
-  const delegate = button("Approve and stop asking for commands like this")!;
+  const delegate = button("Yes, and don't ask again this session")!;
   await act(async () => { delegate.click(); delegate.click(); });
   expect(calls).toEqual(["decide", "set:medium"]);
   expect(transport.decide).toHaveBeenCalledExactlyOnceWith(base.id, "approved");
@@ -48,7 +48,7 @@ it("never offers to stop asking for a destructive command", async () => {
   await card(base, { decide: vi.fn(), setAutoApprove: vi.fn() });
   expect(base.risk).toBe("destructive");
   expect(button("Approve")).toBeDefined();
-  expect(Array.from(host.querySelectorAll("button")).some((node) => node.textContent?.includes("auto-approve"))).toBe(false);
+  expect(Array.from(host.querySelectorAll("button")).some((node) => node.textContent?.includes("this session"))).toBe(false);
   expect(host.textContent).toContain("always needs a person");
 });
 
@@ -58,7 +58,7 @@ it("says which half failed when the approval stood but delegation did not", asyn
     setAutoApprove: vi.fn().mockRejectedValue(new Error("auto-approve can only be changed from the phone or the web app")),
   };
   const onDecided = await card({ ...base, risk: "low" }, transport);
-  await act(async () => button("Approve and auto-approve read-only tools")!.click());
+  await act(async () => button("Yes, and allow reads this session")!.click());
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("Approved, but auto-approve was not turned on");
   expect(onDecided).toHaveBeenCalledOnce();
 });
@@ -99,4 +99,31 @@ it("returns to the reported level and explains a refusal", async () => {
 it("cannot change the level of a session that has ended", async () => {
   const { select } = await control({ setAutoApprove: vi.fn() }, { ...session, is_live: false });
   expect(select.disabled).toBe(true);
+});
+
+it("says when the level comes from the repository default", async () => {
+  await control({ setAutoApprove: vi.fn() }, { ...session, auto_approve: "medium", repo_auto_approve: "medium" });
+  expect(host.querySelector('[role="status"]')?.textContent).toBe("Commands and edits run on their own. Destructive commands still ask. Set by the repository default.");
+  await control({ setAutoApprove: vi.fn() }, { ...session, auto_approve: "medium", repo_auto_approve: "off" });
+  expect(host.querySelector('[role="status"]')?.textContent).toBe("Commands and edits run on their own. Destructive commands still ask.");
+});
+
+it("offers to make this session's level the repository default, once", async () => {
+  const setRepoAutoApprove = vi.fn(() => new Promise<void>(() => {}));
+  await control(
+    { setAutoApprove: vi.fn(), setRepoAutoApprove },
+    { ...session, auto_approve: "medium", repo_auto_approve: "off", repo_id: "repo-1", repo_name: "payments-api" },
+  );
+  expect(host.textContent).toContain("Default for payments-api: ask first");
+  const apply = Array.from(host.querySelectorAll("button")).find((node) => node.textContent === "Use for every session in payments-api")!;
+  await act(async () => { apply.click(); apply.click(); });
+  expect(setRepoAutoApprove).toHaveBeenCalledExactlyOnceWith("repo-1", "medium");
+});
+
+it("does not offer the repository default when it already matches", async () => {
+  await control(
+    { setAutoApprove: vi.fn(), setRepoAutoApprove: vi.fn() },
+    { ...session, auto_approve: "medium", repo_auto_approve: "medium", repo_id: "repo-1", repo_name: "payments-api" },
+  );
+  expect(Array.from(host.querySelectorAll("button")).some((node) => node.textContent?.startsWith("Use for every session"))).toBe(false);
 });

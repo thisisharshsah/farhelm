@@ -1,5 +1,7 @@
 /** Money, always in dollars. Sub-dollar spend needs the extra digits to move. */
 export function usd(value: number, precise = false): string {
+  // Nothing spent reads as "$0.00"; four zeros looked like a rendering fault.
+  if (value === 0 && !precise) return "$0.00";
   if (precise || Math.abs(value) < 1) return `$${value.toFixed(4)}`;
   return `$${value.toFixed(2)}`;
 }

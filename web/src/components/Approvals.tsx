@@ -38,10 +38,22 @@ function levelCovering(risk: Risk): Exclude<AutoApprove, "off"> | null {
   return risk === "low" ? "low" : risk === "medium" ? "medium" : null;
 }
 
+/**
+ * Short names with a one-line description, after Codex's approval presets
+ * ("Read Only", "Default", "Full Access"): the name fits a menu, the
+ * description says exactly what runs without asking. Destructive commands are
+ * outside every level, so each description ends by saying so.
+ */
 export const AUTO_APPROVE_LABEL: Record<AutoApprove, string> = {
-  off: "Ask every time",
-  low: "Auto-approve read-only tools",
-  medium: "Auto-approve commands",
+  off: "Ask first",
+  low: "Read only",
+  medium: "Auto",
+};
+
+export const AUTO_APPROVE_DESCRIPTION: Record<AutoApprove, string> = {
+  off: "Every command waits for your approval.",
+  low: "Reading files runs on its own. Commands and edits ask first.",
+  medium: "Commands and edits run on their own. Destructive commands still ask.",
 };
 
 function message(cause: unknown): string {
@@ -149,8 +161,8 @@ export function ApprovalCard({
             {busy === "delegate"
               ? "Approving…"
               : delegate === "low"
-                ? "Approve and auto-approve read-only tools"
-                : "Approve and stop asking for commands like this"}
+                ? "Yes, and allow reads this session"
+                : "Yes, and don't ask again this session"}
           </button>
         ) : null}
       </div>
@@ -175,7 +187,8 @@ export function AutoApproveControl({
   onChanged,
   compact = false,
 }: {
-  session: Pick<SessionView, "id" | "auto_approve" | "is_live">;
+  session: Pick<SessionView, "id" | "auto_approve" | "is_live">
+    & Partial<Pick<SessionView, "repo_id" | "repo_name" | "repo_auto_approve">>;
   transport: Transport | null;
   onChanged: (session: SessionView) => void;
   compact?: boolean;
@@ -219,6 +232,9 @@ export function AutoApproveControl({
     }
   };
 
+  // The wire cannot tell an explicit session level equal to the repository
+  // default from an inherited one, so equal reads as inherited.
+  const inherited = reported !== "off" && answered === null && session.repo_auto_approve === reported;
   const id = `auto-approve-${session.id}`;
   return (
     <div className="auto-approve" data-compact={compact ? "yes" : undefined} data-level={pending ?? reported}>
@@ -240,8 +256,87 @@ export function AutoApproveControl({
           ? "Saving…"
           : error
             ? `Not changed: ${error}`
-            : "Destructive commands always ask."}
+            : inherited
+              ? `${AUTO_APPROVE_DESCRIPTION[pending ?? reported]} Set by the repository default.`
+              : AUTO_APPROVE_DESCRIPTION[pending ?? reported]}
       </span>
+      {session.repo_id ? (
+        <RepositoryDefault
+          key={session.repo_id}
+          repoId={session.repo_id}
+          repoName={session.repo_name ?? "this repository"}
+          level={reported}
+          repoLevel={session.repo_auto_approve ?? "off"}
+          transport={transport}
+          disabled={pending !== null || !session.is_live}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * The second scope: make this session's level the default for its repository.
+ *
+ * Shows the default as the runner reports it in the session snapshot. Over the
+ * relay the request has no reply; the new default appears when the runner
+ * announces the sessions it changed, so the button says "Sent" rather than
+ * claiming a change it has not seen. Sessions with their own level keep it;
+ * sessions started later inherit the default.
+ */
+function RepositoryDefault({
+  repoId,
+  repoName,
+  level,
+  repoLevel,
+  transport,
+  disabled,
+}: {
+  repoId: string;
+  repoName: string;
+  level: AutoApprove;
+  repoLevel: AutoApprove;
+  transport: Transport | null;
+  disabled: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [sentFor, setSentFor] = useState<AutoApprove | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+
+  const apply = async () => {
+    if (inFlight.current || !transport) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await transport.setRepoAutoApprove(repoId, level);
+      setSentFor(level);
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  };
+
+  const waiting = sentFor !== null && sentFor !== repoLevel;
+  return (
+    <span className="auto-approve-repo">
+      <span className="auto-approve-note">
+        Default for {repoName}: {AUTO_APPROVE_LABEL[repoLevel].toLowerCase()}
+      </span>
+      {level !== repoLevel ? (
+        <button
+          type="button"
+          className="btn btn-quiet btn-small"
+          disabled={disabled || busy || waiting || !transport}
+          onClick={() => void apply()}
+        >
+          {busy ? "Saving…" : waiting ? "Sent" : `Use for every session in ${repoName}`}
+        </button>
+      ) : null}
+      {error ? <span className="auto-approve-note" role="alert">Default not changed: {error}</span> : null}
+    </span>
   );
 }

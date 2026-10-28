@@ -134,13 +134,17 @@ function ProjectsWorkspace({ transport, projectId, onNavigate }: {
   return (
     <div className="view">
       <header className="view-head">
-        <h1 className="view-title">{projectId === null ? "Projects" : detail?.name ?? "Project"}</h1>
-        <div className="approval-actions">
-          {projectId !== null ? <button className="btn" onClick={() => onNavigate("/p")}>All projects</button> : null}
-          <button className="btn" onClick={reload} disabled={loading || resource.morePending}>
-            {loading && (page || detail) ? "Refreshing…" : "Refresh"}
-          </button>
+        <div>
+          <h1 className="view-title">{projectId === null ? "Projects" : detail?.name ?? "Project"}</h1>
+          {projectId === null ? (
+            <p className="page-sub">A project keeps its repositories, conversations and tasks together.</p>
+          ) : null}
         </div>
+        <span className="spacer" />
+        {projectId !== null ? <button className="btn btn-quiet btn-small" onClick={() => onNavigate("/p")}>All projects</button> : null}
+        <button className="btn btn-quiet btn-small" onClick={reload} disabled={loading || resource.morePending}>
+          {loading && (page || detail) ? "Refreshing…" : "Refresh"}
+        </button>
       </header>
       {error ? (
         <div className="card error" role="alert">
@@ -162,7 +166,10 @@ function ProjectsWorkspace({ transport, projectId, onNavigate }: {
       {detail ? <ProjectWorkflow transport={transport} projectId={detail.id} onNavigate={onNavigate} /> : null}
       {page ? (
         <section aria-label="Local projects" aria-busy={loading}>
-          {page.projects.length === 0 ? <p className="empty">No projects yet. Create a project on this runner.</p> : (
+          {page.projects.length === 0 ? <div className="panel projects-empty">
+              <b>No projects yet</b>
+              <p className="field-hint">Name one below. You add its repositories, talk the work through, and start tasks from it.</p>
+            </div> : (
             <div className="projects-grid">
               {page.projects.map((project) => (
                 <article className="project-card" key={project.id}>
@@ -242,18 +249,20 @@ function CreateProjectForm({ transport, onCreated }: {
   }
 
   return (
-    <section className="card project-create" aria-label="Create a project">
-      <h2 className="chart-title">Create a project</h2>
-      <p className="tile-note">Project names and descriptions are stored on this runner.</p>
-      <form onSubmit={(event) => { event.preventDefault(); void create(); }} aria-busy={pending}>
-        <label className="tile-label" htmlFor="project-name">Name</label>
-        <input className="pair-input" id="project-name" name="name" value={name}
+    <section className="panel project-create" aria-label="Create a project">
+      <form className="new-session" onSubmit={(event) => { event.preventDefault(); void create(); }} aria-busy={pending}>
+        <h2 className="panel-title">New project</h2>
+        <label className="field-label" htmlFor="project-name">Name</label>
+        <input className="pair-input" id="project-name" name="name" value={name} placeholder="Payments reliability"
           onChange={(event) => setName(event.target.value)} required maxLength={240} disabled={pending} autoComplete="off" />
-        <label className="tile-label" htmlFor="project-description">Description <span className="tile-note">(optional)</span></label>
+        <label className="field-label" htmlFor="project-description">Description <span className="field-hint">(optional)</span></label>
         <textarea className="pair-input" id="project-description" name="description" value={description}
-          onChange={(event) => setDescription(event.target.value)} rows={4} maxLength={8_000} disabled={pending} />
+          onChange={(event) => setDescription(event.target.value)} rows={2} maxLength={8_000} disabled={pending} />
+        <p className="field-hint">Stored on this runner.</p>
         {error ? <p className="error" role="alert">{error}</p> : null}
-        <button className="btn btn-primary" type="submit" disabled={pending}>{pending ? "Creating…" : "Create project"}</button>
+        <div className="form-actions">
+          <button className="btn btn-primary" type="submit" disabled={pending}>{pending ? "Creating…" : "Create project"}</button>
+        </div>
       </form>
     </section>
   );

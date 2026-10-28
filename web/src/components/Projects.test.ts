@@ -88,7 +88,7 @@ it("renders loading, an actual empty response, and the local create form", async
   await render(runner({ projects: vi.fn().mockReturnValue(request.promise) }));
   expect(host.querySelector('[role="status"]')?.textContent).toBe("Loading projects…");
   await act(async () => request.resolve({ projects: [], next_cursor: null }));
-  expect(host.textContent).toContain("No projects yet. Create a project on this runner.");
+  expect(host.textContent).toContain("No projects yet");
   expect(host.querySelector('label[for="project-name"]')?.textContent).toBe("Name");
   expect(host.querySelector("#project-description")).not.toBeNull();
 });

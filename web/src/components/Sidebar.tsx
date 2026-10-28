@@ -13,7 +13,7 @@
  */
 
 import { useMemo, useState } from "react";
-import type { SessionView, TaskView, Workspace } from "@farhelm/client-core";
+import { agentName, since, type SessionView, type TaskView, type Workspace } from "@farhelm/client-core";
 import type { Route } from "../hooks";
 import { Icon, type IconName } from "./Icon";
 import { SESSION_STATUS, StatusDot, TASK_STATUS } from "./status";
@@ -208,7 +208,12 @@ export function Sidebar({
                   aria-current={currentSession === session.id ? "page" : undefined}
                   onClick={() => onNavigate(`/s/${session.id}`)}
                 >
-                  <span className="side-item-label">{session.repo_name}</span>
+                  {/* Two sessions in one repository share a name, so each
+                      carries its agent and age to tell them apart. */}
+                  <span className="side-item-label side-item-stack">
+                    <span>{session.repo_name}</span>
+                    <span className="side-item-sub">{agentName(session.agent)} · {since(session.started_at)}</span>
+                  </span>
                   <StatusDot tone={look.tone} label={look.label} />
                 </button>
               );

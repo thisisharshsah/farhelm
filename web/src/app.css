@@ -13,6 +13,9 @@
  */
 
 :root {
+  /* The fill behind white text. Separate from --series-1 because the dark
+     theme's link-and-focus blue is too light to carry white text. */
+  --accent-fill: #2563eb;
   --side-w: 16.5rem;
   --rail-w: 18rem;
   --thread-measure: 52rem;
@@ -21,17 +24,25 @@
 
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
-    /* White on the lighter dark-mode blue measured 3.3:1. */
-    --on-accent: #0b1020;
+    --accent-fill: #2f6ae0;
   }
 }
 
 :root[data-theme="dark"] {
-  --on-accent: #0b1020;
+  --accent-fill: #2f6ae0;
 }
 
 .btn-primary,
-.btn-primary:hover:not(:disabled) {
+.auth-primary.btn-primary {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.btn-primary:hover:not(:disabled),
+.auth-primary.btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-fill) 86%, #000000);
+  border-color: color-mix(in srgb, var(--accent-fill) 86%, #000000);
   color: var(--on-accent);
 }
 
@@ -225,6 +236,23 @@ svg.is-open {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.side-item-stack {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.side-item-stack > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-item-sub {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 400;
 }
 
 .side-badge {
@@ -1127,7 +1155,7 @@ svg.is-open {
   height: 2rem;
   border: 0;
   border-radius: 50%;
-  background: var(--series-1);
+  background: var(--accent-fill);
   color: var(--on-accent);
 }
 
@@ -1469,4 +1497,199 @@ svg.is-open {
 
 .device-slot-name {
   font-weight: 600;
+}
+
+.auto-approve-repo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------- project chat */
+
+.project-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+}
+
+.project-chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.project-chat-new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--gridline);
+}
+
+.project-chat-new .btn {
+  flex: none;
+  align-self: flex-start;
+}
+
+.project-chat-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.project-chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+
+.project-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-height: 32rem;
+  overflow-y: auto;
+}
+
+.project-chat-empty {
+  align-self: center;
+}
+
+.chat-line-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 0.75rem;
+}
+
+.chat-task-draft {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+}
+
+@media (max-width: 52rem) {
+  .project-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Older screens (Projects, project tasks) use `.view-head`; their actions sit
+   at the far end at toolbar size, as on the newer pages. */
+.view-head {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.view-head .btn,
+.view-head .approval-actions .btn {
+  flex: none;
+  min-height: 34px;
+  padding: 0 0.85rem;
+  font-size: 0.82rem;
+}
+
+.view-head .approval-actions {
+  margin-top: 0;
+}
+
+/* ------------------------------------------------------- start a session */
+
+.page-narrow {
+  max-width: 46rem;
+}
+
+.new-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.field-label {
+  margin-top: var(--s-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.field-label:first-child {
+  margin-top: 0;
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.repo-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.repo-choice {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+
+.repo-choice:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, var(--surface-1));
+}
+
+.repo-choice[aria-pressed="true"] {
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.agent-missing > summary {
+  padding: var(--s-1) 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.agent-missing > .agent-list {
+  margin-top: var(--s-2);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+/* `.btn` grows to fill a row (the approval card wants that); a form's
+   actions sit at their own width on the right. */
+.form-actions .btn {
+  flex: none;
+  padding-inline: var(--s-4);
+}
+
+.projects-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
 }
