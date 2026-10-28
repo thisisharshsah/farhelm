@@ -328,8 +328,33 @@ fn completion_params(request: &ModelRequest, openrouter: bool) -> Result<Value, 
     if openrouter {
         body["provider"] = json!({ "allow_fallbacks": false, "require_parameters": true });
     }
-    // Gateway effort levels currently describe Anthropic routing. Passing them
-    // through would imply unsupported per-model capability negotiation.
+    // Gateway effort levels describe Anthropic routing and are not sent. A
+    // caller's own sampling is: it is what the caller's previous endpoint
+    // honoured, and dropping it would change their answers.
+    let sampling = &request.sampling;
+    if let Some(temperature) = sampling.temperature {
+        if !temperature.is_finite() || !(0.0..=2.0).contains(&temperature) {
+            return Err(invalid("temperature must be from 0 to 2"));
+        }
+        body["temperature"] = json!(temperature);
+    }
+    if let Some(top_p) = sampling.top_p {
+        if !top_p.is_finite() || !(0.0..=1.0).contains(&top_p) {
+            return Err(invalid("top_p must be from 0 to 1"));
+        }
+        body["top_p"] = json!(top_p);
+    }
+    if let Some(effort) = &sampling.reasoning_effort {
+        if !matches!(effort.as_str(), "low" | "medium" | "high") {
+            return Err(invalid("reasoning_effort must be low, medium or high"));
+        }
+        // llama.cpp hands chat_template_kwargs to the model's template, which
+        // is where gpt-oss reads its reasoning level. OpenRouter has its own
+        // field and is not sent one it would ignore.
+        if !openrouter {
+            body["chat_template_kwargs"] = json!({ "reasoning_effort": effort });
+        }
+    }
     Ok(body)
 }
 
@@ -538,6 +563,7 @@ mod tests {
 
     fn request() -> ModelRequest {
         ModelRequest {
+            sampling: Default::default(),
             model: "fixture-model".into(),
             max_tokens: 512,
             effort: Some(crate::dispatch::Effort::High),
@@ -667,6 +693,31 @@ mod tests {
             value["messages"][4],
             json!({ "role": "user", "content": "Continue" })
         );
+    }
+
+    #[test]
+    fn a_callers_sampling_reaches_the_server() {
+        let mut request = request();
+        request.sampling = crate::dispatch::Sampling {
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            reasoning_effort: Some("low".into()),
+        };
+        let body = completion_params(&request, false).unwrap();
+        assert_eq!(
+            body["temperature"].as_f64().map(|t| (t * 10.0).round()),
+            Some(2.0)
+        );
+        assert_eq!(body["chat_template_kwargs"]["reasoning_effort"], "low");
+        // OpenRouter is not sent llama.cpp's template field.
+        let body = completion_params(&request, true).unwrap();
+        assert!(body.get("chat_template_kwargs").is_none());
+
+        request.sampling.reasoning_effort = Some("extreme".into());
+        assert!(completion_params(&request, false).is_err());
+        request.sampling.reasoning_effort = None;
+        request.sampling.temperature = Some(9.0);
+        assert!(completion_params(&request, false).is_err());
     }
 
     #[test]

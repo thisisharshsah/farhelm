@@ -680,6 +680,7 @@ cache_read_per_mtok = 0.5
 
     fn request(client: &ProviderClient) -> ModelRequest {
         ModelRequest {
+            sampling: Default::default(),
             model: "code".into(),
             max_tokens: 8000,
             effort: None,

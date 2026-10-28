@@ -65,6 +65,24 @@ pub struct ModelRequest {
     /// tag the request with `X-Conscious-Client: farhelm/<purpose>` so usage
     /// splits by component; Anthropic is sent nothing extra.
     pub purpose: Option<TaskType>,
+    pub sampling: Sampling,
+}
+
+/// Sampling a caller asked for, applied by providers that take it from the
+/// request (the OpenAI-compatible adapter). Absent fields leave the server's
+/// own defaults, so a caller that sets nothing changes nothing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Sampling {
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    /// `low`, `medium` or `high`, for reasoning models such as gpt-oss.
+    pub reasoning_effort: Option<String>,
+}
+
+impl Sampling {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// A safety-classifier decline. Not an error in the transport sense: the call
@@ -905,6 +923,7 @@ mod tests {
             ..StableContext::default()
         };
         ModelRequest {
+            sampling: Default::default(),
             model: model.to_owned(),
             max_tokens: DEFAULT_MAX_TOKENS,
             effort: Some(Effort::High),
@@ -1041,6 +1060,7 @@ mod tests {
     fn empty_system_and_tools_are_omitted_rather_than_sent_blank() {
         let client = AnthropicClient::new("k");
         let bare = ModelRequest {
+            sampling: Default::default(),
             model: "m".into(),
             max_tokens: 16,
             effort: None,
@@ -1207,6 +1227,7 @@ mod tests {
         let price = price_of("claude-opus-5").unwrap();
 
         let first = ModelRequest {
+            sampling: Default::default(),
             model: "claude-opus-5".into(),
             max_tokens: 16,
             effort: None,
@@ -1221,6 +1242,7 @@ mod tests {
         grown.history.push(crate::prompt::Turn::user("turn two"));
         let second = client
             .complete(ModelRequest {
+                sampling: Default::default(),
                 model: "claude-opus-5".into(),
                 max_tokens: 16,
                 effort: None,
@@ -1257,6 +1279,7 @@ mod tests {
 
         let response = client
             .complete(ModelRequest {
+                sampling: Default::default(),
                 model: "claude-opus-5".into(),
                 max_tokens: 16,
                 effort: None,

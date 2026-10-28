@@ -771,6 +771,7 @@ mod tests {
         };
         let plan = assemble_with_results(&context, "Try another path.", &[result], &opus());
         let request = crate::dispatch::ModelRequest {
+            sampling: Default::default(),
             model: "claude-opus-5".into(),
             max_tokens: 100,
             effort: None,

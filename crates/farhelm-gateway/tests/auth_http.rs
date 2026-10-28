@@ -57,6 +57,7 @@ async fn spawn(seen: Arc<Seen>) -> SocketAddr {
 
 fn request() -> ModelRequest {
     ModelRequest {
+        sampling: Default::default(),
         model: "claude-sonnet-5".into(),
         max_tokens: 64,
         effort: None,

@@ -111,6 +111,11 @@ pub struct CompleteRequest {
     /// Keeps cached answers apart between callers that must not share them:
     /// two projects sending the same prompt each get their own cache entry.
     pub cache_scope: Option<String>,
+    /// An output ceiling the caller asked for. Lower than the gateway's own
+    /// is honoured; higher is clamped to it (and then to the model's limit).
+    pub max_tokens: Option<u32>,
+    /// Sampling the caller asked for; see [`Sampling`].
+    pub sampling: crate::dispatch::Sampling,
 }
 
 impl CompleteRequest {
@@ -131,6 +136,8 @@ impl CompleteRequest {
             deferrable: false,
             model: None,
             cache_scope: None,
+            max_tokens: None,
+            sampling: crate::dispatch::Sampling::default(),
         }
     }
 }
@@ -476,6 +483,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         let response = self
             .client
             .complete(ModelRequest {
+                sampling: Default::default(),
                 model: model.clone(),
                 max_tokens: self.config.max_tokens,
                 // Low effort: this is condensation, not reasoning.
@@ -731,7 +739,14 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 .iter()
                 .any(|turn| !turn.tool_calls.is_empty() || !turn.tool_results.is_empty());
         let cache_key = (cache::is_cacheable(request.task_type) && !has_tools).then(|| {
-            let namespace = self.client.cache_namespace(&route.model);
+            let mut namespace = self.client.cache_namespace(&route.model);
+            // A different ceiling or sampling is a different answer.
+            if request.max_tokens.is_some() || !request.sampling.is_default() {
+                namespace = format!(
+                    "{namespace}/{:?}/{:?}",
+                    request.max_tokens, request.sampling
+                );
+            }
             match &request.cache_scope {
                 Some(scope) => cache::key(&format!("{scope}/{namespace}"), &plan),
                 None => cache::key(&namespace, &plan),
@@ -812,6 +827,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 // different model for the same slot.
                 tier: route.tier,
                 request_json: messages_params(&ModelRequest {
+                    sampling: Default::default(),
                     model: route.model.clone(),
                     max_tokens: self.config.max_tokens,
                     effort: Some(effort_for(route.slot)),
@@ -870,8 +886,11 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         let response = match self
             .client
             .complete(ModelRequest {
+                sampling: request.sampling.clone(),
                 model: route.model.clone(),
-                max_tokens: self.config.max_tokens,
+                max_tokens: request.max_tokens.map_or(self.config.max_tokens, |asked| {
+                    asked.min(self.config.max_tokens)
+                }),
                 effort: Some(effort_for(route.slot)),
                 plan,
                 purpose: Some(request.task_type),
