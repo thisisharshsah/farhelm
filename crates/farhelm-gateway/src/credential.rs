@@ -200,6 +200,27 @@ fn run(command: &str) -> Result<Held, CredentialError> {
             detail: err.to_string(),
         })?;
 
+    // The helper runs under `sh -c`, so the shell's own codes mean the helper
+    // never started: 127 is "not found", 126 "not executable". Said as the
+    // cause, with the fix, because "exited with status 127" reads like the
+    // helper ran and refused.
+    match output.status.code() {
+        Some(127) => {
+            return Err(CredentialError::NotRunnable {
+                command: program,
+                detail:
+                    "it is not installed; run `farhelm auth` to set the model credential up again"
+                        .into(),
+            });
+        }
+        Some(126) => {
+            return Err(CredentialError::NotRunnable {
+                command: program,
+                detail: "it is not executable".into(),
+            });
+        }
+        _ => {}
+    }
     if !output.status.success() {
         return Err(CredentialError::Failed {
             command: program,
@@ -360,6 +381,22 @@ mod tests {
         let second = format!("{:?}", source.get().unwrap());
         assert_ne!(first, second);
         let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn a_missing_helper_says_so_and_how_to_fix_it() {
+        let err = run("/nonexistent/farhelm-test-helper --access-token").unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("`/nonexistent/farhelm-test-helper`"),
+            "{text}"
+        );
+        assert!(text.contains("not installed"), "{text}");
+        assert!(text.contains("farhelm auth"), "{text}");
+        assert!(
+            !text.contains("--access-token"),
+            "arguments can hold secrets: {text}"
+        );
     }
 
     #[test]
