@@ -194,6 +194,7 @@ async fn answer(state: Arc<AppState>, project_id: String, chat_id: String, turn:
                         text: message.content.clone(),
                         tool_calls: Vec::new(),
                         tool_results: Vec::new(),
+                        reasoning: None,
                     })
                     .collect(),
             };

@@ -186,6 +186,9 @@ pub struct CompleteResponse {
     /// Tools the model wants run before it will continue. Empty on every
     /// zero-cost exit, because none of them can produce one.
     pub tool_calls: Vec<ToolCall>,
+    /// Reasoning that came with `tool_calls`. Keep it on the assistant turn
+    /// (`Turn::with_reasoning`) so a reasoning model gets it back next time.
+    pub reasoning: Option<String>,
     /// Set when the call was queued rather than answered (C6). `text` is empty;
     /// this is what to ask for later.
     pub batch_item_id: Option<String>,
@@ -585,6 +588,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 refusal: None,
                 stop_reason: None,
                 tool_calls: Vec::new(),
+                reasoning: None,
                 batch_item_id: None,
                 compacted_history: None,
                 trace: StageTrace {
@@ -738,6 +742,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 refusal: None,
                 stop_reason: None,
                 tool_calls: Vec::new(),
+                reasoning: None,
                 batch_item_id: None,
                 compacted_history: compacted,
                 trace: StageTrace {
@@ -817,6 +822,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 refusal: None,
                 stop_reason: None,
                 tool_calls: Vec::new(),
+                reasoning: None,
                 batch_item_id: Some(item_id),
                 compacted_history: compacted.clone(),
                 trace: StageTrace {
@@ -913,6 +919,7 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             refusal: response.refusal,
             stop_reason: response.stop_reason,
             tool_calls: response.tool_calls,
+            reasoning: response.reasoning,
             batch_item_id: None,
             compacted_history: compacted,
             trace: StageTrace {

@@ -46,6 +46,13 @@ pub struct Turn {
     pub tool_calls: Vec<ToolCall>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_results: Vec<ToolResult>,
+    /// The model's private reasoning before the tool calls in this turn.
+    ///
+    /// Reasoning models (gpt-oss) expect it back on the next request: their
+    /// tool-calling format puts the analysis before the call, and without it
+    /// they continue worse than they started. Only kept with tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 /// An executed tool response, paired with the model call that authorized it.
@@ -63,6 +70,7 @@ impl Turn {
             text: text.into(),
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
+            reasoning: None,
         }
     }
 
@@ -72,7 +80,14 @@ impl Turn {
             text: text.into(),
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
+            reasoning: None,
         }
+    }
+
+    /// Keep the reasoning a model produced with this turn's tool calls.
+    pub fn with_reasoning(mut self, reasoning: Option<String>) -> Self {
+        self.reasoning = reasoning.filter(|text| !text.is_empty());
+        self
     }
 
     pub fn assistant_with_tools(text: impl Into<String>, calls: Vec<ToolCall>) -> Self {
@@ -150,6 +165,16 @@ pub enum ContentBlock {
     Text(TextBlock),
     ToolUse(ToolUseBlock),
     ToolResult(ToolResultBlock),
+    Reasoning(ReasoningBlock),
+}
+
+/// A model's reasoning, replayed to the provider that produced it. Not part of
+/// the answer, and never shown as one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReasoningBlock {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -178,6 +203,7 @@ impl ContentBlock {
             Self::Text(block) => block.cache_control.as_ref(),
             Self::ToolUse(block) => block.cache_control.as_ref(),
             Self::ToolResult(block) => block.cache_control.as_ref(),
+            Self::Reasoning(_) => None,
         }
     }
 
@@ -186,6 +212,8 @@ impl ContentBlock {
             Self::Text(block) => block.cache_control = Some(control),
             Self::ToolUse(block) => block.cache_control = Some(control),
             Self::ToolResult(block) => block.cache_control = Some(control),
+            // Always followed by the turn's tool calls, which take the mark.
+            Self::Reasoning(_) => {}
         }
     }
 
@@ -208,6 +236,9 @@ impl ContentBlock {
                     "tool_use:{}",
                     serde_json::to_string(&block.call).unwrap()
                 );
+            }
+            Self::Reasoning(block) => {
+                let _ = write!(out, "reasoning:{}", block.text);
             }
             Self::ToolResult(block) => {
                 let _ = write!(
@@ -238,6 +269,14 @@ impl From<&Turn> for Message {
                 cache_control: None,
             })
         }));
+        if turn.role == Role::Assistant
+            && let Some(reasoning) = turn.reasoning.as_ref().filter(|text| !text.is_empty())
+        {
+            content.push(ContentBlock::Reasoning(ReasoningBlock {
+                kind: "reasoning",
+                text: reasoning.clone(),
+            }));
+        }
         if !turn.text.is_empty() || !turn.has_tools() {
             content.push(ContentBlock::Text(TextBlock::new(turn.text.clone())));
         }

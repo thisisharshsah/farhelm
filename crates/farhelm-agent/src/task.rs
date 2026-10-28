@@ -342,10 +342,10 @@ async fn delegate<S: Store, C: ModelClient, Sup: Supervisor>(
             response.submitted_instruction,
             std::mem::take(&mut pending_results),
         ));
-        stable.history.push(Turn::assistant_with_tools(
-            response.text,
-            response.tool_calls.clone(),
-        ));
+        stable.history.push(
+            Turn::assistant_with_tools(response.text, response.tool_calls.clone())
+                .with_reasoning(response.reasoning.clone()),
+        );
 
         let mut results = Vec::with_capacity(response.tool_calls.len());
         for call in &response.tool_calls {
@@ -556,10 +556,10 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
             response.submitted_instruction,
             std::mem::take(&mut pending_results),
         ));
-        stable.history.push(Turn::assistant_with_tools(
-            response.text,
-            response.tool_calls.clone(),
-        ));
+        stable.history.push(
+            Turn::assistant_with_tools(response.text, response.tool_calls.clone())
+                .with_reasoning(response.reasoning.clone()),
+        );
 
         let mut results = Vec::with_capacity(response.tool_calls.len());
         for call in &response.tool_calls {

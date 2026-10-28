@@ -86,6 +86,7 @@ impl ModelClient for QueuedClient {
 
 fn response(text: &str, stop_reason: Option<&str>, input_tokens: u32) -> ModelResponse {
     ModelResponse {
+        reasoning: None,
         text: text.into(),
         usage: Usage {
             input_tokens,

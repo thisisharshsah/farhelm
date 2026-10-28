@@ -117,6 +117,7 @@ impl ModelClient for ScriptedClient {
 
         let refused = turn.refusal.is_some();
         Ok(ModelResponse {
+            reasoning: None,
             text: turn.text,
             // Small but non-zero, so a scripted run moves the ledger and the
             // budget guard the way a real one would.

@@ -200,11 +200,15 @@ fn completion_params(request: &ModelRequest, openrouter: bool) -> Result<Value, 
     let mut pending_ids = HashSet::new();
     for message in &request.plan.messages {
         let mut text = String::new();
+        let mut reasoning = String::new();
         let mut calls = Vec::new();
         let mut results = Vec::new();
         for block in &message.content {
             match block {
                 ContentBlock::Text(block) if block.kind == "text" => text.push_str(&block.text),
+                ContentBlock::Reasoning(block) if message.role == Role::Assistant => {
+                    reasoning.push_str(&block.text)
+                }
                 ContentBlock::ToolUse(block)
                     if block.kind == "tool_use" && message.role == Role::Assistant =>
                 {
@@ -250,6 +254,11 @@ fn completion_params(request: &ModelRequest, openrouter: bool) -> Result<Value, 
         messages.extend(results);
         if message.role == Role::Assistant {
             let mut assistant = json!({ "role": "assistant", "content": if text.is_empty() { Value::Null } else { Value::String(text) } });
+            // llama.cpp and vLLM read it back into the model's own reasoning
+            // channel (gpt-oss's analysis), where its template expects it.
+            if !reasoning.is_empty() {
+                assistant["reasoning_content"] = Value::String(reasoning);
+            }
             if !calls.is_empty() {
                 for call in &calls {
                     pending_ids.insert(call["id"].as_str().unwrap().to_owned());
@@ -410,14 +419,25 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, DispatchError> {
             "unsupported generated media or legacy function call",
         ));
     }
-    if !message.tool_calls.is_empty()
-        && (nonempty(&message.reasoning_details)
-            || nonempty(&message.reasoning)
-            || nonempty(&message.reasoning_content))
-    {
-        return Err(invalid(
-            "tool response requires unsupported reasoning block replay",
-        ));
+    // Reasoning that comes with tool calls must be replayed on the next turn.
+    // A plain `reasoning_content` string (llama.cpp, vLLM) can be; structured
+    // or differently named reasoning (OpenRouter's `reasoning_details`) needs
+    // exact replay this adapter does not do, so it is still refused rather
+    // than silently dropped.
+    let mut reasoning = None;
+    if !message.tool_calls.is_empty() {
+        if nonempty(&message.reasoning_details) || nonempty(&message.reasoning) {
+            return Err(invalid(
+                "tool response requires unsupported reasoning block replay",
+            ));
+        }
+        match &message.reasoning_content {
+            Some(Value::String(text)) if !text.is_empty() => reasoning = Some(text.clone()),
+            value if nonempty(value) => {
+                return Err(invalid("reasoning_content must be a string"));
+            }
+            _ => {}
+        }
     }
     let refusal = if message.refusal.is_some() || choice.finish_reason == "content_filter" {
         Some(Refusal {
@@ -478,6 +498,7 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse, DispatchError> {
         stop_reason: Some(choice.finish_reason),
         refusal,
         tool_calls,
+        reasoning,
     })
 }
 
@@ -618,6 +639,54 @@ mod tests {
             value["messages"][4],
             json!({ "role": "user", "content": "Continue" })
         );
+    }
+
+    #[test]
+    fn reasoning_before_a_tool_call_is_kept_and_sent_back() {
+        // gpt-oss on llama.cpp: the analysis comes as `reasoning_content`
+        // next to the call, and must return on the following request.
+        let mut value = tool_response();
+        value["choices"][0]["message"]["reasoning_content"] = json!("We need the file.");
+        let parsed = parse(&value).unwrap();
+        assert_eq!(parsed.reasoning.as_deref(), Some("We need the file."));
+
+        // Without tool calls there is nothing to replay it for.
+        let mut value = response();
+        value["choices"][0]["message"]["reasoning_content"] = json!("Thinking.");
+        assert_eq!(parse(&value).unwrap().reasoning, None);
+
+        let mut request = request();
+        let turn = Turn::assistant_with_tools(
+            "",
+            vec![ToolCall {
+                id: "history_1".into(),
+                name: "read_file".into(),
+                input: json!({ "path": "src/lib.rs" }),
+            }],
+        )
+        .with_reasoning(parsed.reasoning);
+        request.plan.messages.push(Message::from(&turn));
+        request
+            .plan
+            .messages
+            .push(Message::from(&Turn::user_with_results(
+                "",
+                vec![ToolResult {
+                    tool_use_id: "history_1".into(),
+                    content: "fn main() {}".into(),
+                    is_error: false,
+                }],
+            )));
+        let body = completion_params(&request, false).unwrap();
+        assert_eq!(
+            body["messages"][2]["reasoning_content"],
+            "We need the file."
+        );
+        assert_eq!(body["messages"][2]["tool_calls"][0]["id"], "history_1");
+        // Anthropic's request leaves it out: its thinking blocks need its own
+        // signatures.
+        let anthropic = crate::dispatch::messages_params(&request);
+        assert!(!anthropic.to_string().contains("We need the file."));
     }
 
     #[test]
@@ -778,13 +847,18 @@ mod tests {
             response["choices"][0]["message"][field] = value;
             assert!(parse(&response).is_err());
         }
-        for field in ["reasoning_details", "reasoning", "reasoning_content"] {
+        // Reasoning this adapter cannot replay exactly is refused, never
+        // dropped.
+        for field in ["reasoning_details", "reasoning"] {
             let mut value = tool_response();
             value["choices"][0]["message"][field] = json!("private reasoning state");
             assert!(parse(&value).is_err());
             value["choices"][0]["message"][field] = json!("");
             assert!(parse(&value).is_ok());
         }
+        let mut value = tool_response();
+        value["choices"][0]["message"]["reasoning_content"] = json!({ "encrypted": "x" });
+        assert!(parse(&value).is_err());
         let mut value = response();
         value["choices"][0]["error"] = json!({ "message": "secret upstream body" });
         assert!(!parse(&value).unwrap_err().to_string().contains("secret"));

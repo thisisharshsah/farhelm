@@ -101,6 +101,8 @@ pub struct ModelResponse {
     /// Tools the model wants run before it can continue. Non-empty exactly when
     /// `stop_reason` is `tool_use`.
     pub tool_calls: Vec<ToolCall>,
+    /// Reasoning that came with the tool calls, to be replayed next turn.
+    pub reasoning: Option<String>,
 }
 
 #[derive(Debug)]
@@ -168,10 +170,27 @@ pub trait ModelClient: Send + Sync {
 /// would find out is a batched call being assembled differently (and priced
 /// differently) from the live one it was meant to replace.
 pub fn messages_params(request: &ModelRequest) -> serde_json::Value {
+    // Reasoning blocks are replayed only to the kind of provider that wrote
+    // them. Anthropic's thinking blocks carry Anthropic's own signature, so
+    // reasoning from an open-weight model cannot be sent back as one.
+    let messages: Vec<crate::prompt::Message> = request
+        .plan
+        .messages
+        .iter()
+        .map(|message| crate::prompt::Message {
+            role: message.role,
+            content: message
+                .content
+                .iter()
+                .filter(|block| !matches!(block, crate::prompt::ContentBlock::Reasoning(_)))
+                .cloned()
+                .collect(),
+        })
+        .collect();
     let mut body = serde_json::json!({
         "model": request.model,
         "max_tokens": request.max_tokens,
-        "messages": request.plan.messages,
+        "messages": messages,
     });
 
     if !request.plan.system.is_empty() {
@@ -273,6 +292,7 @@ impl WireResponse {
         };
 
         ModelResponse {
+            reasoning: None,
             // Guarded: on a refusal `content` is empty, and on any response it
             // may hold non-text blocks that must not be concatenated blindly.
             text: if refused {
@@ -843,6 +863,7 @@ impl ModelClient for StubClient {
 
         if self.refuse {
             return Ok(ModelResponse {
+                reasoning: None,
                 text: String::new(),
                 usage: Usage::default(),
                 model,
@@ -856,6 +877,7 @@ impl ModelClient for StubClient {
         }
 
         Ok(ModelResponse {
+            reasoning: None,
             text: self.reply.clone(),
             usage: Usage {
                 input_tokens: tail_tokens + uncached_prefix,
