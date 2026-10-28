@@ -177,3 +177,4 @@ Architecture direction and implementation status reviewed October 25, 2026; acce
 
 
 - [0008: project-owned local agent runs](adr/0008-project-agent-workflow.md): implemented many-to-many repository attachment, immutable run ownership, atomic session/task/provenance writes and scoped task controls. Existing legacy tasks remain unassigned. [Account sign-in](account-sign-in.md) also documents distinct local runner/account service endpoints and recoverable upstream failures.
+- [0009: local specialists and work modes](adr/0009-specialists-and-modes.md): proposed. Ask, Plan, Agent and Review modes fix the tools; versioned specialists (base model plus adapter, prompt and evaluation) are chosen by mode and task type, promoted only on held-out evaluation, and never fall back to cloud under `local_only`.
