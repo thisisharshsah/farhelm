@@ -75,6 +75,11 @@ RUNNING
     serve            Start the daemon: the API, the fleet, the gateway. --demo
                      runs against a seeded in-memory database with simulated
                      activity and writes nothing to disk.
+    check            Validate the model registry (FARHELM_MODELS_CONFIG or
+                     --models-config), engine.toml and clients.toml without
+                     starting anything; exits non-zero on a problem. Run it
+                     before restarting a runner other projects depend on: an
+                     invalid registry stops the runner from starting at all.
     doctor           Check a running setup and say what is wrong. Every problem
                      it reports names the command that fixes it. Run this when
                      something is not happening and you cannot see why.
@@ -250,6 +255,7 @@ fn main() -> ExitCode {
         Some("policy") => policy_command(&flags, &args[1..]),
         Some("engine") => engine_command(&flags, &args[1..]),
         Some("clients") => clients_command(&flags, &args[1..]),
+        Some("check") => check_command(&flags, &args[1..]),
         Some("install-service") => install_service(&flags),
         // The two server halves. They were separate binaries; they are
         // subcommands so that everything this system does is reachable from the
@@ -1155,14 +1161,16 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
         println!();
         println!("Restart the runner to start it. In the model registry:");
         println!();
-        println!("  [providers.engine-{alias}]");
+        // Quoted: an alias such as `qwen3.5-4b` has dots, and an unquoted
+        // dotted name is a nested table that makes the registry invalid.
+        println!("  [providers.\"engine-{alias}\"]");
         println!("  kind = \"openai_compatible\"");
         println!("  base_url = \"http://127.0.0.1:{}/v1\"", model.port);
         println!("  data_location = \"local\"");
         for (id, adapter) in model.adapters.iter().enumerate() {
             println!();
             println!(
-                "  [models.{}]  # specialist: {alias} with adapter {id}",
+                "  [models.\"{}\"]  # specialist: {alias} with adapter {id}",
                 adapter.name
             );
             println!("  provider = \"engine-{alias}\"");
@@ -1287,7 +1295,12 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
             let arch = value_of("--arch").unwrap_or_else(|| "gpt-oss".into());
             let out = home.join("adapters").join(format!("{name}.gguf"));
             let imported =
-                farhelm_runner::adapter_import::import_mlx_lora(Path::new(&from), &arch, &out)?;
+                farhelm_runner::adapter_import::import_mlx_lora(
+                Path::new(&from),
+                &arch,
+                value_of("--base").as_deref().map(Path::new),
+                &out,
+            )?;
             println!("  adapter    {}", out.display());
             println!("  trained on {}", imported.trained_on);
             println!(
@@ -1481,6 +1494,89 @@ fn restart_in_place() {
     // No in-place exec on Windows: exit and let the service manager restart.
     eprintln!("  cloud      reachable again; exiting so the service restarts with the relay");
     std::process::exit(75);
+}
+
+/// `farhelm check`: every configuration the runner reads at start, checked
+/// the way the runner checks it, without starting anything.
+fn check_command(flags: &Flags, args: &[String]) -> Fallible {
+    let value_of = |name: &str| {
+        args.iter()
+            .position(|arg| arg == name)
+            .and_then(|index| args.get(index + 1))
+            .cloned()
+    };
+    let mut problems = 0usize;
+    let mut report = |what: &str, result: Result<String, String>| match result {
+        Ok(note) => println!("  ok         {what}{note}"),
+        Err(err) => {
+            problems += 1;
+            println!("  PROBLEM    {what}: {err}");
+        }
+    };
+
+    let registry_path = value_of("--models-config")
+        .or_else(|| farhelm_app::legacy::env_var("FARHELM_MODELS_CONFIG"));
+    let mut aliases = Vec::new();
+    match &registry_path {
+        Some(path) => report(
+            &format!("model registry {path}"),
+            farhelm_gateway::ProviderClient::from_path(Path::new(path))
+                .map(|client| {
+                    aliases = client.model_aliases();
+                    format!(" ({} models)", aliases.len())
+                })
+                .map_err(|err| err.to_string()),
+        ),
+        None => println!("  -          no model registry selected (FARHELM_MODELS_CONFIG unset)"),
+    }
+
+    let engine_path = Path::new(&flags.engine_config);
+    match farhelm_runner::engine::EngineConfig::load(engine_path) {
+        Ok(Some(config)) => {
+            report(
+                &format!("engine {}", engine_path.display()),
+                Ok(format!(" ({} models)", config.models.len())),
+            );
+            for server in config.servers() {
+                report(
+                    &format!("engine model {}", server.model.alias),
+                    server
+                        .preflight()
+                        .map(|()| String::new())
+                        .map_err(|err| err.to_string()),
+                );
+            }
+        }
+        Ok(None) => println!("  -          no engine ({} absent)", engine_path.display()),
+        Err(err) => report(
+            &format!("engine {}", engine_path.display()),
+            Err(err.to_string()),
+        ),
+    }
+
+    let clients_path = Path::new(&flags.clients_file);
+    match farhelm_runner::clients::ClientsFile::load(clients_path) {
+        Ok(clients) => {
+            report(
+                &format!("clients {}", clients_path.display()),
+                Ok(format!(" ({} clients)", clients.clients.len())),
+            );
+            for problem in farhelm_runner::front_door::check(&clients, &aliases) {
+                report("clients", Err(problem));
+            }
+        }
+        Err(err) => report(
+            &format!("clients {}", clients_path.display()),
+            Err(err.to_string()),
+        ),
+    }
+
+    if problems > 0 {
+        return Err(format!("{problems} problem(s); the runner would not start as configured, or would start without them").into());
+    }
+    println!();
+    println!("Everything the runner reads at start is valid.");
+    Ok(())
 }
 
 /// `farhelm clients add|list|rotate|remove`.

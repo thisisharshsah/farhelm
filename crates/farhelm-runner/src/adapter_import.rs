@@ -80,10 +80,29 @@ const GPT_OSS: ModuleMap = &[
     ("mlp.experts.down_proj", "ffn_down_exps", true),
 ];
 
+/// Qwen3.5's modules. Three in four layers are linear attention (gated
+/// delta-net), the fourth full attention; llama.cpp names the linear ones'
+/// projections after their role in the state-space update.
+const QWEN35: ModuleMap = &[
+    ("self_attn.q_proj", "attn_q", false),
+    ("self_attn.k_proj", "attn_k", false),
+    ("self_attn.v_proj", "attn_v", false),
+    ("self_attn.o_proj", "attn_output", false),
+    ("linear_attn.in_proj_qkv", "attn_qkv", false),
+    ("linear_attn.in_proj_z", "attn_gate", false),
+    ("linear_attn.in_proj_a", "ssm_alpha", false),
+    ("linear_attn.in_proj_b", "ssm_beta", false),
+    ("linear_attn.out_proj", "ssm_out", false),
+    ("mlp.gate_proj", "ffn_gate", false),
+    ("mlp.up_proj", "ffn_up", false),
+    ("mlp.down_proj", "ffn_down", false),
+];
+
 /// The architectures this can import, by the name the engine's GGUF uses.
 fn table(architecture: &str) -> Option<(&'static str, ModuleMap)> {
     match architecture {
         "gpt-oss" => Some(("gpt-oss", GPT_OSS)),
+        "qwen35" => Some(("qwen35", QWEN35)),
         _ => None,
     }
 }
@@ -98,11 +117,12 @@ struct Tensor {
 pub fn import_mlx_lora(
     dir: &Path,
     architecture: &str,
+    base: Option<&Path>,
     out: &Path,
 ) -> Result<Imported, ImportError> {
     let (arch, modules) = table(architecture).ok_or_else(|| {
         fail(format!(
-            "importing adapters for `{architecture}` is not supported yet; gpt-oss is"
+            "importing adapters for `{architecture}` is not supported yet; gpt-oss and qwen35 are"
         ))
     })?;
 
@@ -121,6 +141,16 @@ pub fn import_mlx_lora(
     let rank = config.lora_parameters.rank;
     let alpha = config.lora_parameters.scale * rank as f32;
 
+    // Qwen3.5's GGUF stores the linear-attention value heads in another order
+    // than the MLX weights the adapter was trained on; its head counts come
+    // from the base model the adapter will run on.
+    let layout = match arch {
+        "qwen35" => Some(ValueHeads::from_base(base.ok_or_else(|| {
+            fail("a qwen35 adapter needs --base <the GGUF it will run on>, for its head layout")
+        })?)?),
+        _ => None,
+    };
+
     let weights = dir.join("adapters.safetensors");
     let source = read_safetensors(&weights)?;
 
@@ -134,7 +164,10 @@ pub fn import_mlx_lora(
             .filter(|(_, half)| *half == "lora_a" || *half == "lora_b")
             .ok_or_else(|| fail(format!("`{name}` is not a LoRA tensor")))?;
         let rest = stem
-            .strip_prefix("model.layers.")
+            // A vision-language model keeps its text model under
+            // `language_model`; the adapter only ever touches that part.
+            .strip_prefix("language_model.model.layers.")
+            .or_else(|| stem.strip_prefix("model.layers."))
             .ok_or_else(|| fail(format!("`{name}` is not inside a transformer layer")))?;
         let (layer, module) = rest
             .split_once('.')
@@ -174,6 +207,10 @@ pub fn import_mlx_lora(
                 "`{name}` has rank {rank_axis}, but the adapter says {rank}"
             )));
         }
+        let tensor = match &layout {
+            Some(layout) => layout.reorder(gguf, half, tensor, &name)?,
+            None => tensor,
+        };
         layers.insert(layer);
         converted.insert(format!("blk.{layer}.{gguf}.weight.{half}"), tensor);
     }
@@ -199,6 +236,198 @@ pub fn import_mlx_lora(
         layers: layers.into_iter().collect(),
         trained_on: config.model,
     })
+}
+
+/// Qwen3.5's linear-attention value heads, as its GGUF lays them out.
+///
+/// MLX keeps each key head's value heads together (key head `g` owns value
+/// heads `g*r .. g*r + r`, with `r` value heads per key head). llama.cpp's
+/// converter stores them tiled instead: GGUF value head `i` is MLX value head
+/// `(i % k) * r + i / k` for `k` key heads. Measured on Qwen3.5-4B: rows
+/// matched at 0.995 correlation under this order and not without it, in
+/// `attn_qkv`'s value block, `attn_gate`, `ssm_alpha`, `ssm_beta` and
+/// `ssm_out`'s inputs. Query and key rows, full attention and the MLP are
+/// stored as MLX has them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ValueHeads {
+    key_heads: usize,
+    value_heads: usize,
+    key_dim: usize,
+    value_dim: usize,
+}
+
+impl ValueHeads {
+    fn from_base(base: &Path) -> Result<Self, ImportError> {
+        let meta = gguf_metadata(
+            base,
+            &[
+                "general.architecture",
+                "qwen35.ssm.group_count",
+                "qwen35.ssm.time_step_rank",
+                "qwen35.ssm.inner_size",
+                "qwen35.ssm.state_size",
+            ],
+        )?;
+        let get = |key: &str| {
+            meta.get(key)
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| fail(format!("{} has no {key}", base.display())))
+        };
+        if meta.get("general.architecture").map(String::as_str) != Some("qwen35") {
+            return Err(fail(format!("{} is not a qwen35 model", base.display())));
+        }
+        let key_heads = get("qwen35.ssm.group_count")?;
+        let value_heads = get("qwen35.ssm.time_step_rank")?;
+        let inner = get("qwen35.ssm.inner_size")?;
+        let key_dim = get("qwen35.ssm.state_size")?;
+        if value_heads % key_heads != 0 || inner % value_heads != 0 {
+            return Err(fail("the base model's head counts do not divide evenly"));
+        }
+        Ok(Self {
+            key_heads,
+            value_heads,
+            key_dim,
+            value_dim: inner / value_heads,
+        })
+    }
+
+    /// Where GGUF value head `i` comes from in MLX order.
+    fn source(&self, i: usize) -> usize {
+        let per_key = self.value_heads / self.key_heads;
+        (i % self.key_heads) * per_key + i / self.key_heads
+    }
+
+    /// Put one converted tensor (numpy layout: `lora_a` is `(r, in)`,
+    /// `lora_b` is `(out, r)`) into GGUF head order where it needs it.
+    fn reorder(
+        &self,
+        gguf: &str,
+        half: &str,
+        tensor: Tensor,
+        name: &str,
+    ) -> Result<Tensor, ImportError> {
+        let value_total = self.value_heads * self.value_dim;
+        let (axis, start, block, expected) = match (gguf, half) {
+            ("attn_qkv", "lora_b") => (
+                0,
+                2 * self.key_heads * self.key_dim,
+                self.value_dim,
+                2 * self.key_heads * self.key_dim + value_total,
+            ),
+            ("attn_gate", "lora_b") => (0, 0, self.value_dim, value_total),
+            ("ssm_alpha" | "ssm_beta", "lora_b") => (0, 0, 1, self.value_heads),
+            ("ssm_out", "lora_a") => (1, 0, self.value_dim, value_total),
+            _ => return Ok(tensor),
+        };
+        if tensor.shape[axis] != expected {
+            return Err(fail(format!(
+                "`{name}` has {} along its head axis, but the base model's layout needs {expected}",
+                tensor.shape[axis]
+            )));
+        }
+        let (rows, cols) = (tensor.shape[0], tensor.shape[1]);
+        let mut data = tensor.data.clone();
+        for head in 0..self.value_heads {
+            let from = start + self.source(head) * block;
+            let to = start + head * block;
+            for offset in 0..block {
+                if axis == 0 {
+                    let (src, dst) = ((from + offset) * cols, (to + offset) * cols);
+                    data[dst..dst + cols].copy_from_slice(&tensor.data[src..src + cols]);
+                } else {
+                    for row in 0..rows {
+                        data[row * cols + to + offset] = tensor.data[row * cols + from + offset];
+                    }
+                }
+            }
+        }
+        Ok(Tensor {
+            shape: tensor.shape,
+            data,
+        })
+    }
+}
+
+/// String and integer metadata from a GGUF header, for the keys asked for.
+/// Values are skipped without being kept, so a header with a large
+/// vocabulary costs a scan, not its size in memory.
+fn gguf_metadata(path: &Path, keys: &[&str]) -> Result<BTreeMap<String, String>, ImportError> {
+    use std::io::Read as _;
+    let file =
+        std::fs::File::open(path).map_err(|err| fail(format!("{}: {err}", path.display())))?;
+    let mut reader = std::io::BufReader::new(file);
+    let bad = || fail(format!("{} is not a readable GGUF file", path.display()));
+    let read = |len: usize,
+                reader: &mut std::io::BufReader<std::fs::File>|
+     -> Result<Vec<u8>, ImportError> {
+        let mut buf = vec![0u8; len];
+        reader.read_exact(&mut buf).map_err(|_| bad())?;
+        Ok(buf)
+    };
+    let u32_of = |bytes: Vec<u8>| u32::from_le_bytes(bytes[..4].try_into().unwrap_or_default());
+    let u64_of = |bytes: Vec<u8>| u64::from_le_bytes(bytes[..8].try_into().unwrap_or_default());
+    if read(4, &mut reader)? != b"GGUF" {
+        return Err(bad());
+    }
+    let _version = read(4, &mut reader)?;
+    let _tensors = read(8, &mut reader)?;
+    let count = u64_of(read(8, &mut reader)?);
+
+    fn scalar_size(kind: u32) -> Option<usize> {
+        match kind {
+            0 | 1 | 7 => Some(1),
+            2 | 3 => Some(2),
+            4..=6 => Some(4),
+            10..=12 => Some(8),
+            _ => None,
+        }
+    }
+    let mut found = BTreeMap::new();
+    for _ in 0..count {
+        let len = u64_of(read(8, &mut reader)?) as usize;
+        let key = String::from_utf8(read(len, &mut reader)?).map_err(|_| bad())?;
+        let kind = u32_of(read(4, &mut reader)?);
+        let wanted = keys.contains(&key.as_str());
+        match kind {
+            8 => {
+                let len = u64_of(read(8, &mut reader)?) as usize;
+                let value = read(len, &mut reader)?;
+                if wanted {
+                    found.insert(key, String::from_utf8_lossy(&value).into_owned());
+                }
+            }
+            9 => {
+                let inner = u32_of(read(4, &mut reader)?);
+                let items = u64_of(read(8, &mut reader)?);
+                for _ in 0..items {
+                    if inner == 8 {
+                        let len = u64_of(read(8, &mut reader)?) as usize;
+                        read(len, &mut reader)?;
+                    } else {
+                        read(scalar_size(inner).ok_or_else(bad)?, &mut reader)?;
+                    }
+                }
+            }
+            kind => {
+                let size = scalar_size(kind).ok_or_else(bad)?;
+                let bytes = read(size, &mut reader)?;
+                if wanted {
+                    let value = match kind {
+                        4 => u32_of(bytes) as u64,
+                        5 => u32_of(bytes) as i32 as u64,
+                        10 | 11 => u64_of(bytes),
+                        _ => continue,
+                    };
+                    found.insert(key, value.to_string());
+                }
+            }
+        }
+        if found.len() == keys.len() {
+            break;
+        }
+    }
+    Ok(found)
 }
 
 /// Swap the two axes of a matrix.
@@ -493,7 +722,7 @@ mod tests {
         let dir = scratch("ok");
         synthetic(&dir, None);
         let out = dir.join("c2.gguf");
-        let imported = import_mlx_lora(&dir, "gpt-oss", &out).unwrap();
+        let imported = import_mlx_lora(&dir, "gpt-oss", None, &out).unwrap();
         assert_eq!(imported.rank, 2);
         assert_eq!(imported.alpha, 20.0, "alpha / rank must equal MLX's scale");
         assert_eq!(imported.tensors, 8);
@@ -523,10 +752,120 @@ mod tests {
     }
 
     #[test]
+    fn qwen35_value_heads_move_to_the_gguf_order() {
+        // Two key heads, four value heads of two values each: MLX order is
+        // v0 v1 | v2 v3 (grouped by key head), GGUF order v0 v2 v1 v3.
+        let layout = ValueHeads {
+            key_heads: 2,
+            value_heads: 4,
+            key_dim: 1,
+            value_dim: 2,
+        };
+        assert_eq!(
+            (0..4).map(|i| layout.source(i)).collect::<Vec<_>>(),
+            [0, 2, 1, 3]
+        );
+
+        // attn_gate lora_b: (8 outputs, rank 1), row r holds value r.
+        let gate = Tensor {
+            shape: vec![8, 1],
+            data: (0..8).map(|v| v as f32).collect(),
+        };
+        let moved = layout.reorder("attn_gate", "lora_b", gate, "gate").unwrap();
+        assert_eq!(moved.data, [0.0, 1.0, 4.0, 5.0, 2.0, 3.0, 6.0, 7.0]);
+
+        // attn_qkv lora_b: q and k (two key heads each, four rows) stay; the
+        // value block moves.
+        let qkv = Tensor {
+            shape: vec![12, 1],
+            data: (0..12).map(|v| v as f32).collect(),
+        };
+        let moved = layout.reorder("attn_qkv", "lora_b", qkv, "qkv").unwrap();
+        assert_eq!(
+            moved.data,
+            [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 8.0, 9.0, 6.0, 7.0, 10.0, 11.0]
+        );
+
+        // ssm_out lora_a: (rank 1, 8 inputs); the inputs move.
+        let out = Tensor {
+            shape: vec![1, 8],
+            data: (0..8).map(|v| v as f32).collect(),
+        };
+        let moved = layout.reorder("ssm_out", "lora_a", out, "out").unwrap();
+        assert_eq!(moved.data, [0.0, 1.0, 4.0, 5.0, 2.0, 3.0, 6.0, 7.0]);
+
+        // Untouched: the MLP, and the other half of each pair.
+        let ffn = Tensor {
+            shape: vec![2, 3],
+            data: vec![1.0; 6],
+        };
+        assert_eq!(
+            layout.reorder("ffn_up", "lora_b", ffn, "ffn").unwrap().data,
+            vec![1.0; 6]
+        );
+
+        // A shape that does not fit the layout is refused.
+        let wrong = Tensor {
+            shape: vec![6, 1],
+            data: vec![0.0; 6],
+        };
+        assert!(
+            layout
+                .reorder("attn_gate", "lora_b", wrong, "gate")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_head_layout_is_read_from_the_base_models_header() {
+        let dir = scratch("base");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut file = b"GGUF".to_vec();
+        file.extend_from_slice(&3u32.to_le_bytes());
+        file.extend_from_slice(&0u64.to_le_bytes());
+        file.extend_from_slice(&7u64.to_le_bytes());
+        let string_kv = |file: &mut Vec<u8>, key: &str, value: &str| {
+            gguf_string(file, key);
+            file.extend_from_slice(&8u32.to_le_bytes());
+            gguf_string(file, value);
+        };
+        string_kv(&mut file, "general.architecture", "qwen35");
+        // An array to skip, as a tokenizer vocabulary would be.
+        gguf_string(&mut file, "tokenizer.ggml.tokens");
+        file.extend_from_slice(&9u32.to_le_bytes());
+        file.extend_from_slice(&8u32.to_le_bytes());
+        file.extend_from_slice(&2u64.to_le_bytes());
+        gguf_string(&mut file, "a");
+        gguf_string(&mut file, "bc");
+        for (key, value) in [
+            ("qwen35.ssm.group_count", 16u32),
+            ("qwen35.ssm.time_step_rank", 32),
+            ("qwen35.ssm.inner_size", 4096),
+            ("qwen35.ssm.state_size", 128),
+        ] {
+            gguf_string(&mut file, key);
+            file.extend_from_slice(&4u32.to_le_bytes());
+            file.extend_from_slice(&value.to_le_bytes());
+        }
+        let base = dir.join("base.gguf");
+        std::fs::write(&base, file).unwrap();
+        assert_eq!(
+            ValueHeads::from_base(&base).unwrap(),
+            ValueHeads {
+                key_heads: 16,
+                value_heads: 32,
+                key_dim: 128,
+                value_dim: 128
+            }
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn an_unknown_tensor_is_refused_rather_than_dropped() {
         let dir = scratch("unknown");
         synthetic(&dir, Some("model.layers.3.self_attn.sinks.lora_a"));
-        let err = import_mlx_lora(&dir, "gpt-oss", &dir.join("out.gguf")).unwrap_err();
+        let err = import_mlx_lora(&dir, "gpt-oss", None, &dir.join("out.gguf")).unwrap_err();
         assert!(err.0.contains("no counterpart"), "{err}");
         assert!(!dir.join("out.gguf").exists());
         std::fs::remove_dir_all(&dir).unwrap();
@@ -536,8 +875,8 @@ mod tests {
     fn an_unsupported_architecture_says_which_are() {
         let dir = scratch("arch");
         synthetic(&dir, None);
-        let err = import_mlx_lora(&dir, "llama", &dir.join("out.gguf")).unwrap_err();
-        assert!(err.0.contains("gpt-oss is"), "{err}");
+        let err = import_mlx_lora(&dir, "llama", None, &dir.join("out.gguf")).unwrap_err();
+        assert!(err.0.contains("gpt-oss and qwen35 are"), "{err}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

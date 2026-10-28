@@ -31,7 +31,7 @@ Requests still go through the gateway: point a registry provider at each model's
 
 ### Adapters trained with MLX
 
-`farhelm engine import-adapter --from <mlx-adapter-dir> --name <name>` converts an MLX-LM LoRA adapter (`adapter_config.json` and `adapters.safetensors`, F32) into the engine's GGUF adapter format under `adapters/`. Linear matrices are transposed, per-expert matrices are kept, and `alpha = scale * rank` so llama.cpp applies the same strength. Only gpt-oss is mapped so far; an adapter tensor with no counterpart in the base model is an error rather than being dropped. `farhelm engine add-adapter --to <model> --adapter <name>` loads it with that model's server, switched off, and prints its id.
+`farhelm engine import-adapter --from <mlx-adapter-dir> --name <name>` converts an MLX-LM LoRA adapter (`adapter_config.json` and `adapters.safetensors`, F32) into the engine's GGUF adapter format under `adapters/`. Linear matrices are transposed, per-expert matrices are kept, and `alpha = scale * rank` so llama.cpp applies the same strength. gpt-oss and Qwen3.5 (`--arch qwen35`) are mapped; an adapter tensor with no counterpart in the base model is an error rather than being dropped. A Qwen3.5 import also needs `--base <the GGUF it will run on>`: llama.cpp's converter stores the linear-attention value heads tiled where MLX groups them by key head, so the adapter's value-head rows (`attn_qkv`'s value block, `attn_gate`, `ssm_alpha`, `ssm_beta`) and `ssm_out`'s inputs are reordered to match, using the head counts in the base model's metadata. The order was measured on Qwen3.5-4B: dequantized rows matched at 0.995 correlation under it and not without it. `farhelm engine add-adapter --to <model> --adapter <name>` loads it with that model's server, switched off, and prints its id.
 
 ### Specialists
 
@@ -45,6 +45,8 @@ tools = true
 max_output_tokens = 8192
 adapters = [{ id = 0, scale = 1.0 }]
 ```
+
+A model may also carry fixed chat-template settings, sent with every request and merged over the caller's: `chat_template_kwargs = { enable_thinking = false }` deploys a Qwen3.5 adapter that was trained and benchmarked without thinking. Quote a table name that contains a dot (`[providers."engine-qwen3.5-4b"]`); unquoted, it is a nested table and the registry is invalid. Run `farhelm check` before restarting the runner after any change: an invalid registry stops it from starting.
 
 The gateway sends llama.cpp's `lora` field with those ids; the base model on the same server sends none and gets every adapter at scale 0. Ids must be distinct and below 64, scales from 0 to 4, and only `openai_compatible` providers may declare adapters. The ledger records the specialist, not just the base model (`local/<provider>/gpt-oss-20b+gpt-oss-c2`), so its spend and quality can be told apart.
 
