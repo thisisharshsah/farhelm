@@ -163,7 +163,12 @@ impl FrontDoor {
 
     /// Which model serves this request. See the module docs.
     fn model_for(&self, client: &Client, requested: &str) -> Result<Option<String>, DoorError> {
-        if !requested.is_empty() && self.models.iter().any(|model| model == requested) {
+        let declared = self
+            .app
+            .gateway
+            .as_ref()
+            .is_some_and(|gateway| gateway.client().declares(requested));
+        if !requested.is_empty() && declared {
             if !client.allows(requested) {
                 return Err(DoorError::new(
                     StatusCode::FORBIDDEN,
@@ -195,6 +200,22 @@ impl FrontDoor {
             ));
         }
         Ok(())
+    }
+
+    /// What the response says ran: exactly what the ledger records, and, when
+    /// the request used an alias, the alias too (`... (as companion)`), so a
+    /// client can tell its own name was served rather than a fallback.
+    fn reported(&self, ran: &str, model: Option<&str>) -> String {
+        let alias = model.filter(|name| {
+            self.app
+                .gateway
+                .as_ref()
+                .is_some_and(|gateway| gateway.client().alias_target(name).is_some())
+        });
+        match alias {
+            Some(alias) => format!("{ran} (as {alias})"),
+            None => ran.to_owned(),
+        }
     }
 
     /// Bill to the client, keep its cache to itself, use its model, and fill
@@ -245,8 +266,13 @@ async fn anthropic_messages(
     let max_tokens = body.max_tokens;
     let mut request = messages::translate(&headers, body)?;
     request.max_tokens = max_tokens;
+    let shown = model.clone();
     door.scope(&name, client, &mut request, model);
-    Ok(messages::answer(&door.app, request, stream).await?)
+    let door_ref = &door;
+    Ok(messages::answer(&door.app, request, stream, |ran| {
+        door_ref.reported(ran, shown.as_deref())
+    })
+    .await?)
 }
 
 /* ----------------------------------------------------------- OpenAI style */
@@ -461,6 +487,7 @@ async fn chat_completions(
     door.within_limit(&name, client)?;
     let model = door.model_for(client, &body.model)?;
     let mut request = translate_chat(&body)?;
+    let shown = model.clone();
     door.scope(&name, client, &mut request, model);
 
     messages::ensure_bucket(&door.app, &request.session_id)?;
@@ -518,6 +545,7 @@ async fn chat_completions(
     if let Some(reasoning) = &response.reasoning {
         message["reasoning_content"] = Value::String(reasoning.clone());
     }
+    let reported = door.reported(&response.model, shown.as_deref());
     let id = format!("chatcmpl-{}", farhelm_app::id::new_id());
     let created = farhelm_app::time::now_ms() / 1000;
     let prompt_tokens = response.usage.input_tokens
@@ -533,7 +561,7 @@ async fn chat_completions(
     if !body.stream {
         return Ok(Json(json!({
             "id": id, "object": "chat.completion", "created": created,
-            "model": response.model,
+            "model": reported,
             "choices": [{ "index": 0, "message": message, "finish_reason": finish_reason }],
             "usage": usage,
         }))
@@ -550,7 +578,7 @@ async fn chat_completions(
     let chunk = |delta: Value, finish: Value, usage: Value| {
         json!({
             "id": id, "object": "chat.completion.chunk", "created": created,
-            "model": response.model,
+            "model": reported,
             "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }],
             "usage": usage,
         })

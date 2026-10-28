@@ -63,9 +63,11 @@ SETTING UP
                      add-model --model <file.gguf> --alias <name>` adds a base
                      model with its own port; `serve` starts and supervises one
                      server per model. `engine import-adapter --from <mlx-dir>
-                     --name <name>` converts an MLX-trained LoRA adapter, and
-                     `engine add-adapter --to <model> --adapter <name>` loads
-                     it with that model. `engine status` shows all of it.
+                     --for <model> --name <adapter> [--version N]` converts an
+                     MLX-trained LoRA adapter to adapters/<model>/<adapter>-vN
+                     .gguf, and `engine add-adapter --to <model> --adapter
+                     <adapter> [--version N]` loads it with that model.
+                     `engine status` shows all of it.
                      A service restart (SIGTERM) leaves the servers running for
                      the next start to adopt; Ctrl-C or `engine stop` stops them.
     install-service  A unit file for this machine, with its paths filled in, and
@@ -75,6 +77,9 @@ RUNNING
     serve            Start the daemon: the API, the fleet, the gateway. --demo
                      runs against a seeded in-memory database with simulated
                      activity and writes nothing to disk.
+    models           The model registry: each model with its card, its routes
+                     and aliases, and its adapters (`model:adapter`) with every
+                     version's training and evaluation record.
     check            Validate the model registry (FARHELM_MODELS_CONFIG or
                      --models-config), engine.toml and clients.toml without
                      starting anything; exits non-zero on a problem. Run it
@@ -256,6 +261,7 @@ fn main() -> ExitCode {
         Some("engine") => engine_command(&flags, &args[1..]),
         Some("clients") => clients_command(&flags, &args[1..]),
         Some("check") => check_command(&flags, &args[1..]),
+        Some("models") => models_command(&args[1..]),
         Some("install-service") => install_service(&flags),
         // The two server halves. They were separate binaries; they are
         // subcommands so that everything this system does is reachable from the
@@ -1167,15 +1173,37 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
         println!("  kind = \"openai_compatible\"");
         println!("  base_url = \"http://127.0.0.1:{}/v1\"", model.port);
         println!("  data_location = \"local\"");
+        println!();
+        println!("  [models.\"{alias}\"]");
+        println!("  provider = \"engine-{alias}\"");
+        println!("  model = \"{alias}\"");
+        // Engine adapter entries are named `<adapter>-v<N>`; each version is
+        // listed under its adapter, and requests select `{alias}:<adapter>`.
+        let mut by_adapter: std::collections::BTreeMap<&str, Vec<(u32, usize)>> =
+            std::collections::BTreeMap::new();
         for (id, adapter) in model.adapters.iter().enumerate() {
+            if let Some((name, version)) = adapter
+                .name
+                .rsplit_once("-v")
+                .and_then(|(name, version)| Some((name, version.parse::<u32>().ok()?)))
+            {
+                by_adapter.entry(name).or_default().push((version, id));
+            }
+        }
+        for (name, versions) in by_adapter {
+            let current = versions
+                .iter()
+                .map(|(version, _)| *version)
+                .max()
+                .unwrap_or(1);
+            let list: Vec<String> = versions
+                .iter()
+                .map(|(version, id)| format!("{{ version = {version}, lora_id = {id} }}"))
+                .collect();
             println!();
-            println!(
-                "  [models.\"{}\"]  # specialist: {alias} with adapter {id}",
-                adapter.name
-            );
-            println!("  provider = \"engine-{alias}\"");
-            println!("  model = \"{alias}\"");
-            println!("  adapters = [{{ id = {id}, scale = 1.0 }}]");
+            println!("  [models.\"{alias}\".adapters.{name}]");
+            println!("  current = {current}");
+            println!("  versions = [{}]", list.join(", "));
         }
     };
 
@@ -1289,11 +1317,23 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
                 "say which MLX adapter to import: `farhelm engine import-adapter --from <dir> --name <name>`",
             )?;
             let name = value_of("--name").ok_or("give the adapter a --name")?;
-            if !valid_name(&name) {
-                return Err("an adapter name is ASCII letters, digits, '-', '_' or '.'".into());
+            let model = value_of("--for").ok_or("say which model it is for: --for <model>")?;
+            let version: u32 = value_of("--version")
+                .unwrap_or_else(|| "1".into())
+                .parse()
+                .ok()
+                .filter(|version| *version > 0)
+                .ok_or("--version is a whole number from 1")?;
+            if !valid_name(&name) || !valid_name(&model) {
+                return Err("model and adapter names are ASCII letters, digits, '-', '_' or '.'".into());
             }
             let arch = value_of("--arch").unwrap_or_else(|| "gpt-oss".into());
-            let out = home.join("adapters").join(format!("{name}.gguf"));
+            // adapters/<model>/<adapter>-v<N>.gguf: each model's adapters
+            // together, each version its own file.
+            let out = home
+                .join("adapters")
+                .join(&model)
+                .join(format!("{name}-v{version}.gguf"));
             let imported =
                 farhelm_runner::adapter_import::import_mlx_lora(
                 Path::new(&from),
@@ -1309,16 +1349,25 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
             );
             println!("  sha256     {}", engine::sha256_file(&out)?);
             println!();
-            println!("Attach it with `farhelm engine add-adapter --to <model> --adapter {name}`.");
+            println!(
+                "Attach it with `farhelm engine add-adapter --to {model} --adapter {name} --version {version}`."
+            );
             Ok(())
         }
         Some("add-adapter") => {
             let mut config = existing()?;
             let to = value_of("--to").ok_or("say which model it adapts: --to <model alias>")?;
-            let name = value_of("--adapter").ok_or("say which adapter: --adapter <name>")?;
-            let path = value_of("--path")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join("adapters").join(format!("{name}.gguf")));
+            let adapter = value_of("--adapter").ok_or("say which adapter: --adapter <name>")?;
+            let version: u32 = value_of("--version")
+                .unwrap_or_else(|| "1".into())
+                .parse()
+                .ok()
+                .filter(|version| *version > 0)
+                .ok_or("--version is a whole number from 1")?;
+            let name = format!("{adapter}-v{version}");
+            let path = value_of("--path").map(PathBuf::from).unwrap_or_else(|| {
+                home.join("adapters").join(&to).join(format!("{name}.gguf"))
+            });
             if !engine::is_gguf(&path) {
                 return Err(format!(
                     "{} is not a GGUF adapter; import it with `farhelm engine import-adapter`",
@@ -1494,6 +1543,82 @@ fn restart_in_place() {
     // No in-place exec on Windows: exit and let the service manager restart.
     eprintln!("  cloud      reachable again; exiting so the service restarts with the relay");
     std::process::exit(75);
+}
+
+/// `farhelm models`: the registry as people read it.
+fn models_command(args: &[String]) -> Fallible {
+    let path = args
+        .iter()
+        .position(|arg| arg == "--models-config")
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+        .or_else(|| farhelm_app::legacy::env_var("FARHELM_MODELS_CONFIG"))
+        .ok_or("no model registry selected; set FARHELM_MODELS_CONFIG or pass --models-config")?;
+    let client = farhelm_gateway::ProviderClient::from_path(Path::new(&path))?;
+    for model in client.summaries() {
+        println!("{}", model.name);
+        if let Some(card) = &model.card {
+            for (label, value) in [("owner", &card.owner), ("notes", &card.notes)] {
+                if let Some(value) = value {
+                    println!("  {label:<10} {value}");
+                }
+            }
+        }
+        println!("  served by  {} as {}", model.provider, model.upstream);
+        if !model.aliases.is_empty() {
+            println!("  aliases    {}", model.aliases.join(", "));
+        }
+        if !model.routes.is_empty() {
+            println!("  routes     {}", model.routes.join(", "));
+        }
+        for adapter in &model.adapters {
+            let config = &adapter.config;
+            println!(
+                "  adapter    {}:{} (current v{})",
+                model.name, adapter.name, config.current
+            );
+            for (label, value) in [("purpose", &config.purpose), ("owner", &config.owner)] {
+                if let Some(value) = value {
+                    println!("    {label:<10} {value}");
+                }
+            }
+            if let Some(template) = &config.chat_template_kwargs {
+                println!(
+                    "    {:<10} {}",
+                    "template",
+                    serde_json::Value::Object(template.clone())
+                );
+            }
+            if !adapter.aliases.is_empty() {
+                println!("    {:<10} {}", "aliases", adapter.aliases.join(", "));
+            }
+            for version in &config.versions {
+                println!(
+                    "    v{:<9} lora {} at scale {}{}",
+                    version.version,
+                    version.lora_id,
+                    version.scale,
+                    if version.version == config.current {
+                        "  (current)"
+                    } else {
+                        ""
+                    }
+                );
+                for (label, value) in [
+                    ("trained on", &version.trained_on),
+                    ("training", &version.training),
+                    ("evaluation", &version.evaluation),
+                    ("notes", &version.notes),
+                ] {
+                    if let Some(value) = value {
+                        println!("      {label:<10} {value}");
+                    }
+                }
+            }
+        }
+        println!();
+    }
+    Ok(())
 }
 
 /// `farhelm check`: every configuration the runner reads at start, checked

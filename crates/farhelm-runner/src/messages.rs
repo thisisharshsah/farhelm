@@ -468,7 +468,7 @@ pub async fn messages(
     let stream = body.stream;
     // Validated before the provider is looked at, so a bad request says so.
     let request = translate(&headers, body)?;
-    answer(&state, request, stream).await
+    answer(&state, request, stream, str::to_owned).await
 }
 
 /// Run a translated Messages request through the gateway and answer in the
@@ -477,6 +477,8 @@ pub(crate) async fn answer(
     state: &AppState,
     request: CompleteRequest,
     stream: bool,
+    // What to call the model that ran, given the ledger's name for it.
+    reported: impl FnOnce(&str) -> String,
 ) -> Result<Response, ApiError> {
     // The gateway attributes spend to a session, and a caller coming in over
     // the Messages API has no reason to have created one: it does not know
@@ -533,7 +535,7 @@ pub(crate) async fn answer(
         id: format!("msg_{}", farhelm_app::id::new_id()),
         kind: "message",
         role: "assistant",
-        model: response.model.clone(),
+        model: reported(&response.model),
         content,
         stop_reason: messages_stop_reason(response.stop_reason.as_deref(), has_tools),
         stop_sequence: None,

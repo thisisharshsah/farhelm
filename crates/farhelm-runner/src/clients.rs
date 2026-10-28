@@ -98,8 +98,15 @@ impl Client {
     }
 
     /// Whether this client may name `model`.
+    /// Whether this client may use `model`: listed exactly, or a pinned
+    /// version (`model:adapter@vN`) of a `model:adapter` it lists.
     pub fn allows(&self, model: &str) -> bool {
-        self.models.is_empty() || self.models.iter().any(|allowed| allowed == model)
+        let unpinned = model.split_once('@').map_or(model, |(name, _)| name);
+        self.models.is_empty()
+            || self
+                .models
+                .iter()
+                .any(|allowed| allowed == model || allowed == unpinned)
     }
 }
 
