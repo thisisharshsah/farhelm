@@ -2,6 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Runs from the checkout, on purpose: the live site follows this
+	  checkout's web/dist (see deploy/live-web.sh), and the control plane's
+	  accounts and signing key are the checkout's farhelm-cloud.db and
+	  farhelm-cloud.key. Pointing at any other database or key starts an empty
+	  workspace with a new key, which signs every device out.
+	-->
 	<key>KeepAlive</key>
 	<true/>
 	<key>Label</key>
@@ -10,18 +17,18 @@
 	<string>Background</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/harshsah/.farhelm/bin/farhelm</string>
+		<string>/Users/harshsah/Project/farhelm/target/release/farhelm</string>
 		<string>cloud</string>
 		<string>--bind</string>
 		<string>127.0.0.1</string>
 		<string>--port</string>
 		<string>7844</string>
 		<string>--db</string>
-		<string>/Users/harshsah/.farhelm/forge-cloud.db</string>
+		<string>/Users/harshsah/Project/farhelm/farhelm-cloud.db</string>
 		<string>--key</string>
-		<string>/Users/harshsah/.farhelm/forge-cloud.key</string>
+		<string>/Users/harshsah/Project/farhelm/farhelm-cloud.key</string>
 		<string>--app-dir</string>
-		<string>/Users/harshsah/.farhelm/web</string>
+		<string>/Users/harshsah/Project/farhelm/web/dist</string>
 		<string>--public-url</string>
 		<string>https://farhelm.aurovie.com</string>
 		<string>--relay-url</string>
@@ -36,6 +43,6 @@
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>WorkingDirectory</key>
-	<string>/Users/harshsah/.farhelm</string>
+	<string>/Users/harshsah/Project/farhelm</string>
 </dict>
 </plist>

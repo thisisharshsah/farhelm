@@ -23,6 +23,7 @@ cd "$ROOT"
 
 LIVE_URL="${LIVE_URL:-https://farhelm.aurovie.com}"
 STAGE="web/.dist-next"
+INSTALLED_WEB="${INSTALLED_WEB:-$HOME/.farhelm/web}"
 WATCH=(web/src web/public web/index.html packages/client-core/src)
 
 GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; OFF=$'\033[0m'
@@ -54,6 +55,18 @@ build_and_swap() {
   [[ -d web/dist ]] && mv web/dist web/.dist-old
   mv "$STAGE" web/dist
   rm -rf web/.dist-old
+
+  # The installed runner serves its own copy (`~/.farhelm/web`) at
+  # http://127.0.0.1:7842, which otherwise stays at whatever build the last
+  # install left there. Swapped the same way, so a local tab never loads half a
+  # build.
+  if [[ -d "$INSTALLED_WEB" ]]; then
+    rm -rf "$INSTALLED_WEB.next" "$INSTALLED_WEB.old"
+    cp -R web/dist "$INSTALLED_WEB.next"
+    mv "$INSTALLED_WEB" "$INSTALLED_WEB.old"
+    mv "$INSTALLED_WEB.next" "$INSTALLED_WEB"
+    rm -rf "$INSTALLED_WEB.old"
+  fi
 
   local built served
   built="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' web/dist/index.html | head -1)"

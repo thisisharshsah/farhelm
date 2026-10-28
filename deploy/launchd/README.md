@@ -1,12 +1,12 @@
 # Running it on macOS, across reboots
 
-Four `launchd` jobs. Everything lives under `~/.farhelm/`, so no `sudo` is
-needed and nothing depends on the repository still being checked out where it is
-today.
+Four `launchd` jobs, none needing `sudo`. The relay, runner and tunnel live
+under `~/.farhelm/`. The cloud job runs from the repository checkout, so moving
+or deleting the checkout stops the control plane.
 
 | Job | What it runs | Port |
 |---|---|---|
-| `com.farhelm.cloud` | control plane: accounts, plans, the PWA, the fleet connector | 7844 |
+| `com.farhelm.cloud` | control plane: accounts, plans, the PWA, the fleet connector. Runs from the repository checkout (its binary, `farhelm-cloud.db`, `farhelm-cloud.key` and `web/dist`) so `deploy/live-web.sh` updates the live site | 7844 |
 | `com.farhelm.relay` | ciphertext fan-out, gated by the control plane's key | 7843 |
 | `com.farhelm.runner` | the daemon, plus this machine's own connector | 7852 |
 | `com.farhelm.tunnel` | `cloudflared`, mapping all three to public hostnames | — |
