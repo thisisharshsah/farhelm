@@ -1,4 +1,4 @@
-import { getMigratingSync } from "@farhelm/client-core";
+import { getMigratingSync, isAgentSession } from "@farhelm/client-core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OutputLine, ServerEvent } from "@farhelm/client-core";
 import { sessionIdOf, useResource, useRoute } from "./hooks";
@@ -586,7 +586,7 @@ export default function App() {
                 : "On this machine only"
             }
             machineName={activeRunner?.name ?? (transport?.kind === "loopback" ? "Local runner" : null)}
-            sessions={fleet.data ? fleet.data.sessions.length : null}
+            sessions={fleet.data ? fleet.data.sessions.filter(isAgentSession).length : null}
           />
         ) : null}
         {route.view === "account" ? (

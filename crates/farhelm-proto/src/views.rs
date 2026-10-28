@@ -102,6 +102,23 @@ pub struct PlanProgress {
     pub current_title: Option<String>,
 }
 
+/// What a session is for, so a client lists agent work as agent work.
+///
+/// The runner also keeps sessions as accounts for spend that is not an agent:
+/// a project conversation's replies, and model calls made straight to the
+/// gateway's API. Those are real sessions with real budgets, but showing them
+/// as live agents made a quiet machine look busy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionKind {
+    /// A supervised agent: hooks, a terminal, or a native task.
+    Agent,
+    /// The budget account of a project conversation.
+    Conversation,
+    /// Model calls made directly to the gateway, outside any agent.
+    Api,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionView {
     pub id: String,
@@ -125,6 +142,7 @@ pub struct SessionView {
     /// The repository's default, so a client can say where the level came
     /// from and offer to change it for every session in the repository.
     pub repo_auto_approve: AutoApprove,
+    pub kind: SessionKind,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -226,6 +226,9 @@ store_port! {
 
     /// Record the repository default. Sessions with their own row keep it.
     fn set_repo_auto_approve(&self, repo_id: &str, level: AutoApprove, at_ms: i64) -> Result<()>;
+
+    /// Whether this session is the budget account of a project conversation.
+    fn is_conversation_session(&self, session_id: &str) -> Result<bool>;
     }
 }
 

@@ -27,6 +27,7 @@ import {
   CloudClient,
   RelayTransport,
   pct,
+  isAgentSession,
   usd,
   type CloudSession,
   type ConnectionState,
@@ -717,7 +718,7 @@ export default function App() {
                   />
                 ))}
 
-                {fleet.sessions.length === 0 ? (
+                {fleet.sessions.filter(isAgentSession).length === 0 ? (
                   <Text
                     style={{
                       color: palette.textMuted,
@@ -728,7 +729,7 @@ export default function App() {
                     No sessions yet. Start one on the runner.
                   </Text>
                 ) : (
-                  fleet.sessions.map((item) => (
+                  fleet.sessions.filter(isAgentSession).map((item) => (
                     <SessionRow
                       key={item.id}
                       session={item}

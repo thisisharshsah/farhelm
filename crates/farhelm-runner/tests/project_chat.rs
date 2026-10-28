@@ -131,6 +131,18 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
     let chat_id = detail["conversation"]["id"].as_str().unwrap().to_owned();
     assert_eq!(detail["conversation"]["repo_id"], "repo-1");
 
+    // Its budget account is a session, but it is listed as a conversation so
+    // clients do not show it as a live agent.
+    let (status, sessions) = server.get("/v1/sessions").await;
+    assert_eq!(status, StatusCode::OK);
+    let kinds: Vec<&str> = sessions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|session| session["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["conversation"]);
+
     // The claim is answered at once with the turn pending.
     let (status, reply) = server
         .post(

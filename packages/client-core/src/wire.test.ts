@@ -93,6 +93,7 @@ const SESSION_KEYS = [
   "auto_approve",
   "repo_auto_approve",
   "repo_id",
+  "kind",
 ] as const;
 
 const APPROVAL_KEYS = [

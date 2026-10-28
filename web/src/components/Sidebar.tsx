@@ -13,7 +13,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { agentName, since, type SessionView, type TaskView, type Workspace } from "@farhelm/client-core";
+import { agentName, isAgentSession, since, type SessionView, type TaskView, type Workspace } from "@farhelm/client-core";
 import type { Route } from "../hooks";
 import { Icon, type IconName } from "./Icon";
 import { SESSION_STATUS, StatusDot, TASK_STATUS } from "./status";
@@ -99,7 +99,9 @@ export function Sidebar({
       .sort((a, b) => (b.tasks[0]?.updated_at ?? 0) - (a.tasks[0]?.updated_at ?? 0));
   }, [tasks]);
 
-  const liveSessions = sessions.filter((session) => session.is_live);
+  // Agent work only: conversations and direct API calls keep sessions as
+  // budget accounts, and are not something to open from here.
+  const liveSessions = sessions.filter((session) => session.is_live && isAgentSession(session));
   const currentTask = route.view === "task" ? route.id : null;
   const currentSession = route.view === "session" || route.view === "cost" ? route.id : null;
 

@@ -26,8 +26,8 @@ use farhelm_app::time::now_ms;
 use farhelm_domain::{ApprovalRules as _, budget_view};
 use farhelm_proto::types::{Approval, Budget, Machine, Repo, Session, SessionStatus};
 use farhelm_proto::views::{
-    ApprovalView, DashboardView, FleetView, PlanProgress, PlanStepView, SessionDetail, SessionView,
-    SpendBucket, TaskDetail, TaskView, TierSlice,
+    ApprovalView, DashboardView, FleetView, PlanProgress, PlanStepView, SessionDetail, SessionKind,
+    SessionView, SpendBucket, TaskDetail, TaskView, TierSlice,
 };
 
 use crate::state::AppState;
@@ -186,6 +186,15 @@ pub fn view_of<S: Store>(
         None => None,
     };
 
+    // The gateway files direct API calls under a repository with no path;
+    // nothing else has one.
+    let kind = if repo.path.is_empty() {
+        SessionKind::Api
+    } else if lookups.store.is_conversation_session(&session.id)? {
+        SessionKind::Conversation
+    } else {
+        SessionKind::Agent
+    };
     Ok(SessionView {
         id: session.id.clone(),
         repo_id: session.repo_id.clone(),
@@ -204,6 +213,7 @@ pub fn view_of<S: Store>(
         awaiting_approval_id: lookups.awaiting_approval_id(&session.id),
         auto_approve: lookups.store.auto_approve(&session.id)?,
         repo_auto_approve: lookups.store.repo_auto_approve(&session.repo_id)?,
+        kind,
     })
 }
 

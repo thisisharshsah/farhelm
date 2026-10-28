@@ -888,6 +888,16 @@ impl SessionStore for SqliteStore {
             .map(|level| level.unwrap_or(AutoApprove::Off))
     }
 
+    fn is_conversation_session(&self, session_id: &str) -> Result<bool> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM chat_session WHERE session_id = ?1)",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .map_err(backend)
+    }
+
     fn repo_auto_approve(&self, repo_id: &str) -> Result<AutoApprove> {
         let conn = self.lock()?;
         let stored: Option<String> = conn

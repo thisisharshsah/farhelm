@@ -74,6 +74,9 @@ impl SessionStore for FakeStore {
     fn repo_auto_approve(&self, _repo_id: &str) -> Result<AutoApprove> {
         Ok(AutoApprove::Off)
     }
+    fn is_conversation_session(&self, _session_id: &str) -> Result<bool> {
+        Ok(false)
+    }
     fn set_repo_auto_approve(
         &self,
         _repo_id: &str,

@@ -381,6 +381,7 @@ async fn fleet_view_shape_is_stable() {
             "ended_at",
             "id",
             "is_live",
+            "kind",
             "machine_name",
             "plan",
             "repo_auto_approve",

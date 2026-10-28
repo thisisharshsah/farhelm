@@ -43,6 +43,18 @@ export type BudgetState = "ok" | "warn" | "stop";
  */
 export type AutoApprove = "off" | "low" | "medium";
 
+/**
+ * `agent` is supervised work. `conversation` and `api` are the budget accounts
+ * of a project conversation and of direct gateway calls: real spend, not a
+ * live agent.
+ */
+export type SessionKind = "agent" | "conversation" | "api";
+
+/** Whether a session is agent work, which is what session lists show. */
+export function isAgentSession(session: { kind?: SessionKind }): boolean {
+  return (session.kind ?? "agent") === "agent";
+}
+
 export interface BudgetView {
   cap_usd: number | null;
   spent_usd: number;
@@ -75,6 +87,11 @@ export interface SessionView {
   auto_approve: AutoApprove;
   /** The repository's default, so the UI can say where the level came from. */
   repo_auto_approve: AutoApprove;
+  /**
+   * What the session is for. Optional because a runner from before the field
+   * sends none, and every session it had was agent work as far as a list goes.
+   */
+  kind?: SessionKind;
 }
 
 export interface PlanStepView {

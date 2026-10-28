@@ -83,6 +83,7 @@ fn build() -> serde_json::Value {
         awaiting_approval_id: Some("approval-1".into()),
         auto_approve: farhelm_proto::types::AutoApprove::Off,
         repo_auto_approve: farhelm_proto::types::AutoApprove::Off,
+        kind: farhelm_proto::SessionKind::Agent,
     };
 
     let task = TaskView {

@@ -15,6 +15,7 @@
 import { useMemo } from "react";
 import {
   agentName,
+  isAgentSession,
   pct,
   since,
   usd,
@@ -44,7 +45,9 @@ export function Overview({
   onChanged: () => void;
 }) {
   const allTasks = useMemo(() => tasks ?? [], [tasks]);
-  const live = fleet.sessions.filter((session) => session.is_live);
+  // Conversations and direct API calls are budget accounts, not agents.
+  const agentSessions = fleet.sessions.filter(isAgentSession);
+  const live = agentSessions.filter((session) => session.is_live);
   const reviews = fleet.tasks_awaiting_review;
   const needsYou = fleet.pending_approvals.length + reviews.length;
   const working = allTasks.filter((task) => task.status === "running").length;
@@ -65,7 +68,7 @@ export function Overview({
     [allTasks],
   );
 
-  const empty = allTasks.length === 0 && fleet.sessions.length === 0;
+  const empty = allTasks.length === 0 && agentSessions.length === 0;
 
   return (
     <div className="page">
@@ -196,7 +199,7 @@ export function Overview({
               </button>
             ) : null}
           </div>
-          {fleet.sessions.length === 0 ? (
+          {agentSessions.length === 0 ? (
             <p className="panel-empty">
               No sessions yet. A supervised agent session shows up here, and waits
               for you before it runs anything risky.
@@ -215,7 +218,7 @@ export function Overview({
                   </tr>
                 </thead>
                 <tbody>
-                  {fleet.sessions.map((session) => (
+                  {agentSessions.map((session) => (
                     <tr key={session.id}>
                       <td className="col-task">
                         <button type="button" className="row-open" onClick={() => onNavigate(`/s/${session.id}`)}>
