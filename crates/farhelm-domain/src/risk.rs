@@ -58,7 +58,10 @@ pub const EXAMPLE_POLICY: &str = r#"# What counts as destructive on this machine
 # git reset --hard, git clean -fd, git filter-branch, DROP TABLE / TRUNCATE /
 # DELETE FROM, FLUSHALL, mkfs, dd if=, shred, chmod -R 777, chown -R, sudo,
 # curl | sh, npm publish, terraform destroy, kubectl delete, docker system
-# prune, and aws s3 rb. Check before adding; you may not need to.
+# prune, and aws s3 rb. They also cover running code fetched from a package
+# registry: npx, pnpm dlx, uvx, pipx run, and package installs such as
+# npm install, pnpm add, pip install and cargo install. Check before adding;
+# you may not need to.
 #
 # What they cannot know is your stack: the deploy script your team wrote, the
 # make target that drops the staging database.
@@ -185,6 +188,33 @@ const DESTRUCTIVE_PATTERNS: &[&str] = &[
     "curl | bash",
     "wget | sh",
     "wget | bash",
+    // Running code fetched from a package registry. Each of these downloads
+    // packages and runs them (or their install scripts) on the host, and a
+    // model can name a typosquat as easily as the real thing. Found when an
+    // auto-approved agent ran `npx vitest` and fetched an unpinned vitest.
+    // Allow the ones your workflow needs in the policy file.
+    "npx ",
+    "pnpx ",
+    "bunx ",
+    "uvx ",
+    "npm exec",
+    "pnpm dlx",
+    "yarn dlx",
+    "pipx run",
+    "uv tool run",
+    "npm install",
+    "npm i ",
+    "npm ci",
+    "pnpm install",
+    "pnpm i ",
+    "pnpm add",
+    "yarn add",
+    "bun add",
+    "pip install",
+    "pip3 install",
+    "cargo install",
+    "go install",
+    "gem install",
     // Package-manager global removals.
     "apt-get remove",
     "apt remove",
@@ -348,6 +378,38 @@ pub fn classify_with(policy: &Policy, tool: &str, payload: &str) -> Risk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn running_code_from_a_package_registry_needs_a_person() {
+        for command in [
+            "npx vitest run src/format.test.ts",
+            "cd packages/client-core && npx vitest run",
+            "pnpm dlx create-vite",
+            "uvx ruff check",
+            "pipx run black .",
+            "npm install left-pad",
+            "npm i lodash",
+            "pnpm add zod",
+            "pip install requests",
+            "cargo install ripgrep",
+        ] {
+            assert_eq!(classify("run", command), Risk::Destructive, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn running_the_projects_own_scripts_does_not() {
+        for command in [
+            "npm test",
+            "npm run build",
+            "pnpm -r test",
+            "pnpm --filter @farhelm/web test",
+            "cargo test -p farhelm-domain",
+            "vitest run",
+        ] {
+            assert_ne!(classify("run", command), Risk::Destructive, "{command:?}");
+        }
+    }
 
     #[test]
     fn recursive_deletion_is_destructive_in_any_flag_order() {
@@ -530,6 +592,19 @@ mod policy_tests {
 
     fn policy(toml_text: &str) -> Policy {
         toml::from_str(toml_text).expect("valid policy")
+    }
+
+    #[test]
+    fn a_policy_can_allow_one_registry_runner() {
+        let policy = policy(r#"allow = ["npx "]"#);
+        assert_ne!(
+            classify_with(&policy, "run", "npx tsc -b"),
+            Risk::Destructive
+        );
+        assert_eq!(
+            classify_with(&policy, "run", "pnpm dlx tsc"),
+            Risk::Destructive
+        );
     }
 
     #[test]
