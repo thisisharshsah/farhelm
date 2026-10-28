@@ -60,6 +60,81 @@ struct Config {
     routes: Routes,
     providers: BTreeMap<String, ProviderConfig>,
     models: BTreeMap<String, ModelConfig>,
+    /// Purpose names projects ask for (`think`, `companion`), each pointing
+    /// at a model or a model with one of its adapters (`gpt-oss-20b:fast`).
+    /// Moving an alias changes what serves a purpose without any project
+    /// changing its setting; the ledger records exactly what ran.
+    #[serde(default)]
+    aliases: BTreeMap<String, String>,
+}
+
+/// A name a request may use: `model`, `model:adapter`, or a pinned
+/// `model:adapter@vN`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModelRef<'a> {
+    model: &'a str,
+    adapter: Option<&'a str>,
+    version: Option<u32>,
+}
+
+fn parse_ref(name: &str) -> Option<ModelRef<'_>> {
+    let (model, rest) = match name.split_once(':') {
+        Some((model, rest)) => (model, Some(rest)),
+        None => (name, None),
+    };
+    let (adapter, version) = match rest {
+        None => (None, None),
+        Some(rest) => match rest.split_once('@') {
+            Some((adapter, version)) => (
+                Some(adapter),
+                Some(
+                    version
+                        .strip_prefix('v')?
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|v| *v > 0)?,
+                ),
+            ),
+            None => (Some(rest), None),
+        },
+    };
+    if model.is_empty() || adapter.is_some_and(str::is_empty) {
+        return None;
+    }
+    Some(ModelRef {
+        model,
+        adapter,
+        version,
+    })
+}
+
+impl Config {
+    /// The reference a name means: an alias's target, or the name itself.
+    fn reference<'a>(&'a self, name: &'a str) -> Option<ModelRef<'a>> {
+        let target = self.aliases.get(name).map_or(name, String::as_str);
+        let reference = parse_ref(target)?;
+        let model = self.models.get(reference.model)?;
+        if let Some(adapter) = reference.adapter {
+            let config = model.adapters.get(adapter)?;
+            let version = reference.version.unwrap_or(config.current);
+            config.versions.iter().find(|v| v.version == version)?;
+        }
+        Some(reference)
+    }
+
+    /// The exact model a name serves: `model` or `model:adapter@vN`.
+    fn canonical(&self, name: &str) -> Option<String> {
+        let reference = self.reference(name)?;
+        Some(match reference.adapter {
+            None => reference.model.to_owned(),
+            Some(adapter) => {
+                let version = reference
+                    .version
+                    .unwrap_or(self.models[reference.model].adapters[adapter].current);
+                format!("{}:{adapter}@v{version}", reference.model)
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,20 +172,98 @@ struct ModelConfig {
     tools: bool,
     max_output_tokens: u32,
     pricing: Option<Pricing>,
-    /// LoRA adapters the server applies to this model's requests: a
-    /// specialist is a base model plus these. Ids are the order the server
-    /// loaded them in (`farhelm engine status` lists them). Only for
-    /// `openai_compatible` servers that read llama.cpp's `lora` field.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    adapters: Vec<AdapterUse>,
-    /// Chat-template settings this model is deployed with, sent on every
-    /// request (llama.cpp's `chat_template_kwargs`): for example Qwen3.5's
-    /// `enable_thinking = false` for an adapter trained without thinking.
-    /// Only scalar values, and only for `openai_compatible` servers.
+    /// Chat-template settings sent with every request to this model
+    /// (llama.cpp's `chat_template_kwargs`). Scalars only; `openai_compatible`
+    /// servers only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chat_template_kwargs: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The adapters trained for this model, by name. A request selects one as
+    /// `model:adapter`; the model on its own uses none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    adapters: BTreeMap<String, AdapterConfig>,
+    /// What this model is and where it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    card: Option<ModelCard>,
 }
 
+/// A model's record: who made it, and the facts of this deployment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCard {
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+/// One adapter of a model, across its versions. `model:adapter` serves the
+/// `current` version; `model:adapter@vN` pins one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdapterConfig {
+    pub current: u32,
+    #[serde(default)]
+    pub purpose: Option<String>,
+    /// The project or person it was trained for.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// Template settings the adapter was trained with (Qwen3.5's
+    /// `enable_thinking = false`, say), merged over the model's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_template_kwargs: Option<serde_json::Map<String, serde_json::Value>>,
+    pub versions: Vec<AdapterVersion>,
+}
+
+/// One trained version: where the server holds it, and its record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdapterVersion {
+    pub version: u32,
+    /// Its position among the adapters the model's server loaded
+    /// (`farhelm engine status` lists them).
+    pub lora_id: u32,
+    #[serde(default = "full_scale")]
+    pub scale: f32,
+    /// The exact weights it was trained on, when that differs from what is
+    /// served (an MLX 4-bit base for a GGUF 8-bit deployment, say).
+    #[serde(default)]
+    pub trained_on: Option<String>,
+    #[serde(default)]
+    pub training: Option<String>,
+    #[serde(default)]
+    pub evaluation: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+fn full_scale() -> f32 {
+    1.0
+}
+
+/// One registry model, for listings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelSummary {
+    pub name: String,
+    pub provider: String,
+    pub upstream: String,
+    pub card: Option<ModelCard>,
+    pub adapters: Vec<AdapterSummary>,
+    /// Aliases pointing at the model on its own.
+    pub aliases: Vec<String>,
+    /// Which routing slots use it.
+    pub routes: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdapterSummary {
+    pub name: String,
+    pub config: AdapterConfig,
+    /// Aliases pointing at `model:adapter` (any version).
+    pub aliases: Vec<String>,
+}
+
+/// What a request switches on: an adapter's position on its server, and how
+/// strongly.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdapterUse {
@@ -180,7 +333,8 @@ impl ProviderClient {
                 "evaluation requires an explicit configured provider".into(),
             ));
         };
-        let (model, provider) = registry.resolve(alias)?;
+        let resolved = registry.resolve(alias)?;
+        let (model, provider) = (resolved.model, resolved.provider);
         // Deliberately exclude resolved credentials, endpoint strings and the
         // credential-sensitive cache fingerprint from the public report.
         let encoded = serde_json::to_vec(&registry.config)
@@ -239,11 +393,103 @@ impl ProviderClient {
 
     /// Every model alias the registry declares, in order. Empty for the
     /// legacy Anthropic client, which has no registry.
+    /// Every name a request may use, in order: each model, each
+    /// `model:adapter`, then the aliases. Pinned `@vN` forms are accepted
+    /// too but not listed. Empty for the legacy Anthropic client.
     pub fn model_aliases(&self) -> Vec<String> {
-        match self {
-            Self::Legacy(_) => Vec::new(),
-            Self::Configured(registry) => registry.config.models.keys().cloned().collect(),
+        let Self::Configured(registry) = self else {
+            return Vec::new();
+        };
+        let config = &registry.config;
+        let mut names = Vec::new();
+        for (name, model) in &config.models {
+            names.push(name.clone());
+            names.extend(
+                model
+                    .adapters
+                    .keys()
+                    .map(|adapter| format!("{name}:{adapter}")),
+            );
         }
+        names.extend(config.aliases.keys().cloned());
+        names
+    }
+
+    /// Whether the registry serves this name (model, `model:adapter`, a
+    /// pinned version, or an alias).
+    pub fn declares(&self, name: &str) -> bool {
+        match self {
+            Self::Legacy(_) => false,
+            Self::Configured(registry) => registry.config.reference(name).is_some(),
+        }
+    }
+
+    /// For an alias, what it points at now; `None` for any other name.
+    pub fn alias_target(&self, name: &str) -> Option<String> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Configured(registry) => registry.config.aliases.get(name).cloned(),
+        }
+    }
+
+    /// The exact model a name serves (`model` or `model:adapter@vN`).
+    pub fn canonical(&self, name: &str) -> Option<String> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Configured(registry) => registry.config.canonical(name),
+        }
+    }
+
+    /// Every registry model with its card, adapters, aliases and routes.
+    /// Empty for the legacy client.
+    pub fn summaries(&self) -> Vec<ModelSummary> {
+        let Self::Configured(registry) = self else {
+            return Vec::new();
+        };
+        let config = &registry.config;
+        let pointing_at = |model: &str, adapter: Option<&str>| -> Vec<String> {
+            config
+                .aliases
+                .iter()
+                .filter(|(_, target)| {
+                    parse_ref(target).is_some_and(|r| r.model == model && r.adapter == adapter)
+                })
+                .map(|(alias, _)| alias.clone())
+                .collect()
+        };
+        config
+            .models
+            .iter()
+            .map(|(name, model)| ModelSummary {
+                name: name.clone(),
+                provider: model.provider.clone(),
+                upstream: model.model.clone(),
+                card: model.card.clone(),
+                adapters: model
+                    .adapters
+                    .iter()
+                    .map(|(adapter, config)| AdapterSummary {
+                        name: adapter.clone(),
+                        config: config.clone(),
+                        aliases: pointing_at(name, Some(adapter)),
+                    })
+                    .collect(),
+                aliases: pointing_at(name, None),
+                routes: [
+                    ("small", &config.routes.small),
+                    ("large", &config.routes.large),
+                    ("frontier", &config.routes.frontier),
+                ]
+                .into_iter()
+                .filter(|(_, route)| {
+                    config
+                        .reference(route)
+                        .is_some_and(|r| r.model == name && r.adapter.is_none())
+                })
+                .map(|(slot, _)| slot)
+                .collect(),
+            })
+            .collect()
     }
 
     pub fn models(&self) -> Option<Models> {
@@ -308,14 +554,27 @@ impl ModelClient for ProviderClient {
     fn billing_rates(&self, model: &str) -> Option<TokenRates> {
         match self {
             Self::Legacy(client) => client.billing_rates(model),
-            Self::Configured(registry) => registry.rates.get(model).copied(),
+            Self::Configured(registry) => registry
+                .config
+                .reference(model)
+                .and_then(|reference| registry.rates.get(reference.model))
+                .copied(),
         }
     }
 
     fn cache_namespace(&self, model: &str) -> String {
         match self {
             Self::Legacy(client) => client.cache_namespace(model),
-            Self::Configured(registry) => format!("configured/{}/{model}", registry.fingerprint),
+            // The exact model and adapter version: an adapter's answers are not
+            // its model's, and an alias shares the cache of what it points at.
+            Self::Configured(registry) => format!(
+                "configured/{}/{}",
+                registry.fingerprint,
+                registry
+                    .config
+                    .canonical(model)
+                    .unwrap_or_else(|| model.to_owned())
+            ),
         }
     }
 }
@@ -402,40 +661,44 @@ impl ProviderRegistry {
                     "model {alias} max_output_tokens must be positive"
                 )));
             }
-            if !model.adapters.is_empty() {
-                if provider.kind != ProviderKind::OpenaiCompatible {
-                    return Err(ConfigError(format!(
-                        "model {alias} uses adapters, which only openai_compatible servers apply"
-                    )));
-                }
-                let mut ids = std::collections::BTreeSet::new();
-                for adapter in &model.adapters {
-                    if adapter.id >= 64
-                        || !ids.insert(adapter.id)
-                        || !adapter.scale.is_finite()
-                        || !(0.0..=4.0).contains(&adapter.scale)
+            let openai_compatible = provider.kind == ProviderKind::OpenaiCompatible;
+            check_template(
+                alias,
+                model.chat_template_kwargs.as_ref(),
+                openai_compatible,
+            )?;
+            if !model.adapters.is_empty() && !openai_compatible {
+                return Err(ConfigError(format!(
+                    "model {alias} has adapters, which only openai_compatible servers apply"
+                )));
+            }
+            let mut lora_ids = std::collections::BTreeSet::new();
+            for (name, adapter) in &model.adapters {
+                validate_identifier(name)?;
+                let label = format!("{alias}:{name}");
+                check_template(
+                    &label,
+                    adapter.chat_template_kwargs.as_ref(),
+                    openai_compatible,
+                )?;
+                let mut versions = std::collections::BTreeSet::new();
+                for version in &adapter.versions {
+                    if version.version == 0
+                        || !versions.insert(version.version)
+                        || version.lora_id >= 64
+                        || !lora_ids.insert(version.lora_id)
+                        || !version.scale.is_finite()
+                        || !(0.0..=4.0).contains(&version.scale)
                     {
                         return Err(ConfigError(format!(
-                            "model {alias} adapters need distinct ids below 64 and a scale from 0 to 4"
+                            "adapter {label}: versions need distinct numbers from 1, lora ids below 64 used once per model, and a scale from 0 to 4"
                         )));
                     }
                 }
-            }
-            if let Some(kwargs) = &model.chat_template_kwargs {
-                if provider.kind != ProviderKind::OpenaiCompatible {
+                if !versions.contains(&adapter.current) {
                     return Err(ConfigError(format!(
-                        "model {alias} sets chat_template_kwargs, which only openai_compatible servers read"
-                    )));
-                }
-                if kwargs.len() > 16
-                    || kwargs.iter().any(|(key, value)| {
-                        key.is_empty()
-                            || key.len() > 64
-                            || !(value.is_boolean() || value.is_number() || value.is_string())
-                    })
-                {
-                    return Err(ConfigError(format!(
-                        "model {alias} chat_template_kwargs must be at most 16 scalar settings"
+                        "adapter {label}: current version {} is not one of its versions",
+                        adapter.current
                     )));
                 }
             }
@@ -462,18 +725,36 @@ impl ProviderRegistry {
             };
             rates.insert(alias.clone(), rate);
         }
+        for (alias, target) in &config.aliases {
+            validate_identifier(alias)?;
+            if config.models.contains_key(alias) {
+                return Err(ConfigError(format!(
+                    "alias {alias} has the same name as a model"
+                )));
+            }
+            // An alias points at a model reference, never at another alias.
+            let ok = !config.aliases.contains_key(target)
+                && parse_ref(target)
+                    .is_some_and(|reference| config.models.contains_key(reference.model))
+                && config.reference(target).is_some();
+            if !ok {
+                return Err(ConfigError(format!(
+                    "alias {alias} must point at a model or model:adapter[@vN], and {target} is not one"
+                )));
+            }
+        }
         for alias in [
             &config.routes.small,
             &config.routes.large,
             &config.routes.frontier,
         ] {
-            if !config.models.contains_key(alias) {
+            let Some(reference) = config.reference(alias) else {
                 return Err(ConfigError(format!(
                     "route references unknown model alias {alias}"
                 )));
-            }
+            };
             if config.policy == DataPolicy::LocalOnly {
-                let model = &config.models[alias];
+                let model = &config.models[reference.model];
                 if config.providers[&model.provider].data_location != DataLocation::Local {
                     return Err(ConfigError(format!(
                         "local_only policy forbids cloud route {alias}"
@@ -495,11 +776,19 @@ impl ProviderRegistry {
         })
     }
 
-    fn resolve(&self, alias: &str) -> Result<(&ModelConfig, &ProviderConfig), DispatchError> {
-        let model =
-            self.config.models.get(alias).ok_or_else(|| {
-                DispatchError::Decode(format!("unconfigured model alias {alias}"))
-            })?;
+    /// What a name serves: the model, its server, and the adapter version a
+    /// request switches on, if any.
+    fn resolve(&self, name: &str) -> Result<Resolved<'_>, DispatchError> {
+        let reference = self
+            .config
+            .reference(name)
+            .ok_or_else(|| DispatchError::Decode(format!("unconfigured model alias {name}")))?;
+        // Names borrowed from the registry's own keys, not from the request.
+        let (key, model) = self
+            .config
+            .models
+            .get_key_value(reference.model)
+            .expect("reference() checked the model exists");
         let provider = &self.config.providers[&model.provider];
         if self.config.policy == DataPolicy::LocalOnly
             && provider.data_location != DataLocation::Local
@@ -508,15 +797,37 @@ impl ProviderRegistry {
                 "local_only policy forbids cloud inference".into(),
             ));
         }
-        Ok((model, provider))
+        let adapter = reference.adapter.map(|adapter_name| {
+            let (adapter_name, adapter) = model
+                .adapters
+                .get_key_value(adapter_name)
+                .expect("reference() checked the adapter exists");
+            let wanted = reference.version.unwrap_or(adapter.current);
+            let version = adapter
+                .versions
+                .iter()
+                .find(|version| version.version == wanted)
+                .expect("reference() checked the version exists");
+            (adapter_name.as_str(), adapter, version)
+        });
+        Ok(Resolved {
+            key: key.as_str(),
+            model,
+            provider,
+            adapter,
+        })
     }
 
     fn model_price(&self, alias: &str) -> Result<ModelPrice, DispatchError> {
-        self.resolve(alias)?;
-        let rates = self.rates[alias];
+        let resolved = self.resolve(alias)?;
+        let rates = self.rates[resolved.key];
+        let small = self
+            .config
+            .reference(&self.config.routes.small)
+            .map(|r| r.model);
         Ok(ModelPrice {
             model: "configured",
-            tier: if self.config.routes.small == alias {
+            tier: if small == Some(resolved.key) {
                 Tier::Small
             } else {
                 Tier::Large
@@ -529,7 +840,8 @@ impl ProviderRegistry {
     }
 
     async fn complete(&self, mut request: ModelRequest) -> Result<ModelResponse, DispatchError> {
-        let (model, provider) = self.resolve(&request.model)?;
+        let resolved = self.resolve(&request.model)?;
+        let model = resolved.model;
         let has_tools = !request.plan.tools.is_empty()
             || request
                 .plan
@@ -542,28 +854,81 @@ impl ProviderRegistry {
                 "selected model does not support tools".into(),
             ));
         }
-        let alias = std::mem::take(&mut request.model);
         request.model.clone_from(&model.model);
         request.max_tokens = request.max_tokens.min(model.max_output_tokens);
+        let (lora, template) = resolved.deployment();
         let mut response = self.clients[&model.provider]
-            .complete_with_deployment(
-                request,
-                &model.adapters,
-                model.chat_template_kwargs.as_ref(),
-            )
+            .complete_with_deployment(request, &lora, template.as_ref())
             .await?;
         // The server reports the base model either way; the ledger has to say
-        // which specialist answered, or its spend and quality cannot be told
-        // apart from the base model's.
-        if !model.adapters.is_empty() {
-            response.model = format!("{}+{alias}", response.model);
+        // which adapter version answered, or its spend and quality cannot be
+        // told apart from the model's.
+        if let Some((name, _, version)) = resolved.adapter {
+            response.model = format!("{}:{name}@v{}", response.model, version.version);
         }
-        response.model = match provider.data_location {
+        response.model = match resolved.provider.data_location {
             DataLocation::Local => format!("local/{}/{}", model.provider, response.model),
             DataLocation::Cloud => format!("{}/{}", model.provider, response.model),
         };
         Ok(response)
     }
+}
+
+/// A resolved name.
+struct Resolved<'a> {
+    key: &'a str,
+    model: &'a ModelConfig,
+    provider: &'a ProviderConfig,
+    adapter: Option<(&'a str, &'a AdapterConfig, &'a AdapterVersion)>,
+}
+
+impl Resolved<'_> {
+    /// The adapters to switch on and the template settings to send: the
+    /// model's, with the adapter's merged over them.
+    fn deployment(
+        &self,
+    ) -> (
+        Vec<AdapterUse>,
+        Option<serde_json::Map<String, serde_json::Value>>,
+    ) {
+        let mut template = self.model.chat_template_kwargs.clone().unwrap_or_default();
+        let mut lora = Vec::new();
+        if let Some((_, adapter, version)) = self.adapter {
+            lora.push(AdapterUse {
+                id: version.lora_id,
+                scale: version.scale,
+            });
+            for (key, value) in adapter.chat_template_kwargs.iter().flatten() {
+                template.insert(key.clone(), value.clone());
+            }
+        }
+        (lora, (!template.is_empty()).then_some(template))
+    }
+}
+
+fn check_template(
+    label: &str,
+    kwargs: Option<&serde_json::Map<String, serde_json::Value>>,
+    openai_compatible: bool,
+) -> Result<(), ConfigError> {
+    let Some(kwargs) = kwargs else { return Ok(()) };
+    if !openai_compatible {
+        return Err(ConfigError(format!(
+            "{label} sets chat_template_kwargs, which only openai_compatible servers read"
+        )));
+    }
+    if kwargs.len() > 16
+        || kwargs.iter().any(|(key, value)| {
+            key.is_empty()
+                || key.len() > 64
+                || !(value.is_boolean() || value.is_number() || value.is_string())
+        })
+    {
+        return Err(ConfigError(format!(
+            "{label} chat_template_kwargs must be at most 16 scalar settings"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_identifier(value: &str) -> Result<(), ConfigError> {
@@ -985,116 +1350,242 @@ cache_read_per_mtok = 0.5
         server.abort();
     }
 
-    #[tokio::test]
-    async fn a_specialist_switches_its_adapter_on_and_is_named_in_the_ledger() {
+    /// A model with one adapter in two versions, and aliases for each form,
+    /// served by the mock at `address`.
+    fn with_adapters(address: &str) -> String {
+        format!(
+            r#"
+version = 1
+policy = "local_only"
+[routes]
+small = "work"
+large = "work"
+frontier = "work"
+[providers.engine]
+kind = "openai_compatible"
+base_url = "http://{address}/v1"
+data_location = "local"
+[models.base-model]
+provider = "engine"
+model = "base-model"
+tools = true
+max_output_tokens = 512
+card = {{ owner = "Example Labs" }}
+[models.base-model.adapters.short]
+current = 2
+purpose = "brief answers"
+chat_template_kwargs = {{ enable_thinking = false }}
+versions = [
+  {{ version = 1, lora_id = 0 }},
+  {{ version = 2, lora_id = 1, scale = 0.5, evaluation = "beat v1" }},
+]
+[aliases]
+work = "base-model"
+quick = "base-model:short"
+pinned = "base-model:short@v1"
+# The shared `request` helper prices its request as `code`.
+code = "base-model"
+"#
+        )
+    }
+
+    async fn mock() -> (
+        std::net::SocketAddr,
+        Arc<Mutex<Vec<Value>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let saved = captured.clone();
         let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
             saved.lock().unwrap().push(body);
-            async { axum::Json(json!({"model":"gpt-oss-20b", "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}})) }
+            async { axum::Json(json!({"model":"base-model", "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}})) }
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let mut source =
-            local_config().replace("http://127.0.0.1:11434/v1", &format!("http://{address}/v1"));
-        source.push_str(
-            r#"
-[models.oss-c2]
-provider = "ollama"
-model = "gpt-oss-20b"
-tools = true
-max_output_tokens = 4096
-adapters = [{ id = 0, scale = 1.0 }]
-"#,
-        );
-        let client = load(&source).unwrap();
+        (address, captured, server)
+    }
 
-        let mut specialist = request(&client);
-        specialist.model = "oss-c2".into();
-        let response = client.complete(specialist).await.unwrap();
-        assert_eq!(response.model, "local/ollama/gpt-oss-20b+oss-c2");
-        // The base model on the same server sends no adapter at all.
-        client.complete(request(&client)).await.unwrap();
+    #[tokio::test]
+    async fn a_model_and_its_adapter_are_chosen_by_name_and_recorded_exactly() {
+        let (address, captured, server) = mock().await;
+        let client = load(&with_adapters(&address.to_string())).unwrap();
+        let ask = |name: &str| {
+            let mut asked = request(&client);
+            asked.model = name.into();
+            asked
+        };
+
+        // `model:adapter` serves the current version, with the adapter's
+        // template settings merged over the caller's.
+        let mut current = ask("base-model:short");
+        current.sampling.reasoning_effort = Some("low".into());
+        let response = client.complete(current).await.unwrap();
+        assert_eq!(response.model, "local/engine/base-model:short@v2");
+        // An alias, and a pinned version.
+        assert_eq!(
+            client.complete(ask("quick")).await.unwrap().model,
+            "local/engine/base-model:short@v2"
+        );
+        assert_eq!(
+            client.complete(ask("pinned")).await.unwrap().model,
+            "local/engine/base-model:short@v1"
+        );
+        assert_eq!(
+            client
+                .complete(ask("base-model:short@v1"))
+                .await
+                .unwrap()
+                .model,
+            "local/engine/base-model:short@v1"
+        );
+        // The model alone uses no adapter and no template.
+        assert_eq!(
+            client.complete(ask("work")).await.unwrap().model,
+            "local/engine/base-model"
+        );
 
         let bodies = captured.lock().unwrap();
-        assert_eq!(bodies[0]["model"], "gpt-oss-20b");
-        assert_eq!(bodies[0]["lora"], json!([{ "id": 0, "scale": 1.0 }]));
-        assert!(bodies[1].get("lora").is_none());
+        assert_eq!(bodies[0]["model"], "base-model");
+        assert_eq!(bodies[0]["lora"], json!([{ "id": 1, "scale": 0.5 }]));
+        assert_eq!(
+            bodies[0]["chat_template_kwargs"],
+            json!({ "enable_thinking": false, "reasoning_effort": "low" })
+        );
+        assert_eq!(bodies[2]["lora"], json!([{ "id": 0, "scale": 1.0 }]));
+        assert!(bodies[4].get("lora").is_none() && bodies[4].get("chat_template_kwargs").is_none());
+        drop(bodies);
+
+        // An alias shares the cache of exactly what it points at; versions do not.
+        assert_eq!(
+            client.cache_namespace("quick"),
+            client.cache_namespace("base-model:short@v2")
+        );
+        assert_ne!(
+            client.cache_namespace("quick"),
+            client.cache_namespace("pinned")
+        );
+        assert_ne!(
+            client.cache_namespace("quick"),
+            client.cache_namespace("work")
+        );
+
+        assert_eq!(
+            client.canonical("quick").as_deref(),
+            Some("base-model:short@v2")
+        );
+        assert_eq!(
+            client.alias_target("quick").as_deref(),
+            Some("base-model:short")
+        );
+        assert!(client.declares("base-model:short@v1") && !client.declares("base-model:short@v3"));
+        assert!(!client.declares("base-model:long") && !client.declares("other-model"));
+        assert!(
+            client
+                .model_aliases()
+                .contains(&"base-model:short".to_owned())
+        );
         server.abort();
     }
 
     #[test]
-    fn adapters_need_a_server_that_applies_them_and_sane_values() {
-        let with = |adapters: &str| {
-            let mut source = with_cloud(local_config()).replace(
-                "max_output_tokens = 1024\n",
-                &format!("max_output_tokens = 1024\nadapters = {adapters}\n"),
-            );
-            source.push('\n');
-            load(&source)
-        };
-        assert!(
-            with("[{ id = 0, scale = 1.0 }]")
-                .err()
-                .is_some_and(|err| err.0.contains("openai_compatible"))
-        );
-        let local = |adapters: &str| {
-            load(&local_config().replace(
-                "max_output_tokens = 4096\n",
-                &format!("max_output_tokens = 4096\nadapters = {adapters}\n"),
-            ))
-        };
-        assert!(local("[{ id = 0, scale = 1.0 }]").is_ok());
-        assert!(local("[{ id = 0, scale = 9.0 }]").is_err());
-        assert!(local("[{ id = 1, scale = 1.0 }, { id = 1, scale = 0.5 }]").is_err());
-        assert!(local("[{ id = 0, scale = 1.0, path = \"x\" }]").is_err());
+    fn summaries_list_each_models_adapters_and_aliases() {
+        let client = load(&with_adapters("127.0.0.1:9")).unwrap();
+        let summaries = client.summaries();
+        let model = &summaries[0];
+        assert_eq!(model.name, "base-model");
+        assert_eq!(model.routes, ["small", "large", "frontier"]);
+        assert_eq!(model.aliases, ["code", "work"]);
+        assert_eq!(model.adapters[0].name, "short");
+        assert_eq!(model.adapters[0].config.current, 2);
+        assert_eq!(model.adapters[0].aliases, ["pinned", "quick"]);
     }
 
-    #[tokio::test]
-    async fn a_models_template_settings_reach_the_server_with_the_callers() {
-        let captured = Arc::new(Mutex::new(Vec::new()));
-        let saved = captured.clone();
-        let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
-            saved.lock().unwrap().push(body);
-            async { axum::Json(json!({"model":"qwen3.5-4b", "choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}})) }
-        }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let mut source =
-            local_config().replace("http://127.0.0.1:11434/v1", &format!("http://{address}/v1"));
-        source.push_str(
-            r#"
-[models.crawl-4b]
-provider = "ollama"
-model = "qwen3.5-4b"
-tools = false
-max_output_tokens = 512
-adapters = [{ id = 0, scale = 1.0 }]
-chat_template_kwargs = { enable_thinking = false }
-"#,
+    #[test]
+    fn adapters_aliases_and_cards_are_held_to_their_rules() {
+        let good = with_adapters("127.0.0.1:9");
+        assert!(load(&good).is_ok());
+        let broken = |from: &str, to: &str| {
+            assert!(good.contains(from), "fixture lacks {from:?}");
+            load(&good.replace(from, to)).is_err()
+        };
+        // Aliases point at a real model reference, never another alias, and
+        // never take a model's name.
+        assert!(broken("quick = \"base-model:short\"", "quick = \"work\""));
+        assert!(broken(
+            "quick = \"base-model:short\"",
+            "quick = \"base-model:long\""
+        ));
+        assert!(broken(
+            "pinned = \"base-model:short@v1\"",
+            "pinned = \"base-model:short@v3\""
+        ));
+        assert!(broken(
+            "work = \"base-model\"",
+            "work = \"base-model\"\nbase-model = \"base-model\""
+        ));
+        // Versions: current must exist; lora ids once per model; sane scale.
+        assert!(broken("current = 2", "current = 3"));
+        assert!(broken(
+            "version = 2, lora_id = 1",
+            "version = 2, lora_id = 0"
+        ));
+        assert!(broken("scale = 0.5", "scale = 9.0"));
+        assert!(broken(
+            "version = 1, lora_id = 0",
+            "version = 0, lora_id = 0"
+        ));
+        // Unknown fields and nested template values are refused.
+        assert!(broken(
+            "purpose = \"brief answers\"",
+            "purpose = \"brief answers\"\ncolour = \"red\""
+        ));
+        assert!(broken(
+            "{ enable_thinking = false }",
+            "{ nested = { a = 1 } }"
+        ));
+        assert!(broken(
+            "card = { owner = \"Example Labs\" }",
+            "card = { kind = \"base\" }"
+        ));
+        // Only openai_compatible servers apply adapters.
+        let cloud = with_cloud(local_config()).replace(
+            "max_output_tokens = 1024\n",
+            "max_output_tokens = 1024\n[models.remote.adapters.x]\ncurrent = 1\nversions = [{ version = 1, lora_id = 0 }]\n",
         );
-        let client = load(&source).unwrap();
-        let mut asked = request(&client);
-        asked.model = "crawl-4b".into();
-        asked.sampling.reasoning_effort = Some("low".into());
-        client.complete(asked).await.unwrap();
-        let body = captured.lock().unwrap()[0].clone();
-        assert_eq!(
-            body["chat_template_kwargs"],
-            json!({ "enable_thinking": false, "reasoning_effort": "low" })
-        );
-        server.abort();
+        assert!(load(&cloud).is_err());
+    }
 
-        let nested = local_config().replace(
-            "max_output_tokens = 4096\n",
-            "max_output_tokens = 4096\nchat_template_kwargs = { nested = { a = 1 } }\n",
+    #[test]
+    fn a_name_parses_into_model_adapter_and_version() {
+        assert_eq!(
+            parse_ref("m"),
+            Some(ModelRef {
+                model: "m",
+                adapter: None,
+                version: None
+            })
         );
-        assert!(load(&nested).is_err());
+        assert_eq!(
+            parse_ref("m:a"),
+            Some(ModelRef {
+                model: "m",
+                adapter: Some("a"),
+                version: None
+            })
+        );
+        assert_eq!(
+            parse_ref("qwen3.5-4b:conscious@v2"),
+            Some(ModelRef {
+                model: "qwen3.5-4b",
+                adapter: Some("conscious"),
+                version: Some(2)
+            })
+        );
+        for bad in ["", ":a", "m:", "m:a@2", "m:a@v0", "m:a@vx"] {
+            assert_eq!(parse_ref(bad), None, "{bad:?}");
+        }
     }
 }

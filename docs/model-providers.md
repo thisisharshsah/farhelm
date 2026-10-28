@@ -33,22 +33,32 @@ Requests still go through the gateway: point a registry provider at each model's
 
 `farhelm engine import-adapter --from <mlx-adapter-dir> --name <name>` converts an MLX-LM LoRA adapter (`adapter_config.json` and `adapters.safetensors`, F32) into the engine's GGUF adapter format under `adapters/`. Linear matrices are transposed, per-expert matrices are kept, and `alpha = scale * rank` so llama.cpp applies the same strength. gpt-oss and Qwen3.5 (`--arch qwen35`) are mapped; an adapter tensor with no counterpart in the base model is an error rather than being dropped. A Qwen3.5 import also needs `--base <the GGUF it will run on>`: llama.cpp's converter stores the linear-attention value heads tiled where MLX groups them by key head, so the adapter's value-head rows (`attn_qkv`'s value block, `attn_gate`, `ssm_alpha`, `ssm_beta`) and `ssm_out`'s inputs are reordered to match, using the head counts in the base model's metadata. The order was measured on Qwen3.5-4B: dequantized rows matched at 0.995 correlation under it and not without it. `farhelm engine add-adapter --to <model> --adapter <name>` loads it with that model's server, switched off, and prints its id.
 
-### Specialists
+### Models, adapters and aliases
 
-A specialist is a base model plus adapters switched on for its requests only. Declare it in the registry as a model on the base model's provider, naming the adapter ids `farhelm engine status` lists:
+A registry model keeps its maker's name and lists the adapters trained for it. A request selects one as `model:adapter`, which serves the adapter's current version; `model:adapter@vN` pins a version. The model's name alone uses no adapter:
 
 ```toml
-[models.gpt-oss-c2]
+[models.gpt-oss-20b]
 provider = "engine-gpt-oss-20b"
 model = "gpt-oss-20b"
 tools = true
 max_output_tokens = 8192
-adapters = [{ id = 0, scale = 1.0 }]
+
+[models.gpt-oss-20b.adapters.fast]
+current = 1
+purpose = "reasoning with short thinking"
+versions = [{ version = 1, lora_id = 0, evaluation = "..." }]
+
+[aliases]
+think = "gpt-oss-20b"
+quick = "gpt-oss-20b:fast"
 ```
 
-A model may also carry fixed chat-template settings, sent with every request and merged over the caller's: `chat_template_kwargs = { enable_thinking = false }` deploys a Qwen3.5 adapter that was trained and benchmarked without thinking. Quote a table name that contains a dot (`[providers."engine-qwen3.5-4b"]`); unquoted, it is a nested table and the registry is invalid. Run `farhelm check` before restarting the runner after any change: an invalid registry stops it from starting.
+`lora_id` is the adapter's position among those the model's server loaded (`farhelm engine status` lists them); the gateway sends llama.cpp's `lora` field with it, and a request without an adapter sends none, so every adapter stays at scale 0. Lora ids are used once per model, scales run from 0 to 4, and only `openai_compatible` providers may declare adapters. An adapter may carry its own `chat_template_kwargs`, merged over the model's: Qwen3.5's `enable_thinking = false` for an adapter trained without thinking.
 
-The gateway sends llama.cpp's `lora` field with those ids; the base model on the same server sends none and gets every adapter at scale 0. Ids must be distinct and below 64, scales from 0 to 4, and only `openai_compatible` providers may declare adapters. The ledger records the specialist, not just the base model (`local/<provider>/gpt-oss-20b+gpt-oss-c2`), so its spend and quality can be told apart.
+Aliases are purpose names projects ask for. Each points at a model, `model:adapter` or a pinned version, never at another alias, and never takes a model's name. Moving an alias changes what serves a purpose without any project changing its setting. The ledger records exactly what ran (`local/engine-gpt-oss-20b/gpt-oss-20b:fast@v1`), an alias shares the response cache of what it points at, and the front door reports a request made by alias as `... (as quick)`. `farhelm models` lists every model with its card, adapters, versions, aliases and routes. Names are the owner's to choose (AGENTS.md).
+
+Quote a table name that contains a dot (`[models."qwen3.5-4b"]`, `[providers."engine-qwen3.5-4b"]`); unquoted, it is a nested table and the registry is invalid.
 
 ### Reasoning models and tool calls
 
