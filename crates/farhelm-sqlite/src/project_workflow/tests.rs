@@ -380,3 +380,39 @@ fn task_creation_validation_bounds_user_inputs_before_execution() {
         assert!(validate_start_task(&input).is_err());
     }
 }
+
+#[test]
+fn the_api_bookkeeping_repository_is_never_offered() {
+    // The gateway records direct API calls against a pathless repository.
+    // Offering it made the whole candidate list fail validation in the client.
+    let store = setup();
+    store
+        .upsert_repo(&Repo {
+            id: "repo-api-machine".into(),
+            machine_id: "machine".into(),
+            path: String::new(),
+            name: "API calls".into(),
+            budget_usd: None,
+        })
+        .unwrap();
+    let workspace = store.local_workspace_id().unwrap();
+    let scope = ProjectScope {
+        workspace_id: &workspace,
+        machine_id: "machine",
+        project_id: "project-a",
+    };
+    let offered: Vec<String> = store
+        .project_repository_candidates(scope, None, 50)
+        .unwrap()
+        .into_iter()
+        .map(|repo| repo.id)
+        .collect();
+    assert_eq!(offered, ["repo-b", "repo-a"]);
+    let listed: Vec<String> = store
+        .list_repos("machine")
+        .unwrap()
+        .into_iter()
+        .map(|repo| repo.id)
+        .collect();
+    assert_eq!(listed, ["repo-a", "repo-b"]);
+}

@@ -3,7 +3,7 @@ import {
   parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskView,
 } from "./projects.ts";
 import {
-  parseChatDetail, parseChatReply, parseProjectChat, parseProjectChatPage,
+  parseChatDetail, parseChatReply, parseProjectChatPage,
   type CreateProjectChatRequest, type SendChatMessageRequest,
 } from "./chat.ts";
 
@@ -456,11 +456,19 @@ async function request<T>(
   } catch (cause) {
     // Status 0 is "never reached the server", which the callers already render
     // as a connection problem rather than an API error.
+    // A change that timed out may still have been applied: the runner can be
+    // slow (a machine deep in swap) rather than gone. Saying it failed invites
+    // a second submit of something that already happened.
+    const changes = (init?.method ?? "GET").toUpperCase() !== "GET";
     throw new ApiError(
       abort.signal.aborted
-        ? `no answer from ${baseUrl || "the runner"} within ${
-            REQUEST_TIMEOUT_MS / 1000
-          }s. Is it running, and is the address right?`
+        ? changes
+          ? `no answer from ${baseUrl || "the runner"} within ${
+              REQUEST_TIMEOUT_MS / 1000
+            }s. It may still have done this; refresh to check before trying again.`
+          : `no answer from ${baseUrl || "the runner"} within ${
+              REQUEST_TIMEOUT_MS / 1000
+            }s. Is it running, and is the address right?`
         : cause instanceof Error
           ? cause.message
           : String(cause),
@@ -534,10 +542,12 @@ export function createRunnerApi(baseUrl = "") {
       return page;
     },
     createProjectConversation: async (id: string, input: CreateProjectChatRequest) => {
-      const chat = parseProjectChat(await request<unknown>(base, `${projectPath(id)}/conversations`, {
+      // The runner answers 201 with the new conversation's detail (no messages
+      // yet), not the bare conversation.
+      const chat = parseChatDetail(await request<unknown>(base, `${projectPath(id)}/conversations`, {
         method: "POST", body: JSON.stringify({ repo_id: input.repo_id, title: input.title,
           ...(input.budget_usd !== undefined ? { budget_usd: input.budget_usd } : {}) }),
-      }));
+      })).conversation;
       if (chat.project_id !== id || chat.repo_id !== input.repo_id) throw new Error("The runner returned a conversation for a different project or repository.");
       return chat;
     },

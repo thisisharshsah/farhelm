@@ -39,9 +39,12 @@ use crate::{
 
 pub(crate) fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/v1/projects/{id}/chats", get(list).post(create))
-        .route("/v1/projects/{id}/chats/{chat_id}", get(detail))
-        .route("/v1/projects/{id}/chats/{chat_id}/messages", post(send))
+        .route("/v1/projects/{id}/conversations", get(list).post(create))
+        .route("/v1/projects/{id}/conversations/{chat_id}", get(detail))
+        .route(
+            "/v1/projects/{id}/conversations/{chat_id}/messages",
+            post(send),
+        )
         .layer(DefaultBodyLimit::max(128 * 1024))
 }
 

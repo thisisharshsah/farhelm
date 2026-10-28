@@ -1771,3 +1771,37 @@ svg.is-open {
   max-width: 62rem;
   margin: 0 auto var(--s-3);
 }
+
+/* --------------------------------------------------------- project page */
+
+/* `.btn` grows to fill its row by default; on the project page that turned a
+   "Refresh" beside a heading into a bar half the card wide. */
+.project-workflow .btn,
+.project-chat .chart-title .btn {
+  flex: none;
+  padding-inline: var(--s-3);
+}
+
+.project-workflow .chart-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.project-workflow .chart-title h2 {
+  flex: 1;
+  margin: 0;
+}
+
+.project-workflow .chart-title .btn {
+  min-height: 30px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.project-workflow .chart-title .btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}

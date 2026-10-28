@@ -38,8 +38,10 @@ impl ProjectWorkflowStore for SqliteStore {
         let conn = self.lock()?;
         let limit = i64::try_from(limit).map_err(|error| StoreError::Backend(Box::new(error)))?;
         let mut stmt = conn.prepare(
+            // A repository with no path is the gateway's bookkeeping row for
+            // direct API calls; nothing can be attached to or run in it.
             "SELECT r.id,r.machine_id,r.path,r.name,r.budget_usd FROM repo r
-             WHERE r.machine_id=?3 AND EXISTS (SELECT 1 FROM project WHERE id=?1 AND workspace_id=?2)
+             WHERE r.machine_id=?3 AND r.path <> '' AND EXISTS (SELECT 1 FROM project WHERE id=?1 AND workspace_id=?2)
                AND (?4 IS NULL OR r.id<?4) ORDER BY r.id DESC LIMIT ?5"
         ).map_err(backend)?;
         stmt.query_map(

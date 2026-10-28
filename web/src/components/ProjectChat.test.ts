@@ -85,3 +85,28 @@ it("starts a task from a reply only after the prompt is confirmed", async () => 
   expect(startProjectTask).toHaveBeenCalledExactlyOnceWith("p", { repo_id: "repo-1", prompt: "Cap it at 30 seconds and add a test." });
   expect(onTaskStarted).toHaveBeenCalledExactlyOnceWith(task);
 });
+
+it("retries a send that timed out with the same request id, and re-reads the conversation", async () => {
+  const load = vi.fn().mockResolvedValue(detail(null, { messages: [] }));
+  const sendProjectMessage = vi.fn()
+    .mockRejectedValueOnce(new Error("no answer from the runner within 10s. It may still have done this; refresh to check before trying again."))
+    .mockResolvedValue({ detail: detail("pending"), turn: turn("pending") });
+  await render(runner(load, { sendProjectMessage }));
+  const box = host.querySelector<HTMLTextAreaElement>('[aria-label="Message"]')!;
+  const form = box.closest("form")!;
+  const write = async (value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, value);
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  await write("Cap the backoff?");
+  await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(load.mock.calls.length).toBeGreaterThanOrEqual(2);
+  await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+  expect(sendProjectMessage).toHaveBeenCalledTimes(2);
+  const first = sendProjectMessage.mock.calls[0]![2].request_id;
+  const second = sendProjectMessage.mock.calls[1]![2].request_id;
+  expect(second).toBe(first);
+});

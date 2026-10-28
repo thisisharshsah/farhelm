@@ -229,6 +229,10 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
   const [revision, setRevision] = useState(0);
   const inFlight = useRef(false);
   const alive = useRef(true);
+  // The id of a send whose outcome is unknown. Retrying the same text reuses
+  // it, so a send that timed out but landed is replayed by the runner rather
+  // than posted twice.
+  const unsettled = useRef<{ content: string; id: string } | null>(null);
   useEffect(() => () => { alive.current = false; }, []);
 
   // Load, then keep re-reading while a reply is pending. Bounded: a turn that
@@ -259,7 +263,7 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
   const pending = turn?.status === "pending";
   const lastUser = [...(detail?.messages ?? [])].reverse().find((item) => item.role === "user") ?? null;
 
-  const send = async (content: string) => {
+  const send = async (content: string, fresh = false) => {
     const value = content.trim();
     if (!value || inFlight.current || pending) return;
     inFlight.current = true;
@@ -268,13 +272,20 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
     try {
       // A fresh id for every deliberate send, including a resend after an
       // interruption: the runner replays a reused id instead of answering it.
-      const reply = await transport.sendProjectMessage(projectId, conversation.id, { content: value, request_id: requestId() });
+      // The one exception is retrying a send that may already have landed.
+      const id = !fresh && unsettled.current?.content === value ? unsettled.current.id : requestId();
+      unsettled.current = { content: value, id };
+      const reply = await transport.sendProjectMessage(projectId, conversation.id, { content: value, request_id: id });
+      unsettled.current = null;
       if (!alive.current) return;
       setDetail(reply.detail);
       setText("");
       setRevision((current) => current + 1);
     } catch (cause) {
-      if (alive.current) setSendError(message(cause));
+      if (!alive.current) return;
+      setSendError(message(cause));
+      // Read the conversation again: the message may be there after all.
+      setRevision((current) => current + 1);
     } finally {
       inFlight.current = false;
       if (alive.current) setSending(false);
@@ -322,7 +333,7 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
           <p className="notice" role="alert">
             The runner restarted before it replied.
             {lastUser ? (
-              <button className="btn btn-small" disabled={sending} onClick={() => void send(lastUser.content)}>
+              <button className="btn btn-small" disabled={sending} onClick={() => void send(lastUser.content, true)}>
                 Send again
               </button>
             ) : null}

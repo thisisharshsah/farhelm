@@ -109,7 +109,7 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
     // A conversation needs an attached repository: refused before, created after.
     let (status, _) = server
         .post(
-            &format!("/v1/projects/{project_id}/chats"),
+            &format!("/v1/projects/{project_id}/conversations"),
             json!({ "repo_id": "repo-1", "title": "Retry policy" }),
         )
         .await;
@@ -123,7 +123,7 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
     assert_eq!(status, StatusCode::CREATED);
     let (status, detail) = server
         .post(
-            &format!("/v1/projects/{project_id}/chats"),
+            &format!("/v1/projects/{project_id}/conversations"),
             json!({ "repo_id": "repo-1", "title": "Retry policy", "budget_usd": 0.5 }),
         )
         .await;
@@ -134,7 +134,7 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
     // The claim is answered at once with the turn pending.
     let (status, reply) = server
         .post(
-            &format!("/v1/projects/{project_id}/chats/{chat_id}/messages"),
+            &format!("/v1/projects/{project_id}/conversations/{chat_id}/messages"),
             json!({ "content": "Why does the retry loop spin?", "request_id": "req-1" }),
         )
         .await;
@@ -146,7 +146,9 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
     let mut settled = None;
     for _ in 0..100 {
         let (_, detail) = server
-            .get(&format!("/v1/projects/{project_id}/chats/{chat_id}"))
+            .get(&format!(
+                "/v1/projects/{project_id}/conversations/{chat_id}"
+            ))
             .await;
         if detail["latest_turn"]["status"] != "pending" {
             settled = Some(detail);
@@ -169,7 +171,7 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
     // A resend replays the recorded failure; the same id with other words is refused.
     let (status, replay) = server
         .post(
-            &format!("/v1/projects/{project_id}/chats/{chat_id}/messages"),
+            &format!("/v1/projects/{project_id}/conversations/{chat_id}/messages"),
             json!({ "content": "Why does the retry loop spin?", "request_id": "req-1" }),
         )
         .await;
@@ -177,7 +179,7 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
     assert_eq!(replay["turn"]["status"], "failed");
     let (status, _) = server
         .post(
-            &format!("/v1/projects/{project_id}/chats/{chat_id}/messages"),
+            &format!("/v1/projects/{project_id}/conversations/{chat_id}/messages"),
             json!({ "content": "Something else", "request_id": "req-1" }),
         )
         .await;
@@ -185,11 +187,11 @@ async fn a_message_is_claimed_answered_truthfully_and_replayed() {
 
     // Listing and an unknown project.
     let (status, page) = server
-        .get(&format!("/v1/projects/{project_id}/chats?limit=10"))
+        .get(&format!("/v1/projects/{project_id}/conversations?limit=10"))
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(page["conversations"].as_array().unwrap().len(), 1);
-    let (status, _) = server.get("/v1/projects/nope/chats").await;
+    let (status, _) = server.get("/v1/projects/nope/conversations").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     server.stop().await;

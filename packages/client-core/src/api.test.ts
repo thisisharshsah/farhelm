@@ -39,6 +39,26 @@ describe("a runner that does not answer", () => {
     await assertion;
   });
 
+  it("does not call a change that timed out a failure", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+          );
+        }),
+    );
+
+    const api = createRunnerApi("http://127.0.0.1:7842");
+    const pending = api.createProject({ name: "Payments", description: "" });
+    const assertion = expect(pending).rejects.toThrow(/may still have done this; refresh to check/);
+
+    await vi.advanceTimersByTimeAsync(11_000);
+    await assertion;
+  });
+
   it("names the address, so a typo is visible without a debugger", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
@@ -97,5 +117,26 @@ describe("a runner that does not answer", () => {
 
     expect(error.status).toBe(404);
     expect(error.message).toBe("session not found");
+  });
+});
+
+describe("project conversations", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads the detail the runner answers a new conversation with", async () => {
+    // The runner's 201 body, as it serialises `ChatDetail`: the conversation
+    // sits under `conversation`, with no messages and no turn yet.
+    const conversation = {
+      id: "chat-1", project_id: "project-1", repo_id: "repo-1",
+      title: "Cover pct()", created_at: 1, updated_at: 1,
+    };
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(new Response(JSON.stringify({ conversation, messages: [] }), { status: 201 })),
+    );
+
+    const created = await createRunnerApi("").createProjectConversation("project-1", {
+      repo_id: "repo-1", title: "Cover pct()",
+    });
+    expect(created).toEqual(conversation);
   });
 });

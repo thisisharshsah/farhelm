@@ -22,10 +22,10 @@ A project can hold text-only conversations about one attached repository. Each c
 
 | Request | Result |
 | --- | --- |
-| `GET /v1/projects/{id}/chats?limit=50&after=<cursor>` | Bounded conversation page, newest first. |
-| `POST /v1/projects/{id}/chats` | `{"repo_id","title","budget_usd"?}` → 201 with the conversation detail. The repository must be attached. |
-| `GET /v1/projects/{id}/chats/{chat_id}` | Conversation, messages and the latest reply attempt. |
-| `POST /v1/projects/{id}/chats/{chat_id}/messages` | `{"content","request_id"}` → 200 with the turn `pending`; the reply is composed detached. Read the conversation again to see it settle. |
+| `GET /v1/projects/{id}/conversations?limit=50&after=<cursor>` | Bounded conversation page, newest first. |
+| `POST /v1/projects/{id}/conversations` | `{"repo_id","title","budget_usd"?}` → 201 with the conversation detail. The repository must be attached. |
+| `GET /v1/projects/{id}/conversations/{chat_id}` | Conversation, messages and the latest reply attempt. |
+| `POST /v1/projects/{id}/conversations/{chat_id}/messages` | `{"content","request_id"}` → 200 with the turn `pending`; the reply is composed detached. Read the conversation again to see it settle. |
 
 Sending a message claims a durable turn before any inference runs. A resend with the same `request_id` and text replays the recorded outcome instead of asking twice; the same id with different text is a 409. Only one reply can be pending per conversation. A reply that fails records why (`failed` with an error), and one that was pending when the runner stopped is marked `interrupted` at the next start and never retried on its own: send a new request. History handed to the model contains completed turns only; the transcript keeps everything. A conversation holds at most 100 messages or 256 KiB; start another when it fills. Without a configured model provider every reply fails with that reason rather than hanging.
 

@@ -743,8 +743,10 @@ impl FleetStore for SqliteStore {
         let conn = self.lock()?;
         let mut stmt = conn
             .prepare(
+                // Registered repositories only: the pathless row that
+                // accounts direct API calls is not a place to start work.
                 "SELECT id, machine_id, path, name, budget_usd FROM repo
-                 WHERE machine_id = ?1
+                 WHERE machine_id = ?1 AND path <> ''
                  ORDER BY name ASC, id ASC LIMIT 100",
             )
             .map_err(backend)?;
