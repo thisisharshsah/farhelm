@@ -658,6 +658,9 @@ async fn serve_async(flags: Flags) -> Fallible {
     // Awaited rather than spawned: which relay to dial and which channel to
     // publish on are the control plane's answers, and starting the link on a
     // guess would mean publishing into silence until the first heartbeat landed.
+    // Set when enrolment failed only because the control plane was unreachable,
+    // typically at boot, before it or its tunnel is up. See `rejoin_cloud`.
+    let mut rejoin: Option<farhelm_runner::cloud::CloudConfig> = None;
     let cloud_session = match cloud_config_or_ask(&flags).await {
         Some(config) => {
             match farhelm_runner::cloud::enroll_with_retry(&config, identity.public_key().as_str())
@@ -682,7 +685,14 @@ async fn serve_async(flags: Flags) -> Fallible {
                     // website is down is worse than one that serves loopback and
                     // says why.
                     eprintln!("  cloud      {err}");
-                    eprintln!("  cloud      continuing on loopback only");
+                    if matches!(err, farhelm_runner::cloud::CloudError::Unreachable(_)) {
+                        eprintln!(
+                            "  cloud      serving loopback, still trying to reach the control plane"
+                        );
+                        rejoin = Some(config);
+                    } else {
+                        eprintln!("  cloud      continuing on loopback only");
+                    }
                     None
                 }
             }
@@ -922,12 +932,101 @@ async fn serve_async(flags: Flags) -> Fallible {
         }
     }
 
+    if let Some(config) = rejoin {
+        tokio::spawn(rejoin_cloud(
+            config,
+            identity.public_key().as_str().to_owned(),
+            Arc::clone(&state),
+        ));
+    }
+
     // Outbound-only is the security posture (§6); binding to loopback keeps the
     // runner off the network even before the relay exists.
     axum::serve(listener, app_router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+/// Keep trying to enrol after a startup that could not reach the control plane,
+/// then restart this process in place so it comes up with the relay.
+///
+/// The relay URL and channel are read once at startup, so the only way to pick
+/// them up is a fresh start. Without this, a runner that booted before the
+/// control plane (or its tunnel) stayed loopback-only until someone restarted
+/// it by hand, and every remote device saw "cannot reach the runner".
+///
+/// The restart waits for a quiet moment: no task drafting and no live session
+/// in a terminal this process owns,
+/// so nothing in progress is cut off. `exec` keeps the process id, so a
+/// service manager sees the same job carry on.
+async fn rejoin_cloud(
+    config: farhelm_runner::cloud::CloudConfig,
+    public_key: String,
+    state: Arc<AppState>,
+) {
+    use farhelm_runner::cloud::{CloudError, enroll};
+    let mut backoff = Duration::from_secs(15);
+    loop {
+        tokio::time::sleep(backoff).await;
+        match enroll(&config, &public_key).await {
+            Ok(_) => break,
+            Err(CloudError::Refused(why)) => {
+                eprintln!("  cloud      enrolment refused: {why}; staying on loopback");
+                return;
+            }
+            Err(_) => backoff = (backoff * 2).min(Duration::from_secs(120)),
+        }
+    }
+    eprintln!("  cloud      reachable again; restarting to connect the relay");
+    loop {
+        let busy = state
+            .running_tasks
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0
+            || state.store.list_sessions().map_or(true, |sessions| {
+                // Only sessions whose terminal this process owns end with it.
+                // Hook-attached agents (no pane) run on their own and simply
+                // reconnect, so they must not hold the restart back forever.
+                sessions.iter().any(|session| {
+                    session.tmux_target.is_some()
+                        && matches!(
+                            session.status,
+                            SessionStatus::Running
+                                | SessionStatus::AwaitingApproval
+                                | SessionStatus::Paused
+                        )
+                })
+            });
+        if !busy {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+    restart_in_place();
+}
+
+#[cfg(unix)]
+fn restart_in_place() {
+    use std::os::unix::process::CommandExt;
+    let Ok(exe) = std::env::current_exe() else {
+        eprintln!(
+            "  cloud      cannot locate this executable; restart farhelm to connect the relay"
+        );
+        return;
+    };
+    // Only returns on failure.
+    let err = std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .exec();
+    eprintln!("  cloud      restart failed ({err}); restart farhelm to connect the relay");
+}
+
+#[cfg(not(unix))]
+fn restart_in_place() {
+    // No in-place exec on Windows: exit and let the service manager restart.
+    eprintln!("  cloud      reachable again; exiting so the service restarts with the relay");
+    std::process::exit(75);
 }
 
 async fn shutdown_signal() {
