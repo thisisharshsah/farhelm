@@ -83,7 +83,30 @@ impl OpenAiClient {
         request: ModelRequest,
         adapters: &[crate::providers::AdapterUse],
     ) -> Result<ModelResponse, DispatchError> {
+        self.complete_with_deployment(request, adapters, None).await
+    }
+
+    /// A completion for a registry model's deployment: its adapters, and
+    /// chat-template settings merged over the caller's (the deployment wins
+    /// a key both set, since it describes how the model was trained).
+    pub async fn complete_with_deployment(
+        &self,
+        request: ModelRequest,
+        adapters: &[crate::providers::AdapterUse],
+        template: Option<&serde_json::Map<String, Value>>,
+    ) -> Result<ModelResponse, DispatchError> {
         let mut body = completion_params(&request, self.openrouter)?;
+        if let Some(template) = template.filter(|template| !template.is_empty()) {
+            let mut merged = body
+                .get("chat_template_kwargs")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            for (key, value) in template {
+                merged.insert(key.clone(), value.clone());
+            }
+            body["chat_template_kwargs"] = Value::Object(merged);
+        }
         if !adapters.is_empty() {
             body["lora"] = Value::Array(
                 adapters

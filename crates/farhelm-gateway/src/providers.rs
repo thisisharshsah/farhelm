@@ -103,6 +103,12 @@ struct ModelConfig {
     /// `openai_compatible` servers that read llama.cpp's `lora` field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     adapters: Vec<AdapterUse>,
+    /// Chat-template settings this model is deployed with, sent on every
+    /// request (llama.cpp's `chat_template_kwargs`): for example Qwen3.5's
+    /// `enable_thinking = false` for an adapter trained without thinking.
+    /// Only scalar values, and only for `openai_compatible` servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -415,6 +421,24 @@ impl ProviderRegistry {
                     }
                 }
             }
+            if let Some(kwargs) = &model.chat_template_kwargs {
+                if provider.kind != ProviderKind::OpenaiCompatible {
+                    return Err(ConfigError(format!(
+                        "model {alias} sets chat_template_kwargs, which only openai_compatible servers read"
+                    )));
+                }
+                if kwargs.len() > 16
+                    || kwargs.iter().any(|(key, value)| {
+                        key.is_empty()
+                            || key.len() > 64
+                            || !(value.is_boolean() || value.is_number() || value.is_string())
+                    })
+                {
+                    return Err(ConfigError(format!(
+                        "model {alias} chat_template_kwargs must be at most 16 scalar settings"
+                    )));
+                }
+            }
             let configured_rates = model.pricing.as_ref().map(Pricing::rates).transpose()?;
             let rate = match provider.data_location {
                 DataLocation::Local => {
@@ -522,7 +546,11 @@ impl ProviderRegistry {
         request.model.clone_from(&model.model);
         request.max_tokens = request.max_tokens.min(model.max_output_tokens);
         let mut response = self.clients[&model.provider]
-            .complete_with_adapters(request, &model.adapters)
+            .complete_with_deployment(
+                request,
+                &model.adapters,
+                model.chat_template_kwargs.as_ref(),
+            )
             .await?;
         // The server reports the base model either way; the ledger has to say
         // which specialist answered, or its spend and quality cannot be told
@@ -1023,5 +1051,50 @@ adapters = [{ id = 0, scale = 1.0 }]
         assert!(local("[{ id = 0, scale = 9.0 }]").is_err());
         assert!(local("[{ id = 1, scale = 1.0 }, { id = 1, scale = 0.5 }]").is_err());
         assert!(local("[{ id = 0, scale = 1.0, path = \"x\" }]").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_models_template_settings_reach_the_server_with_the_callers() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let saved = captured.clone();
+        let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            saved.lock().unwrap().push(body);
+            async { axum::Json(json!({"model":"qwen3.5-4b", "choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}})) }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut source =
+            local_config().replace("http://127.0.0.1:11434/v1", &format!("http://{address}/v1"));
+        source.push_str(
+            r#"
+[models.crawl-4b]
+provider = "ollama"
+model = "qwen3.5-4b"
+tools = false
+max_output_tokens = 512
+adapters = [{ id = 0, scale = 1.0 }]
+chat_template_kwargs = { enable_thinking = false }
+"#,
+        );
+        let client = load(&source).unwrap();
+        let mut asked = request(&client);
+        asked.model = "crawl-4b".into();
+        asked.sampling.reasoning_effort = Some("low".into());
+        client.complete(asked).await.unwrap();
+        let body = captured.lock().unwrap()[0].clone();
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({ "enable_thinking": false, "reasoning_effort": "low" })
+        );
+        server.abort();
+
+        let nested = local_config().replace(
+            "max_output_tokens = 4096\n",
+            "max_output_tokens = 4096\nchat_template_kwargs = { nested = { a = 1 } }\n",
+        );
+        assert!(load(&nested).is_err());
     }
 }
