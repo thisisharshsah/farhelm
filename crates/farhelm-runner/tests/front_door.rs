@@ -97,6 +97,7 @@ max_output_tokens = 512
             default_model: Some("gpt-oss-20b".into()),
             models: vec!["gpt-oss-20b".into()],
             daily_token_limit: None,
+            default_effort: Some("low".into()),
         },
     );
     file.clients.insert(
@@ -107,6 +108,7 @@ max_output_tokens = 512
             models: Vec::new(),
             // Two calls of 50 tokens each fit; the third is refused.
             daily_token_limit: Some(100),
+            default_effort: None,
         },
     );
     let runner = serve(farhelm_runner::front_door::router(Arc::clone(&state), file)).await;
@@ -197,8 +199,15 @@ async fn a_client_reaches_its_models_only_with_its_own_key() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["model"], "local/engine/gpt-oss-20b");
 
-    // Only the two accepted calls reached the model server.
-    assert_eq!(fixture.seen.lock().unwrap().len(), 2);
+    // Only the two accepted calls reached the model server, with the caller's
+    // temperature and the client's default reasoning effort.
+    let seen = fixture.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0]["chat_template_kwargs"]["reasoning_effort"], "low");
+    assert_eq!(
+        seen[0]["temperature"].as_f64().map(|t| (t * 10.0).round()),
+        Some(2.0)
+    );
 }
 
 #[tokio::test]

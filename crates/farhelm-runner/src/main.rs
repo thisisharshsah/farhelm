@@ -53,7 +53,8 @@ SETTING UP
     clients          Other projects that call models through this runner, each
                      at http://127.0.0.1:7842/p/<name>/v1 with its own key.
                      `clients add <name>` prints a new key once; --default-model,
-                     --models a,b and --daily-tokens limit it. `clients list`,
+                     --models a,b, --daily-tokens and --default-effort shape it,
+                     and `clients set <name>` changes them. `clients list`,
                      `clients rotate <name>`, `clients remove <name>`. The
                      runner reads the file when it starts.
     engine           The local model servers this runner owns. `engine install`
@@ -1524,10 +1525,46 @@ fn clients_command(flags: &Flags, args: &[String]) -> Fallible {
                         .map(|raw| raw.parse())
                         .transpose()
                         .map_err(|_| "--daily-tokens must be a whole number")?,
+                    default_effort: value_of("--default-effort"),
                 },
             );
             save(&file)?;
             show_key(&name, &key);
+            Ok(())
+        }
+        Some("set") => {
+            let name = name()?;
+            let client = file
+                .clients
+                .get_mut(&name)
+                .ok_or_else(|| format!("no client {name}"))?;
+            if let Some(model) = value_of("--default-model") {
+                client.default_model = (!model.is_empty()).then_some(model);
+            }
+            if let Some(list) = value_of("--models") {
+                client.models = list
+                    .split(',')
+                    .map(|model| model.trim().to_owned())
+                    .filter(|model| !model.is_empty())
+                    .collect();
+            }
+            if let Some(raw) = value_of("--daily-tokens") {
+                client.daily_token_limit = if raw.is_empty() || raw == "none" {
+                    None
+                } else {
+                    Some(
+                        raw.parse()
+                            .map_err(|_| "--daily-tokens must be a whole number or none")?,
+                    )
+                };
+            }
+            if let Some(effort) = value_of("--default-effort") {
+                client.default_effort = (!effort.is_empty()).then_some(effort);
+            }
+            save(&file)?;
+            // Reload to validate what was just written.
+            ClientsFile::load(path)?;
+            println!("Updated {name}; the runner applies it when it restarts.");
             Ok(())
         }
         Some("rotate") => {
@@ -1559,8 +1596,9 @@ fn clients_command(flags: &Flags, args: &[String]) -> Fallible {
             }
             for (name, client) in &file.clients {
                 println!(
-                    "  {name:<12} default {:<14} models {:<24} daily {}",
+                    "  {name:<12} default {:<14} effort {:<7} models {:<24} daily {}",
                     client.default_model.as_deref().unwrap_or("routed"),
+                    client.default_effort.as_deref().unwrap_or("model's"),
                     if client.models.is_empty() {
                         "any".to_owned()
                     } else {
@@ -1574,7 +1612,7 @@ fn clients_command(flags: &Flags, args: &[String]) -> Fallible {
             Ok(())
         }
         Some(other) => Err(format!(
-            "unknown clients command `{other}`; try add, list, rotate or remove"
+            "unknown clients command `{other}`; try add, set, list, rotate or remove"
         )
         .into()),
     }

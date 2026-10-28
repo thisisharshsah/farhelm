@@ -197,11 +197,21 @@ impl FrontDoor {
         Ok(())
     }
 
-    /// Bill to the client, keep its cache to itself, and use its model.
-    fn scope(&self, name: &str, request: &mut CompleteRequest, model: Option<String>) {
+    /// Bill to the client, keep its cache to itself, use its model, and fill
+    /// in its default reasoning effort when the request set none.
+    fn scope(
+        &self,
+        name: &str,
+        client: &Client,
+        request: &mut CompleteRequest,
+        model: Option<String>,
+    ) {
         request.session_id = clients::session_id(name);
         request.cache_scope = Some(format!("client:{name}"));
         request.model = model;
+        if request.sampling.reasoning_effort.is_none() {
+            request.sampling.reasoning_effort = client.default_effort.clone();
+        }
     }
 }
 
@@ -232,8 +242,10 @@ async fn anthropic_messages(
     door.within_limit(&name, client)?;
     let model = door.model_for(client, &body.model)?;
     let stream = body.stream;
+    let max_tokens = body.max_tokens;
     let mut request = messages::translate(&headers, body)?;
-    door.scope(&name, &mut request, model);
+    request.max_tokens = max_tokens;
+    door.scope(&name, client, &mut request, model);
     Ok(messages::answer(&door.app, request, stream).await?)
 }
 
@@ -248,6 +260,20 @@ struct ChatBody {
     tools: Vec<Value>,
     #[serde(default)]
     stream: bool,
+    #[serde(default)]
+    max_tokens: Option<u32>,
+    #[serde(default)]
+    max_completion_tokens: Option<u32>,
+    #[serde(default)]
+    temperature: Option<f32>,
+    #[serde(default)]
+    top_p: Option<f32>,
+    /// OpenAI's name for it.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
+    /// llama.cpp's and the private gateway's way of passing it.
+    #[serde(default)]
+    chat_template_kwargs: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,6 +438,16 @@ fn translate_chat(body: &ChatBody) -> Result<CompleteRequest, DoorError> {
         .iter()
         .map(tool_definition)
         .collect::<Result<_, _>>()?;
+    request.max_tokens = body.max_completion_tokens.or(body.max_tokens);
+    request.sampling.temperature = body.temperature;
+    request.sampling.top_p = body.top_p;
+    request.sampling.reasoning_effort = body.reasoning_effort.clone().or_else(|| {
+        body.chat_template_kwargs
+            .as_ref()
+            .and_then(|kwargs| kwargs.get("reasoning_effort"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    });
     Ok(request)
 }
 
@@ -425,7 +461,7 @@ async fn chat_completions(
     door.within_limit(&name, client)?;
     let model = door.model_for(client, &body.model)?;
     let mut request = translate_chat(&body)?;
-    door.scope(&name, &mut request, model);
+    door.scope(&name, client, &mut request, model);
 
     messages::ensure_bucket(&door.app, &request.session_id)?;
     let gateway = door.app.gateway.as_ref().ok_or_else(|| {
@@ -573,6 +609,19 @@ mod tests {
     }
 
     #[test]
+    fn the_callers_sampling_and_ceiling_are_kept() {
+        let request = translate_chat(&body(json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "max_tokens": 900, "max_completion_tokens": 700, "temperature": 0.2,
+            "chat_template_kwargs": { "reasoning_effort": "high" },
+        })))
+        .unwrap();
+        assert_eq!(request.max_tokens, Some(700));
+        assert_eq!(request.sampling.temperature, Some(0.2));
+        assert_eq!(request.sampling.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
     fn media_prefill_and_orphan_results_are_refused() {
         let image = body(
             json!({ "messages": [{ "role": "user", "content": [{ "type": "image_url", "image_url": { "url": "x" } }] }] }),
@@ -597,6 +646,7 @@ mod tests {
                 default_model: Some("gpt-oss-120b".into()),
                 models: Vec::new(),
                 daily_token_limit: None,
+                default_effort: None,
             },
         );
         let problems = check(&file, &["gpt-oss-20b".into()]);

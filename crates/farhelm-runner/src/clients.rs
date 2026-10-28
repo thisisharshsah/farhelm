@@ -54,9 +54,14 @@ pub struct Client {
     /// Registry models this client may name. Empty means any.
     #[serde(default)]
     pub models: Vec<String>,
-    /// Input plus output tokens a day, from local midnight. `None` is no limit.
+    /// Input plus output tokens a day (UTC). `None` is no limit.
     #[serde(default)]
     pub daily_token_limit: Option<u64>,
+    /// Reasoning effort (`low`, `medium`, `high`) for a request that does not
+    /// set one. Keeps a reasoning model as quick as the client's previous
+    /// endpoint made it.
+    #[serde(default)]
+    pub default_effort: Option<String>,
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -114,6 +119,15 @@ impl ClientsFile {
                     "client name `{name}` must be lowercase letters, digits, '-' or '_'"
                 )));
             }
+            if client
+                .default_effort
+                .as_deref()
+                .is_some_and(|effort| !matches!(effort, "low" | "medium" | "high"))
+            {
+                return Err(fail(format!(
+                    "client `{name}`: default_effort must be low, medium or high"
+                )));
+            }
             if client.key_sha256.len() != 64
                 || !client.key_sha256.bytes().all(|b| b.is_ascii_hexdigit())
             {
@@ -144,6 +158,9 @@ impl ClientsFile {
             }
             if let Some(limit) = client.daily_token_limit {
                 out.push_str(&format!("daily_token_limit = {limit}\n"));
+            }
+            if let Some(effort) = &client.default_effort {
+                out.push_str(&format!("default_effort = {}\n", quote(effort)));
             }
         }
         out
@@ -178,6 +195,7 @@ mod tests {
                 default_model: Some("gpt-oss-20b".into()),
                 models: vec!["gpt-oss-20b".into(), "gpt-oss-c2".into()],
                 daily_token_limit: Some(2_000_000),
+                default_effort: Some("low".into()),
             },
         );
         let text = file.to_toml();
@@ -198,6 +216,7 @@ mod tests {
             default_model: None,
             models: vec!["gpt-oss-20b".into()],
             daily_token_limit: None,
+            default_effort: None,
         };
         assert!(client.allows("gpt-oss-20b"));
         assert!(!client.allows("engine-code"));

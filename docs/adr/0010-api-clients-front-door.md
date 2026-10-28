@@ -46,10 +46,18 @@ with repositories, conversations and tasks.
 - The runner becomes a dependency of those projects: a runner restart is a
   model outage for them. Restarts are short, and the engine keeps its
   servers' state on disk, but a client should retry a refused connection.
-- Sampling parameters (`temperature`, `top_p`, `seed`) are accepted and not
-  applied, and streaming is one delta, as on `/v1/messages`. Images and
-  audio are refused.
+- A client's `temperature`, `top_p`, `max_tokens` (lowered, never raised)
+  and `reasoning_effort` (top-level or in `chat_template_kwargs`) reach the
+  model, and a client can have a `default_effort`; the moved projects keep
+  gpt-oss at the `low` effort their previous gateway gave them. All of it is
+  part of the cache key. `response_format` is not applied (the previous
+  gateway did not apply it either; the clients put their schema in the
+  prompt). `seed` is ignored, streaming is one delta as on `/v1/messages`,
+  and images and audio are refused.
 - `local-assistant` can retire once its projects have moved and its models
   run on the engine (gpt-oss-20b and the C2 adapter already do).
+- everest, career and lacuna were moved on 2026-10-28: their `.env` files
+  (and career's `.env.live`) point at the front door, with the previous
+  files kept in `~/.farhelm/backups/env-before-front-door/`.
 - Not built: per-client budgets in dollars (local tokens cost nothing in the
   ledger), a web page for clients, and limits that change without a restart.
