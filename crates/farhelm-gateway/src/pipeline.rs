@@ -104,6 +104,13 @@ pub struct CompleteRequest {
     pub verify_only: bool,
     /// Caller is willing to wait for the nightly batch flush.
     pub deferrable: bool,
+    /// A model alias the caller asked for by name, overriding routing. The
+    /// registry still refuses an undeclared alias, and a cloud one under
+    /// `local_only`; nothing here widens what may run.
+    pub model: Option<String>,
+    /// Keeps cached answers apart between callers that must not share them:
+    /// two projects sending the same prompt each get their own cache entry.
+    pub cache_scope: Option<String>,
 }
 
 impl CompleteRequest {
@@ -122,6 +129,8 @@ impl CompleteRequest {
             repo_path: None,
             verify_only: false,
             deferrable: false,
+            model: None,
+            cache_scope: None,
         }
     }
 }
@@ -421,6 +430,11 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         }
     }
 
+    /// The model client, for callers that need to know what it serves.
+    pub fn client(&self) -> &C {
+        &self.client
+    }
+
     pub fn config(&self) -> &GatewayConfig {
         &self.config
     }
@@ -617,12 +631,16 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         let batching = self.config.batch_enabled && self.client.supports_batch();
         let batch_downgraded = request.deferrable && !batching;
         let deferrable = request.deferrable && batching;
-        let route = route(
+        let mut route = route(
             request.task_type,
             request.tier_pin,
             deferrable,
             &self.config.models,
         );
+        if let Some(model) = &request.model {
+            route.model.clone_from(model);
+            route.pinned = true;
+        }
         let price = self.client.model_price(&route.model)?;
 
         // ---- stage 5: retrieval ---------------------------------------------
@@ -712,8 +730,13 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
                 .history
                 .iter()
                 .any(|turn| !turn.tool_calls.is_empty() || !turn.tool_results.is_empty());
-        let cache_key = (cache::is_cacheable(request.task_type) && !has_tools)
-            .then(|| cache::key(&self.client.cache_namespace(&route.model), &plan));
+        let cache_key = (cache::is_cacheable(request.task_type) && !has_tools).then(|| {
+            let namespace = self.client.cache_namespace(&route.model);
+            match &request.cache_scope {
+                Some(scope) => cache::key(&format!("{scope}/{namespace}"), &plan),
+                None => cache::key(&namespace, &plan),
+            }
+        });
 
         if let Some(key) = &cache_key
             && let Some(hit) = self.store.cache_get(key, at_ms)?

@@ -231,6 +231,15 @@ impl ProviderClient {
         ProviderRegistry::new(source, get_env).map(|registry| Self::Configured(Box::new(registry)))
     }
 
+    /// Every model alias the registry declares, in order. Empty for the
+    /// legacy Anthropic client, which has no registry.
+    pub fn model_aliases(&self) -> Vec<String> {
+        match self {
+            Self::Legacy(_) => Vec::new(),
+            Self::Configured(registry) => registry.config.models.keys().cloned().collect(),
+        }
+    }
+
     pub fn models(&self) -> Option<Models> {
         match self {
             Self::Legacy(_) => None,
