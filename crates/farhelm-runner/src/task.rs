@@ -1067,14 +1067,49 @@ fn apply(task: &AgentTask) -> Result<Vec<String>, TaskError> {
 /// that has the diff next to it.
 fn commit_message(task: &AgentTask) -> String {
     let prompt = task.prompt.trim();
-    let subject: String = prompt
-        .lines()
-        .next()
-        .unwrap_or("Agent task")
-        .chars()
-        .take(72)
-        .collect();
+    let subject = commit_subject(prompt.lines().next().unwrap_or(""));
     format!("{subject}\n\nFarhelm task {}.\n\n{prompt}", task.id)
+}
+
+/// The prompt's first line as a subject of at most 72 characters.
+///
+/// Cut at the first sentence end, or else at the last word that fits, never
+/// mid-word: a subject ending "in packages/cl" was the old cut.
+fn commit_subject(line: &str) -> String {
+    const LIMIT: usize = 72;
+    let line = line.trim();
+    if line.is_empty() {
+        return "Agent task".to_owned();
+    }
+    let sentence = line
+        .find(". ")
+        .map(|end| &line[..end])
+        .unwrap_or(line)
+        .trim_end_matches('.');
+    if sentence.chars().count() <= LIMIT {
+        return sentence.to_owned();
+    }
+    let mut subject = String::new();
+    for word in sentence.split_whitespace() {
+        let next = if subject.is_empty() {
+            word.chars().count()
+        } else {
+            subject.chars().count() + 1 + word.chars().count()
+        };
+        if next > LIMIT {
+            break;
+        }
+        if !subject.is_empty() {
+            subject.push(' ');
+        }
+        subject.push_str(word);
+    }
+    if subject.is_empty() {
+        // One word longer than the limit: nothing better to cut at.
+        sentence.chars().take(LIMIT).collect()
+    } else {
+        subject
+    }
 }
 
 /// Delete a rejected task's branch and checkout.
@@ -1186,6 +1221,24 @@ fn publish(state: &AppState, task: &AgentTask) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_commit_subject_never_ends_mid_word() {
+        let prompt = "Check if there is a test case covering the pct() function in \
+                      packages/client-core/src/format.ts that verifies it returns n/a.";
+        let subject = commit_subject(prompt);
+        assert_eq!(
+            subject,
+            "Check if there is a test case covering the pct() function in"
+        );
+        assert!(subject.chars().count() <= 72);
+
+        assert_eq!(
+            commit_subject("Bound the retry backoff. Add a test."),
+            "Bound the retry backoff"
+        );
+        assert_eq!(commit_subject("   "), "Agent task");
+    }
     use farhelm_sqlite::SqliteStore;
 
     fn state() -> Arc<AppState> {
