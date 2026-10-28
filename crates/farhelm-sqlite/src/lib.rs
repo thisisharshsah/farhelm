@@ -43,6 +43,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0016_repo_auto_approve.sql"),
     include_str!("../migrations/0017_project_chat.sql"),
     include_str!("../migrations/0018_task_step.sql"),
+    include_str!("../migrations/0019_runner_identity.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -249,6 +250,84 @@ impl SqliteStore {
         let conn = self.lock()?;
         conn.query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(backend)
+    }
+
+    /// Resolve the machine row this runner is, recording it on first use.
+    ///
+    /// `derived` is the row the caller would create from the current hostname.
+    /// Once an identity is recorded it wins over `derived`: only the display
+    /// name and last-seen time follow the hostname from then on.
+    ///
+    /// A database from before the identity was recorded is adopted rather than
+    /// orphaned. If the derived machine owns no repositories and exactly one
+    /// other machine does, the hostname changed under an existing runner and
+    /// that machine is this one. With several candidates (a seeded fleet) or
+    /// none, the derived row stands, as it always did.
+    pub fn claim_runner_machine(&self, derived: &Machine) -> Result<String> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(backend)?;
+        let recorded: Option<String> = tx
+            .query_row(
+                "SELECT machine_id FROM runner_identity WHERE slot = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(backend)?;
+        let id = match recorded {
+            Some(id) => id,
+            None => {
+                let owns_repos: bool = tx
+                    .query_row(
+                        "SELECT EXISTS (SELECT 1 FROM repo WHERE machine_id = ?1)",
+                        params![derived.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(backend)?;
+                let others: Vec<String> = if owns_repos {
+                    Vec::new()
+                } else {
+                    let mut stmt = tx
+                        .prepare(
+                            "SELECT DISTINCT machine_id FROM repo WHERE machine_id <> ?1 LIMIT 2",
+                        )
+                        .map_err(backend)?;
+                    stmt.query_map(params![derived.id], |row| row.get(0))
+                        .map_err(backend)?
+                        .collect::<rusqlite::Result<_>>()
+                        .map_err(backend)?
+                };
+                match others.as_slice() {
+                    [only] => only.clone(),
+                    _ => derived.id.clone(),
+                }
+            }
+        };
+        // `created_at` is kept on conflict, so an adopted machine keeps its age.
+        tx.execute(
+            "INSERT INTO machine (id, name, pubkey, last_seen_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                 name = excluded.name,
+                 last_seen_at = excluded.last_seen_at",
+            params![
+                id,
+                derived.name,
+                derived.pubkey,
+                derived.last_seen_at,
+                derived.created_at
+            ],
+        )
+        .map_err(backend)?;
+        tx.execute(
+            "INSERT INTO runner_identity (slot, machine_id, recorded_at)
+             VALUES (1, ?1, ?2)
+             ON CONFLICT(slot) DO NOTHING",
+            params![id, derived.last_seen_at.unwrap_or(derived.created_at)],
+        )
+        .map_err(backend)?;
+        tx.commit().map_err(backend)?;
+        Ok(id)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
@@ -2766,6 +2845,73 @@ mod tests {
     fn a_fresh_database_is_at_the_latest_schema_version() {
         let store = SqliteStore::open_in_memory().unwrap();
         assert_eq!(store.schema_version().unwrap(), MIGRATIONS.len() as i64);
+    }
+
+    fn host(name: &str, at: i64) -> Machine {
+        Machine {
+            id: format!("machine-{name}"),
+            name: name.into(),
+            pubkey: String::new(),
+            last_seen_at: Some(at),
+            created_at: at,
+        }
+    }
+
+    fn register(store: &SqliteStore, machine: &Machine, path: &str) {
+        store.upsert_machine(machine).unwrap();
+        store
+            .upsert_repo(&Repo {
+                id: format!("repo-{path}"),
+                machine_id: machine.id.clone(),
+                path: path.into(),
+                name: path.rsplit('/').next().unwrap().into(),
+                budget_usd: None,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_runner_keeps_its_machine_when_the_hostname_changes() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let first = store
+            .claim_runner_machine(&host("mbp.attlocal.net", 1))
+            .unwrap();
+        assert_eq!(first, "machine-mbp.attlocal.net");
+
+        let again = store.claim_runner_machine(&host("mbp.local", 2)).unwrap();
+        assert_eq!(again, first, "the recorded identity outlives the hostname");
+        let machine = store.get_machine(&first).unwrap().unwrap();
+        assert_eq!(
+            machine.name, "mbp.local",
+            "the display name follows the host"
+        );
+        assert_eq!(machine.created_at, 1);
+        assert!(store.get_machine("machine-mbp.local").unwrap().is_none());
+    }
+
+    #[test]
+    fn an_unrecorded_database_adopts_the_one_machine_that_owns_repositories() {
+        // The state a database was left in before identities were recorded: the
+        // repositories belong to the old hostname, and a start under the new
+        // one already made an empty row.
+        let store = SqliteStore::open_in_memory().unwrap();
+        let old = host("mbp.attlocal.net", 1);
+        register(&store, &old, "/src/farhelm");
+        store.upsert_machine(&host("mbp.local", 2)).unwrap();
+
+        let id = store.claim_runner_machine(&host("mbp.local", 3)).unwrap();
+        assert_eq!(id, old.id);
+        assert_eq!(store.list_repos(&id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_seeded_fleet_is_not_mistaken_for_this_runner() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        register(&store, &host("hetzner-1", 1), "/srv/payments-api");
+        register(&store, &host("home-server", 1), "/srv/portfolio");
+
+        let id = store.claim_runner_machine(&host("laptop", 2)).unwrap();
+        assert_eq!(id, "machine-laptop");
     }
 
     #[test]

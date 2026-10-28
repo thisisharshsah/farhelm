@@ -89,32 +89,27 @@ const PRUNE_EVERY: u32 = 500;
 
 /// Resolve this runner's machine row, creating it on first start.
 ///
-/// The id is derived from the hostname rather than random, so restarting the
-/// runner — or reopening the same database from a rebuilt binary — re-attaches
-/// to the existing machine instead of orphaning its repos.
+/// A new database names its machine after the hostname, and records that id
+/// (see `SqliteStore::claim_runner_machine`). Later starts reuse the recorded
+/// id even when the hostname has changed, which on macOS it does with the
+/// network, so a reboot no longer orphans the registered repositories.
 fn ensure_machine(store: &SqliteStore) -> String {
     let name = machine_name();
-    let id = format!("machine-{name}");
+    let derived = format!("machine-{name}");
     let now = farhelm_app::time::now_ms();
-
-    let created_at = store
-        .get_machine(&id)
-        .ok()
-        .flatten()
-        .map(|machine| machine.created_at)
-        .unwrap_or(now);
 
     // A failure here is not fatal: the read-only API still works, and the hook
     // bridge will report the real error when it tries to use the machine.
-    let _ = store.upsert_machine(&farhelm_proto::types::Machine {
-        id: cloned(&id),
-        name,
-        // Filled in by device pairing (M3). Empty until then rather than fake.
-        pubkey: String::new(),
-        last_seen_at: Some(now),
-        created_at,
-    });
-    id
+    store
+        .claim_runner_machine(&farhelm_proto::types::Machine {
+            id: cloned(&derived),
+            name,
+            // Filled in by device pairing (M3). Empty until then rather than fake.
+            pubkey: String::new(),
+            last_seen_at: Some(now),
+            created_at: now,
+        })
+        .unwrap_or(derived)
 }
 
 fn cloned(value: &str) -> String {
