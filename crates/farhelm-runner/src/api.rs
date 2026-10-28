@@ -231,14 +231,12 @@ impl ApiError {
         }
     }
 
-    /// The status a client will see. For tests in sibling modules.
-    #[cfg(test)]
+    /// The status a client will see. Read by sibling modules that answer in
+    /// another error format (the front door's OpenAI-shaped errors).
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
-    /// For tests in sibling modules.
-    #[cfg(test)]
     pub fn message(&self) -> &str {
         &self.message
     }

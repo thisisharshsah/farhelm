@@ -330,6 +330,22 @@ impl SqliteStore {
         Ok(id)
     }
 
+    /// Input plus output tokens a session spent since `since_ms`, counting
+    /// only real model calls (cache hits and pre-gate answers cost nothing).
+    pub fn session_tokens_since(&self, session_id: &str, since_ms: i64) -> Result<u64> {
+        let conn = self.lock()?;
+        let total: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens + output_tokens + cache_write_tokens + cache_read_tokens), 0)
+                 FROM usage_event
+                 WHERE session_id = ?1 AND created_at >= ?2 AND avoided IS NULL",
+                params![session_id, since_ms],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        Ok(u64::try_from(total).unwrap_or(0))
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()

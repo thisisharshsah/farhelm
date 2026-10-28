@@ -50,6 +50,12 @@ SETTING UP
                      given. Nothing is copied by hand and it works over SSH.
                      After it, `serve` needs no cloud flags at all.
     logout           Forget those credentials on this machine.
+    clients          Other projects that call models through this runner, each
+                     at http://127.0.0.1:7842/p/<name>/v1 with its own key.
+                     `clients add <name>` prints a new key once; --default-model,
+                     --models a,b and --daily-tokens limit it. `clients list`,
+                     `clients rotate <name>`, `clients remove <name>`. The
+                     runner reads the file when it starts.
     engine           The local model servers this runner owns. `engine install`
                      installs the pinned llama.cpp build (checksum verified;
                      --from <archive> uses one you downloaded). `engine
@@ -101,6 +107,7 @@ DEFAULTS
     --credential-file farhelm.credential.json (written by `auth`, mode 0600)
     --policy farhelm.policy.toml   (optional; the built-in rules stand alone)
     --engine-config engine.toml    (written by `engine install`; optional)
+    --clients-file clients.toml    (written by `clients add`; optional)
     --terminal auto  (tmux when installed, otherwise this process's own PTYs)
 
     The `forge`-prefixed names these files and variables had before the rename
@@ -239,6 +246,7 @@ fn main() -> ExitCode {
         Some("doctor") => doctor(&flags),
         Some("policy") => policy_command(&flags, &args[1..]),
         Some("engine") => engine_command(&flags, &args[1..]),
+        Some("clients") => clients_command(&flags, &args[1..]),
         Some("install-service") => install_service(&flags),
         // The two server halves. They were separate binaries; they are
         // subcommands so that everything this system does is reachable from the
@@ -304,6 +312,8 @@ struct Flags {
     terminal: Option<String>,
     /// The local model server's configuration. Absent file means no engine.
     engine_config: String,
+    /// API clients that may call models through this runner.
+    clients_file: String,
 }
 
 impl Flags {
@@ -354,6 +364,8 @@ impl Flags {
             engine_config: value_of("--engine-config")
                 .or_else(|| farhelm_app::legacy::env_var("FARHELM_ENGINE_CONFIG"))
                 .unwrap_or_else(|| farhelm_runner::engine::DEFAULT_ENGINE_CONFIG.to_owned()),
+            clients_file: value_of("--clients-file")
+                .unwrap_or_else(|| farhelm_runner::clients::DEFAULT_CLIENTS_FILE.to_owned()),
         }
     }
 }
@@ -965,6 +977,33 @@ async fn serve_async(flags: Flags) -> Fallible {
     // loopback listener the tunnel already reaches, so there is one process and
     // one port rather than a second server to keep patched.
     let mut app_router = api::router_with_app(Arc::clone(&state), app_dir);
+
+    // Other projects' model calls, each under its own key (`farhelm clients`).
+    // Served on the same loopback listener as everything else.
+    match farhelm_runner::clients::ClientsFile::load(Path::new(&flags.clients_file)) {
+        Ok(clients) => {
+            let models = state
+                .gateway
+                .as_ref()
+                .map(|gateway| gateway.client().model_aliases())
+                .unwrap_or_default();
+            for problem in farhelm_runner::front_door::check(&clients, &models) {
+                eprintln!("  clients    {problem}");
+            }
+            if !clients.clients.is_empty() {
+                let names: Vec<&str> = clients.clients.keys().map(String::as_str).collect();
+                println!(
+                    "  clients    {} at http://{addr}/p/<name>/v1",
+                    names.join(", ")
+                );
+            }
+            app_router = app_router.merge(farhelm_runner::front_door::router(
+                Arc::clone(&state),
+                clients,
+            ));
+        }
+        Err(err) => eprintln!("  clients    {err}; the front door is closed"),
+    }
     if let Some((mcp_url, cloud_url, org_id)) = mcp_settings(&flags, &cloud_session) {
         match farhelm_runner::cloud::fetch_verifier(&cloud_url).await {
             Ok(verifier) => {
@@ -1412,6 +1451,133 @@ fn restart_in_place() {
     // No in-place exec on Windows: exit and let the service manager restart.
     eprintln!("  cloud      reachable again; exiting so the service restarts with the relay");
     std::process::exit(75);
+}
+
+/// `farhelm clients add|list|rotate|remove`.
+fn clients_command(flags: &Flags, args: &[String]) -> Fallible {
+    use farhelm_runner::clients::{self, Client, ClientsFile};
+
+    let path = Path::new(&flags.clients_file);
+    let mut file = ClientsFile::load(path)?;
+    let value_of = |name: &str| {
+        args.iter()
+            .position(|arg| arg == name)
+            .and_then(|index| args.get(index + 1))
+            .cloned()
+    };
+    let name = || -> Result<String, Box<dyn std::error::Error>> {
+        let name = args
+            .get(1)
+            .filter(|name| !name.starts_with("--"))
+            .cloned()
+            .ok_or("name the client: `farhelm clients <command> <name>`")?;
+        if !clients::valid_name(&name) {
+            return Err("a client name is lowercase letters, digits, '-' or '_'".into());
+        }
+        Ok(name)
+    };
+    let save = |file: &ClientsFile| -> Fallible {
+        std::fs::write(path, file.to_toml())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    };
+    let show_key = |name: &str, key: &str| {
+        println!("  client     {name}");
+        println!("  key        {key}");
+        println!();
+        println!("This is the only time the key is shown; Farhelm keeps its hash.");
+        println!("Point the project at Farhelm (restart the runner first):");
+        println!();
+        println!("  OpenAI-style     base_url = http://127.0.0.1:7842/p/{name}/v1");
+        println!("  Anthropic-style  base_url = http://127.0.0.1:7842/p/{name}");
+        println!("  key              Authorization: Bearer <key>  (or x-api-key)");
+    };
+
+    match args.first().map(String::as_str) {
+        Some("add") => {
+            let name = name()?;
+            if file.clients.contains_key(&name) {
+                return Err(format!(
+                    "client {name} exists; `clients rotate {name}` gives it a new key"
+                )
+                .into());
+            }
+            let key = clients::new_key();
+            file.clients.insert(
+                name.clone(),
+                Client {
+                    key_sha256: clients::hash_key(&key),
+                    default_model: value_of("--default-model"),
+                    models: value_of("--models")
+                        .map(|list| {
+                            list.split(',')
+                                .map(|model| model.trim().to_owned())
+                                .filter(|model| !model.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    daily_token_limit: value_of("--daily-tokens")
+                        .map(|raw| raw.parse())
+                        .transpose()
+                        .map_err(|_| "--daily-tokens must be a whole number")?,
+                },
+            );
+            save(&file)?;
+            show_key(&name, &key);
+            Ok(())
+        }
+        Some("rotate") => {
+            let name = name()?;
+            let client = file
+                .clients
+                .get_mut(&name)
+                .ok_or_else(|| format!("no client {name}"))?;
+            let key = clients::new_key();
+            client.key_sha256 = clients::hash_key(&key);
+            save(&file)?;
+            show_key(&name, &key);
+            println!();
+            println!("The old key stops working when the runner restarts.");
+            Ok(())
+        }
+        Some("remove") => {
+            let name = name()?;
+            if file.clients.remove(&name).is_none() {
+                return Err(format!("no client {name}").into());
+            }
+            save(&file)?;
+            println!("Removed {name}; its calls are refused once the runner restarts.");
+            Ok(())
+        }
+        Some("list") | None => {
+            if file.clients.is_empty() {
+                println!("No clients yet. `farhelm clients add <name>` makes one.");
+            }
+            for (name, client) in &file.clients {
+                println!(
+                    "  {name:<12} default {:<14} models {:<24} daily {}",
+                    client.default_model.as_deref().unwrap_or("routed"),
+                    if client.models.is_empty() {
+                        "any".to_owned()
+                    } else {
+                        client.models.join(",")
+                    },
+                    client
+                        .daily_token_limit
+                        .map_or("no limit".to_owned(), |limit| format!("{limit} tokens")),
+                );
+            }
+            Ok(())
+        }
+        Some(other) => Err(format!(
+            "unknown clients command `{other}`; try add, list, rotate or remove"
+        )
+        .into()),
+    }
 }
 
 /// Ctrl-C in a terminal, or SIGTERM from launchd and systemd. Both shut down

@@ -269,7 +269,7 @@ fn tool_result_text(value: Option<&serde_json::Value>) -> Result<String, ApiErro
 /// Every result belongs to the immediately preceding assistant tool turn.
 /// Requiring the whole exchange prevents orphan/duplicate results and avoids
 /// forwarding a partial tool conversation to a runtime with different rules.
-fn validate_tool_pairs(turns: &[Turn]) -> Result<(), ApiError> {
+pub(crate) fn validate_tool_pairs(turns: &[Turn]) -> Result<(), ApiError> {
     let mut seen = HashSet::new();
     let mut pending = HashSet::new();
     for turn in turns {
@@ -468,13 +468,22 @@ pub async fn messages(
     let stream = body.stream;
     // Validated before the provider is looked at, so a bad request says so.
     let request = translate(&headers, body)?;
+    answer(&state, request, stream).await
+}
 
+/// Run a translated Messages request through the gateway and answer in the
+/// Messages format. Shared with the per-client front door.
+pub(crate) async fn answer(
+    state: &AppState,
+    request: CompleteRequest,
+    stream: bool,
+) -> Result<Response, ApiError> {
     // The gateway attributes spend to a session, and a caller coming in over
     // the Messages API has no reason to have created one: it does not know
     // this system exists. Making them create one first would be the exact
     // "do the same thing again before you can start" this endpoint is meant to
     // remove, so the bucket creates itself on first use.
-    ensure_bucket(&state, request.session_id.as_str())?;
+    ensure_bucket(state, request.session_id.as_str())?;
 
     let Some(gateway) = &state.gateway else {
         return Err(ApiError::new(
@@ -566,7 +575,7 @@ fn messages_stop_reason(reason: Option<&str>, has_tools: bool) -> &'static str {
 /// inserts exactly once per bucket. The repo row exists because a session
 /// belongs to one; there is no real checkout behind an API call, so it points
 /// at the runner's own home and is named for what it is.
-fn ensure_bucket(state: &AppState, session_id: &str) -> Result<(), ApiError> {
+pub(crate) fn ensure_bucket(state: &AppState, session_id: &str) -> Result<(), ApiError> {
     use farhelm_app::store::{FleetStore, SessionStore};
     use farhelm_proto::types::{Agent, Repo, Session, SessionStatus};
 

@@ -52,6 +52,16 @@ The gateway sends llama.cpp's `lora` field with those ids; the base model on the
 
 Reasoning models such as gpt-oss write their analysis before a tool call and need it back on the next request. The OpenAI-compatible adapter keeps a plain `reasoning_content` string that comes with tool calls and returns it on the assistant message of the following request, where llama.cpp renders it into the model's analysis channel. A successful tool result is sent as the tool's plain output; a failed one as `{"content": ..., "is_error": true}`, since Chat Completions has no error flag. Structured reasoning (`reasoning_details`, OpenRouter's `reasoning`) still fails the request, since it needs exact replay this adapter does not do. Reasoning is not sent to Anthropic, whose thinking blocks need Anthropic's own signature.
 
+## Other projects through Farhelm
+
+Projects that call models directly can go through the runner instead, each as an API client with its own key ([ADR 0010](adr/0010-api-clients-front-door.md)):
+
+```sh
+farhelm clients add everest --default-model gpt-oss-20b --models gpt-oss-20b,gpt-oss-c2 --daily-tokens 2000000
+```
+
+The key is printed once. Point the project at `http://127.0.0.1:7842/p/everest/v1` (OpenAI style) or `http://127.0.0.1:7842/p/everest` (Anthropic style) and send the key as `Authorization: Bearer` or `x-api-key`. Restart the runner after adding, rotating or removing a client.
+
 ## Configuration contract
 
 The TOML file has `version = 1`, a required `policy`, `routes`, `providers` and `models`. Unknown fields fail validation. Provider/model aliases use ASCII letters, digits, underscores, hyphens or periods; upstream model identifiers may include runtime-specific syntax such as `qwen3-coder:30b` or a deployed LoRA alias. No adapter upload/activation endpoint is exposed.
