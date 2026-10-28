@@ -1524,7 +1524,9 @@ fn clients_command(flags: &Flags, args: &[String]) -> Fallible {
         println!();
         println!("  OpenAI-style     base_url = http://127.0.0.1:7842/p/{name}/v1");
         println!("  Anthropic-style  base_url = http://127.0.0.1:7842/p/{name}");
-        println!("  key              Authorization: Bearer <key>  (or x-api-key)");
+        // Not labelled `key`: scripts pick the key out by that label, and a
+        // second `key` line once put this hint into four projects' .env files.
+        println!("  send it as       Authorization: Bearer <key>  (or x-api-key)");
     };
 
     match args.first().map(String::as_str) {
