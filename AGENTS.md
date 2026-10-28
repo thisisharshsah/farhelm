@@ -94,6 +94,8 @@ cargo test --workspace
 - Keep paid/live-provider tests opt-in; use deterministic fixtures for ordinary CI and a separate real-model conformance/evaluation path. Report skipped or unavailable checks clearly.
 - Model smoke checks use `cargo test -p farhelm-gateway --example model_conformance` for offline fixtures. Live probes require explicit configuration and `--run` (also `--allow-cloud` for cloud entries); follow [the evaluation guide](docs/model-evaluation.md). A smoke-test pass is not held-out workflow certification.
 - The live site (`farhelm.aurovie.com`) serves this checkout's `web/dist` directly. While working on the web app, keep `./deploy/live-web.sh` running so each passing build goes live as you go (user direction, 2026-10-26). It swaps a build in only after typecheck and both builds pass, and refreshes the installed runner's copy (`~/.farhelm/web`) so the local app at 127.0.0.1:7842 matches. Never build straight into `web/dist` while the site is serving it.
+- Commits and pull requests carry no `Co-Authored-By` or other AI attribution line, whatever a tool's default says (user direction, 2026-10-27).
+- Never write the em dash (U+2014) anywhere: code, comments, docs, UI text, commit messages. Use a comma, colon, parentheses or a new sentence. ASCII `--` that is syntax (command flags, `cargo run -p x -- serve`, SQL comments, CSS custom properties) stays (user direction, 2026-10-27).
 - Before finishing, inspect the diff for unintended changes, generated artifacts and secrets. Report what changed, why, verification and remaining limitations. Do not claim a proposed dependency, benchmark or missing release gate has been implemented.
 
 ## Durable user direction recorded 2026-10-22
