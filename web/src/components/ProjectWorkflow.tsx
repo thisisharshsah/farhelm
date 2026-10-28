@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectListOptions, ProjectRepository, TaskDetail, TaskView, Transport } from "@farhelm/client-core";
 import { TaskReviewScreen, TaskRow } from "./Tasks";
+import { ProjectChat } from "./ProjectChat";
 
 type WorkflowTransport = Transport & Required<Pick<Transport,
   "projectRepoCandidates" | "projectRepositories" | "attachProjectRepository" | "projectTasks"
@@ -191,6 +192,8 @@ function WorkflowScope({ transport, projectId, onNavigate }: {
         {attachError ? <p className="error" role="alert">{attachError}</p> : null}
       </form>
     </section>
+    <ProjectChat transport={transport} projectId={projectId} repositories={repos}
+      onTaskStarted={(task) => { tasks.refresh(); onNavigate(projectTaskPath(projectId, task.id)); }} />
     <StartProjectTask transport={transport} projectId={projectId} repositories={repos} disabled={attached.pending || !!attached.error}
       onStarted={(task) => { tasks.refresh(); onNavigate(projectTaskPath(projectId, task.id)); }} />
     <section className="card" aria-label="Project task history">
