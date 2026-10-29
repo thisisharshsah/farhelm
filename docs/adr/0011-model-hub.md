@@ -55,6 +55,29 @@ training data or evaluation sets, and an evaluation set is never trained on.
 4. Evaluation as a Farhelm feature: a per-project evaluation set and grader,
    run against any registry model, results kept with the deployment record.
    fennec's `bench.py` is the template.
+
+   First run (2026-10-28), lacuna's `e030-audit`, the one lacuna task with
+   enough human labels (54 blind grades by the author), graded with lacuna's
+   own harness on a copy of its database under the `eval` client. Cohen's
+   kappa against the author: `code` 0.19, `quick` 0.17, `think` 0.11; the same
+   gpt-oss-20b on the earlier MLX server scored 0.34 (ranges overlap at this
+   size). None reaches lacuna's 0.6 floor, so a task adapter has room to earn
+   promotion. `qwen3.5-4b` exhausted its token allowance thinking on 43 of 54
+   items; with thinking off (`enable_thinking: false`, which the front door
+   now passes) it answered all 54 and scored 0.07.
+
+   One run is not a score. A second identical `think` run, same prompts and
+   temperature 0, changed 6 of 54 labels and moved kappa from 0.11 to 0.21;
+   the October and current runs differ by about as much. Evaluation therefore
+   repeats runs and reports the spread. The other lacuna tasks have
+   1 to 4 human labels against a target of 40; until labelled, they can only
+   measure a student's agreement with its teacher.
+
+   The run found two gateway faults, both fixed: the front door dropped
+   `response_format`, and gpt-oss asked for JSON in prose labels its answer in
+   a way llama.cpp's parser rejects (about one call in six failed); and the
+   agent loop breaker applied to front-door clients, so ten failures in a row
+   refused every later request from the project until a restart.
 5. Datasets from use, with permission: a project opts in, and its prompts and
    accepted answers become a versioned dataset with recorded lineage.
 6. Training and distillation as jobs: MLX LoRA on this machine (PEFT on a GPU
