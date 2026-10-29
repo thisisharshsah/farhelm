@@ -93,7 +93,7 @@ const PRUNE_EVERY: u32 = 500;
 /// (see `SqliteStore::claim_runner_machine`). Later starts reuse the recorded
 /// id even when the hostname has changed, which on macOS it does with the
 /// network, so a reboot no longer orphans the registered repositories.
-fn ensure_machine(store: &SqliteStore) -> String {
+pub(crate) fn ensure_machine(store: &SqliteStore) -> String {
     let name = machine_name();
     let derived = format!("machine-{name}");
     let now = farhelm_app::time::now_ms();

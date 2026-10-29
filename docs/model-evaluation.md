@@ -155,3 +155,25 @@ Start with the existing base deployment, improve the prompt/tool definitions, th
 Run repeated trials with the same recorded deployment and workload settings. Report successes, failures and unavailable results separately, with numerator and denominator; keep p50/p95 completion latency, total usage, configured provider charges and independently metered local compute. A single pass is a smoke test. A LoRA is useful only when it improves the chosen held-out workflows without unacceptable regressions. Release thresholds depend on the pilot's task and latency requirements and must be declared before comparing candidates.
 
 Before promotion, retain the manifest, evaluation report, relevant redacted failure artifacts, model/data license records and rollback configuration. Re-run affected cases whenever base/adapter weights, tokenizer, template, parser, quantization or runtime changes. Broader capability claims require corresponding evaluations.
+
+## Score models on a project's labelled suite
+
+`farhelm eval run` scores registry models on a project's held-out, labelled task: a classification or grading job whose items a person has labelled. A suite is a folder outside Git (it holds the project's data):
+
+```toml
+# <suite folder>/suite.toml
+name        = "lacuna-e030-audit"
+system_file = "system.md"      # the system prompt
+schema_file = "schema.json"    # JSON schema the answer must match
+label_field = "grade"          # answer field holding the label
+labels      = ["studies", "passing", "false_match"]
+max_tokens  = 1500             # optional, default 1500
+```
+
+`items.jsonl` holds one item per line: `{"id": "1", "user": "<prompt>", "expected": "studies"}`. An item without `expected` is answered but not scored.
+
+```sh
+farhelm eval run <suite folder> --model think --model code --runs 3
+```
+
+Each model answers every item `--runs` times (default 3, at temperature 0, with the schema sent as `response_format`). The report gives Cohen's kappa and exact agreement against the person's labels per run, their range, failed items, and how often runs agree with each other. One run is not a score: on lacuna's e030 audit, identical runs moved kappa by up to 0.1. Calls go through the gateway under the `eval` client's session, so they are in the ledger and apart from the projects' own use; each run has its own cache scope. The JSON report, with every answer, is written to `evals/` beside the database.

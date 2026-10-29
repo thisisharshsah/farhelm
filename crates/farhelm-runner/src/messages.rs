@@ -578,58 +578,54 @@ fn messages_stop_reason(reason: Option<&str>, has_tools: bool) -> &'static str {
 /// belongs to one; there is no real checkout behind an API call, so it points
 /// at the runner's own home and is named for what it is.
 pub(crate) fn ensure_bucket(state: &AppState, session_id: &str) -> Result<(), ApiError> {
+    ensure_bucket_in(&state.store, &state.machine_id, session_id)
+        .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+/// [`ensure_bucket`] against a store directly, for callers without the
+/// runner's state (`farhelm eval`).
+pub(crate) fn ensure_bucket_in(
+    store: &farhelm_sqlite::SqliteStore,
+    machine_id: &str,
+    session_id: &str,
+) -> Result<(), farhelm_app::store::StoreError> {
     use farhelm_app::store::{FleetStore, SessionStore};
     use farhelm_proto::types::{Agent, Repo, Session, SessionStatus};
 
-    let store_err = |err: farhelm_app::store::StoreError| {
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-    };
-
-    if state
-        .store
-        .get_session(session_id)
-        .map_err(store_err)?
-        .is_some()
-    {
+    if store.get_session(session_id)?.is_some() {
         return Ok(());
     }
 
-    let repo_id = format!("repo-api-{}", state.machine_id);
-    if state.store.get_repo(&repo_id).map_err(store_err)?.is_none() {
-        state
-            .store
-            .upsert_repo(&Repo {
-                id: repo_id.clone(),
-                machine_id: state.machine_id.clone(),
-                path: String::new(),
-                name: "API calls".to_owned(),
-                budget_usd: None,
-            })
-            .map_err(store_err)?;
+    let repo_id = format!("repo-api-{machine_id}");
+    if store.get_repo(&repo_id)?.is_none() {
+        store.upsert_repo(&Repo {
+            id: repo_id.clone(),
+            machine_id: machine_id.to_owned(),
+            path: String::new(),
+            name: "API calls".to_owned(),
+            budget_usd: None,
+        })?;
     }
 
-    state
-        .store
-        .upsert_session(&Session {
-            id: session_id.to_owned(),
-            repo_id,
-            // The gateway is the agent here: nothing else is driving this turn.
-            agent: Agent::Farhelm,
-            tmux_target: None,
-            // Running, not Done: a bucket that is closed the moment it is
-            // created would show up in the fleet as a finished session, and
-            // every subsequent call would be spend against a dead one.
-            status: SessionStatus::Running,
-            plan_id: None,
-            // No cap by default. A cap invented here would start refusing calls
-            // for a reason the caller never chose and cannot see.
-            budget_usd: None,
-            spent_usd: 0.0,
-            started_at: farhelm_app::time::now_ms(),
-            ended_at: None,
-            agent_session_id: None,
-        })
-        .map_err(store_err)?;
+    store.upsert_session(&Session {
+        id: session_id.to_owned(),
+        repo_id,
+        // The gateway is the agent here: nothing else is driving this turn.
+        agent: Agent::Farhelm,
+        tmux_target: None,
+        // Running, not Done: a bucket that is closed the moment it is
+        // created would show up in the fleet as a finished session, and
+        // every subsequent call would be spend against a dead one.
+        status: SessionStatus::Running,
+        plan_id: None,
+        // No cap by default. A cap invented here would start refusing calls
+        // for a reason the caller never chose and cannot see.
+        budget_usd: None,
+        spent_usd: 0.0,
+        started_at: farhelm_app::time::now_ms(),
+        ended_at: None,
+        agent_session_id: None,
+    })?;
     Ok(())
 }
 

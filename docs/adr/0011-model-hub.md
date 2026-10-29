@@ -69,7 +69,10 @@ training data or evaluation sets, and an evaluation set is never trained on.
    One run is not a score. A second identical `think` run, same prompts and
    temperature 0, changed 6 of 54 labels and moved kappa from 0.11 to 0.21;
    the October and current runs differ by about as much. Evaluation therefore
-   repeats runs and reports the spread. The other lacuna tasks have
+   repeats runs and reports the spread: `farhelm eval run` (2026-10-29, see
+   the evaluation guide). Its first report, three runs each on e030-audit:
+   `quick` 0.24 (0.22 to 0.25), `think` 0.20 (0.15 to 0.25), `code` 0.18;
+   runs agreed with each other on 96 to 100 percent of items. The other lacuna tasks have
    1 to 4 human labels against a target of 40; until labelled, they can only
    measure a student's agreement with its teacher.
 

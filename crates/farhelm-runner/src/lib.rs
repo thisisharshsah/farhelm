@@ -11,6 +11,7 @@ pub mod clients;
 pub mod cloud;
 pub mod commands;
 pub mod engine;
+pub mod eval;
 pub mod front_door;
 pub mod hook;
 pub mod hook_cli;

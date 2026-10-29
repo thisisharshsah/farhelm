@@ -80,6 +80,13 @@ RUNNING
     models           The model registry: each model with its card, its routes
                      and aliases, and its adapters (`model:adapter`) with every
                      version's training and evaluation record.
+    eval run <suite> --model <name> [--model <name>…] [--runs 3]
+                     Score registry models on a held-out suite (a folder with
+                     suite.toml and items.jsonl): Cohen's kappa and exact
+                     agreement against a person's labels, per run and as a
+                     range, and how often runs agree. Calls are recorded under
+                     the `eval` client; the report goes to evals/ beside the
+                     database.
     check            Validate the model registry (FARHELM_MODELS_CONFIG or
                      --models-config), engine.toml and clients.toml without
                      starting anything; exits non-zero on a problem. Run it
@@ -262,6 +269,7 @@ fn main() -> ExitCode {
         Some("clients") => clients_command(&flags, &args[1..]),
         Some("check") => check_command(&flags, &args[1..]),
         Some("models") => models_command(&args[1..]),
+        Some("eval") => eval_command(&flags, &args[1..]),
         Some("install-service") => install_service(&flags),
         // The two server halves. They were separate binaries; they are
         // subcommands so that everything this system does is reachable from the
@@ -1541,6 +1549,62 @@ fn restart_in_place() {
     // No in-place exec on Windows: exit and let the service manager restart.
     eprintln!("  cloud      reachable again; exiting so the service restarts with the relay");
     std::process::exit(75);
+}
+
+/// `farhelm eval run`: see [`farhelm_runner::eval`].
+fn eval_command(flags: &Flags, args: &[String]) -> Fallible {
+    const USAGE: &str =
+        "usage: farhelm eval run <suite folder> --model <name> [--model <name>…] [--runs 3]";
+    let (Some("run"), Some(suite)) = (args.first().map(String::as_str), args.get(1)) else {
+        return Err(USAGE.into());
+    };
+    let mut models = Vec::new();
+    let mut runs = 3;
+    let mut models_config = farhelm_app::legacy::env_var("FARHELM_MODELS_CONFIG");
+    let mut rest = args[2..].iter();
+    while let Some(arg) = rest.next() {
+        let mut value = || rest.next().cloned().ok_or(USAGE);
+        match arg.as_str() {
+            "--model" => models.push(value()?),
+            "--runs" => {
+                runs = value()?
+                    .parse()
+                    .ok()
+                    .filter(|runs| (1..=20).contains(runs))
+                    .ok_or("--runs takes 1 to 20")?;
+            }
+            "--models-config" => models_config = Some(value()?),
+            // Shared flags (--db) were read by Flags::parse.
+            "--db" => {
+                value()?;
+            }
+            other => return Err(format!("unknown option `{other}`; {USAGE}").into()),
+        }
+    }
+    if models.is_empty() {
+        return Err(USAGE.into());
+    }
+    let models_config = models_config
+        .ok_or("no model registry selected; set FARHELM_MODELS_CONFIG or pass --models-config")?;
+    let db = PathBuf::from(&flags.db);
+    let reports = db
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .join("evals");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let path = runtime.block_on(farhelm_runner::eval::run(farhelm_runner::eval::Options {
+        suite_dir: PathBuf::from(suite),
+        models,
+        runs,
+        models_config: PathBuf::from(models_config),
+        db,
+        reports,
+    }))?;
+    println!("\nreport     {}", path.display());
+    Ok(())
 }
 
 /// `farhelm models`: the registry as people read it.
