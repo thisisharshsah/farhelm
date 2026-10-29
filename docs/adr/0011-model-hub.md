@@ -95,5 +95,10 @@ training data or evaluation sets, and an evaluation set is never trained on.
 - One ledger, one model store, one evaluation discipline.
 - Farhelm is on the path of every project's model calls; its reliability is
   theirs (step 2 exists for this reason).
-- Memory is shared: every loaded model counts against one machine. Loading
-  and unloading models on demand will be needed as projects add their own.
+- Memory is shared: every loaded model counts against one machine. An idle
+  model sleeps (`sleep_idle_seconds`, 600 for each model since 2026-10-29):
+  on this 64 GB Mac, wired memory fell from 40 GB to 15 GB with two of the
+  three asleep, and the 30B model's first request after sleep took 5.4 s
+  (0.6 s once awake). Models that must answer at once can stay awake by
+  leaving the setting out. Loading models that do not fit together is still
+  to come.

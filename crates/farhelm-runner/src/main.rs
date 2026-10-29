@@ -1144,6 +1144,7 @@ fn engine_command(flags: &Flags, args: &[String]) -> Fallible {
                     .unwrap_or(32_768),
                 parallel: 1,
                 adapters: Vec::new(),
+                sleep_idle_seconds: None,
             })
         };
     let model_args = || -> Result<(PathBuf, String), Box<dyn std::error::Error>> {

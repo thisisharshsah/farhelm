@@ -100,6 +100,12 @@ pub struct ModelEntry {
     /// registry specialist names (`adapters = [{ id = 0, scale = 1.0 }]`).
     #[serde(default)]
     pub adapters: Vec<AdapterEntry>,
+    /// Seconds without a request after which the server sleeps: it frees its
+    /// cache and compute buffers and the next request wakes it (about half a
+    /// second for a 4B model on this machine). The weights stay mapped, in
+    /// memory macOS reclaims under pressure. Unset keeps it awake.
+    #[serde(default)]
+    pub sleep_idle_seconds: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -189,6 +195,12 @@ impl EngineConfig {
                     model.alias
                 )));
             }
+            if model.sleep_idle_seconds == Some(0) {
+                return Err(fail(format!(
+                    "model `{}`: sleep_idle_seconds must be at least 1, or left out to stay awake",
+                    model.alias
+                )));
+            }
             let mut names = std::collections::BTreeSet::new();
             for adapter in &model.adapters {
                 if !valid_name(&adapter.name) || !names.insert(adapter.name.as_str()) {
@@ -232,6 +244,7 @@ impl EngineConfig {
                 if entry.adapters.is_empty() {
                     entry.adapters = std::mem::take(&mut existing.adapters);
                 }
+                entry.sleep_idle_seconds = entry.sleep_idle_seconds.or(existing.sleep_idle_seconds);
                 *existing = entry;
             }
             None => self.models.push(entry),
@@ -266,6 +279,9 @@ impl EngineConfig {
                 model.ctx_size,
                 model.parallel,
             ));
+            if let Some(seconds) = model.sleep_idle_seconds {
+                out.push_str(&format!("sleep_idle_seconds = {seconds}\n"));
+            }
             for (id, adapter) in model.adapters.iter().enumerate() {
                 out.push_str(&format!(
                     "\n# adapter id {id}\n\
@@ -345,6 +361,10 @@ impl ModelServer {
         }
         if !model.adapters.is_empty() {
             args.push("--lora-init-without-apply".into());
+        }
+        if let Some(seconds) = model.sleep_idle_seconds {
+            args.push("--sleep-idle-seconds".into());
+            args.push(seconds.to_string());
         }
         args
     }
@@ -932,6 +952,7 @@ mod tests {
             ctx_size: 32_768,
             parallel: 1,
             adapters: Vec::new(),
+            sleep_idle_seconds: None,
         }
     }
 
@@ -961,10 +982,37 @@ mod tests {
 
     #[test]
     fn the_written_config_reads_back_identically() {
-        let written = with_specialist();
+        let mut written = with_specialist();
+        written.models[1].sleep_idle_seconds = Some(600);
         let read: EngineConfig = toml::from_str(&written.to_toml()).unwrap();
         assert_eq!(read, written);
         assert_eq!(read.models[1].port, DEFAULT_PORT + 1);
+    }
+
+    #[test]
+    fn an_idle_server_sleeps_only_when_asked() {
+        let mut config = config();
+        let awake = config.servers()[0].clone();
+        assert!(!awake.args().iter().any(|arg| arg == "--sleep-idle-seconds"));
+
+        config.models[0].sleep_idle_seconds = Some(600);
+        let sleepy = config.servers()[0].clone();
+        let args = sleepy.args();
+        let at = args
+            .iter()
+            .position(|arg| arg == "--sleep-idle-seconds")
+            .unwrap();
+        assert_eq!(args[at + 1], "600");
+        // A changed setting is a different server: the old one is replaced,
+        // not adopted.
+        assert_ne!(awake.fingerprint(), sleepy.fingerprint());
+
+        // Re-adding the model keeps the setting, as it keeps the adapters.
+        config.upsert_model(entry());
+        assert_eq!(config.models[0].sleep_idle_seconds, Some(600));
+
+        config.models[0].sleep_idle_seconds = Some(0);
+        assert!(config.validate().is_err());
     }
 
     #[test]
