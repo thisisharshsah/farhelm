@@ -116,6 +116,14 @@ pub struct CompleteRequest {
     pub max_tokens: Option<u32>,
     /// Sampling the caller asked for; see [`Sampling`].
     pub sampling: crate::dispatch::Sampling,
+    /// Whether the session's error and repeat counters may restrain or stop
+    /// it. On for agent sessions, where a run of failures or identical calls
+    /// means a loop. Off for a project's service calling through the front
+    /// door: its calls are independent requests sharing one session id, so a
+    /// run of model errors there is a model problem, and a stop would refuse
+    /// every later request from the project (and count each refusal as one
+    /// more error). Budget restraint applies either way.
+    pub loop_guard: bool,
 }
 
 impl CompleteRequest {
@@ -138,6 +146,7 @@ impl CompleteRequest {
             cache_scope: None,
             max_tokens: None,
             sampling: crate::dispatch::Sampling::default(),
+            loop_guard: true,
         }
     }
 }
@@ -547,7 +556,11 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
             }
         }
 
-        let pressure = self.pressure_for(&request.session_id, session_budget.pct());
+        let mut pressure = self.pressure_for(&request.session_id, session_budget.pct());
+        if !request.loop_guard {
+            pressure.consecutive_errors = 0;
+            pressure.repeated_calls = 0;
+        }
         let restraint = restraint(&pressure);
         let steer = correction(&pressure);
 
@@ -1124,6 +1137,21 @@ mod tests {
             matches!(err, GatewayError::Contained { .. }),
             "a loop with no budget pressure has to be caught by something else"
         );
+    }
+
+    #[tokio::test]
+    async fn independent_calls_are_not_stopped_as_a_loop() {
+        // A project's service grading many items through the front door sends
+        // independent requests under one session id, some of them identical.
+        // Stopping it would refuse every later request from the project.
+        let gw = gateway(store_with(None, None), StubClient::new("same answer"));
+        for _ in 0..=(farhelm_domain::breaker::STOP_AFTER_REPEATS + 2) {
+            let mut request = CompleteRequest::new("s1", TaskType::Edit, "grade item");
+            request.loop_guard = false;
+            if let Err(err) = gw.complete(request).await {
+                panic!("refused: {err}");
+            }
+        }
     }
 
     #[tokio::test]

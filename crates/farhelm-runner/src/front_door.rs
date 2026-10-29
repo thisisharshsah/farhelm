@@ -230,6 +230,9 @@ impl FrontDoor {
         request.session_id = clients::session_id(name);
         request.cache_scope = Some(format!("client:{name}"));
         request.model = model;
+        // A project's calls are independent requests, not an agent's loop;
+        // see `CompleteRequest::loop_guard`.
+        request.loop_guard = false;
         if request.sampling.reasoning_effort.is_none() {
             request.sampling.reasoning_effort = client.default_effort.clone();
         }
@@ -300,6 +303,8 @@ struct ChatBody {
     /// llama.cpp's and the private gateway's way of passing it.
     #[serde(default)]
     chat_template_kwargs: Option<Value>,
+    #[serde(default)]
+    response_format: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,6 +479,12 @@ fn translate_chat(body: &ChatBody) -> Result<CompleteRequest, DoorError> {
             .and_then(Value::as_str)
             .map(str::to_owned)
     });
+    request.sampling.enable_thinking = body
+        .chat_template_kwargs
+        .as_ref()
+        .and_then(|kwargs| kwargs.get("enable_thinking"))
+        .and_then(Value::as_bool);
+    request.sampling.response_format = body.response_format.clone();
     Ok(request)
 }
 
@@ -641,12 +652,18 @@ mod tests {
         let request = translate_chat(&body(json!({
             "messages": [{ "role": "user", "content": "hi" }],
             "max_tokens": 900, "max_completion_tokens": 700, "temperature": 0.2,
-            "chat_template_kwargs": { "reasoning_effort": "high" },
+            "chat_template_kwargs": { "reasoning_effort": "high", "enable_thinking": false },
+            "response_format": { "type": "json_object" },
         })))
         .unwrap();
         assert_eq!(request.max_tokens, Some(700));
         assert_eq!(request.sampling.temperature, Some(0.2));
         assert_eq!(request.sampling.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(request.sampling.enable_thinking, Some(false));
+        assert_eq!(
+            request.sampling.response_format,
+            Some(json!({ "type": "json_object" }))
+        );
     }
 
     #[test]

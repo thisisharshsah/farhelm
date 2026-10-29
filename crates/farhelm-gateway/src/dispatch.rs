@@ -77,6 +77,15 @@ pub struct Sampling {
     pub top_p: Option<f32>,
     /// `low`, `medium` or `high`, for reasoning models such as gpt-oss.
     pub reasoning_effort: Option<String>,
+    /// Whether a hybrid thinking model such as Qwen3.5 thinks before
+    /// answering; its template's own default when unset. A deployment that
+    /// sets it (an adapter trained without thinking) overrides the caller.
+    pub enable_thinking: Option<bool>,
+    /// An OpenAI `response_format` (`json_object`, or `json_schema` with a
+    /// schema), which llama.cpp enforces with a grammar while decoding. gpt-oss
+    /// asked for JSON in prose labels its answer in a way llama.cpp's parser
+    /// rejects; with the format it answers in the shape the parser expects.
+    pub response_format: Option<serde_json::Value>,
 }
 
 impl Sampling {

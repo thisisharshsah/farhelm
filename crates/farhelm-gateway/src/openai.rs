@@ -378,6 +378,28 @@ fn completion_params(request: &ModelRequest, openrouter: bool) -> Result<Value, 
             body["chat_template_kwargs"] = json!({ "reasoning_effort": effort });
         }
     }
+    if let Some(thinking) = sampling.enable_thinking
+        && !openrouter
+    {
+        body["chat_template_kwargs"]["enable_thinking"] = json!(thinking);
+    }
+    if let Some(format) = &sampling.response_format {
+        match format["type"].as_str() {
+            Some("text") => {}
+            Some("json_object") => body["response_format"] = format.clone(),
+            Some("json_schema") if format["json_schema"]["schema"].is_object() => {
+                body["response_format"] = format.clone();
+            }
+            Some("json_schema") => {
+                return Err(invalid("response_format json_schema needs a schema object"));
+            }
+            _ => {
+                return Err(invalid(
+                    "response_format type must be text, json_object or json_schema",
+                ));
+            }
+        }
+    }
     Ok(body)
 }
 
@@ -725,6 +747,7 @@ mod tests {
             temperature: Some(0.2),
             top_p: Some(0.9),
             reasoning_effort: Some("low".into()),
+            ..Default::default()
         };
         let body = completion_params(&request, false).unwrap();
         assert_eq!(
@@ -736,11 +759,42 @@ mod tests {
         let body = completion_params(&request, true).unwrap();
         assert!(body.get("chat_template_kwargs").is_none());
 
+        request.sampling.enable_thinking = Some(false);
+        let body = completion_params(&request, false).unwrap();
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({ "reasoning_effort": "low", "enable_thinking": false })
+        );
+
         request.sampling.reasoning_effort = Some("extreme".into());
         assert!(completion_params(&request, false).is_err());
         request.sampling.reasoning_effort = None;
         request.sampling.temperature = Some(9.0);
         assert!(completion_params(&request, false).is_err());
+    }
+
+    #[test]
+    fn a_callers_response_format_reaches_the_server() {
+        let mut request = request();
+        let format = json!({
+            "type": "json_schema",
+            "json_schema": { "name": "out", "schema": { "type": "object" }, "strict": true }
+        });
+        request.sampling.response_format = Some(format.clone());
+        let body = completion_params(&request, false).unwrap();
+        assert_eq!(body["response_format"], format);
+
+        request.sampling.response_format = Some(json!({ "type": "text" }));
+        let body = completion_params(&request, false).unwrap();
+        assert!(body.get("response_format").is_none());
+
+        for bad in [
+            json!({ "type": "json_schema", "json_schema": { "name": "out" } }),
+            json!({ "type": "yaml" }),
+        ] {
+            request.sampling.response_format = Some(bad);
+            assert!(completion_params(&request, false).is_err());
+        }
     }
 
     #[test]
