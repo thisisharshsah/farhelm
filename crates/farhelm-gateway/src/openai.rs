@@ -612,7 +612,6 @@ mod tests {
             model: "fixture-model".into(),
             max_tokens: 512,
             effort: Some(crate::dispatch::Effort::High),
-            purpose: None,
             plan: PromptPlan {
                 tools: vec![
                     json!({ "name": "read_file", "description": "Read", "input_schema": { "type": "object", "properties": { "path": { "type": "string" } } } }),

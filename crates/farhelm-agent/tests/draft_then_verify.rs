@@ -157,7 +157,8 @@ struct ReviewerCompletion {
 
 impl ModelClient for ReviewerCompletion {
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, DispatchError> {
-        let reviewing = request.purpose == Some(TaskType::HardDebug);
+        // The reviewer is the call carrying the verifier's instructions.
+        let reviewing = format!("{:?}", request.plan).contains("You review proposed code changes");
         let mut response = self.inner.complete(request).await?;
         if reviewing {
             response.stop_reason = self.stop_reason.map(str::to_owned);

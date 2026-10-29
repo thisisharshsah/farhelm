@@ -87,7 +87,8 @@ training data or evaluation sets, and an evaluation set is never trained on.
 7. Retire `local-assistant` once no project uses it (done, 2026-10-29: the
    service is stopped and its launch agent removed, with a backup under
    `~/.farhelm/backups/`). Farhelm's own `CONSCIOUS_*` provider path, which
-   called it, remains and is the next thing to remove.
+   called it, is removed; the registry is the one local path, and the
+   Anthropic environment path stays optional.
 
 ## Consequences
 

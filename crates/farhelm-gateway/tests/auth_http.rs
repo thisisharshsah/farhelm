@@ -61,7 +61,6 @@ fn request() -> ModelRequest {
         model: "claude-sonnet-5".into(),
         max_tokens: 64,
         effort: None,
-        purpose: None,
         plan: assemble(
             &StableContext::default(),
             "hello",

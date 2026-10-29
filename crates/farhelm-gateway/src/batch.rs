@@ -404,13 +404,10 @@ impl AnthropicBatchClient {
         }
     }
 
-    /// `None` when Conscious is the provider: it has no Batch API, and the
-    /// owner chose it over Anthropic, so queued work must not be flushed to
-    /// Anthropic with a leftover `ANTHROPIC_API_KEY`.
+    /// `None` without an API key. The runner starts the flusher only when the
+    /// selected provider supports batching, so a local-only registry never
+    /// sends queued work to Anthropic with a leftover `ANTHROPIC_API_KEY`.
     pub fn from_env() -> Option<Self> {
-        if crate::dispatch::conscious_configured() {
-            return None;
-        }
         let key = std::env::var("ANTHROPIC_API_KEY").ok()?;
         if key.trim().is_empty() {
             return None;

@@ -823,9 +823,6 @@ async fn serve_async(flags: Flags) -> Fallible {
                 config.models.large,
                 config.models.frontier
             );
-            if let Some(model) = client.model_override() {
-                provider.push_str(&format!(" · all sent as {model}"));
-            }
             Some(Gateway::new(store, client, config))
         },
         Arc::clone(&identity),

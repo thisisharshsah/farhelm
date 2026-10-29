@@ -501,7 +501,7 @@ impl ProviderClient {
 
     pub fn provider_name(&self) -> &'static str {
         match self {
-            Self::Legacy(client) => client.provider_name(),
+            Self::Legacy(_) => "anthropic",
             Self::Configured(_) => "configured",
         }
     }
@@ -510,13 +510,6 @@ impl ProviderClient {
         match self {
             Self::Legacy(client) => client.credential_kind(),
             Self::Configured(_) => "provider configuration",
-        }
-    }
-
-    pub fn model_override(&self) -> Option<&str> {
-        match self {
-            Self::Legacy(client) => client.model_override(),
-            Self::Configured(_) => None,
         }
     }
 
@@ -1077,7 +1070,6 @@ cache_read_per_mtok = 0.5
             model: "code".into(),
             max_tokens: 8000,
             effort: None,
-            purpose: None,
             plan: assemble(
                 &StableContext::default(),
                 "hello",

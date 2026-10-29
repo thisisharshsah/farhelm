@@ -775,7 +775,6 @@ mod tests {
             model: "claude-opus-5".into(),
             max_tokens: 100,
             effort: None,
-            purpose: None,
             plan,
         };
         let body = crate::dispatch::messages_params(&request);

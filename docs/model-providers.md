@@ -13,7 +13,7 @@ cargo run -p farhelm-runner -- serve
 
 Launch desktop with the same environment when using the packaged desktop host. A GUI process launched separately may not inherit your shell exports; configure its launch environment explicitly. Configuration is loaded at startup; restart after changing it. The registry fails closed when the selected file is missing, malformed, has an unsupported version or references missing credentials. It does not switch back to an older environment configuration on errors.
 
-Without `FARHELM_MODELS_CONFIG`, the existing Conscious/Anthropic environment and stored-credential paths remain available with their existing behavior. The configuration-file policy described here applies to the explicitly selected registry, not to an unconfigured legacy client.
+Without `FARHELM_MODELS_CONFIG`, the Anthropic environment and stored-credential paths remain available with their existing behavior. The configuration-file policy described here applies to the explicitly selected registry, not to an unconfigured legacy client.
 
 ## The Farhelm engine
 

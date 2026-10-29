@@ -80,7 +80,7 @@ flowchart TD
         GW_POLICY["Data Policy & Quota Filter"]
         MODEL_REG["Provider-Neutral Model Registry"]
         ADAPT_LOCAL["Local Adapters (vLLM / Ollama / llama.cpp)"]
-        ADAPT_CLOUD["Optional Cloud: OpenRouter / Anthropic; legacy Conscious"]
+        ADAPT_CLOUD["Optional Cloud: OpenRouter / Anthropic"]
     end
 
     Clients -->|Direct HTTP / SSE| HTTP_API
@@ -101,7 +101,7 @@ flowchart TD
     MODEL_REG --> ADAPT_CLOUD
 ```
 
-The existing relay uses X25519 key agreement with XSalsa20-Poly1305 authenticated encryption (`crypto_box`), not Noise. Control-plane token signatures use ES256/P-256. These transport primitives do not establish the future per-project execution permissions. Conscious is a configurable existing Messages-compatible integration; its locality is a deployment property.
+The existing relay uses X25519 key agreement with XSalsa20-Poly1305 authenticated encryption (`crypto_box`), not Noise. Control-plane token signatures use ES256/P-256. These transport primitives do not establish the future per-project execution permissions.
 
 ---
 
@@ -248,7 +248,7 @@ CREATE INDEX IF NOT EXISTS idx_entity_links_target ON entity_links(target_type, 
 
 ### 4.1 Motivation
 
-The existing `ModelClient` port separates gateway policy from transport. The initial configured slice adds Chat Completions transport beside the existing Anthropic/Conscious Messages transport; [ADR 0006](adr/0006-configurable-model-providers.md) defines its precise scope. The broader deployment direction is:
+The existing `ModelClient` port separates gateway policy from transport. The initial configured slice adds Chat Completions transport beside the existing Anthropic Messages transport; [ADR 0006](adr/0006-configurable-model-providers.md) defines its precise scope. The broader deployment direction is:
 
 1. **Local Self-Hosted Runtimes**:
    - **Ollama**: Developer convenience default; supports a subset of `/v1/chat/completions`. Verify the selected model is local and tool capable.
@@ -257,7 +257,6 @@ The existing `ModelClient` port separates gateway policy from transport. The ini
 2. **Cloud Escalation Backends**:
    - **Anthropic Messages**: Existing direct provider path; model availability is configured separately.
    - **OpenRouter**: Optional explicit model route and authorized free-tier experimentation. Initial configured requests disable provider fallback; free capacity is not a production guarantee.
-   - **Conscious**: Existing custom Messages-compatible gateway with component tagging.
 
 ### 4.2 Data Sovereignty Enforcement
 
