@@ -84,7 +84,10 @@ training data or evaluation sets, and an evaluation set is never trained on.
    host later), a teacher model labelling data for a smaller, faster student,
    each run producing an adapter, its evaluation and a deployment record.
    Promotion follows step 4.
-7. Retire `local-assistant` once no project uses it.
+7. Retire `local-assistant` once no project uses it (done, 2026-10-29: the
+   service is stopped and its launch agent removed, with a backup under
+   `~/.farhelm/backups/`). Farhelm's own `CONSCIOUS_*` provider path, which
+   called it, remains and is the next thing to remove.
 
 ## Consequences
 
