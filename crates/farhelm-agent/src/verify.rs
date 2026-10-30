@@ -7,8 +7,13 @@
 //! the part that needs the best model in the world.
 //!
 //! What does need it is the judgement at the end. So exactly one frontier call
-//! happens per task, and it sees **only the diff**: no repo map, no history, no
-//! tool results. A patch is a few kilobytes; a twelve-turn session is not.
+//! happens per task, and it sees **the diff and the last command's result**:
+//! no repo map, no history, no other tool results. A patch is a few
+//! kilobytes; a twelve-turn session is not.
+//!
+//! The last command is there because a diff alone cannot show that its tests
+//! fail. On a local model (2026-10-29) a verifier passed a change whose own
+//! test failed, and one the agent had never managed to run.
 //!
 //! ```text
 //!   drafting   N turns × large tier × full context
@@ -36,9 +41,11 @@ use crate::diff::ChangeSet;
 
 /// Frozen, like the agent's own system prompt; this call caches too.
 const VERIFY_SYSTEM: &str = "\
-You review proposed code changes. You are given the task that was asked for and \
-a unified diff, and nothing else: no repository, no conversation, no ability to \
-run anything. Judge only what is visible in the patch.
+You review proposed code changes. You are given the task that was asked for, \
+a unified diff, and the result of the last command the agent ran (usually its \
+tests), and nothing else: no repository, no conversation, no ability to run \
+anything. Judge only what is visible. A change whose last command failed, or \
+that was never run when the task asked for it to be, is not a pass.
 
 Reply with a single line:
 
@@ -129,8 +136,45 @@ pub fn parse(text: &str) -> (Grade, String) {
     )
 }
 
-/// The instruction: the ask, then the patch. Nothing else.
-fn instruction(prompt: &str, changes: &ChangeSet) -> String {
+/// The last command the agent ran, as its result came back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastRun {
+    pub command: String,
+    /// `None` when the result did not start with the `exit N` line `run`
+    /// writes (a denied or failed command).
+    pub exit: Option<i32>,
+    /// The end of the output, where test runners put their summary.
+    pub tail: String,
+}
+
+/// How much of the last command's output the verifier reads.
+const MAX_RUN_TAIL_BYTES: usize = 3 * 1024;
+
+impl LastRun {
+    pub fn new(command: &str, output: &str) -> Self {
+        let exit = output
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("exit "))
+            .and_then(|code| code.trim().parse().ok());
+        let mut start = output.len().saturating_sub(MAX_RUN_TAIL_BYTES);
+        while !output.is_char_boundary(start) {
+            start += 1;
+        }
+        Self {
+            command: command.to_owned(),
+            exit,
+            tail: output[start..].to_owned(),
+        }
+    }
+
+    fn failed(&self) -> bool {
+        self.exit != Some(0)
+    }
+}
+
+/// The instruction: the ask, the patch, then what the agent last ran.
+fn instruction(prompt: &str, changes: &ChangeSet, last_run: Option<&LastRun>) -> String {
     let mut patch = changes.render();
     if patch.len() > MAX_PATCH_BYTES {
         let mut end = MAX_PATCH_BYTES;
@@ -141,10 +185,48 @@ fn instruction(prompt: &str, changes: &ChangeSet) -> String {
         patch.push_str("\n[patch truncated; judge what is visible]\n");
     }
 
+    let run = match last_run {
+        Some(run) => format!(
+            "The last command the agent ran was `{}`, which {}. The end of its output:\n\n{}",
+            run.command,
+            run.exit
+                .map_or("did not report an exit code".to_owned(), |code| format!(
+                    "exited {code}"
+                )),
+            run.tail
+        ),
+        None => "The agent ran no commands: nothing in this change was executed or tested.".into(),
+    };
     format!(
-        "The task was:\n\n{prompt}\n\nThe proposed change ({}):\n\n{patch}",
+        "The task was:\n\n{prompt}\n\nThe proposed change ({}):\n\n{patch}\n\n{run}",
         changes.summary()
     )
+}
+
+/// A failed last command caps the grade at `concerns`, whatever the model
+/// said, and the card says why: a model that misread a failing test run must
+/// not put "pass" on it.
+fn checked(grade: Grade, notes: String, last_run: Option<&LastRun>) -> (Grade, String) {
+    match last_run {
+        Some(run) if run.failed() && grade == Grade::Pass => (
+            Grade::Concerns,
+            format!(
+                "The last command the agent ran (`{}`) {}. {notes}",
+                run.command,
+                run.exit
+                    .map_or("did not report an exit code".to_owned(), |code| format!(
+                        "exited {code}"
+                    ))
+            ),
+        ),
+        None if grade == Grade::Pass => (
+            grade,
+            format!("{notes} Nothing was run to test it.")
+                .trim()
+                .to_owned(),
+        ),
+        _ => (grade, notes),
+    }
 }
 
 /// Have the frontier model read the diff.
@@ -158,6 +240,7 @@ pub async fn assess<S: Store, C: ModelClient>(
     session_id: &str,
     prompt: &str,
     changes: &ChangeSet,
+    last_run: Option<&LastRun>,
 ) -> Option<Assessment> {
     if changes.is_empty() {
         return None;
@@ -173,7 +256,7 @@ pub async fn assess<S: Store, C: ModelClient>(
     let mut request = CompleteRequest::new(
         session_id,
         TaskType::HardDebug,
-        instruction(prompt, changes),
+        instruction(prompt, changes, last_run),
     );
     request.stable = stable;
     // No `repo_path`: no retrieval, no pre-gate. The patch is the whole input,
@@ -220,6 +303,7 @@ pub async fn assess<S: Store, C: ModelClient>(
                 });
             }
             let (grade, notes) = parse(&response.text);
+            let (grade, notes) = checked(grade, notes, last_run);
             Some(Assessment {
                 grade,
                 notes,
@@ -242,6 +326,57 @@ pub async fn assess<S: Store, C: ModelClient>(
 mod tests {
     use super::*;
     use crate::diff::file_diff;
+
+    #[test]
+    fn the_reviewer_sees_what_the_agent_last_ran() {
+        let run = LastRun::new(
+            "cargo test",
+            "exit 101\nrunning 3 tests\ntest result: FAILED",
+        );
+        assert_eq!(run.exit, Some(101));
+        let text = instruction("Fix it", &changes(), Some(&run));
+        assert!(text.contains("`cargo test`, which exited 101"));
+        assert!(text.contains("test result: FAILED"));
+
+        let text = instruction("Fix it", &changes(), None);
+        assert!(text.contains("nothing in this change was executed or tested"));
+
+        let denied = LastRun::new("rm -rf /", "the supervisor denied this command");
+        assert_eq!(denied.exit, None);
+    }
+
+    #[test]
+    fn a_failed_last_run_is_never_a_pass() {
+        let failed = LastRun::new("cargo test", "exit 101\nFAILED");
+        let (grade, notes) = checked(Grade::Pass, "Looks right.".into(), Some(&failed));
+        assert_eq!(grade, Grade::Concerns);
+        assert!(notes.starts_with("The last command the agent ran (`cargo test`) exited 101."));
+        // The model's own fail stands.
+        assert_eq!(
+            checked(Grade::Fail, String::new(), Some(&failed)).0,
+            Grade::Fail
+        );
+
+        let passed = LastRun::new("cargo test", "exit 0\nok");
+        assert_eq!(
+            checked(Grade::Pass, "Fine.".into(), Some(&passed)),
+            (Grade::Pass, "Fine.".into())
+        );
+
+        // Nothing run keeps the grade and says so.
+        assert_eq!(
+            checked(Grade::Pass, "Fine.".into(), None),
+            (Grade::Pass, "Fine. Nothing was run to test it.".into())
+        );
+    }
+
+    #[test]
+    fn a_long_output_keeps_its_end() {
+        let output = format!("exit 1\n{}\nthe summary line", "x".repeat(10_000));
+        let run = LastRun::new("make", &output);
+        assert!(run.tail.len() <= MAX_RUN_TAIL_BYTES);
+        assert!(run.tail.ends_with("the summary line"));
+    }
 
     fn changes() -> ChangeSet {
         ChangeSet {
@@ -302,7 +437,7 @@ mod tests {
 
     #[test]
     fn the_instruction_carries_the_ask_and_the_patch_and_nothing_else() {
-        let text = instruction("Bound the retry backoff", &changes());
+        let text = instruction("Bound the retry backoff", &changes(), None);
         assert!(text.contains("Bound the retry backoff"));
         assert!(text.contains("+new"));
         assert!(text.contains("1 file, +1 −1"));
@@ -315,7 +450,7 @@ mod tests {
             files: vec![file_diff("big.txt", Some(""), Some(&huge)).unwrap()],
         };
 
-        let text = instruction("x", &set);
+        let text = instruction("x", &set, None);
         assert!(text.contains("[patch truncated"));
         assert!(text.len() < MAX_PATCH_BYTES * 2);
     }

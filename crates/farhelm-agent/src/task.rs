@@ -475,6 +475,10 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     let mut remembered: Vec<(String, String)> = Vec::new();
     let mut steps = 0;
     let mut outcome = Outcome::StepLimit;
+    // What the reviewer is shown besides the diff: the last command and its
+    // result. Delegates' commands are not tracked; the parent's are the ones
+    // that decided it was finished.
+    let mut last_run: Option<crate::verify::LastRun> = None;
 
     while steps < spec.max_steps {
         steps += 1;
@@ -614,7 +618,17 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
 
             let rendered =
                 match tools::execute(call, &mut workspace, supervisor, &mut remembered).await {
-                    Ok(body) => tool_result(call, &body, false),
+                    Ok(body) => {
+                        if call.name == tools::RUN {
+                            let command = call
+                                .input
+                                .get("command")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or_default();
+                            last_run = Some(crate::verify::LastRun::new(command, &body));
+                        }
+                        tool_result(call, &body, false)
+                    }
                     // A tool error is not a task failure. The model gets told what
                     // went wrong and takes another turn, which is what a person at
                     // a terminal would do with a typo'd filename.
@@ -630,6 +644,15 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         summary = format!(
             "Stopped after {steps} steps without finishing. \
              What follows is the change set as it stood."
+        );
+    }
+    // A gateway error ends the loop without one; the card should say why.
+    if let Outcome::Failed(why) = &outcome
+        && summary.is_empty()
+    {
+        summary = format!(
+            "Stopped after {steps} steps with an error: {why}. \
+             Any changes are the change set as it stood."
         );
     }
 
@@ -660,8 +683,14 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     // judging half-finished work at the tier that costs the most to be wrong
     // about, and would fire a dozen times for one answer.
     let assessment = if spec.verify && outcome.needs_review() {
-        let assessment =
-            crate::verify::assess(gateway, &spec.session_id, &spec.prompt, &changes).await;
+        let assessment = crate::verify::assess(
+            gateway,
+            &spec.session_id,
+            &spec.prompt,
+            &changes,
+            last_run.as_ref(),
+        )
+        .await;
         if let Some(assessment) = &assessment {
             cost_usd += assessment.cost_usd;
             supervisor.note(&format!(

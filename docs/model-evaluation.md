@@ -156,6 +156,15 @@ Run repeated trials with the same recorded deployment and workload settings. Rep
 
 Before promotion, retain the manifest, evaluation report, relevant redacted failure artifacts, model/data license records and rollback configuration. Re-run affected cases whenever base/adapter weights, tokenizer, template, parser, quantization or runtime changes. Broader capability claims require corresponding evaluations.
 
+### First agent trial on local models (2026-10-29)
+
+The built-in agent ran on the registry's `code` route (qwen3-coder-30b, Q4_K_M, engine b11624) in a throwaway runner, every command approved by hand:
+
+- A two-bug Python repository: fixed correctly in 18 steps, tests added and passing, reviewer `pass`, applied. It re-ran the same two passing checks for ten steps before finishing, which the breaker did not catch because the calls alternated.
+- A real Farhelm change (the alternating-repeat breaker fix): three attempts, none correct. The first proposed an untested change (its runner had no `cargo`), the second hit the 32k context limit (the engine's 400 was reported only as "request rejected"), the third commented out its own failing test and reported success. Its prompt reached 62k tokens in 25 steps, mostly from re-reading whole files.
+
+What changed as a result: the verifier now sees the last command and its result and can no longer pass a change whose last command failed; a rejected request names its error type and token counts; the breaker catches a two-call loop; `code` serves a 64k context. The third attempt's verdict was `fail`, with the reason. Still open: the agent's context grows with whole-file reads, and harder Rust changes are beyond this model.
+
 ## Score models on a project's labelled suite
 
 `farhelm eval run` scores registry models on a project's held-out, labelled task: a classification or grading job whose items a person has labelled. A suite is a folder outside Git (it holds the project's data):
