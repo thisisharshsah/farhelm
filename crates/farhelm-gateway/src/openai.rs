@@ -123,10 +123,18 @@ impl OpenAiClient {
         let status = response.status();
         if !status.is_success() {
             // Provider errors can echo prompt content, credentials and upstream
-            // URLs. The status remains useful without copying the remote body.
+            // URLs, so the body's message is never copied; only its error type
+            // and token counts are (see `rejection`).
+            let mut body = Vec::new();
+            while let Ok(Some(chunk)) = response.chunk().await {
+                body.extend_from_slice(&chunk);
+                if body.len() > MAX_ERROR_BYTES {
+                    break;
+                }
+            }
             return Err(DispatchError::Api {
                 status: status.as_u16(),
-                message: "Chat Completions request rejected".into(),
+                message: rejection(&body),
             });
         }
         if response
@@ -401,6 +409,36 @@ fn completion_params(request: &ModelRequest, openrouter: bool) -> Result<Value, 
         }
     }
     Ok(body)
+}
+
+/// How much of an error body is read to find its type.
+const MAX_ERROR_BYTES: usize = 16 * 1024;
+
+/// The message for a rejected request: its error type and token counts when
+/// the provider gives them, which say what went wrong ("the prompt was 40009
+/// tokens and the context is 32768") without any of the prompt.
+fn rejection(body: &[u8]) -> String {
+    const BASE: &str = "Chat Completions request rejected";
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return BASE.into();
+    };
+    let error = &value["error"];
+    // An identifier, never free text: anything else is dropped.
+    let kind = error["type"].as_str().filter(|kind| {
+        !kind.is_empty()
+            && kind.len() <= 64
+            && kind
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+    });
+    let count = |field: &str| error[field].as_u64();
+    match (kind, count("n_prompt_tokens"), count("n_ctx")) {
+        (Some(kind), Some(prompt), Some(context)) => {
+            format!("{BASE} ({kind}: {prompt} prompt tokens, context {context})")
+        }
+        (Some(kind), _, _) => format!("{BASE} ({kind})"),
+        _ => BASE.into(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -770,6 +808,23 @@ mod tests {
         request.sampling.reasoning_effort = None;
         request.sampling.temperature = Some(9.0);
         assert!(completion_params(&request, false).is_err());
+    }
+
+    #[test]
+    fn a_rejection_names_its_type_and_sizes_but_never_its_message() {
+        let body = br#"{"error":{"code":400,"message":"request (40009 tokens) exceeds the available context size (32768 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":40009,"n_ctx":32768}}"#;
+        assert_eq!(
+            rejection(body),
+            "Chat Completions request rejected (exceed_context_size_error: 40009 prompt tokens, context 32768)"
+        );
+        // A message alone, or a type that is not an identifier, adds nothing.
+        let echoed = br#"{"error":{"message":"secret prompt text","type":"Bad: secret prompt"}}"#;
+        assert_eq!(rejection(echoed), "Chat Completions request rejected");
+        assert_eq!(
+            rejection(br#"{"error":{"type":"invalid_request_error"}}"#),
+            "Chat Completions request rejected (invalid_request_error)"
+        );
+        assert_eq!(rejection(b"<html>"), "Chat Completions request rejected");
     }
 
     #[test]

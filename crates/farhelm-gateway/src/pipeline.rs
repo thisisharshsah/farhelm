@@ -339,6 +339,10 @@ struct SessionPressure {
     /// A hash rather than the text: this map is held for every live session and
     /// the content is the one thing it does not need to keep.
     last_instruction: u64,
+    /// The one before it. An agent alternating between two calls whose
+    /// results do not change (run the tests, print the values, run the tests)
+    /// never repeats the call immediately before, and is just as stuck.
+    previous_instruction: u64,
 }
 
 fn hash_of(text: &str) -> u64 {
@@ -418,11 +422,16 @@ impl<S: GatewayStore, C: ModelClient> Gateway<S, C> {
         let seen = all.entry(session_id.to_owned()).or_default();
         let digest = hash_of(instruction);
 
-        seen.repeated_calls = if seen.last_instruction == digest {
-            seen.repeated_calls.saturating_add(1)
-        } else {
-            0
-        };
+        // A tool continuation's instruction carries its results, so a call
+        // whose results changed is a different instruction: progress resets
+        // the count, only an unchanged loop of one or two calls builds it.
+        seen.repeated_calls =
+            if seen.last_instruction == digest || seen.previous_instruction == digest {
+                seen.repeated_calls.saturating_add(1)
+            } else {
+                0
+            };
+        seen.previous_instruction = seen.last_instruction;
         seen.last_instruction = digest;
         seen.consecutive_errors = match failed {
             true => seen.consecutive_errors.saturating_add(1),
@@ -1134,6 +1143,41 @@ mod tests {
             matches!(err, GatewayError::Contained { .. }),
             "a loop with no budget pressure has to be caught by something else"
         );
+    }
+
+    #[tokio::test]
+    async fn an_alternating_session_is_stopped_too() {
+        // Seen on a local model (2026-10-29): after its tests passed, an agent
+        // ran them and printed the values, in turn, until its steps ran out.
+        let gw = gateway(store_with(None, None), StubClient::new("same answer"));
+        let mut contained = false;
+        for index in 0..(2 * farhelm_domain::breaker::STOP_AFTER_REPEATS + 2) {
+            let instruction = if index % 2 == 0 {
+                "run the tests"
+            } else {
+                "print the values"
+            };
+            if matches!(
+                gw.complete(CompleteRequest::new("s1", TaskType::Edit, instruction))
+                    .await,
+                Err(GatewayError::Contained { .. })
+            ) {
+                contained = true;
+                break;
+            }
+        }
+        assert!(contained);
+
+        // Three different calls in turn is not that loop.
+        let gw = gateway(store_with(None, None), StubClient::new("ok"));
+        for index in 0..30 {
+            let instruction = ["read", "edit", "test"][index % 3];
+            assert!(
+                gw.complete(CompleteRequest::new("s1", TaskType::Edit, instruction))
+                    .await
+                    .is_ok()
+            );
+        }
     }
 
     #[tokio::test]
