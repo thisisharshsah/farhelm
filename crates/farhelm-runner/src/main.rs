@@ -85,7 +85,7 @@ RUNNING
                      suite.toml and items.jsonl): Cohen's kappa and exact
                      agreement against a person's labels, per run and as a
                      range, and how often runs agree. Calls are recorded under
-                     the `eval` client; the report goes to evals/ beside the
+                     the `eval` client; the report goes to evals/reports/ beside the
                      database.
     check            Validate the model registry (FARHELM_MODELS_CONFIG or
                      --models-config), engine.toml and clients.toml without
@@ -1591,7 +1591,8 @@ fn eval_command(flags: &Flags, args: &[String]) -> Fallible {
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or(Path::new("."))
-        .join("evals");
+        .join("evals")
+        .join("reports");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
