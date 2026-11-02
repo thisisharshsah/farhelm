@@ -201,12 +201,12 @@ function WorkflowScope({ transport, projectId, onNavigate }: {
     <StartProjectTask transport={transport} projectId={projectId} repositories={repos} disabled={attached.pending || !!attached.error}
       onStarted={(task) => { tasks.refresh(); onNavigate(projectTaskPath(projectId, task.id)); }} />
     <section className="card" aria-label="Project task history">
-      <div className="chart-title"><h2>Task history</h2><button className="btn" disabled={tasks.pending || tasks.morePending} onClick={tasks.refresh}>Refresh tasks</button></div>
-      <p className="tile-note">Up to 200 loaded tasks are retained here. Refresh returns to the newest tasks.</p>
+      <div className="chart-title"><h2>Runs</h2><button className="btn" disabled={tasks.pending || tasks.morePending} onClick={tasks.refresh}>Refresh runs</button></div>
+      <p className="tile-note">Every agent run in this project, newest first. Up to 200 are kept loaded.</p>
       <CollectionStatus resource={tasks} noun="tasks" />
-      {tasks.data?.items.length === 0 ? <p>No tasks have started in this project.</p> : null}
+      {tasks.data?.items.length === 0 ? <p>No runs have started in this project.</p> : null}
       <div className="task-list">{tasks.data?.items.map((task) => <TaskRow key={task.id} task={task} onOpen={() => onNavigate(projectTaskPath(projectId, task.id))} />)}</div>
-      {tasks.data?.next ? <button className="btn" disabled={tasks.pending || tasks.morePending} onClick={() => void tasks.more()}>{tasks.morePending ? "Loading tasks…" : "Load older tasks"}</button> : null}
+      {tasks.data?.next ? <button className="btn" disabled={tasks.pending || tasks.morePending} onClick={() => void tasks.more()}>{tasks.morePending ? "Loading runs…" : "Load older runs"}</button> : null}
     </section>
   </div>;
 }
@@ -259,8 +259,8 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
     }
   }
 
-  return <section className="card" aria-label="Start a project task">
-    <h2 className="chart-title">Start a task</h2>
+  return <section className="card" aria-label="Start a run">
+    <h2 className="chart-title">Start a run</h2>
     <p className="tile-note">The agent works in the selected repository and proposes a diff for review. Commands still require the runner’s approval policy.</p>
     <form className="project-workflow-form" onSubmit={(event) => { event.preventDefault(); void start(); }} aria-busy={pending}>
       <fieldset disabled={pending || disabled || repositories.length === 0}>
@@ -279,7 +279,7 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
         <input id="project-task-budget" className="pair-input" type="number" min="0" step="any" value={budget} onChange={(event) => setBudget(event.target.value)} />
         <label htmlFor="project-task-steps">Maximum steps (optional)</label>
         <input id="project-task-steps" className="pair-input" type="number" min="1" max="256" step="1" value={maxSteps} onChange={(event) => setMaxSteps(event.target.value)} />
-        <button className="btn btn-primary" type="submit">{pending ? "Starting task…" : "Start task"}</button>
+        <button className="btn btn-primary" type="submit">{pending ? "Starting run…" : "Start run"}</button>
       </fieldset>
       {repositories.length === 0 ? <p className="tile-note">Attach a repository before starting a task.</p> : null}
       {error ? <p className="error" role="alert">{error}</p> : null}

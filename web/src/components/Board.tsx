@@ -106,13 +106,13 @@ export function TaskBoard({
         <div>
           <h1 className="page-title">Board</h1>
           <p className="page-sub">
-            {tasks.length} task{tasks.length === 1 ? "" : "s"} on this runner
+            {tasks.length} run{tasks.length === 1 ? "" : "s"} on this runner
           </p>
         </div>
         <span className="spacer" />
         {transport?.supportsTaskControl ? (
           <button className="btn btn-primary" onClick={onNewTask}>
-            <Icon name="plus" size={14} /> New task
+            <Icon name="plus" size={14} /> New run
           </button>
         ) : null}
       </header>
@@ -128,10 +128,10 @@ export function TaskBoard({
         </div>
         <label className="board-search">
           <Icon name="search" size={14} />
-          <span className="sr-only">Filter tasks</span>
+          <span className="sr-only">Filter runs</span>
           <input
             type="search"
-            placeholder="Search tasks"
+            placeholder="Search runs"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -158,7 +158,7 @@ export function TaskBoard({
                 Describe a change and an agent works on it in a separate worktree,
                 then hands you a diff. Nothing reaches your files until you approve it.
               </p>
-              <button className="btn btn-primary" onClick={onNewTask}>New task</button>
+              <button className="btn btn-primary" onClick={onNewTask}>New run</button>
             </>
           ) : (
             <p className="tile-note">

@@ -36,7 +36,8 @@ the task updated, with an overview in the manner of monday.com.
 
 ## Consequences
 
-- The fleet-wide "Board" of runs stays as it is; a cross-project board of
-  tasks is the next step.
+- The Board page shows every project's tasks in one board above the runs
+  on this runner (read project by project; a workspace-wide route is a later
+  change), and run screens say Run.
 - Comments, priority, assignees and due dates are not part of this change.
 - Older `agent_task` rows have no task; they stay as plain runs.

@@ -17,6 +17,7 @@ import { Overview } from "./components/Overview";
 import { NewTaskComposer, TaskThread } from "./components/TaskThread";
 import { ProjectsList } from "./components/Projects";
 import { ProjectTaskScreen, ProjectWorkItemScreen } from "./components/ProjectWorkflow";
+import { WorkOverview } from "./components/WorkBoard";
 import { DashboardScreen, SessionScreen, useScrollReset } from "./components/views";
 import { Sidebar, sectionOf, type Section } from "./components/Sidebar";
 import { Palette, type Action } from "./components/Palette";
@@ -273,7 +274,7 @@ export default function App() {
     }
 
     if (transport?.supportsTaskControl) {
-      list.push({ id: "new-task", group: "Start", icon: "plus", label: "Start a task",
+      list.push({ id: "new-task", group: "Start", icon: "plus", label: "Start a run",
         hint: "Point an agent at a repository", run: () => navigate("/t/new") });
     }
     if (transport?.supportsSessionControl) {
@@ -343,7 +344,7 @@ export default function App() {
         : route.view === "tasks"
           ? "Board"
           : route.view === "new-task"
-            ? "New task"
+            ? "New run"
             : route.view === "new-session"
               ? "New session"
               : route.view === "account"
@@ -705,6 +706,7 @@ export default function App() {
             </div>
           ) : tasks.data ? (
             <div className={staleClass(tasks.stale)}>
+              <WorkOverview transport={transport} onNavigate={navigate} />
               <TaskBoard
                 tasks={tasks.data}
                 onOpen={(id) => navigate(`/t/${id}`)}

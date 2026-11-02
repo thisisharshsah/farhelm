@@ -66,7 +66,7 @@ export function TaskThread({
 
   return (
     <div className="thread-layout">
-      <section className="thread" aria-label="Task">
+      <section className="thread" aria-label="Run">
         <header className="thread-head">
           <div className="thread-head-title">
             <span className="thread-crumb">{task.repo_name}</span>
@@ -176,7 +176,7 @@ export function TaskThread({
         />
       </section>
 
-      <aside className="thread-rail" aria-label="Task details">
+      <aside className="thread-rail" aria-label="Run details">
         <section className="rail-panel">
           <h2>Outputs</h2>
           <ul className="rail-list">
@@ -294,16 +294,16 @@ function TaskComposer({
               void submit();
             }
           }}
-          aria-label={followUp ? "Follow-up task" : "Instruction for the agent"}
-          placeholder={followUp ? `Start a follow-up task in ${task.repo_name}…` : "Tell the agent…"}
+          aria-label={followUp ? "Follow-up run" : "Instruction for the agent"}
+          placeholder={followUp ? `Start a follow-up run in ${task.repo_name}…` : "Tell the agent…"}
           disabled={busy}
         />
         <div className="composer-bar">
           {autoApprove}
           {followUp ? <ModelPicker value={model} mode="agent" modes={modes} onChange={setModel} disabled={busy} /> : null}
           <span className="spacer" />
-          <span className="composer-hint">{followUp ? "Starts a new task · ⌘⏎" : "⌘⏎ to send"}</span>
-          <button className="send-button" type="submit" disabled={busy || !text.trim()} aria-label={followUp ? "Start follow-up task" : "Send instruction"}>
+          <span className="composer-hint">{followUp ? "Starts a new run · ⌘⏎" : "⌘⏎ to send"}</span>
+          <button className="send-button" type="submit" disabled={busy || !text.trim()} aria-label={followUp ? "Start follow-up run" : "Send instruction"}>
             <Icon name="send" size={16} />
           </button>
         </div>
@@ -396,10 +396,10 @@ function NewTaskForm({
 
   if (!transport?.supportsTaskControl) {
     return (
-      <section className="new-task" data-variant={variant} aria-label="New task">
-        <h1 className="new-task-title">New task</h1>
+      <section className="new-task" data-variant={variant} aria-label="New run">
+        <h1 className="new-task-title">New run</h1>
         <p className="tile-note">
-          Tasks start only from the machine the agent will run on. A paired device
+          Runs start only from the machine the agent will run on. A paired device
           reviews the diff, which is the decision worth making from a phone, but
           pointing an agent at a directory is a different kind of permission.
         </p>
@@ -433,7 +433,7 @@ function NewTaskForm({
   };
 
   return (
-    <section className="new-task" data-variant={variant} aria-label="New task">
+    <section className="new-task" data-variant={variant} aria-label="New run">
       <h1 className="new-task-title">What should we build?</h1>
       <p className="new-task-sub">
         The agent drafts in a separate worktree and stops with a diff. Nothing
@@ -500,7 +500,7 @@ function NewTaskForm({
           />
           <span className="spacer" />
           <button className="btn btn-primary" type="submit" disabled={busy || !prompt.trim() || !target.trim()}>
-            {busy ? "Starting…" : "Start task"}
+            {busy ? "Starting…" : "Start run"}
           </button>
         </div>
       </form>

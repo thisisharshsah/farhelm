@@ -111,9 +111,9 @@ it("starts by attached repository ID, preserves project review route and prevent
   await field("#project-task-prompt", "  Implement this change  ");
   await field("#project-task-budget", "1.5");
   await field("#project-task-steps", "4");
-  await submit("Start a project task", 2);
+  await submit("Start a run", 2);
   expect(startProjectTask).toHaveBeenCalledExactlyOnceWith("project-one", { repo_id: repo.id, prompt: "Implement this change", budget_usd: 1.5, max_steps: 4 });
-  expect(host.querySelector<HTMLFieldSetElement>("[aria-label='Start a project task'] fieldset")?.disabled).toBe(true);
+  expect(host.querySelector<HTMLFieldSetElement>("[aria-label='Start a run'] fieldset")?.disabled).toBe(true);
   expect(onNavigate).not.toHaveBeenCalled();
   await act(async () => started.resolve(task("created")));
   expect(onNavigate).toHaveBeenCalledExactlyOnceWith("/p/project-one/t/created");
@@ -125,7 +125,7 @@ it("reports start errors, retains the instruction, and does not retry automatica
   const { transport } = runner({ startProjectTask });
   const navigate = await render(transport);
   await field("#project-task-repo", repo.id); await field("#project-task-prompt", "Keep this instruction");
-  await submit("Start a project task");
+  await submit("Start a run");
   expect(host.querySelector<HTMLInputElement>("#project-task-prompt")?.value).toBe("Keep this instruction");
   expect(host.textContent).toContain("Provider is not configured");
   expect(startProjectTask).toHaveBeenCalledTimes(1); expect(navigate).not.toHaveBeenCalled();
@@ -137,7 +137,7 @@ it("does not carry drafts, late list data or late start navigation into another 
   const first = runner({ projectTasks: vi.fn().mockReturnValue(pendingTasks.promise), startProjectTask: vi.fn().mockReturnValue(started.promise) });
   const navigate = await render(first.transport);
   await field("#project-task-repo", repo.id); await field("#project-task-prompt", "Private project instruction");
-  await submit("Start a project task");
+  await submit("Start a run");
   const second = runner();
   await render(second.transport, "project-two", null, navigate);
   expect(host.querySelector<HTMLTextAreaElement>("#project-task-prompt")?.value).toBe("");
@@ -152,10 +152,10 @@ it("loads project task history with scoped cursors and keeps failures explicit",
     .mockResolvedValueOnce({ tasks: [task("older")], next_cursor: null });
   const { transport } = runner({ projectTasks });
   const navigate = await render(transport);
-  await act(async () => button("Load older tasks").click());
+  await act(async () => button("Load older runs").click());
   expect(host.textContent).toContain("History unavailable");
   expect(host.textContent).toContain("Showing previously loaded tasks");
-  await act(async () => button("Load older tasks").click());
+  await act(async () => button("Load older runs").click());
   expect(projectTasks).toHaveBeenLastCalledWith("project-one", { after: "newer", limit: 50 });
   expect(host.querySelectorAll(".task-row")).toHaveLength(2);
   await act(async () => host.querySelector<HTMLButtonElement>(".task-row")!.click());
@@ -258,10 +258,10 @@ it("validates explicit execution limits before starting a task", async () => {
   await render(transport);
   await field("#project-task-repo", repo.id); await field("#project-task-prompt", "Synthetic instruction");
   await field("#project-task-budget", "-1");
-  await submit("Start a project task");
+  await submit("Start a run");
   expect(host.textContent).toContain("budget must be a positive amount");
   await field("#project-task-budget", ""); await field("#project-task-steps", "257");
-  await submit("Start a project task");
+  await submit("Start a run");
   expect(host.textContent).toContain("step limit must be between 1 and 256");
   expect(transport.startProjectTask).not.toHaveBeenCalled();
 });
@@ -289,9 +289,9 @@ it("bounds retained task rows while allowing the cursor to reach older tasks", a
   });
   const { transport } = runner({ projectTasks });
   await render(transport);
-  for (let index = 0; index < 4; index++) await act(async () => button("Load older tasks").click());
+  for (let index = 0; index < 4; index++) await act(async () => button("Load older runs").click());
   expect(host.querySelectorAll(".task-row")).toHaveLength(200);
   expect(host.textContent).not.toContain("Instruction number 0.");
   expect(host.textContent).toContain("Instruction number 249.");
-  expect(button("Load older tasks").disabled).toBe(false);
+  expect(button("Load older runs").disabled).toBe(false);
 });

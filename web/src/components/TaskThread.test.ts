@@ -110,5 +110,5 @@ it("offers the access level only while the task's session is live", async () => 
     task: fixture.task_detail as TaskDetail, transport: runner(), fleet: ended as FleetView, onChanged: vi.fn(), onOpenTask: vi.fn(),
   })));
   expect(host.querySelector('select[id^="auto-approve-"]')).toBeNull();
-  expect(host.querySelector('[aria-label="Follow-up task"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="Follow-up run"]')).not.toBeNull();
 });

@@ -391,3 +391,110 @@ function RunWorkItem({ transport, projectId, detail, repositories, onStarted }: 
     </form>
   );
 }
+
+/* --------------------------------------------------------------- overview */
+
+interface ProjectTasks { projectId: string; projectName: string; items: WorkItemView[] }
+
+/**
+ * Every project's tasks on one board. Read project by project, because the
+ * runner scopes tasks to a project; a workspace-wide list is a later route.
+ */
+export function WorkOverview({ transport, onNavigate }: {
+  transport: Transport | null;
+  onNavigate: (path: string) => void;
+}) {
+  const [projects, setProjects] = useState<ProjectTasks[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const refresh = () => setRevision((value) => value + 1);
+  const board = supportsBoard(transport) ? transport : null;
+  useEffect(() => {
+    if (!board) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = board.onEvent((event) => {
+      if (event.type !== "task_upsert" || timer !== null) return;
+      timer = setTimeout(() => { timer = null; setRevision((value) => value + 1); }, 300);
+    });
+    return () => { off(); if (timer !== null) clearTimeout(timer); };
+  }, [board]);
+
+  useEffect(() => {
+    if (!board || typeof board.projects !== "function") return;
+    let cancelled = false;
+    const list = board.projects;
+    list({ limit: 50 })
+      .then(async (page) => {
+        const loaded = await Promise.all(page.projects.map(async (project) => ({
+          projectId: project.id,
+          projectName: project.name,
+          items: (await board.projectWorkItems(project.id, { limit: 100 })).items,
+        })));
+        if (!cancelled) { setProjects(loaded); setError(null); }
+      })
+      .catch((cause) => { if (!cancelled) setError(message(cause)); });
+    return () => { cancelled = true; };
+  }, [board, revision]);
+
+  if (!board) return null;
+  const all = (projects ?? []).flatMap((project) => project.items.map((item) => ({ item, project })));
+  const move = async (projectId: string, item: WorkItemView, status: WorkItemStatus) => {
+    setProjects((current) => current?.map((project) => project.projectId !== projectId ? project
+      : { ...project, items: project.items.map((row) => (row.id === item.id ? { ...row, status } : row)) }) ?? null);
+    try {
+      await board.updateProjectWorkItem(projectId, item.id, { status });
+    } catch (cause) {
+      setError(message(cause));
+    }
+    refresh();
+  };
+
+  return (
+    <section className="card work-board" aria-label="Tasks across projects">
+      <div className="chart-title">
+        <h2>Tasks</h2>
+        <span className="muted">{projects ? `${all.length} across ${projects.length} project${projects.length === 1 ? "" : "s"}` : ""}</span>
+        <span className="spacer" />
+        <button className="btn btn-small" onClick={refresh}>Refresh</button>
+      </div>
+      {error ? <p className="error" role="alert">{error}</p> : null}
+      {projects === null && !error ? <p role="status" className="tile-note">Loading tasks…</p> : null}
+      {projects && all.length === 0 ? <p className="tile-note">No tasks in any project yet. Open a project to add one or create one from a discussion.</p> : null}
+      {all.length > 0 ? (
+        <div className="kanban-board work-columns">
+          {WORK_ITEM_STATUSES.map((status) => {
+            const look = WORK_ITEM_STATUS[status];
+            const column = all.filter(({ item }) => item.status === status);
+            return (
+              <section className="kanban-column" key={status} data-tone={look.tone} aria-label={look.label}>
+                <h3 className="kanban-column-head">{look.label} <span className="muted">{column.length}</span></h3>
+                <div className="kanban-stack">
+                  {column.map(({ item, project }) => (
+                    <article className="kanban-card work-card-item" key={item.id}>
+                      <span className="thread-crumb">{project.projectName}</span>
+                      <button type="button" className="work-item-title" onClick={() => onNavigate(workItemPath(project.projectId, item.id))}>
+                        {item.title}
+                      </button>
+                      <div className="kanban-card-meta">
+                        {item.latest_run ? <StatusPill look={TASK_STATUS[item.latest_run.status]} size="sm" /> : null}
+                        {item.latest_run ? <span className="muted">run {since(item.latest_run.updated_at)}</span> : null}
+                      </div>
+                      <select
+                        className="board-select work-item-move"
+                        aria-label={`Status of ${item.title}`}
+                        value={item.status}
+                        onChange={(event) => void move(project.projectId, item, event.target.value as WorkItemStatus)}
+                      >
+                        {WORK_ITEM_STATUSES.map((option) => <option key={option} value={option}>{WORK_ITEM_STATUS[option].label}</option>)}
+                      </select>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+}
