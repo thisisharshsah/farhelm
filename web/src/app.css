@@ -1901,3 +1901,129 @@ svg.is-open {
 .chat-tasks .linkish {
   font-weight: 600;
 }
+
+/* ---------------------------------------------------------- project workspace */
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
+  gap: var(--s-5);
+  width: 100%;
+  min-height: 0;
+  align-items: start;
+}
+
+.ws-side {
+  position: sticky;
+  top: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.ws-side-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.ws-crumb {
+  align-self: flex-start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.ws-title {
+  margin: 0;
+  font-size: 1.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-actions {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.ws-section-title {
+  margin: 0 0 var(--s-1);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ws-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ws-list .side-thread {
+  width: 100%;
+}
+
+.ws-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.ws-main .project-chat-pane {
+  min-height: 60vh;
+}
+
+.ws-main .project-chat-messages {
+  flex: 1;
+  max-height: calc(100vh - 20rem);
+}
+
+.ws-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-width: 34rem;
+  padding: var(--s-6) 0;
+}
+
+.ws-empty h2 {
+  margin: 0;
+}
+
+.ws-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.working-steps {
+  margin: var(--s-1) 0 0 1.4rem;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 60rem) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ws-side {
+    position: static;
+  }
+}
+
+.view-wide {
+  max-width: 82rem;
+}

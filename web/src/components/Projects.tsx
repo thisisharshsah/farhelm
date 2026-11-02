@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CreateProjectRequest, Project, ProjectPage, Transport } from "@farhelm/client-core";
 import { Icon } from "./Icon";
 import { ProjectWorkflow } from "./ProjectWorkflow";
+import { ProjectWorkspace, supportsWorkspace, type WorkspaceFocus } from "./ProjectWorkspace";
 
 type ProjectTransport = Transport & {
   projects: NonNullable<Transport["projects"]>;
@@ -20,9 +21,11 @@ function message(cause: unknown): string {
 }
 
 /** Projects stay on the active runner until an authorized relay contract exists. */
-export function ProjectsList({ transport, projectId = null, onNavigate }: {
+export function ProjectsList({ transport, projectId = null, focus = { kind: "home" }, onNavigate }: {
   transport: Transport | null;
   projectId?: string | null;
+  /** What the project screen opens on; the route decides. */
+  focus?: WorkspaceFocus;
   onNavigate: (to: string) => void;
 }) {
   if (!supportsProjects(transport)) {
@@ -40,7 +43,7 @@ export function ProjectsList({ transport, projectId = null, onNavigate }: {
       </div>
     );
   }
-  return <ProjectsWorkspace transport={transport} projectId={projectId} onNavigate={onNavigate} />;
+  return <ProjectsWorkspace transport={transport} projectId={projectId} focus={focus} onNavigate={onNavigate} />;
 }
 
 interface ProjectResource {
@@ -54,9 +57,10 @@ interface ProjectResource {
   moreError: string | null;
 }
 
-function ProjectsWorkspace({ transport, projectId, onNavigate }: {
+function ProjectsWorkspace({ transport, projectId, focus, onNavigate }: {
   transport: ProjectTransport;
   projectId: string | null;
+  focus: WorkspaceFocus;
   onNavigate: (to: string) => void;
 }) {
   const [revision, setRevision] = useState(0);
@@ -130,6 +134,18 @@ function ProjectsWorkspace({ transport, projectId, onNavigate }: {
   const loading = !current || resource.loading;
   const error = current ? resource.error : null;
   const reload = () => setRevision((value) => value + 1);
+
+  // A project opens as a workspace: list on the left, one thing in the
+  // middle. The stacked page below remains for a runner without chat and
+  // tasks, and for the project list itself.
+  if (detail && supportsWorkspace(transport)) {
+    return (
+      <div className="view view-wide">
+        {error ? <div className="card error" role="alert"><b>Could not refresh the project.</b><p>{error}</p></div> : null}
+        <ProjectWorkspace transport={transport} project={detail} focus={focus} onNavigate={onNavigate} />
+      </div>
+    );
+  }
 
   return (
     <div className="view">

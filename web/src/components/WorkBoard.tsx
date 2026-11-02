@@ -141,11 +141,11 @@ export function WorkBoard({ transport, projectId, repositories, onNavigate }: {
   );
 }
 
-function NewWorkItem({ transport, projectId, repositories, onCreated }: {
+export function NewWorkItem({ transport, projectId, repositories, onCreated }: {
   transport: BoardTransport;
   projectId: string;
   repositories: ProjectRepository[];
-  onCreated: () => void;
+  onCreated: (item: WorkItemView) => void;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -161,10 +161,10 @@ function NewWorkItem({ transport, projectId, repositories, onCreated }: {
     setBusy(true);
     setError(null);
     try {
-      await transport.createProjectWorkItem(projectId, { title: title.trim(), description, repo_id: repo || null });
+      const created = await transport.createProjectWorkItem(projectId, { title: title.trim(), description, repo_id: repo || null });
       setTitle("");
       setDescription("");
-      onCreated();
+      onCreated(created);
     } catch (cause) {
       setError(message(cause));
     } finally {

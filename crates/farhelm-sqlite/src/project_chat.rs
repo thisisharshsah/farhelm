@@ -40,6 +40,7 @@ fn read_scoped_chat(row: &Row<'_>) -> rusqlite::Result<ScopedChat> {
             title: row.get(3)?,
             created_at: row.get(4)?,
             updated_at: row.get(5)?,
+            session_id: row.get(6)?,
         },
         session_id: row.get(6)?,
     })

@@ -12,6 +12,10 @@ pub struct ProjectChat {
     pub title: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// The session its replies are charged to and narrated on: a client
+    /// follows that session's output to show what a reply is reading.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

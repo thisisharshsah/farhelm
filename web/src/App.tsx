@@ -1,7 +1,7 @@
 import { getMigratingSync, isAgentSession } from "@farhelm/client-core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OutputLine, ServerEvent } from "@farhelm/client-core";
-import { sessionIdOf, useResource, useRoute } from "./hooks";
+import { sessionIdOf, useResource, useRoute, type Route } from "./hooks";
 import { migratePairing, webPairingStore } from "./platform";
 import { loopbackAvailable, useConnection } from "./connection";
 import { AuthScreen, MachinePicker, WelcomeScreen, readableError } from "./components/Auth";
@@ -16,8 +16,19 @@ import { Preferences, type Theme } from "./components/Preferences";
 import { Overview } from "./components/Overview";
 import { NewTaskComposer, TaskThread } from "./components/TaskThread";
 import { ProjectsList } from "./components/Projects";
-import { ProjectTaskScreen, ProjectWorkItemScreen } from "./components/ProjectWorkflow";
 import { WorkOverview } from "./components/WorkBoard";
+import type { WorkspaceFocus } from "./components/ProjectWorkspace";
+
+/** Which part of a project a route opens. */
+function projectFocus(route: Route): WorkspaceFocus {
+  switch (route.view) {
+    case "project-chat": return { kind: "chat", id: route.id };
+    case "project-work": return { kind: "work", id: route.id };
+    case "project-task": return { kind: "run", id: route.id };
+    case "project-settings": return { kind: "settings" };
+    default: return { kind: "home" };
+  }
+}
 import { DashboardScreen, SessionScreen, useScrollReset } from "./components/views";
 import { Sidebar, sectionOf, type Section } from "./components/Sidebar";
 import { Palette, type Action } from "./components/Palette";
@@ -228,7 +239,7 @@ export default function App() {
     [connection.cloud, route.view === "billing"],
   );
 
-  useScrollReset(`${route.view}:${sessionId ?? taskId ?? (route.view === "project" || route.view === "project-task" || route.view === "project-work" ? route.id : "")}`);
+  useScrollReset(`${route.view}:${sessionId ?? taskId ?? ("id" in route ? route.id : "")}`);
 
   /**
    * What ⌘K can reach.
@@ -340,6 +351,7 @@ export default function App() {
     route.view === "fleet"
       ? "Home"
       : route.view === "projects" || route.view === "project" || route.view === "project-task" || route.view === "project-work"
+        || route.view === "project-chat" || route.view === "project-settings"
         ? "Projects"
         : route.view === "tasks"
           ? "Board"
@@ -363,7 +375,7 @@ export default function App() {
       ? `/s/${route.id}`
       : route.view === "task" || route.view === "new-task"
         ? "/t"
-        : route.view === "project-task" || route.view === "project-work"
+        : route.view === "project-task" || route.view === "project-work" || route.view === "project-chat" || route.view === "project-settings"
           ? `/p/${encodeURIComponent(route.projectId)}`
         : route.view === "project"
           ? "/p"
@@ -682,21 +694,16 @@ export default function App() {
           />
         ) : null}
 
-        {route.view === "projects" || route.view === "project" ? (
+        {route.view === "projects" || route.view === "project" || route.view === "project-chat" || route.view === "project-work"
+          || route.view === "project-task" || route.view === "project-settings" ? (
           <ProjectsList
             transport={transport}
-            projectId={route.view === "project" ? route.id : null}
+            projectId={route.view === "projects" ? null : route.view === "project" ? route.id : route.projectId}
+            focus={projectFocus(route)}
             onNavigate={navigate}
           />
         ) : null}
 
-        {route.view === "project-task" ? (
-          <ProjectTaskScreen transport={transport} projectId={route.projectId} taskId={route.id} onNavigate={navigate} />
-        ) : null}
-
-        {route.view === "project-work" ? (
-          <ProjectWorkItemScreen transport={transport} projectId={route.projectId} itemId={route.id} onNavigate={navigate} />
-        ) : null}
 
         {route.view === "tasks" ? (
           tasks.error ? (

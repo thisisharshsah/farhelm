@@ -187,6 +187,7 @@ impl<S: ChatStore + WorkspaceStore> ProjectChats<S> {
             title: request.title.trim().into(),
             created_at: at_ms,
             updated_at: at_ms,
+            session_id: session.id.clone(),
         };
         if !self
             .store

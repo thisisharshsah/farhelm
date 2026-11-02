@@ -2,7 +2,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChatDetail, ChatTurn, ProjectRepository, Transport } from "@farhelm/client-core";
-import { ProjectChat } from "./ProjectChat";
+import { ConversationPane } from "./ProjectChat";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
@@ -37,7 +37,9 @@ function runner(projectConversation: Transport["projectConversation"], overrides
 }
 
 async function render(transport: Transport, onTaskStarted = vi.fn()) {
-  await act(async () => root.render(createElement(ProjectChat, { transport, projectId: "p", repositories: [repo], onTaskStarted })));
+  await act(async () => root.render(createElement(ConversationPane, {
+    transport: transport as never, projectId: "p", conversation, repository: repo, onTaskStarted,
+  })));
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   return onTaskStarted;
 }

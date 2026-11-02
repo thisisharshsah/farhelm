@@ -7,6 +7,8 @@ export interface ProjectChat {
   title: string;
   created_at: number;
   updated_at: number;
+  /** The session its replies are narrated on; absent from older runners. */
+  session_id?: string;
 }
 
 export interface ChatMessage {
@@ -85,7 +87,8 @@ function boundedText(value: unknown, maxBytes: number): value is string {
 export function parseProjectChat(value: unknown): ProjectChat {
   if (!object(value) || !identifier(value.id) || !identifier(value.project_id) || !identifier(value.repo_id)
     || !boundedText(value.title, 480) || !value.title.trim() || Array.from(value.title).length > 120
-    || /\p{Cc}/u.test(value.title) || !timestamp(value.created_at) || !timestamp(value.updated_at)) {
+    || /\p{Cc}/u.test(value.title) || !timestamp(value.created_at) || !timestamp(value.updated_at)
+    || (value.session_id !== undefined && !identifier(value.session_id))) {
     throw new Error("The runner returned an invalid project conversation.");
   }
   return value as unknown as ProjectChat;

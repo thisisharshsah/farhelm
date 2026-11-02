@@ -15,6 +15,8 @@ export type Route =
   | { view: "project"; id: string }
   | { view: "project-task"; projectId: string; id: string }
   | { view: "project-work"; projectId: string; id: string }
+  | { view: "project-chat"; projectId: string; id: string }
+  | { view: "project-settings"; projectId: string }
   /** The workspace: machines, devices, people, enrolment keys. */
   | { view: "account" }
   /**
@@ -43,6 +45,8 @@ function parseHash(hash: string): Route {
     };
     if (parts[1] && parts[2] === "t" && parts[3]) return { view: "project-task", projectId: decode(parts[1]), id: decode(parts[3]) };
     if (parts[1] && parts[2] === "w" && parts[3]) return { view: "project-work", projectId: decode(parts[1]), id: decode(parts[3]) };
+    if (parts[1] && parts[2] === "c" && parts[3]) return { view: "project-chat", projectId: decode(parts[1]), id: decode(parts[3]) };
+    if (parts[1] && parts[2] === "settings") return { view: "project-settings", projectId: decode(parts[1]) };
     if (parts[1]) return { view: "project", id: decode(parts[1]) };
     return { view: "projects" };
   }

@@ -1,10 +1,12 @@
 /**
- * Project conversations: the discussion half of discussion → task → review.
+ * A project conversation: the discussion half of discussion → task → review.
  *
  * A conversation belongs to one of the project's attached repositories. A
  * message is claimed with a request id before it is answered: the reply is
  * composed on the runner after the request returns, so the pane polls the
- * conversation until the turn settles. There is no chat event to wait on.
+ * conversation until the turn settles. While it waits it shows what the
+ * reply is reading, from the session's output stream, so a slow answer is
+ * visibly working rather than silent.
  *
  * Turn states are shown as they are, never smoothed over:
  * - pending: the runner has the message and is composing a reply;
@@ -20,7 +22,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  since,
   type ChatDetail,
   type ChatMessage,
   type ModesView,
@@ -39,7 +40,7 @@ import { workItemPath } from "./WorkBoard";
 /** A conversation answers in these; Agent and Review are task modes. */
 const CHAT_MODES: readonly WorkMode[] = ["ask", "plan"];
 
-type ChatTransport = Transport & Required<Pick<Transport,
+export type ChatTransport = Transport & Required<Pick<Transport,
   "projectConversations" | "createProjectConversation" | "projectConversation" | "sendProjectMessage" | "startProjectTask"
   | "projectWorkItems" | "createProjectWorkItem" | "startWorkItemRun">>;
 
@@ -70,171 +71,7 @@ function requestId(): string {
 const POLL_MS = 1_500;
 const POLL_LIMIT_MS = 3 * 60_000;
 
-export function ProjectChat({
-  transport,
-  projectId,
-  repositories,
-  onTaskStarted,
-  onNavigate,
-}: {
-  transport: Transport | null;
-  projectId: string;
-  repositories: ProjectRepository[];
-  onTaskStarted: (task: TaskView) => void;
-  onNavigate?: (path: string) => void;
-}) {
-  if (!supportsProjectChat(transport)) {
-    return (
-      <section className="card" aria-label="Project conversations">
-        <div className="chart-title"><h2>Conversations</h2></div>
-        <p className="tile-note">Conversations need a direct connection to a runner that supports them.</p>
-      </section>
-    );
-  }
-  return (
-    <ChatScope transport={transport} projectId={projectId} repositories={repositories} onTaskStarted={onTaskStarted} onNavigate={onNavigate} />
-  );
-}
-
-function ChatScope({ transport, projectId, repositories, onTaskStarted, onNavigate }: {
-  transport: ChatTransport;
-  projectId: string;
-  repositories: ProjectRepository[];
-  onTaskStarted: (task: TaskView) => void;
-  onNavigate?: (path: string) => void;
-}) {
-  const [list, setList] = useState<Conversation[] | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    transport.projectConversations(projectId, { limit: 50 })
-      .then((page) => {
-        if (cancelled) return;
-        setList(page.conversations);
-        setListError(null);
-        setSelected((current) => current ?? page.conversations[0]?.id ?? null);
-      })
-      .catch((cause) => { if (!cancelled) setListError(message(cause)); });
-    return () => { cancelled = true; };
-  }, [transport, projectId, revision]);
-
-  const current = list?.find((item) => item.id === selected) ?? null;
-
-  return (
-    <section className="card project-chat" aria-label="Project conversations">
-      <div className="chart-title">
-        <h2>Conversations</h2>
-        <button className="btn btn-small" onClick={() => setRevision((value) => value + 1)}>Refresh</button>
-      </div>
-      {listError ? <p className="error" role="alert">{listError}</p> : null}
-      <div className="project-chat-layout">
-        <nav className="project-chat-list" aria-label="Conversations">
-          {list === null && !listError ? <p role="status" className="tile-note">Loading conversations…</p> : null}
-          {list?.length === 0 ? <p className="tile-note">No conversations yet.</p> : null}
-          {list?.map((item) => (
-            <button
-              key={item.id}
-              className={`side-thread${item.id === selected ? " is-current" : ""}`}
-              aria-current={item.id === selected ? "page" : undefined}
-              onClick={() => setSelected(item.id)}
-            >
-              <span className="side-item-label">{item.title}</span>
-              <span className="muted">{since(item.updated_at)}</span>
-            </button>
-          ))}
-          <NewConversation
-            transport={transport}
-            projectId={projectId}
-            repositories={repositories}
-            onCreated={(created) => {
-              setList((items) => [created, ...(items ?? []).filter((item) => item.id !== created.id)]);
-              setSelected(created.id);
-            }}
-          />
-        </nav>
-        {current ? (
-          <ConversationPane
-            onNavigate={onNavigate}
-            key={current.id}
-            transport={transport}
-            projectId={projectId}
-            conversation={current}
-            repository={repositories.find((repo) => repo.id === current.repo_id) ?? null}
-            onTaskStarted={onTaskStarted}
-          />
-        ) : (
-          <p className="tile-note project-chat-empty">
-            Start a conversation to talk a change through before handing it to an agent.
-          </p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function NewConversation({ transport, projectId, repositories, onCreated }: {
-  transport: ChatTransport;
-  projectId: string;
-  repositories: ProjectRepository[];
-  onCreated: (conversation: Conversation) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [repoId, setRepoId] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef(false);
-  const target = repositories.some((repo) => repo.id === repoId) ? repoId : repositories[0]?.id ?? "";
-
-  if (repositories.length === 0) {
-    return <p className="tile-note">Attach a repository to this project to start a conversation.</p>;
-  }
-
-  const create = async () => {
-    const name = title.trim();
-    if (!name || !target || inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      const created = await transport.createProjectConversation(projectId, { repo_id: target, title: name });
-      setTitle("");
-      onCreated(created);
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
-  };
-
-  return (
-    <form className="project-chat-new" onSubmit={(event) => { event.preventDefault(); void create(); }}>
-      <label htmlFor={`chat-title-${projectId}`} className="tile-label">New conversation</label>
-      <input
-        id={`chat-title-${projectId}`}
-        className="pair-input"
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-        placeholder="What do you want to discuss?"
-        disabled={busy}
-      />
-      {repositories.length > 1 ? (
-        <select className="pair-input" aria-label="Conversation repository" value={target} onChange={(event) => setRepoId(event.target.value)} disabled={busy}>
-          {repositories.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
-        </select>
-      ) : null}
-      <button className="btn btn-small" type="submit" disabled={busy || !title.trim()}>
-        <Icon name="plus" size={14} /> {busy ? "Starting…" : "Start"}
-      </button>
-      {error ? <p className="error" role="alert">{error}</p> : null}
-    </form>
-  );
-}
-
-function ConversationPane({ transport, projectId, conversation, repository, onTaskStarted, onNavigate }: {
+export function ConversationPane({ transport, projectId, conversation, repository, onTaskStarted, onNavigate }: {
   transport: ChatTransport;
   projectId: string;
   conversation: Conversation;
@@ -254,6 +91,17 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
   const [mode, setMode] = useState<WorkMode>("ask");
   const [model, setModel] = useState("");
   const modes = useModes(transport);
+  // What the reply is doing right now, from the session it is narrated on.
+  const [progress, setProgress] = useState<string[]>([]);
+  useEffect(() => {
+    const session = conversation.session_id;
+    if (!session) return;
+    const off = transport.onEvent((event) => {
+      if (event.type !== "output_chunk" || event.session_id !== session) return;
+      setProgress((lines) => [...lines, event.text].slice(-4));
+    });
+    return off;
+  }, [transport, conversation.session_id]);
   // The tasks this discussion produced, with where each stands.
   const [tasks, setTasks] = useState<WorkItemView[]>([]);
   const [tasksRevision, setTasksRevision] = useState(0);
@@ -306,6 +154,7 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
 
   const turn = detail?.latest_turn;
   const pending = turn?.status === "pending";
+  useEffect(() => { if (!pending) setProgress([]); }, [pending]);
   const lastUser = [...(detail?.messages ?? [])].reverse().find((item) => item.role === "user") ?? null;
 
   const send = async (content: string, fresh = false) => {
@@ -378,7 +227,12 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
           />
         ))}
         {pending && !waitedOut ? (
-          <p className="working" role="status"><span className="working-dot" aria-hidden="true" />Thinking…</p>
+          <div className="working" role="status">
+            <p><span className="working-dot" aria-hidden="true" />{progress.length > 0 ? "Working…" : "Thinking…"}</p>
+            {progress.length > 0 ? (
+              <ul className="working-steps">{progress.map((line, index) => <li key={index}>{line}</li>)}</ul>
+            ) : null}
+          </div>
         ) : null}
         {pending && waitedOut ? (
           <p className="notice" role="status">
@@ -406,23 +260,24 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
 
       <form className="composer-box" onSubmit={(event) => { event.preventDefault(); void send(text); }}>
         <textarea
-          rows={2}
+          rows={3}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            // Enter sends, as in the apps this follows; Shift+Enter is a new line.
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               void send(text);
             }
           }}
           aria-label="Message"
-          placeholder={pending ? "Waiting for the reply…" : "Discuss the change…"}
+          placeholder={pending ? "Waiting for the reply…" : "Ask about the project, or plan a change…"}
           disabled={sending}
         />
         <div className="composer-bar">
           <ModePicker value={mode} options={CHAT_MODES} modes={modes} onChange={setMode} disabled={sending} />
           <ModelPicker value={model} mode={mode} modes={modes} onChange={setModel} disabled={sending} />
-          <span className="composer-hint">{pending ? "One reply at a time" : "⌘⏎ to send"}</span>
+          <span className="composer-hint">{pending ? "One reply at a time" : "Enter to send · Shift+Enter for a new line"}</span>
           <span className="spacer" />
           <button className="send-button" type="submit" aria-label="Send message" disabled={sending || pending || !text.trim()}>
             <Icon name="send" size={16} />
