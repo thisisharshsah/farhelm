@@ -545,6 +545,7 @@ export function TaskRow({
       <div className="task-row-prompt">{task.prompt}</div>
       <div className="session-line">
         <span>{task.change_summary}</span>
+        {task.model ? (<><span>·</span><span className="mode-tag-model">{task.model}</span></>) : null}
         <span>·</span>
         <span>{usd(task.cost_usd)}</span>
         <span>·</span>

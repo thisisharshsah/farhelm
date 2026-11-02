@@ -43,6 +43,7 @@ import type {
   RunnerApi,
   ServerEvent,
   SessionDetail,
+  ModesView,
   TaskDetail,
   TaskReview,
   TaskView,
@@ -139,8 +140,16 @@ export interface Transport {
     budgetUsd?: number,
     /** A rejected task to try again, with its reason handed to the agent. */
     retryOf?: string,
+    /** A registry model or alias for the agent; the Agent mode's default when absent. */
+    model?: string,
   ): Promise<TaskView>;
   reviewTask(id: string, decision: TaskReview, note?: string): Promise<void>;
+  /**
+   * Each work mode's default model and every name a request may choose.
+   * Loopback only: the registry lives on the runner, and a phone reviews
+   * work rather than choosing what runs it.
+   */
+  modes?(): Promise<ModesView>;
   /** Take an applied change set back off disk. Refuses if anything moved. */
   revertTask(id: string): Promise<void>;
   /** Discovered local git repositories on this runner. */
@@ -248,7 +257,9 @@ export class HttpTransport implements Transport {
     prompt: string,
     budgetUsd?: number,
     retryOf?: string,
-  ) => this.api.startTask(repoPath, prompt, budgetUsd, retryOf);
+    model?: string,
+  ) => this.api.startTask(repoPath, prompt, budgetUsd, retryOf, model);
+  modes = () => this.api.modes();
   reviewTask = async (id: string, decision: TaskReview, note?: string) => {
     await this.api.reviewTask(id, decision, this.via, note);
   };
@@ -313,6 +324,7 @@ export type Command =
       prompt: string;
       budget_usd: number | null;
       retry_of: string | null;
+      model: string | null;
     }
   | { type: "agent_list" };
 
@@ -744,6 +756,7 @@ export class RelayTransport implements Transport {
     prompt: string,
     budgetUsd?: number,
     retryOf?: string,
+    model?: string,
   ): Promise<TaskView> {
     return this.request<TaskView>(
       {
@@ -752,6 +765,7 @@ export class RelayTransport implements Transport {
         prompt,
         budget_usd: budgetUsd ?? null,
         retry_of: retryOf ?? null,
+        model: model ?? null,
       },
       (value) =>
         typeof value === "object" &&

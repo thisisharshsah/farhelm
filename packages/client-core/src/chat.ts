@@ -1,4 +1,5 @@
 /** Project conversation contract, mirrored from farhelm-proto/src/chat.rs. */
+import type { WorkMode } from "./api.ts";
 export interface ProjectChat {
   id: string;
   project_id: string;
@@ -15,6 +16,8 @@ export interface ChatMessage {
   content: string;
   created_at: number;
   model?: string;
+  /** The mode the message was asked or answered in. */
+  mode?: WorkMode;
 }
 
 export interface ChatTurn {
@@ -23,6 +26,9 @@ export interface ChatTurn {
   error?: string;
   created_at: number;
   updated_at: number;
+  mode?: WorkMode;
+  /** The model the turn asked for, as named; absent is the mode's default. */
+  model?: string;
 }
 
 export interface ChatDetail {
@@ -50,7 +56,13 @@ export interface CreateProjectChatRequest {
 export interface SendChatMessageRequest {
   content: string;
   request_id: string;
+  /** `ask` when absent. A conversation answers in `ask` or `plan`. */
+  mode?: WorkMode;
+  /** A registry model or alias; the mode's default when absent. */
+  model?: string;
 }
+
+const CHAT_MODES: readonly string[] = ["ask", "plan"];
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -97,6 +109,8 @@ export function parseChatTurn(value: unknown): ChatTurn {
   if (!object(value) || !identifier(value.request_id)
     || !["pending", "completed", "failed", "interrupted"].includes(String(value.status))
     || (value.error !== undefined && !boundedText(value.error, 16_384))
+    || (value.mode !== undefined && !CHAT_MODES.includes(String(value.mode)))
+    || (value.model !== undefined && (!boundedText(value.model, 256) || !value.model))
     || !timestamp(value.created_at) || !timestamp(value.updated_at)) {
     throw new Error("The runner returned an invalid conversation turn.");
   }
@@ -115,7 +129,8 @@ export function parseChatDetail(value: unknown): ChatDetail {
       || message.conversation_id !== conversation.id || !["user", "assistant"].includes(String(message.role))
       || !boundedText(message.content, message.role === "user" ? 16_384 : 65_536)
       || !timestamp(message.created_at)
-      || (message.model !== undefined && (!boundedText(message.model, 4_096) || !message.model))) {
+      || (message.model !== undefined && (!boundedText(message.model, 4_096) || !message.model))
+      || (message.mode !== undefined && !CHAT_MODES.includes(String(message.mode)))) {
       throw new Error("The runner returned an invalid conversation history.");
     }
     seen.add(message.id);

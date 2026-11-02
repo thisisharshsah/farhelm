@@ -1,7 +1,8 @@
 import type {
-  Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
+  ModesView, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
   TaskView, TaskDetail,
 } from "./api.ts";
+import { WORK_MODES } from "./api.ts";
 
 const MAX_DESCRIPTION_BYTES = 16_000;
 const MAX_PAGE_SIZE = 100;
@@ -112,8 +113,24 @@ export function isTaskView(value: unknown): value is TaskView {
     && nullableText(value.error) && nullableText(value.review_note)
     && (value.verify_grade === null || oneOf(value.verify_grade, ["pass", "concerns", "fail"]))
     && nullableText(value.verify_notes) && nullableText(value.verify_model)
+    && oneOf(value.mode, WORK_MODES) && nullableText(value.model)
     && (value.decided_via === null || oneOf(value.decided_via, ["watch", "phone", "web", "auto_policy"]))
     && timestamp(value.created_at) && timestamp(value.updated_at) && nullableTimestamp(value.decided_at);
+}
+
+export function parseModesView(value: unknown): ModesView {
+  const bad = () => new Error("The runner returned an invalid mode list.");
+  if (!object(value) || !Array.isArray(value.modes) || !Array.isArray(value.models)
+    || value.modes.length > WORK_MODES.length || value.models.length > 1_000) throw bad();
+  for (const mode of value.modes as unknown[]) {
+    if (!object(mode) || !oneOf(mode.mode, WORK_MODES) || !text(mode.label, 64) || !mode.label
+      || !text(mode.model, 256) || !mode.model || !text(mode.deployment, 256) || !mode.deployment) throw bad();
+  }
+  for (const choice of value.models as unknown[]) {
+    if (!object(choice) || !text(choice.name, 256) || !choice.name || !text(choice.deployment, 256)
+      || !choice.deployment || typeof choice.alias !== "boolean") throw bad();
+  }
+  return value as unknown as ModesView;
 }
 
 export function parseTaskView(value: unknown): TaskView {

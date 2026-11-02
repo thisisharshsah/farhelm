@@ -1805,3 +1805,53 @@ svg.is-open {
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   color: var(--text-primary);
 }
+
+/* ------------------------------------------------------- mode and model */
+
+.mode-picker {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.mode-picker button {
+  min-height: 28px;
+  padding: 0 var(--s-3);
+  border: 0;
+  border-radius: calc(var(--r-md) - 2px);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.mode-picker button[aria-checked="true"] {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  box-shadow: var(--lift-1);
+}
+
+.mode-picker button:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 1px;
+}
+
+.mode-picker button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.model-picker {
+  max-width: 16rem;
+}
+
+.mode-tag {
+  color: var(--text-muted);
+}
+
+.mode-tag-model {
+  font-family: var(--mono);
+}

@@ -23,12 +23,18 @@ import {
   since,
   type ChatDetail,
   type ChatMessage,
+  type ModesView,
   type ProjectChat as Conversation,
   type ProjectRepository,
   type TaskView,
   type Transport,
+  type WorkMode,
 } from "@farhelm/client-core";
 import { Icon } from "./Icon";
+import { ModePicker, ModelPicker, ModeTag, useModes } from "./ModelChoice";
+
+/** A conversation answers in these; Agent and Review are task modes. */
+const CHAT_MODES: readonly WorkMode[] = ["ask", "plan"];
 
 type ChatTransport = Transport & Required<Pick<Transport,
   "projectConversations" | "createProjectConversation" | "projectConversation" | "sendProjectMessage" | "startProjectTask">>;
@@ -227,6 +233,11 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
   const [sendError, setSendError] = useState<string | null>(null);
   const [waitedOut, setWaitedOut] = useState(false);
   const [revision, setRevision] = useState(0);
+  // How the next message is answered. Kept while the conversation is open:
+  // a person planning wants every message planned, not just one.
+  const [mode, setMode] = useState<WorkMode>("ask");
+  const [model, setModel] = useState("");
+  const modes = useModes(transport);
   const inFlight = useRef(false);
   const alive = useRef(true);
   // The id of a send whose outcome is unknown. Retrying the same text reuses
@@ -275,7 +286,8 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
       // The one exception is retrying a send that may already have landed.
       const id = !fresh && unsettled.current?.content === value ? unsettled.current.id : requestId();
       unsettled.current = { content: value, id };
-      const reply = await transport.sendProjectMessage(projectId, conversation.id, { content: value, request_id: id });
+      const reply = await transport.sendProjectMessage(projectId, conversation.id,
+        { content: value, request_id: id, mode, ...(model ? { model } : {}) });
       unsettled.current = null;
       if (!alive.current) return;
       setDetail(reply.detail);
@@ -311,6 +323,7 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
             projectId={projectId}
             repoId={conversation.repo_id}
             canStart={repository !== null}
+            modes={modes}
             onTaskStarted={onTaskStarted}
           />
         ))}
@@ -357,6 +370,8 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
           disabled={sending}
         />
         <div className="composer-bar">
+          <ModePicker value={mode} options={CHAT_MODES} modes={modes} onChange={setMode} disabled={sending} />
+          <ModelPicker value={model} mode={mode} modes={modes} onChange={setModel} disabled={sending} />
           <span className="composer-hint">{pending ? "One reply at a time" : "⌘⏎ to send"}</span>
           <span className="spacer" />
           <button className="send-button" type="submit" aria-label="Send message" disabled={sending || pending || !text.trim()}>
@@ -369,16 +384,18 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
   );
 }
 
-function ChatLine({ item, transport, projectId, repoId, canStart, onTaskStarted }: {
+function ChatLine({ item, transport, projectId, repoId, canStart, modes, onTaskStarted }: {
   item: ChatMessage;
   transport: ChatTransport;
   projectId: string;
   repoId: string;
   canStart: boolean;
+  modes: ModesView | null;
   onTaskStarted: (task: TaskView) => void;
 }) {
   const [drafting, setDrafting] = useState(false);
   const [prompt, setPrompt] = useState(item.content);
+  const [model, setModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -392,7 +409,7 @@ function ChatLine({ item, transport, projectId, repoId, canStart, onTaskStarted 
     setBusy(true);
     setError(null);
     try {
-      const task = await transport.startProjectTask(projectId, { repo_id: repoId, prompt: value });
+      const task = await transport.startProjectTask(projectId, { repo_id: repoId, prompt: value, ...(model ? { model } : {}) });
       onTaskStarted(task);
     } catch (cause) {
       setError(message(cause));
@@ -406,7 +423,7 @@ function ChatLine({ item, transport, projectId, repoId, canStart, onTaskStarted 
     <div className="msg-agent">
       <p className="agent-text">{item.content}</p>
       <div className="chat-line-meta">
-        {item.model ? <span className="muted">{item.model}</span> : null}
+        <ModeTag mode={item.mode} model={item.model} />
         {canStart && !drafting ? (
           <button className="btn btn-quiet btn-small" onClick={() => setDrafting(true)}>Start as task</button>
         ) : null}
@@ -416,6 +433,10 @@ function ChatLine({ item, transport, projectId, repoId, canStart, onTaskStarted 
           <label className="tile-label" htmlFor={`task-from-${item.id}`}>Task for the agent</label>
           <textarea id={`task-from-${item.id}`} className="pair-input" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} disabled={busy} />
           <p className="tile-note">The agent drafts in a worktree and stops with a diff for you to review.</p>
+          <div className="composer-bar">
+            <span className="mode-tag">Agent</span>
+            <ModelPicker id={`task-model-${item.id}`} value={model} mode="agent" modes={modes} onChange={setModel} disabled={busy} />
+          </div>
           {error ? <p className="error" role="alert">{error}</p> : null}
           <div className="approval-actions">
             <button type="button" className="btn" onClick={() => setDrafting(false)} disabled={busy}>Cancel</button>

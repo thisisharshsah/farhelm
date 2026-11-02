@@ -15,7 +15,7 @@ function task(id: string, repoId: string, path: string): TaskView {
     prompt: `Review ${id}`, status: "awaiting_review", summary: "Synthetic fixture",
     files_changed: 1, lines_added: 3, lines_removed: 1, change_summary: "1 file, +3 −1",
     steps: 2, cost_usd: 0.04, error: null, review_note: null, verify_grade: null,
-    verify_notes: null, verify_model: null, decided_via: null, created_at: 1, updated_at: 1, decided_at: null,
+    verify_notes: null, verify_model: null, mode: "agent", model: null, decided_via: null, created_at: 1, updated_at: 1, decided_at: null,
   };
 }
 

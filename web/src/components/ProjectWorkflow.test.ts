@@ -12,7 +12,7 @@ function task(id = "task-one", status: TaskDetail["status"] = "running"): TaskDe
   return { id, session_id: `session-${id}`, repo_id: repo.id, repo_name: repo.name, repo_path: repo.path,
     prompt: "Implement synthetic change", status, summary: "Synthetic summary", files_changed: 1, lines_added: 1, lines_removed: 0,
     change_summary: "1 file, +1", steps: 1, cost_usd: 0, error: null, review_note: null, verify_grade: null,
-    verify_notes: null, verify_model: null, decided_via: null, created_at: 1, updated_at: 2, decided_at: null,
+    verify_notes: null, verify_model: null, mode: "agent", model: null, decided_via: null, created_at: 1, updated_at: 2, decided_at: null,
     changes: { files: [] }, patch: "", output: [] };
 }
 function deferred<T>() {

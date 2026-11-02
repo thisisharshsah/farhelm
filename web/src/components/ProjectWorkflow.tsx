@@ -3,6 +3,8 @@ import type { ProjectListOptions, ProjectRepository, TaskDetail, TaskView, Trans
 import { TaskReviewScreen, TaskRow } from "./Tasks";
 import { ProjectChat } from "./ProjectChat";
 
+import { ModelPicker, useModes } from "./ModelChoice";
+
 type WorkflowTransport = Transport & Required<Pick<Transport,
   "projectRepoCandidates" | "projectRepositories" | "attachProjectRepository" | "projectTasks"
   | "startProjectTask" | "projectTask" | "reviewProjectTask" | "revertProjectTask">>;
@@ -222,6 +224,8 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
   const [prompt, setPrompt] = useState("");
   const [budget, setBudget] = useState("");
   const [maxSteps, setMaxSteps] = useState("");
+  const [model, setModel] = useState("");
+  const modes = useModes(transport);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -244,7 +248,7 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
     }
     inFlight.current = true; setPending(true); setError(null);
     try {
-      const task = await transport.startProjectTask(projectId, { repo_id: selectedRepo, prompt: prompt.trim(), budget_usd: parsedBudget, max_steps: steps });
+      const task = await transport.startProjectTask(projectId, { repo_id: selectedRepo, prompt: prompt.trim(), budget_usd: parsedBudget, max_steps: steps, ...(model ? { model } : {}) });
       if (active.current) { setPrompt(""); onStarted(task); }
     } catch (cause) {
       if (active.current) setError(errorMessage(cause));
@@ -265,6 +269,10 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
         </select>
         <label htmlFor="project-task-prompt">Task instruction</label>
         <textarea id="project-task-prompt" className="pair-input" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} required />
+        {modes && modes.models.length > 0 ? <>
+          <label htmlFor="project-task-model">Model</label>
+          <ModelPicker id="project-task-model" value={model} mode="agent" modes={modes} onChange={setModel} />
+        </> : null}
         <label htmlFor="project-task-budget">Task budget in USD (optional)</label>
         <input id="project-task-budget" className="pair-input" type="number" min="0" step="any" value={budget} onChange={(event) => setBudget(event.target.value)} />
         <label htmlFor="project-task-steps">Maximum steps (optional)</label>

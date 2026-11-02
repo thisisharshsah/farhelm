@@ -360,7 +360,7 @@ describe("project workflow contracts", () => {
     const repoKeys = ["id", "name", "path"] as const;
     const pageKeys = ["repositories", "next_cursor"] as const;
     const attachKeys = ["repo_id"] as const;
-    const startKeys = ["repo_id", "prompt", "budget_usd", "max_steps", "retry_of"] as const;
+    const startKeys = ["repo_id", "prompt", "budget_usd", "max_steps", "retry_of", "model"] as const;
     const taskPageKeys = ["tasks", "next_cursor"] as const;
     const exhaustive: [
       Exhaustive<ProjectRepository, typeof repoKeys[number]>,

@@ -36,6 +36,7 @@ export * from "./chat.ts";
 export {
   isProject, parseProject, parseProjectPage, parseProjectRepository,
   parseProjectRepositoryPage, parseProjectTaskPage, isTaskView, parseTaskView, parseTaskDetail,
+  parseModesView,
 } from "./projects.ts";
 export {
   CLOUD_SESSION_STORAGE_KEY,

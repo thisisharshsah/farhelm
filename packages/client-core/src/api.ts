@@ -1,5 +1,5 @@
 import {
-  parseProject, parseProjectPage, parseProjectRepository,
+  parseModesView, parseProject, parseProjectPage, parseProjectRepository,
   parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskView,
 } from "./projects.ts";
 import {
@@ -208,6 +208,10 @@ export interface TaskView {
   verify_notes: string | null;
   /** Which model judged it. "Opus says concerns" is worth more than "Haiku". */
   verify_model: string | null;
+  /** The mode the task was started in (`agent` today). */
+  mode: WorkMode;
+  /** The model it was asked to use, as named; `null` is the mode's default. */
+  model: string | null;
   decided_via: DecidedVia | null;
   created_at: number;
   updated_at: number;
@@ -215,6 +219,38 @@ export interface TaskView {
 }
 
 export type Grade = "pass" | "concerns" | "fail";
+
+/**
+ * What a request asks the model for (ADR 0009). A conversation answers in
+ * `ask` or `plan`; a task runs in `agent`, and `review` judges its diff.
+ */
+export type WorkMode = "ask" | "plan" | "agent" | "review";
+export const WORK_MODES: readonly WorkMode[] = ["ask", "plan", "agent", "review"];
+
+/** One mode and the model that answers it unless a request names another. */
+export interface ModeView {
+  mode: WorkMode;
+  /** What people call it: "Ask", "Plan", "Agent", "Review". */
+  label: string;
+  /** The registry name the mode uses (`think`). */
+  model: string;
+  /** The exact model behind that name (`gpt-oss-20b`). */
+  deployment: string;
+}
+
+/** A model a request may name instead of the mode's default. */
+export interface ModelChoiceView {
+  name: string;
+  deployment: string;
+  /** A purpose name (`think`) rather than a model's own. */
+  alias: boolean;
+}
+
+/** `GET /v1/modes`. Both lists are empty on a runner without a registry. */
+export interface ModesView {
+  modes: ModeView[];
+  models: ModelChoiceView[];
+}
 
 /** True when a grade should make a reviewer slow down. Not-judged counts. */
 export function warrantsAttention(grade: Grade | null): boolean {
@@ -396,6 +432,8 @@ export interface StartProjectTaskRequest {
   budget_usd?: number | null;
   max_steps?: number | null;
   retry_of?: string | null;
+  /** A registry model or alias for the agent; the Agent mode's default when absent. */
+  model?: string | null;
 }
 
 export interface ProjectTaskPage {
@@ -575,7 +613,8 @@ export function createRunnerApi(baseUrl = "") {
     },
     sendProjectMessage: async (id: string, conversationId: string, input: SendChatMessageRequest) => {
       const reply = parseChatReply(await request<unknown>(base, `${projectPath(id)}/conversations/${encodeURIComponent(conversationId)}/messages`, {
-        method: "POST", body: JSON.stringify({ content: input.content, request_id: input.request_id }),
+        method: "POST", body: JSON.stringify({ content: input.content, request_id: input.request_id,
+          ...(input.mode ? { mode: input.mode } : {}), ...(input.model ? { model: input.model } : {}) }),
       }));
       if (reply.detail.conversation.project_id !== id || reply.detail.conversation.id !== conversationId
         || reply.turn.request_id !== input.request_id) throw new Error("The runner returned a different conversation or message request.");
@@ -598,7 +637,8 @@ export function createRunnerApi(baseUrl = "") {
       const task = parseTaskView(await request<unknown>(base, `${projectPath(id)}/tasks`, {
         method: "POST",
         body: JSON.stringify({ repo_id: input.repo_id, prompt: input.prompt,
-          budget_usd: input.budget_usd ?? null, max_steps: input.max_steps ?? null, retry_of: input.retry_of ?? null }),
+          budget_usd: input.budget_usd ?? null, max_steps: input.max_steps ?? null, retry_of: input.retry_of ?? null,
+          ...(input.model ? { model: input.model } : {}) }),
       }));
       if (task.repo_id !== input.repo_id) throw new Error("The runner returned a task for a different repository.");
       return task;
@@ -671,6 +711,7 @@ export function createRunnerApi(baseUrl = "") {
       prompt: string,
       budgetUsd?: number,
       retryOf?: string,
+      model?: string,
     ) =>
       request<TaskView>(base, "/v1/tasks", {
         method: "POST",
@@ -679,8 +720,11 @@ export function createRunnerApi(baseUrl = "") {
           prompt,
           budget_usd: budgetUsd ?? null,
           retry_of: retryOf ?? null,
+          model: model ?? null,
         }),
       }),
+    /** Each work mode's default model, and every name a request may choose. */
+    modes: async () => parseModesView(await request<unknown>(base, "/v1/modes")),
     /** Approve a change set onto disk, or reject it with a reason. */
     reviewTask: (
       id: string,

@@ -70,6 +70,8 @@ const task = (over: Partial<TaskView> = {}): TaskView => ({
   verify_grade: null,
   verify_notes: null,
   verify_model: null,
+  mode: "agent",
+  model: null,
   decided_via: null,
   created_at: 0,
   updated_at: 0,

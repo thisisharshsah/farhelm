@@ -25,6 +25,7 @@ import {
 } from "@farhelm/client-core";
 import { ApprovalCard, AutoApproveControl } from "./Approvals";
 import { Icon } from "./Icon";
+import { ModelPicker, ModeTag, useModes } from "./ModelChoice";
 import { DiffView, RetryButton, SecondOpinion, UndoButton, Verdict } from "./Tasks";
 import { OutputTail } from "./views";
 import { duration, StatusPill, TASK_STATUS } from "./status";
@@ -205,6 +206,7 @@ export function TaskThread({
           <dl className="facts">
             <dt>Started</dt><dd>{since(task.created_at)}</dd>
             <dt>Updated</dt><dd>{since(task.updated_at)}</dd>
+            <dt>Mode</dt><dd><ModeTag mode={task.mode} model={task.model ?? "default model"} /></dd>
             {task.decided_via ? (<><dt>Decided from</dt><dd>{task.decided_via.replace("_", " ")}</dd></>) : null}
             {session ? (<><dt>Agent</dt><dd>{agentName(session.agent)} on {session.machine_name}</dd></>) : null}
           </dl>
@@ -243,8 +245,10 @@ function TaskComposer({
   autoApprove: React.ReactNode;
 }) {
   const [text, setText] = useState("");
+  const [model, setModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modes = useModes(transport);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
@@ -265,7 +269,7 @@ function TaskComposer({
         setText("");
         onChanged();
       } else {
-        const next = await transport.startTask(task.repo_path, value);
+        const next = await transport.startTask(task.repo_path, value, undefined, undefined, model || undefined);
         if (!mounted.current) return;
         onOpenTask(next.id);
       }
@@ -296,6 +300,7 @@ function TaskComposer({
         />
         <div className="composer-bar">
           {autoApprove}
+          {followUp ? <ModelPicker value={model} mode="agent" modes={modes} onChange={setModel} disabled={busy} /> : null}
           <span className="spacer" />
           <span className="composer-hint">{followUp ? "Starts a new task · ⌘⏎" : "⌘⏎ to send"}</span>
           <button className="send-button" type="submit" disabled={busy || !text.trim()} aria-label={followUp ? "Start follow-up task" : "Send instruction"}>
@@ -352,8 +357,10 @@ function NewTaskForm({
   const [custom, setCustom] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [budget, setBudget] = useState("");
+  const [model, setModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modes = useModes(transport);
   const inFlight = useRef(false);
   const mounted = useRef(true);
 
@@ -413,7 +420,7 @@ function NewTaskForm({
     setBusy(true);
     setError(null);
     try {
-      const started = await transport.startTask(path, text, cap);
+      const started = await transport.startTask(path, text, cap, undefined, model || undefined);
       if (!mounted.current) return;
       setPrompt("");
       onStarted(started.id);
@@ -482,6 +489,7 @@ function NewTaskForm({
               Use a known repository
             </button>
           ) : null}
+          <ModelPicker value={model} mode="agent" modes={modes} onChange={setModel} disabled={busy} />
           <input
             className="composer-field composer-cap"
             aria-label="Spend cap in dollars"
