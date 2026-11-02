@@ -4,7 +4,7 @@
 use std::{collections::BTreeMap, fmt, io::Read, net::IpAddr, path::Path};
 
 use farhelm_domain::price::{ModelPrice, TokenRates};
-use farhelm_proto::types::Tier;
+use farhelm_proto::types::{Tier, WorkMode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -66,6 +66,31 @@ struct Config {
     /// changing its setting; the ledger records exactly what ran.
     #[serde(default)]
     aliases: BTreeMap<String, String>,
+    /// Which name answers each work mode (ADR 0009) unless a request names
+    /// another. A mode left out falls back to the routes: Ask, Plan and
+    /// Review to `frontier`, Agent to `large`.
+    #[serde(default)]
+    modes: ModesConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModesConfig {
+    ask: Option<String>,
+    plan: Option<String>,
+    agent: Option<String>,
+    review: Option<String>,
+}
+
+impl ModesConfig {
+    fn get(&self, mode: WorkMode) -> Option<&str> {
+        match mode {
+            WorkMode::Ask => self.ask.as_deref(),
+            WorkMode::Plan => self.plan.as_deref(),
+            WorkMode::Agent => self.agent.as_deref(),
+            WorkMode::Review => self.review.as_deref(),
+        }
+    }
 }
 
 /// A name a request may use: `model`, `model:adapter`, or a pinned
@@ -109,6 +134,14 @@ fn parse_ref(name: &str) -> Option<ModelRef<'_>> {
 }
 
 impl Config {
+    /// The name that answers a mode: its `[modes]` entry, else its route.
+    fn mode_model(&self, mode: WorkMode) -> &str {
+        self.modes.get(mode).unwrap_or(match mode {
+            WorkMode::Agent => &self.routes.large,
+            WorkMode::Ask | WorkMode::Plan | WorkMode::Review => &self.routes.frontier,
+        })
+    }
+
     /// The reference a name means: an alias's target, or the name itself.
     fn reference<'a>(&'a self, name: &'a str) -> Option<ModelRef<'a>> {
         let target = self.aliases.get(name).map_or(name, String::as_str);
@@ -238,6 +271,16 @@ pub struct AdapterVersion {
 
 fn full_scale() -> f32 {
     1.0
+}
+
+/// A mode and the name that answers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModeSummary {
+    pub mode: WorkMode,
+    /// The registry name (`think`), as configured or routed.
+    pub model: String,
+    /// The exact model behind it (`gpt-oss-20b:fast@v1`).
+    pub deployment: String,
 }
 
 /// One registry model, for listings.
@@ -413,6 +456,44 @@ impl ProviderClient {
         }
         names.extend(config.aliases.keys().cloned());
         names
+    }
+
+    /// Each work mode with the name that answers it. Empty for the legacy
+    /// client, which has no registry.
+    pub fn modes(&self) -> Vec<ModeSummary> {
+        let Self::Configured(registry) = self else {
+            return Vec::new();
+        };
+        let config = &registry.config;
+        WorkMode::ALL
+            .iter()
+            .map(|&mode| {
+                let model = config.mode_model(mode).to_owned();
+                // Validated at load: every mode name resolves.
+                let deployment = config.canonical(&model).unwrap_or_else(|| model.clone());
+                ModeSummary {
+                    mode,
+                    model,
+                    deployment,
+                }
+            })
+            .collect()
+    }
+
+    /// The name that answers a mode, or `None` without a registry.
+    pub fn mode_model(&self, mode: WorkMode) -> Option<String> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Configured(registry) => Some(registry.config.mode_model(mode).to_owned()),
+        }
+    }
+
+    /// Whether a name is an alias rather than a model's own name.
+    pub fn is_alias(&self, name: &str) -> bool {
+        match self {
+            Self::Legacy(_) => false,
+            Self::Configured(registry) => registry.config.aliases.contains_key(name),
+        }
     }
 
     /// Whether the registry serves this name (model, `model:adapter`, a
@@ -733,6 +814,15 @@ impl ProviderRegistry {
             if !ok {
                 return Err(ConfigError(format!(
                     "alias {alias} must point at a model or model:adapter[@vN], and {target} is not one"
+                )));
+            }
+        }
+        for mode in WorkMode::ALL {
+            if let Some(name) = config.modes.get(*mode)
+                && config.reference(name).is_none()
+            {
+                return Err(ConfigError(format!(
+                    "mode {mode} names {name}, which is not a model, model:adapter or alias"
                 )));
             }
         }
@@ -1398,6 +1488,48 @@ code = "base-model"
             axum::serve(listener, app).await.unwrap();
         });
         (address, captured, server)
+    }
+
+    #[test]
+    fn modes_default_to_the_routes_and_may_name_any_registry_name() {
+        let source = with_adapters("127.0.0.1:1");
+        let client = load(&source).unwrap();
+        let modes = client.modes();
+        assert_eq!(modes.len(), 4);
+        // Unset: Agent follows `large`, the others `frontier`; here all `work`.
+        assert!(modes.iter().all(|mode| mode.model == "work"));
+        assert_eq!(modes[0].deployment, "base-model");
+        assert_eq!(client.mode_model(WorkMode::Agent).as_deref(), Some("work"));
+
+        let configured = load(&format!(
+            "{source}\n[modes]\nask = \"quick\"\nreview = \"base-model:short@v1\"\n"
+        ))
+        .unwrap();
+        let ask = configured
+            .modes()
+            .into_iter()
+            .find(|mode| mode.mode == WorkMode::Ask)
+            .unwrap();
+        assert_eq!(
+            (ask.model.as_str(), ask.deployment.as_str()),
+            ("quick", "base-model:short@v2")
+        );
+        assert_eq!(
+            configured.mode_model(WorkMode::Review).as_deref(),
+            Some("base-model:short@v1")
+        );
+        assert_eq!(
+            configured.mode_model(WorkMode::Plan).as_deref(),
+            Some("work")
+        );
+        assert!(configured.is_alias("quick") && !configured.is_alias("base-model"));
+
+        // A mode naming nothing the registry serves is refused at load.
+        let bad = load(&format!("{source}\n[modes]\nplan = \"nothing\"\n"))
+            .err()
+            .expect("an unknown mode name is refused");
+        assert!(bad.to_string().contains("mode plan"), "{bad}");
+        assert!(load(&format!("{source}\n[modes]\nthink = \"work\"\n")).is_err());
     }
 
     #[tokio::test]

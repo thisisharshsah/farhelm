@@ -127,6 +127,8 @@ fn running_task(state: &AppState, id: &str, repo: &TempRepo, worktree_json: Stri
         verify_grade: None,
         verify_notes: None,
         verify_model: None,
+        mode: farhelm_proto::types::WorkMode::Agent,
+        model: None,
         decided_via: None,
         created_at: NOW,
         updated_at: NOW,

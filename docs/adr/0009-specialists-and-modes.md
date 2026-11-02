@@ -1,6 +1,11 @@
 # 0009: Local specialists and work modes
 
-Status: proposed, 2026-10-28. User direction: no Claude subscription; run on
+Status: accepted, 2026-10-28; modes implemented 2026-11-02 (the registry's
+`[modes]` table names each mode's default model, a conversation answers in
+Ask or Plan, a task runs in Agent and is judged in Review, and the app's
+pickers let a message or task name another registry model; replies and
+tasks record the mode and the model asked for). Specialists beyond the
+first adapters remain to do. User direction: no Claude subscription; run on
 local models, with several fine-tuned specialists for different work, chosen
 through Ask, Plan, Agent and Review modes. Extends
 [ADR 0003](0003-provider-neutral-inference-layer.md) and

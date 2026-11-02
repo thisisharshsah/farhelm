@@ -5,7 +5,7 @@ use std::fmt;
 
 use farhelm_proto::{
     Agent, ChatDetail, ChatMessage, ChatReply, ChatRole, CreateProjectChatRequest, ProjectChat,
-    ProjectChatPage, Repo, SendChatMessageRequest, Session, SessionStatus,
+    ProjectChatPage, Repo, SendChatMessageRequest, Session, SessionStatus, WorkMode,
 };
 
 use crate::store::{ChatStore, ProjectScope, StoreError, WorkspaceStore};
@@ -48,6 +48,20 @@ pub struct PreparedChatTurn {
     pub instruction: String,
     /// Only successful prior turns, excluding the newly submitted instruction.
     pub history: Vec<ChatMessage>,
+    /// Ask unless the request said Plan; a conversation has no other modes.
+    pub mode: WorkMode,
+    /// The model the request named, already checked to be a registry name
+    /// by the runner; `None` is the mode's default.
+    pub model: Option<String>,
+}
+
+/// What the model answered, and how.
+#[derive(Debug, Clone, Copy)]
+pub struct ChatAnswer<'a> {
+    pub text: &'a str,
+    /// The model that answered, as the ledger names it.
+    pub model: &'a str,
+    pub mode: WorkMode,
 }
 
 pub struct BeginChatResult {
@@ -198,6 +212,15 @@ impl<S: ChatStore + WorkspaceStore> ProjectChats<S> {
             CHAT_MAX_USER_BYTES,
             "message must contain text and fit within 16 KiB",
         )?;
+        let mode = request.mode.unwrap_or(WorkMode::Ask);
+        if !matches!(mode, WorkMode::Ask | WorkMode::Plan) {
+            return Err(ChatError::Validation(
+                "a conversation answers in ask or plan mode; agent and review are task modes",
+            ));
+        }
+        if let Some(model) = &request.model {
+            validate_text(model, 256, "model name is invalid")?;
+        }
         match self.store.chat_begin(
             self.scope(project_id),
             chat_id,
@@ -218,6 +241,8 @@ impl<S: ChatStore + WorkspaceStore> ProjectChats<S> {
                     request_id: request.request_id.clone(),
                     instruction: request.content.clone(),
                     history,
+                    mode,
+                    model: request.model.clone(),
                 }),
             }),
             ChatStoreBegin::Replay(reply) => Ok(BeginChatResult {
@@ -242,23 +267,23 @@ impl<S: ChatStore + WorkspaceStore> ProjectChats<S> {
         project_id: &str,
         chat_id: &str,
         request_id: &str,
-        text: &str,
-        model: &str,
+        answer: ChatAnswer<'_>,
         at_ms: i64,
     ) -> Result<ChatReply, ChatError> {
         validate_text(
-            text,
+            answer.text,
             CHAT_MAX_ASSISTANT_BYTES,
             "reply must contain text and fit within 64 KiB",
         )?;
-        validate_text(model, 256, "reply model identity is invalid")?;
+        validate_text(answer.model, 256, "reply model identity is invalid")?;
         let message = ChatMessage {
             id: crate::id::new_id(),
             conversation_id: chat_id.into(),
             role: ChatRole::Assistant,
-            content: text.into(),
+            content: answer.text.into(),
             created_at: at_ms,
-            model: Some(model.into()),
+            model: Some(answer.model.into()),
+            mode: Some(answer.mode),
         };
         self.finish_result(self.store.chat_complete(
             self.scope(project_id),

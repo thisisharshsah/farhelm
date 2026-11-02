@@ -267,6 +267,8 @@ pub fn task_view<S: Store>(
         verify_grade: task.verify_grade,
         verify_notes: task.verify_notes,
         verify_model: task.verify_model,
+        mode: task.mode,
+        model: task.model,
         decided_via: task.decided_via,
         created_at: task.created_at,
         updated_at: task.updated_at,

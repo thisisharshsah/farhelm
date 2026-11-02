@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::WorkMode;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectChat {
     pub id: String,
@@ -28,6 +30,9 @@ pub struct ChatMessage {
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The mode the message was asked or answered in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<WorkMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +50,11 @@ pub struct ChatTurn {
     pub status: ChatTurnStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<WorkMode>,
+    /// The model the turn asked for, as named; `None` is the mode's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -83,4 +93,11 @@ pub struct CreateProjectChatRequest {
 pub struct SendChatMessageRequest {
     pub content: String,
     pub request_id: String,
+    /// `ask` when absent. A conversation answers in Ask or Plan; Agent and
+    /// Review are task modes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<WorkMode>,
+    /// A registry model or alias; the mode's default when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }

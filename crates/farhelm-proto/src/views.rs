@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::diff::ChangeSet;
 use crate::types::{
     Approval, AutoApprove, DecidedVia, PlanStep, PlanStepStatus, SessionStatus, TaskStatus,
+    WorkMode,
 };
 
 /// Budget as the UI needs it: the bar, the number, and the traffic light.
@@ -264,10 +265,45 @@ pub struct TaskView {
     pub verify_grade: Option<String>,
     pub verify_notes: Option<String>,
     pub verify_model: Option<String>,
+    /// The mode the task was started in (`agent` today).
+    pub mode: WorkMode,
+    /// The model it was asked to use, as named in the request; `null` is the
+    /// mode's default.
+    pub model: Option<String>,
     pub decided_via: Option<DecidedVia>,
     pub created_at: i64,
     pub updated_at: i64,
     pub decided_at: Option<i64>,
+}
+
+/// One mode and the model that answers it by default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeView {
+    pub mode: WorkMode,
+    /// What people call it.
+    pub label: String,
+    /// The registry name the mode uses (`think`).
+    pub model: String,
+    /// The exact model behind that name (`gpt-oss-20b`).
+    pub deployment: String,
+}
+
+/// A model a request may name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelChoiceView {
+    /// The name to send (`code`, `gpt-oss-20b`, `gpt-oss-20b:fast`).
+    pub name: String,
+    /// The exact model it resolves to.
+    pub deployment: String,
+    /// A purpose name (`think`) rather than a model's own.
+    pub alias: bool,
+}
+
+/// `GET /v1/modes`: what the registry offers a picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModesView {
+    pub modes: Vec<ModeView>,
+    pub models: Vec<ModelChoiceView>,
 }
 
 /// Project-scoped task page, exposed only over direct HTTP.

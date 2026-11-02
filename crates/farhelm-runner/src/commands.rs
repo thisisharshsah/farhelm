@@ -286,6 +286,7 @@ pub async fn execute(
             prompt,
             budget_usd,
             retry_of,
+            model,
         } => {
             let task = crate::task::start(
                 state,
@@ -293,6 +294,7 @@ pub async fn execute(
                     repo_path,
                     prompt,
                     budget_usd,
+                    model,
                     // Not exposed over the wire: a step cap is a debugging
                     // knob, and the budget is the limit that actually protects
                     // somebody. Left at the runner's default.

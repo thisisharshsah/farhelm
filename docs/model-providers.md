@@ -58,6 +58,16 @@ quick = "gpt-oss-20b:fast"
 
 Aliases are purpose names projects ask for. Each points at a model, `model:adapter` or a pinned version, never at another alias, and never takes a model's name. Moving an alias changes what serves a purpose without any project changing its setting. The ledger records exactly what ran (`local/engine-gpt-oss-20b/gpt-oss-20b:fast@v1`), an alias shares the response cache of what it points at, and the front door reports a request made by alias as `... (as quick)`. `farhelm models` lists every model with its card, adapters, versions, aliases and routes. Names are the owner's to choose (AGENTS.md).
 
+Work modes (ADR 0009) are what a person asks for in the app: Ask, Plan, Agent or Review. `[modes]` says which name answers each by default; a message or task may name another registry model, and the reply or task records both the mode and the model it was asked for, with the ledger recording what ran. A mode left out follows the routes: Agent uses `large`, the others `frontier`. `GET /v1/modes` serves the app its picker: each mode's default and every name a request may choose.
+
+```toml
+[modes]
+ask = "think"
+plan = "think"
+agent = "code"
+review = "code"
+```
+
 Quote a table name that contains a dot (`[models."qwen3.5-4b"]`, `[providers."engine-qwen3.5-4b"]`); unquoted, it is a nested table and the registry is invalid.
 
 ### Reasoning models and tool calls

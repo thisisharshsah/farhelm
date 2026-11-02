@@ -11,7 +11,7 @@ use farhelm_app::chat::{CHAT_MAX_BYTES, CHAT_MAX_MESSAGES, ChatStoreBegin, ChatS
 use farhelm_app::store::{ChatStore, ProjectScope};
 use farhelm_proto::{
     ChatDetail, ChatMessage, ChatReply, ChatRole, ChatTurn, ChatTurnStatus, ProjectChat,
-    SendChatMessageRequest,
+    SendChatMessageRequest, WorkMode,
 };
 
 /// A conversation inside its scope, plus the session it is charged to.
@@ -91,6 +91,7 @@ struct RawMessage {
     content: String,
     created_at: i64,
     model: Option<String>,
+    mode: Option<String>,
 }
 
 fn read_message(row: &Row<'_>) -> rusqlite::Result<RawMessage> {
@@ -101,6 +102,7 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<RawMessage> {
         content: row.get(3)?,
         created_at: row.get(4)?,
         model: row.get(5)?,
+        mode: row.get(6)?,
     })
 }
 
@@ -112,10 +114,16 @@ fn message_from(raw: RawMessage) -> Result<ChatMessage> {
         content: raw.content,
         created_at: raw.created_at,
         model: raw.model,
+        mode: raw
+            .mode
+            .as_deref()
+            .map(parse_enum::<WorkMode>)
+            .transpose()?,
     })
 }
 
-const MESSAGE_COLUMNS: &str = "m.id, m.conversation_id, m.role, m.content, m.created_at, m.model";
+const MESSAGE_COLUMNS: &str =
+    "m.id, m.conversation_id, m.role, m.content, m.created_at, m.model, m.mode";
 
 fn messages(conn: &Connection, chat_id: &str) -> Result<Vec<ChatMessage>> {
     let mut stmt = conn
@@ -157,6 +165,8 @@ struct RawTurn {
     error: Option<String>,
     created_at: i64,
     updated_at: i64,
+    mode: Option<String>,
+    model: Option<String>,
 }
 
 fn read_turn(row: &Row<'_>) -> rusqlite::Result<RawTurn> {
@@ -166,6 +176,8 @@ fn read_turn(row: &Row<'_>) -> rusqlite::Result<RawTurn> {
         error: row.get(2)?,
         created_at: row.get(3)?,
         updated_at: row.get(4)?,
+        mode: row.get(5)?,
+        model: row.get(6)?,
     })
 }
 
@@ -176,10 +188,16 @@ fn turn_from(raw: RawTurn) -> Result<ChatTurn> {
         error: raw.error,
         created_at: raw.created_at,
         updated_at: raw.updated_at,
+        mode: raw
+            .mode
+            .as_deref()
+            .map(parse_enum::<WorkMode>)
+            .transpose()?,
+        model: raw.model,
     })
 }
 
-const TURN_COLUMNS: &str = "request_id, status, error, created_at, updated_at";
+const TURN_COLUMNS: &str = "request_id, status, error, created_at, updated_at, mode, model";
 
 fn turn(conn: &Connection, chat_id: &str, request_id: &str) -> Result<Option<ChatTurn>> {
     conn.query_row(
@@ -297,15 +315,16 @@ fn settle(
     }
     if let Some(message) = message {
         tx.execute(
-            "INSERT INTO chat_message (id, conversation_id, request_id, role, content, model, created_at)
-             VALUES (?1, ?2, ?3, 'assistant', ?4, ?5, ?6)",
+            "INSERT INTO chat_message (id, conversation_id, request_id, role, content, model, created_at, mode)
+             VALUES (?1, ?2, ?3, 'assistant', ?4, ?5, ?6, ?7)",
             params![
                 message.id,
                 chat_id,
                 request_id,
                 message.content,
                 message.model,
-                message.created_at
+                message.created_at,
+                message.mode.map(WorkMode::as_str)
             ],
         )
         .map_err(backend)?;
@@ -508,16 +527,17 @@ impl ChatStore for SqliteStore {
             return Ok(ChatStoreBegin::Full);
         }
 
+        let mode = request.mode.map(WorkMode::as_str);
         tx.execute(
-            "INSERT INTO chat_message (id, conversation_id, request_id, role, content, model, created_at)
-             VALUES (?1, ?2, ?3, 'user', ?4, NULL, ?5)",
-            params![message_id, chat_id, request.request_id, request.content, at_ms],
+            "INSERT INTO chat_message (id, conversation_id, request_id, role, content, model, created_at, mode)
+             VALUES (?1, ?2, ?3, 'user', ?4, NULL, ?5, ?6)",
+            params![message_id, chat_id, request.request_id, request.content, at_ms, mode],
         )
         .map_err(backend)?;
         tx.execute(
-            "INSERT INTO chat_turn (conversation_id, request_id, status, error, created_at, updated_at)
-             VALUES (?1, ?2, 'pending', NULL, ?3, ?3)",
-            params![chat_id, request.request_id, at_ms],
+            "INSERT INTO chat_turn (conversation_id, request_id, status, error, created_at, updated_at, mode, model)
+             VALUES (?1, ?2, 'pending', NULL, ?3, ?3, ?4, ?5)",
+            params![chat_id, request.request_id, at_ms, mode, request.model],
         )
         .map_err(backend)?;
         tx.execute(
@@ -606,7 +626,7 @@ impl ChatStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use farhelm_app::chat::{ChatError, ProjectChats};
+    use farhelm_app::chat::{ChatAnswer, ChatError, ProjectChats};
     use farhelm_app::store::{ProjectWorkflowStore, WorkspaceStore};
     use farhelm_proto::{CreateProjectChatRequest, Machine, Project};
 
@@ -710,6 +730,8 @@ mod tests {
                 &SendChatMessageRequest {
                     content: text.into(),
                     request_id: request_id.into(),
+                    mode: None,
+                    model: None,
                 },
                 at,
             )
@@ -792,7 +814,9 @@ mod tests {
                 &chat.id,
                 &SendChatMessageRequest {
                     content: "Another".into(),
-                    request_id: "req-2".into()
+                    request_id: "req-2".into(),
+                    mode: None,
+                    model: None,
                 },
                 NOW + 2
             ),
@@ -813,7 +837,9 @@ mod tests {
                 &chat.id,
                 &SendChatMessageRequest {
                     content: "Different".into(),
-                    request_id: "req-1".into()
+                    request_id: "req-1".into(),
+                    mode: None,
+                    model: None,
                 },
                 NOW + 4
             ),
@@ -825,8 +851,11 @@ mod tests {
                 "project-a",
                 &chat.id,
                 "req-1",
-                "It never backs off.",
-                "synthetic-model",
+                ChatAnswer {
+                    text: "It never backs off.",
+                    model: "synthetic-model",
+                    mode: WorkMode::Ask,
+                },
                 NOW + 5,
             )
             .unwrap();
@@ -841,7 +870,17 @@ mod tests {
 
         // Settling twice is a conflict, not a second message.
         assert!(matches!(
-            chats.complete("project-a", &chat.id, "req-1", "Again", "m", NOW + 6),
+            chats.complete(
+                "project-a",
+                &chat.id,
+                "req-1",
+                ChatAnswer {
+                    text: "Again",
+                    model: "m",
+                    mode: WorkMode::Ask,
+                },
+                NOW + 6
+            ),
             Err(ChatError::Conflict(_))
         ));
         assert!(matches!(

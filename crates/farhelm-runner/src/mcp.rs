@@ -405,6 +405,7 @@ async fn call(
                     prompt,
                     budget_usd,
                     retry_of: None,
+                    model: None,
                 },
                 via,
             )

@@ -32,6 +32,13 @@ max_output_tokens = 4096
 #
 # [aliases]
 # quick = "gpt-oss-20b:fast"
+#
+# Which name answers each work mode in the app (Ask, Plan, Agent, Review)
+# unless a request names another. A mode left out follows the routes: Agent
+# uses `large`, the others `frontier`.
+# [modes]
+# ask = "quick"
+# agent = "code"
 
 # Optional cloud route: deliberately absent from the default configuration.
 # To enable, change policy to "cloud_allowed", uncomment this provider/model,

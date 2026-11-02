@@ -38,7 +38,7 @@ use farhelm_app::store::{TaskOutcome, prelude::*};
 use farhelm_app::time::now_ms;
 use farhelm_proto::types::{
     Agent, AgentTask, Approval, DecidedVia, Decision, Repo, Session, SessionStatus,
-    StartProjectTaskRequest, TaskStatus,
+    StartProjectTaskRequest, TaskStatus, WorkMode,
 };
 use serde::Deserialize;
 
@@ -171,6 +171,10 @@ pub struct StartTask {
     pub budget_usd: Option<f64>,
     #[serde(default)]
     pub max_steps: Option<usize>,
+    /// A registry model or alias for the agent; the Agent mode's default
+    /// when absent.
+    #[serde(default)]
+    pub model: Option<String>,
     /// A rejected task to try again, differently.
     ///
     /// Its prompt, its change set, and the reason it was refused are composed
@@ -423,10 +427,35 @@ fn resolve_repo(state: &AppState, repo_path: &str) -> Result<Repo, TaskError> {
     Ok(repo)
 }
 
+/// A named model must be one the registry serves. Checked before any row is
+/// written, so a typo is a refusal rather than a task that fails on step 1.
+fn check_model(state: &AppState, model: Option<&str>) -> Result<(), TaskError> {
+    let Some(model) = model else {
+        return Ok(());
+    };
+    let declared = state
+        .gateway
+        .as_ref()
+        .is_some_and(|gateway| gateway.client().declares(model));
+    if declared {
+        Ok(())
+    } else {
+        Err(TaskError::Conflict(format!(
+            "model `{model}` is not in the model registry"
+        )))
+    }
+}
+
 /// A fresh task row and the session it bills to.
 fn create_rows(state: &AppState, request: &StartTask) -> Result<(AgentTask, Session), TaskError> {
     let repo = resolve_repo(state, &request.repo_path)?;
-    let (task, session) = new_rows(&repo, &request.prompt, request.budget_usd, now_ms());
+    let (task, session) = new_rows(
+        &repo,
+        &request.prompt,
+        request.budget_usd,
+        request.model.clone(),
+        now_ms(),
+    );
     state.store.upsert_session(&session)?;
     state.store.upsert_task(&task)?;
     Ok((task, session))
@@ -434,7 +463,13 @@ fn create_rows(state: &AppState, request: &StartTask) -> Result<(AgentTask, Sess
 
 /// Build both identities before persisting them, so project starts can commit
 /// the session, task and ownership link in one storage transaction.
-fn new_rows(repo: &Repo, prompt: &str, budget_usd: Option<f64>, now: i64) -> (AgentTask, Session) {
+fn new_rows(
+    repo: &Repo,
+    prompt: &str,
+    budget_usd: Option<f64>,
+    model: Option<String>,
+    now: i64,
+) -> (AgentTask, Session) {
     let session = Session {
         id: new_id(),
         repo_id: repo.id.clone(),
@@ -468,6 +503,8 @@ fn new_rows(repo: &Repo, prompt: &str, budget_usd: Option<f64>, now: i64) -> (Ag
         verify_grade: None,
         verify_notes: None,
         verify_model: None,
+        mode: WorkMode::Agent,
+        model,
         decided_via: None,
         created_at: now,
         updated_at: now,
@@ -530,6 +567,7 @@ pub fn start(state: &Arc<AppState>, request: StartTask) -> Result<AgentTask, Tas
     if state.gateway.is_none() {
         return Err(TaskError::NoProvider);
     }
+    check_model(state, request.model.as_deref())?;
     if !Path::new(&request.repo_path).is_dir() {
         return Err(TaskError::NotADirectory(request.repo_path.clone()));
     }
@@ -584,6 +622,7 @@ pub(crate) fn start_project(
     if state.gateway.is_none() {
         return Err(TaskError::NoProvider.into());
     }
+    check_model(state, request.model.as_deref())?;
     if !Path::new(&repo.path).is_dir() {
         return Err(TaskError::NotADirectory(repo.path).into());
     }
@@ -596,7 +635,13 @@ pub(crate) fn start_project(
         .as_ref()
         .map(|previous| previous.prompt.clone())
         .unwrap_or_else(|| request.prompt.clone());
-    let (task, session) = new_rows(&repo, &prompt, request.budget_usd, now_ms());
+    let (task, session) = new_rows(
+        &repo,
+        &prompt,
+        request.budget_usd,
+        request.model.clone(),
+        now_ms(),
+    );
     workflow.insert_task(project_id, &session, &task, request.retry_of.as_deref())?;
     launch(
         state,
@@ -605,6 +650,7 @@ pub(crate) fn start_project(
             prompt,
             budget_usd: request.budget_usd,
             max_steps: request.max_steps,
+            model: request.model,
             retry_of: request.retry_of,
         },
         instruction,
@@ -649,6 +695,16 @@ fn launch(
         .with_task_id(task.id.clone());
         if let Some(max_steps) = request.max_steps.filter(|steps| *steps > 0) {
             spec.max_steps = max_steps;
+        }
+        // The model asked for, else the Agent mode's; the Review mode's for
+        // the second opinion. A legacy client has no registry and routes by
+        // task type as before.
+        if let Some(gateway) = &state.gateway {
+            spec.model = request
+                .model
+                .clone()
+                .or_else(|| gateway.client().mode_model(WorkMode::Agent));
+            spec.review_model = gateway.client().mode_model(WorkMode::Review);
         }
         // What earlier sessions left about this repository. Read here rather
         // than in the agent crate, which has no store and is better without
@@ -1323,6 +1379,7 @@ mod tests {
                 prompt: "change it".into(),
                 budget_usd: None,
                 max_steps: None,
+                model: None,
                 retry_of: None,
             },
         )
@@ -1464,6 +1521,7 @@ mod tests {
                 prompt: "x".into(),
                 budget_usd: None,
                 max_steps: None,
+                model: None,
                 retry_of: None,
             },
         )
@@ -1556,6 +1614,7 @@ mod tests {
             prompt: "x".into(),
             budget_usd: None,
             max_steps: None,
+            model: None,
             retry_of: retry_of.map(str::to_owned),
         }
     }
@@ -1750,6 +1809,7 @@ mod tests {
                 prompt: "x".into(),
                 budget_usd: None,
                 max_steps: None,
+                model: None,
                 retry_of: None,
             },
         );
@@ -1767,6 +1827,7 @@ mod tests {
                 prompt: "x".into(),
                 budget_usd: None,
                 max_steps: None,
+                model: None,
                 retry_of: None,
             },
         )
@@ -1795,6 +1856,7 @@ mod tests {
                     prompt: "x".into(),
                     budget_usd: None,
                     max_steps: None,
+                    model: None,
                     retry_of: None,
                 }
             ),
@@ -1814,6 +1876,7 @@ mod tests {
                 prompt: "x".into(),
                 budget_usd: Some(2.50),
                 max_steps: None,
+                model: None,
                 retry_of: None,
             },
         )

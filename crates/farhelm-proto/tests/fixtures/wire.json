@@ -224,6 +224,8 @@
         "updated_at": 1785369601000,
         "verify_grade": "concerns",
         "verify_model": "claude-opus-5",
+        "mode": "agent",
+        "model": "code",
         "verify_notes": "the timeout is not covered"
       }
     ],
@@ -251,6 +253,7 @@
     "start_task": {
       "budget_usd": 1.0,
       "max_steps": 12,
+      "model": "code",
       "prompt": "Bound the retry loop",
       "repo_id": "repo-1",
       "retry_of": "previous-task"
@@ -281,6 +284,8 @@
           "updated_at": 1785369601000,
           "verify_grade": "concerns",
           "verify_model": "claude-opus-5",
+        "mode": "agent",
+        "model": "code",
           "verify_notes": "the timeout is not covered"
         }
       ]
@@ -411,6 +416,8 @@
     "updated_at": 1785369601000,
     "verify_grade": "concerns",
     "verify_model": "claude-opus-5",
+        "mode": "agent",
+        "model": "code",
     "verify_notes": "the timeout is not covered"
   },
   "workspace": {

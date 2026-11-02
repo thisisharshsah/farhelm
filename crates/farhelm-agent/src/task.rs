@@ -95,6 +95,11 @@ pub struct TaskSpec {
     /// replaces (drafting on the frontier tier throughout) costs far more.
     /// See [`crate::verify`].
     pub verify: bool,
+    /// The registry name the loop asks for (`code`); `None` leaves routing
+    /// to the gateway's task-type slots.
+    pub model: Option<String>,
+    /// The registry name that reviews the diff; `None` routes as before.
+    pub review_model: Option<String>,
 }
 
 impl TaskSpec {
@@ -115,6 +120,8 @@ impl TaskSpec {
             max_steps: DEFAULT_MAX_STEPS,
             memory: Vec::new(),
             verify: true,
+            model: None,
+            review_model: None,
         }
     }
 
@@ -311,6 +318,7 @@ async fn delegate<S: Store, C: ModelClient, Sup: Supervisor>(
         let mut request = CompleteRequest::new(&spec.session_id, TaskType::Edit, &pending);
         request.stable = stable.clone();
         request.tool_results = pending_results.clone();
+        request.model = spec.model.clone();
 
         let response = match gateway.complete(request).await {
             Ok(response) => response,
@@ -486,6 +494,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         let mut request = CompleteRequest::new(&spec.session_id, TaskType::Edit, &pending);
         request.stable = stable.clone();
         request.tool_results = pending_results.clone();
+        request.model = spec.model.clone();
         // Only the first step pays for retrieval and any enabled pre-gate. See the
         // module docs: this is a caching decision as much as a cost one.
         request.repo_path = (steps == 1).then(|| worktree.path().to_path_buf());
@@ -689,6 +698,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
             &spec.prompt,
             &changes,
             last_run.as_ref(),
+            spec.review_model.as_deref(),
         )
         .await;
         if let Some(assessment) = &assessment {

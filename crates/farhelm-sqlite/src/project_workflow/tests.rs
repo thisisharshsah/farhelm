@@ -83,6 +83,8 @@ fn rows(id: &str, repo: &str) -> (Session, AgentTask) {
         verify_grade: None,
         verify_notes: None,
         verify_model: None,
+        mode: farhelm_proto::types::WorkMode::Agent,
+        model: None,
         decided_via: None,
         created_at: 1,
         updated_at: 1,
@@ -362,6 +364,7 @@ fn task_creation_validation_bounds_user_inputs_before_execution() {
         budget_usd: Some(1.0),
         max_steps: Some(10),
         retry_of: None,
+        model: None,
     };
     assert!(validate_start_task(&good).is_ok());
     for budget in [0.0, -1.0, f64::NAN, f64::INFINITY] {

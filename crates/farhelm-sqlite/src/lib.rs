@@ -20,6 +20,7 @@ use farhelm_proto::types::{
     DecidedVia, Decision, Device, DeviceKind, Dispatch, Document, EntityKind, EntityLink, Machine,
     Message, Note, ParseEnumError, Plan, PlanStep, PlanStepStatus, Project, RelationKind, Repo,
     Risk, Session, SessionStatus, TaskStatus, TaskStep, TaskType, Tier, Usage, UsageEvent,
+    WorkMode,
 };
 use farhelm_proto::views::OutputLine;
 
@@ -44,6 +45,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0017_project_chat.sql"),
     include_str!("../migrations/0018_task_step.sql"),
     include_str!("../migrations/0019_runner_identity.sql"),
+    include_str!("../migrations/0020_work_modes.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -61,7 +63,7 @@ mod workspace_integrity_tests;
 const TASK_COLUMNS: &str = "id, session_id, repo_id, prompt, status, summary, diff_json, \
      worktree_json, files_changed, lines_added, lines_removed, steps, cost_usd, error, \
      review_note, decided_via, created_at, updated_at, decided_at, verify_grade, \
-     verify_notes, verify_model";
+     verify_notes, verify_model, mode, model";
 
 struct RawTask {
     id: String,
@@ -86,6 +88,8 @@ struct RawTask {
     verify_grade: Option<String>,
     verify_notes: Option<String>,
     verify_model: Option<String>,
+    mode: Option<String>,
+    model: Option<String>,
 }
 
 fn read_task(row: &Row<'_>) -> rusqlite::Result<RawTask> {
@@ -112,6 +116,8 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<RawTask> {
         verify_grade: row.get(19)?,
         verify_notes: row.get(20)?,
         verify_model: row.get(21)?,
+        mode: row.get(22)?,
+        model: row.get(23)?,
     })
 }
 
@@ -146,6 +152,14 @@ impl TryFrom<RawTask> for AgentTask {
             verify_grade: raw.verify_grade,
             verify_notes: raw.verify_notes,
             verify_model: raw.verify_model,
+            // Rows from before modes were recorded were all the agent's.
+            mode: raw
+                .mode
+                .as_deref()
+                .map(parse_enum::<WorkMode>)
+                .transpose()?
+                .unwrap_or(WorkMode::Agent),
+            model: raw.model,
         })
     }
 }
@@ -1580,7 +1594,7 @@ impl TaskStore for SqliteStore {
             &format!(
                 "INSERT INTO agent_task ({TASK_COLUMNS}) VALUES
                  (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,
-                  ?20,?21,?22)
+                  ?20,?21,?22,?23,?24)
                  ON CONFLICT(id) DO UPDATE SET
                    status = excluded.status,
                    summary = excluded.summary,
@@ -1623,6 +1637,8 @@ impl TaskStore for SqliteStore {
                 task.verify_grade,
                 task.verify_notes,
                 task.verify_model,
+                task.mode.as_str(),
+                task.model,
             ],
         )
         .map_err(backend)?;
@@ -2698,6 +2714,8 @@ mod tests {
             verify_grade: None,
             verify_notes: None,
             verify_model: None,
+            mode: WorkMode::Agent,
+            model: None,
             decided_via: None,
             created_at: NOW_MS,
             updated_at: NOW_MS,

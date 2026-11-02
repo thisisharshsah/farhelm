@@ -241,6 +241,7 @@ pub async fn assess<S: Store, C: ModelClient>(
     prompt: &str,
     changes: &ChangeSet,
     last_run: Option<&LastRun>,
+    model: Option<&str>,
 ) -> Option<Assessment> {
     if changes.is_empty() {
         return None;
@@ -259,6 +260,7 @@ pub async fn assess<S: Store, C: ModelClient>(
         instruction(prompt, changes, last_run),
     );
     request.stable = stable;
+    request.model = model.map(str::to_owned);
     // No `repo_path`: no retrieval, no pre-gate. The patch is the whole input,
     // and that is the entire cost argument for this stage.
 

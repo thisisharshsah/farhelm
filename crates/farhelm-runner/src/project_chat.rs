@@ -17,7 +17,7 @@ use axum::{
     routing::{get, post},
 };
 use farhelm_app::{
-    chat::{CHAT_DEFAULT_BUDGET_USD, ChatError, PreparedChatTurn, ProjectChats},
+    chat::{CHAT_DEFAULT_BUDGET_USD, ChatAnswer, ChatError, PreparedChatTurn, ProjectChats},
     id::new_id,
     time::now_ms,
 };
@@ -25,7 +25,7 @@ use farhelm_gateway::prompt::{Role, StableContext, Turn};
 use farhelm_gateway::{CompleteRequest, GatewayError};
 use farhelm_proto::{
     ChatDetail, ChatReply, ChatRole, CreateProjectChatRequest, ProjectChatPage,
-    SendChatMessageRequest,
+    SendChatMessageRequest, WorkMode,
     types::{Agent, Session, SessionStatus, TaskType},
 };
 use farhelm_sqlite::SqliteStore;
@@ -141,6 +141,17 @@ async fn send(
 ) -> Result<Json<ChatReply>, ApiError> {
     let runtime = tokio::runtime::Handle::current();
     operate(state, move |state| {
+        if let Some(model) = &input.model
+            && !state
+                .gateway
+                .as_ref()
+                .is_some_and(|gateway| gateway.client().declares(model))
+        {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("model `{model}` is not in the model registry"),
+            ));
+        }
         let begun = chats(&state)?
             .begin(&id, &chat_id, &input, now_ms())
             .map_err(chat_error)?;
@@ -161,14 +172,23 @@ async fn send(
 }
 
 /// What the model is told about every conversation. Stable on purpose: no
-/// dates, no ids, nothing that would make two turns' prefixes differ.
-fn system_prompt(repo_name: &str, repo_path: &str) -> String {
+/// dates, no ids, nothing that would make two turns' prefixes differ. Plan
+/// mode asks for steps a person can accept one by one (ADR 0009).
+fn system_prompt(repo_name: &str, repo_path: &str, mode: WorkMode) -> String {
+    let shape = match mode {
+        WorkMode::Plan => {
+            "Answer with a plan: a short statement of the goal, then numbered steps, each one \
+             thing an agent can do and check, with the files it touches. Note anything that \
+             needs a decision from the developer before the work starts."
+        }
+        _ => "Answer in plain, specific prose.",
+    };
     format!(
         "You are Farhelm, the assistant for a software project. This conversation is about \
-         the repository `{repo_name}` at `{repo_path}` on the developer's machine. Answer in \
-         plain, specific prose. When something should be changed in the repository, describe \
-         it as an instruction the developer can hand to an agent as a task; you cannot edit \
-         files or run commands from this conversation."
+         the repository `{repo_name}` at `{repo_path}` on the developer's machine. {shape} \
+         When something should be changed in the repository, describe it as an instruction \
+         the developer can hand to an agent as a task; you cannot edit files or run commands \
+         from this conversation."
     )
 }
 
@@ -178,9 +198,15 @@ async fn answer(state: Arc<AppState>, project_id: String, chat_id: String, turn:
         Some(gateway) => {
             let mut request =
                 CompleteRequest::new(&turn.session_id, TaskType::Plan, &turn.instruction);
+            // The named model, else the mode's. Checked against the registry
+            // when the message was accepted.
+            request.model = turn
+                .model
+                .clone()
+                .or_else(|| gateway.client().mode_model(turn.mode));
             request.stable = StableContext {
                 tools: Vec::new(),
-                system: system_prompt(&turn.repo.name, &turn.repo.path),
+                system: system_prompt(&turn.repo.name, &turn.repo.path, turn.mode),
                 conventions: String::new(),
                 repo_map: String::new(),
                 history: turn
@@ -211,12 +237,23 @@ async fn answer(state: Arc<AppState>, project_id: String, chat_id: String, turn:
 
     let session_id = turn.session_id.clone();
     let request_id = turn.request_id.clone();
+    let mode = turn.mode;
     let settled = tokio::task::spawn_blocking(move || {
         let chats = chats(&state)?;
         let now = now_ms();
         match outcome {
             Ok((text, model)) => chats
-                .complete(&project_id, &chat_id, &request_id, &text, &model, now)
+                .complete(
+                    &project_id,
+                    &chat_id,
+                    &request_id,
+                    ChatAnswer {
+                        text: &text,
+                        model: &model,
+                        mode,
+                    },
+                    now,
+                )
                 .or_else(|err| match err {
                     // An empty or oversized answer is a failed attempt, not a
                     // crash: record why so the conversation can move on.

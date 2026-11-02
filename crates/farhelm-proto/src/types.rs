@@ -215,6 +215,31 @@ text_enum! {
 }
 
 text_enum! {
+    /// What a person asks the model for (ADR 0009): an answer, a plan,
+    /// changes to the code, or a judgement of a change. The mode decides what
+    /// the model may do; the registry's `[modes]` table says which model
+    /// answers it by default, and a request may name another.
+    WorkMode {
+        Ask => "ask",
+        Plan => "plan",
+        Agent => "agent",
+        Review => "review",
+    }
+}
+
+impl WorkMode {
+    /// What each mode is called where people see it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask",
+            Self::Plan => "Plan",
+            Self::Agent => "Agent",
+            Self::Review => "Review",
+        }
+    }
+}
+
+text_enum! {
     Decision {
         Approved => "approved",
         Denied => "denied",
@@ -820,6 +845,15 @@ pub struct AgentTask {
     /// Which model judged it. The router's configuration changes between tasks,
     /// and "Opus says concerns" is worth more than "Haiku says concerns".
     pub verify_model: Option<String>,
+    /// The mode this task was started in. Always `agent` today: a task is
+    /// the agent's work; Plan and Review as task modes are still to come.
+    #[serde(default = "agent_mode")]
+    pub mode: WorkMode,
+    /// The model the task was asked to use, as the request named it (`code`,
+    /// or a model's own name); `None` means the mode's default. The ledger
+    /// records what actually ran.
+    #[serde(default)]
+    pub model: Option<String>,
     pub decided_via: Option<DecidedVia>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -969,6 +1003,14 @@ pub struct StartProjectTaskRequest {
     pub max_steps: Option<usize>,
     #[serde(default)]
     pub retry_of: Option<String>,
+    /// A registry model or alias for the agent; the Agent mode's default
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+fn agent_mode() -> WorkMode {
+    WorkMode::Agent
 }
 
 /// A multi-turn conversation or chat session within a project (ADR 0002).

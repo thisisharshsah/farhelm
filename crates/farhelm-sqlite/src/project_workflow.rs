@@ -238,7 +238,8 @@ impl ProjectWorkflowStore for SqliteStore {
         tx.execute(
             &format!(
                 "INSERT INTO agent_task ({TASK_COLUMNS}) VALUES
-            (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)"
+            (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,
+             ?23,?24)"
             ),
             params![
                 task.id,
@@ -262,7 +263,9 @@ impl ProjectWorkflowStore for SqliteStore {
                 task.decided_at,
                 task.verify_grade,
                 task.verify_notes,
-                task.verify_model
+                task.verify_model,
+                task.mode.as_str(),
+                task.model
             ],
         )
         .map_err(backend)?;

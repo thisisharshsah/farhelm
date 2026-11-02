@@ -178,6 +178,7 @@ fn base_router(state: Arc<AppState>) -> Router {
         .route("/v1/pair/claim", post(pair_claim))
         .route("/v1/devices", get(list_devices))
         .route("/v1/agents", get(list_agents))
+        .route("/v1/modes", get(list_modes))
         .route("/v1/batch", get(batch_queue))
         .route("/v1/health", get(health))
         .layer(local_cors())
@@ -482,6 +483,43 @@ async fn revert_task(
         .unwrap_or(DecidedVia::Web);
     let task = crate::task::revert(&state, &id, via)?;
     Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
+}
+
+/// `GET /v1/modes`: each work mode with its default model, and every name a
+/// request may choose instead. Empty lists without a registry.
+async fn list_modes(State(state): State<Arc<AppState>>) -> Json<farhelm_proto::ModesView> {
+    let Some(gateway) = state.gateway.as_ref() else {
+        return Json(farhelm_proto::ModesView {
+            modes: Vec::new(),
+            models: Vec::new(),
+        });
+    };
+    let client = gateway.client();
+    let modes = client
+        .modes()
+        .into_iter()
+        .map(|mode| farhelm_proto::ModeView {
+            label: mode.mode.label().to_owned(),
+            mode: mode.mode,
+            model: mode.model,
+            deployment: mode.deployment,
+        })
+        .collect();
+    // Purpose names first: they are what a person picks by; a model's own
+    // name is the precise choice.
+    let mut models: Vec<farhelm_proto::ModelChoiceView> = client
+        .model_aliases()
+        .into_iter()
+        .filter_map(|name| {
+            Some(farhelm_proto::ModelChoiceView {
+                deployment: client.canonical(&name)?,
+                alias: client.is_alias(&name),
+                name,
+            })
+        })
+        .collect();
+    models.sort_by_key(|choice| (!choice.alias, choice.name.clone()));
+    Json(farhelm_proto::ModesView { modes, models })
 }
 
 /// `GET /v1/agents`: what this machine can start, and what it cannot.

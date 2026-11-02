@@ -154,6 +154,10 @@ pub enum Command {
         /// A rejected task to try again, with its reason handed to the agent.
         #[serde(default)]
         retry_of: Option<String>,
+        /// A registry model or alias for the agent; the Agent mode's default
+        /// when absent.
+        #[serde(default)]
+        model: Option<String>,
     },
     /// Which agents this machine can actually drive.
     ///

@@ -62,12 +62,12 @@ pub use types::{
     DeviceKind, Dispatch, Document, EntityKind, EntityLink, Machine, ParseEnumError, Plan,
     PlanStep, PlanStepStatus, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage,
     RelationKind, Repo, Risk, Session, SessionStatus, StartProjectTaskRequest, TaskStatus,
-    TaskStep, TaskType, Tier, Usage, UsageEvent,
+    TaskStep, TaskType, Tier, Usage, UsageEvent, WorkMode,
 };
 pub use views::{
-    AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, OutputLine,
-    PlanProgress, PlanStepView, ProjectTaskPage, SessionDetail, SessionKind, SessionView,
-    SpendBucket, TaskDetail, TaskView, TierSlice,
+    AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, ModeView,
+    ModelChoiceView, ModesView, OutputLine, PlanProgress, PlanStepView, ProjectTaskPage,
+    SessionDetail, SessionKind, SessionView, SpendBucket, TaskDetail, TaskView, TierSlice,
 };
 
 /// The relay channel a runner publishes on, derived from its public key.

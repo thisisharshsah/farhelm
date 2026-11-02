@@ -1617,6 +1617,15 @@ fn models_command(args: &[String]) -> Fallible {
         .or_else(|| farhelm_app::legacy::env_var("FARHELM_MODELS_CONFIG"))
         .ok_or("no model registry selected; set FARHELM_MODELS_CONFIG or pass --models-config")?;
     let client = farhelm_gateway::ProviderClient::from_path(Path::new(&path))?;
+    for mode in client.modes() {
+        println!(
+            "mode {:<7} {} ({})",
+            mode.mode.label(),
+            mode.model,
+            mode.deployment
+        );
+    }
+    println!();
     for model in client.summaries() {
         println!("{}", model.name);
         if let Some(card) = &model.card {
