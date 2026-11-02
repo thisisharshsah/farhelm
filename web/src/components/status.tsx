@@ -8,7 +8,7 @@
  * both themes (see `--fill-*` in `styles.css`).
  */
 
-import type { SessionStatus, TaskStatus } from "@farhelm/client-core";
+import type { SessionStatus, TaskStatus, WorkItemStatus } from "@farhelm/client-core";
 
 export type Tone = "working" | "review" | "done" | "stuck" | "paused" | "idle";
 
@@ -25,6 +25,15 @@ export const TASK_STATUS: Record<TaskStatus, StatusLook> = {
   rejected: { label: "Rejected", tone: "idle" },
   no_changes: { label: "No changes", tone: "idle" },
   reverted: { label: "Undone", tone: "idle" },
+};
+
+/** Where a task on a project's board stands. The board's columns, in order. */
+export const WORK_ITEM_STATUS: Record<WorkItemStatus, StatusLook> = {
+  backlog: { label: "Backlog", tone: "idle" },
+  todo: { label: "To do", tone: "paused" },
+  in_progress: { label: "In progress", tone: "working" },
+  review: { label: "Review", tone: "review" },
+  done: { label: "Done", tone: "done" },
 };
 
 export const SESSION_STATUS: Record<SessionStatus, StatusLook> = {

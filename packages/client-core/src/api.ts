@@ -1,6 +1,7 @@
 import {
   parseModesView, parseProject, parseProjectPage, parseProjectRepository,
   parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskView,
+  parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
 } from "./projects.ts";
 import {
   parseChatDetail, parseChatReply, parseProjectChatPage,
@@ -212,6 +213,8 @@ export interface TaskView {
   mode: WorkMode;
   /** The model it was asked to use, as named; `null` is the mode's default. */
   model: string | null;
+  /** The task on the board this run is an attempt on, if any. */
+  work_item_id: string | null;
   decided_via: DecidedVia | null;
   created_at: number;
   updated_at: number;
@@ -250,6 +253,79 @@ export interface ModelChoiceView {
 export interface ModesView {
   modes: ModeView[];
   models: ModelChoiceView[];
+}
+
+/**
+ * Where a task on the board stands. A person moves it; a run moves it too:
+ * starting puts it in progress, a proposed change set puts it in review, an
+ * applied one marks it done, and a rejected, failed or undone one sends it
+ * back to to do.
+ */
+export type WorkItemStatus = "backlog" | "todo" | "in_progress" | "review" | "done";
+export const WORK_ITEM_STATUSES: readonly WorkItemStatus[] = ["backlog", "todo", "in_progress", "review", "done"];
+
+/** A task on a project's board: planned work that agent runs are attempts on. */
+export interface WorkItem {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  status: WorkItemStatus;
+  /** Where its runs happen; null until chosen. */
+  repo_id: string | null;
+  /** The discussion it came from, if any. */
+  conversation_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** A task with its newest run, as a card shows it. */
+export interface WorkItemView extends WorkItem {
+  latest_run: TaskView | null;
+}
+
+export interface WorkItemPage {
+  items: WorkItemView[];
+  next_cursor: string | null;
+}
+
+/** One task with every run made on it, newest first. */
+export interface WorkItemDetail extends WorkItemView {
+  runs: TaskView[];
+}
+
+export interface CreateWorkItemRequest {
+  title: string;
+  description?: string;
+  /** `todo` when absent. */
+  status?: WorkItemStatus;
+  repo_id?: string | null;
+  conversation_id?: string | null;
+}
+
+/** Fields left out stay as they are. */
+export interface UpdateWorkItemRequest {
+  title?: string;
+  description?: string;
+  status?: WorkItemStatus;
+  repo_id?: string;
+}
+
+/**
+ * Start a run on a task. Everything may be left out: the repository is the
+ * task's, the prompt its title and description, the model the Agent default.
+ */
+export interface StartWorkItemRunRequest {
+  repo_id?: string;
+  prompt?: string;
+  budget_usd?: number;
+  max_steps?: number;
+  model?: string;
+}
+
+export interface WorkItemListOptions extends ProjectListOptions {
+  /** Only tasks made from this conversation. */
+  conversation?: string;
 }
 
 /** True when a grade should make a reviewer slow down. Not-judged counts. */
@@ -434,6 +510,8 @@ export interface StartProjectTaskRequest {
   retry_of?: string | null;
   /** A registry model or alias for the agent; the Agent mode's default when absent. */
   model?: string | null;
+  /** The task this run is an attempt on; the run moves it to in progress. */
+  work_item_id?: string | null;
 }
 
 export interface ProjectTaskPage {
@@ -620,6 +698,41 @@ export function createRunnerApi(baseUrl = "") {
         || reply.turn.request_id !== input.request_id) throw new Error("The runner returned a different conversation or message request.");
       return reply;
     },
+    projectWorkItems: async (id: string, options?: WorkItemListOptions) => {
+      const query = pageQuery(options);
+      const filter = options?.conversation ? `${query ? "&" : "?"}conversation=${encodeURIComponent(options.conversation)}` : "";
+      const page = parseWorkItemPage(await request<unknown>(base, `${projectPath(id)}/work-items${query}${filter}`));
+      if (page.items.some((item) => item.project_id !== id)) throw new Error("The runner returned tasks from a different project.");
+      return page;
+    },
+    createProjectWorkItem: async (id: string, input: CreateWorkItemRequest) => {
+      const item = parseWorkItemView(await request<unknown>(base, `${projectPath(id)}/work-items`, {
+        method: "POST", body: JSON.stringify({ title: input.title, description: input.description ?? "",
+          ...(input.status ? { status: input.status } : {}), repo_id: input.repo_id ?? null,
+          conversation_id: input.conversation_id ?? null }),
+      }));
+      if (item.project_id !== id) throw new Error("The runner returned a task for a different project.");
+      return item;
+    },
+    projectWorkItem: async (id: string, itemId: string) => {
+      const item = parseWorkItemDetail(await request<unknown>(base, `${projectPath(id)}/work-items/${encodeURIComponent(itemId)}`));
+      if (item.project_id !== id || item.id !== itemId) throw new Error("The runner returned a different task.");
+      return item;
+    },
+    updateProjectWorkItem: async (id: string, itemId: string, input: UpdateWorkItemRequest) => {
+      const item = parseWorkItemDetail(await request<unknown>(base, `${projectPath(id)}/work-items/${encodeURIComponent(itemId)}`, {
+        method: "PATCH", body: JSON.stringify(input),
+      }));
+      if (item.project_id !== id || item.id !== itemId) throw new Error("The runner returned a different task.");
+      return item;
+    },
+    startWorkItemRun: async (id: string, itemId: string, input: StartWorkItemRunRequest) => {
+      const run = parseTaskView(await request<unknown>(base, `${projectPath(id)}/work-items/${encodeURIComponent(itemId)}/runs`, {
+        method: "POST", body: JSON.stringify(input),
+      }));
+      if (run.work_item_id !== itemId) throw new Error("The runner returned a run for a different task.");
+      return run;
+    },
     projectRepoCandidates: async (id: string, options?: ProjectListOptions) =>
       parseProjectRepositoryPage(await request<unknown>(base, `${projectPath(id)}/repo-candidates${pageQuery(options)}`)),
     projectRepositories: async (id: string, options?: ProjectListOptions) =>
@@ -638,7 +751,8 @@ export function createRunnerApi(baseUrl = "") {
         method: "POST",
         body: JSON.stringify({ repo_id: input.repo_id, prompt: input.prompt,
           budget_usd: input.budget_usd ?? null, max_steps: input.max_steps ?? null, retry_of: input.retry_of ?? null,
-          ...(input.model ? { model: input.model } : {}) }),
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.work_item_id ? { work_item_id: input.work_item_id } : {}) }),
       }));
       if (task.repo_id !== input.repo_id) throw new Error("The runner returned a task for a different repository.");
       return task;

@@ -43,8 +43,15 @@ import type {
   RunnerApi,
   ServerEvent,
   SessionDetail,
+  CreateWorkItemRequest,
   ModesView,
+  StartWorkItemRunRequest,
   TaskDetail,
+  UpdateWorkItemRequest,
+  WorkItemDetail,
+  WorkItemListOptions,
+  WorkItemPage,
+  WorkItemView,
   TaskReview,
   TaskView,
 } from "./api.ts";
@@ -91,6 +98,12 @@ export interface Transport {
   project?(id: string): Promise<Project>;
   createProject?(input: CreateProjectRequest): Promise<Project>;
   readonly supportsProjectWorkflow?: boolean;
+  /** Tasks on a project's board and the runs made on them. */
+  projectWorkItems?(id: string, options?: WorkItemListOptions): Promise<WorkItemPage>;
+  createProjectWorkItem?(id: string, input: CreateWorkItemRequest): Promise<WorkItemView>;
+  projectWorkItem?(id: string, itemId: string): Promise<WorkItemDetail>;
+  updateProjectWorkItem?(id: string, itemId: string, input: UpdateWorkItemRequest): Promise<WorkItemDetail>;
+  startWorkItemRun?(id: string, itemId: string, input: StartWorkItemRunRequest): Promise<TaskView>;
   projectRepoCandidates?(id: string, options?: ProjectListOptions): Promise<ProjectRepositoryPage>;
   projectRepositories?(id: string, options?: ProjectListOptions): Promise<ProjectRepositoryPage>;
   attachProjectRepository?(id: string, repoId: string): Promise<ProjectRepository>;
@@ -223,6 +236,13 @@ export class HttpTransport implements Transport {
   attachProjectRepository = (id: string, repoId: string) => this.api.attachProjectRepository(id, repoId);
   projectTasks = (id: string, options?: ProjectListOptions) => this.api.projectTasks(id, options);
   startProjectTask = (id: string, input: StartProjectTaskRequest) => this.api.startProjectTask(id, input);
+  projectWorkItems = (id: string, options?: WorkItemListOptions) => this.api.projectWorkItems(id, options);
+  createProjectWorkItem = (id: string, input: CreateWorkItemRequest) => this.api.createProjectWorkItem(id, input);
+  projectWorkItem = (id: string, itemId: string) => this.api.projectWorkItem(id, itemId);
+  updateProjectWorkItem = (id: string, itemId: string, input: UpdateWorkItemRequest) =>
+    this.api.updateProjectWorkItem(id, itemId, input);
+  startWorkItemRun = (id: string, itemId: string, input: StartWorkItemRunRequest) =>
+    this.api.startWorkItemRun(id, itemId, input);
   projectTask = (id: string, taskId: string) => this.api.projectTask(id, taskId);
   reviewProjectTask = (id: string, taskId: string, decision: TaskReview, note?: string) =>
     this.api.reviewProjectTask(id, taskId, decision, this.via, note);

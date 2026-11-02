@@ -72,6 +72,7 @@ const task = (over: Partial<TaskView> = {}): TaskView => ({
   verify_model: null,
   mode: "agent",
   model: null,
+  work_item_id: null,
   decided_via: null,
   created_at: 0,
   updated_at: 0,

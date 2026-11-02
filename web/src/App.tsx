@@ -16,7 +16,7 @@ import { Preferences, type Theme } from "./components/Preferences";
 import { Overview } from "./components/Overview";
 import { NewTaskComposer, TaskThread } from "./components/TaskThread";
 import { ProjectsList } from "./components/Projects";
-import { ProjectTaskScreen } from "./components/ProjectWorkflow";
+import { ProjectTaskScreen, ProjectWorkItemScreen } from "./components/ProjectWorkflow";
 import { DashboardScreen, SessionScreen, useScrollReset } from "./components/views";
 import { Sidebar, sectionOf, type Section } from "./components/Sidebar";
 import { Palette, type Action } from "./components/Palette";
@@ -227,7 +227,7 @@ export default function App() {
     [connection.cloud, route.view === "billing"],
   );
 
-  useScrollReset(`${route.view}:${sessionId ?? taskId ?? (route.view === "project" || route.view === "project-task" ? route.id : "")}`);
+  useScrollReset(`${route.view}:${sessionId ?? taskId ?? (route.view === "project" || route.view === "project-task" || route.view === "project-work" ? route.id : "")}`);
 
   /**
    * What ⌘K can reach.
@@ -338,7 +338,7 @@ export default function App() {
   const title =
     route.view === "fleet"
       ? "Home"
-      : route.view === "projects" || route.view === "project" || route.view === "project-task"
+      : route.view === "projects" || route.view === "project" || route.view === "project-task" || route.view === "project-work"
         ? "Projects"
         : route.view === "tasks"
           ? "Board"
@@ -362,7 +362,7 @@ export default function App() {
       ? `/s/${route.id}`
       : route.view === "task" || route.view === "new-task"
         ? "/t"
-        : route.view === "project-task"
+        : route.view === "project-task" || route.view === "project-work"
           ? `/p/${encodeURIComponent(route.projectId)}`
         : route.view === "project"
           ? "/p"
@@ -691,6 +691,10 @@ export default function App() {
 
         {route.view === "project-task" ? (
           <ProjectTaskScreen transport={transport} projectId={route.projectId} taskId={route.id} onNavigate={navigate} />
+        ) : null}
+
+        {route.view === "project-work" ? (
+          <ProjectWorkItemScreen transport={transport} projectId={route.projectId} itemId={route.id} onNavigate={navigate} />
         ) : null}
 
         {route.view === "tasks" ? (

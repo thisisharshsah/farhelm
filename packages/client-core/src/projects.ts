@@ -1,8 +1,8 @@
 import type {
   ModesView, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
-  TaskView, TaskDetail,
+  TaskView, TaskDetail, WorkItemDetail, WorkItemPage, WorkItemView,
 } from "./api.ts";
-import { WORK_MODES } from "./api.ts";
+import { WORK_ITEM_STATUSES, WORK_MODES } from "./api.ts";
 
 const MAX_DESCRIPTION_BYTES = 16_000;
 const MAX_PAGE_SIZE = 100;
@@ -113,9 +113,41 @@ export function isTaskView(value: unknown): value is TaskView {
     && nullableText(value.error) && nullableText(value.review_note)
     && (value.verify_grade === null || oneOf(value.verify_grade, ["pass", "concerns", "fail"]))
     && nullableText(value.verify_notes) && nullableText(value.verify_model)
-    && oneOf(value.mode, WORK_MODES) && nullableText(value.model)
+    && oneOf(value.mode, WORK_MODES) && nullableText(value.model) && nullableText(value.work_item_id)
     && (value.decided_via === null || oneOf(value.decided_via, ["watch", "phone", "web", "auto_policy"]))
     && timestamp(value.created_at) && timestamp(value.updated_at) && nullableTimestamp(value.decided_at);
+}
+
+function isWorkItemView(value: unknown): value is WorkItemView {
+  if (!object(value)) return false;
+  return identifier(value.id) && identifier(value.project_id)
+    && text(value.title, 4_096) && !!value.title && text(value.description, 65_536)
+    && oneOf(value.status, WORK_ITEM_STATUSES)
+    && (value.repo_id === null || identifier(value.repo_id))
+    && (value.conversation_id === null || identifier(value.conversation_id))
+    && timestamp(value.created_at) && timestamp(value.updated_at)
+    && (value.latest_run === null || isTaskView(value.latest_run));
+}
+
+export function parseWorkItemView(value: unknown): WorkItemView {
+  if (!isWorkItemView(value)) throw new Error("The runner returned an invalid task.");
+  return value;
+}
+
+export function parseWorkItemPage(value: unknown): WorkItemPage {
+  if (!object(value) || !Array.isArray(value.items) || value.items.length > MAX_PAGE_SIZE) {
+    throw new Error("The runner returned an invalid task list.");
+  }
+  const items = value.items.map(parseWorkItemView);
+  return { items, next_cursor: pageCursor(items, value.next_cursor) };
+}
+
+export function parseWorkItemDetail(value: unknown): WorkItemDetail {
+  if (!isWorkItemView(value) || !object(value) || !Array.isArray(value.runs) || value.runs.length > 1_000
+    || !value.runs.every(isTaskView)) {
+    throw new Error("The runner returned an invalid task.");
+  }
+  return value as unknown as WorkItemDetail;
 }
 
 export function parseModesView(value: unknown): ModesView {

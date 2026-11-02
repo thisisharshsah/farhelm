@@ -4,6 +4,7 @@ import { TaskReviewScreen, TaskRow } from "./Tasks";
 import { ProjectChat } from "./ProjectChat";
 
 import { ModelPicker, useModes } from "./ModelChoice";
+import { WorkBoard, WorkItemScreen, supportsBoard, type BoardTransport } from "./WorkBoard";
 
 type WorkflowTransport = Transport & Required<Pick<Transport,
   "projectRepoCandidates" | "projectRepositories" | "attachProjectRepository" | "projectTasks"
@@ -194,7 +195,8 @@ function WorkflowScope({ transport, projectId, onNavigate }: {
         {attachError ? <p className="error" role="alert">{attachError}</p> : null}
       </form>
     </section>
-    <ProjectChat transport={transport} projectId={projectId} repositories={repos}
+    {supportsBoard(transport) ? <WorkBoard transport={transport} projectId={projectId} repositories={repos} onNavigate={onNavigate} /> : null}
+    <ProjectChat transport={transport} projectId={projectId} repositories={repos} onNavigate={onNavigate}
       onTaskStarted={(task) => { tasks.refresh(); onNavigate(projectTaskPath(projectId, task.id)); }} />
     <StartProjectTask transport={transport} projectId={projectId} repositories={repos} disabled={attached.pending || !!attached.error}
       onStarted={(task) => { tasks.refresh(); onNavigate(projectTaskPath(projectId, task.id)); }} />
@@ -283,6 +285,28 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
       {error ? <p className="error" role="alert">{error}</p> : null}
     </form>
   </section>;
+}
+
+/** One task on the board, with its runs. */
+export function ProjectWorkItemScreen({ transport, projectId, itemId, onNavigate }: {
+  transport: Transport | null; projectId: string; itemId: string; onNavigate: (path: string) => void;
+}) {
+  const [scope, setScope] = useState({ transport, projectId, itemId, generation: 0 });
+  if (scope.transport !== transport || scope.projectId !== projectId || scope.itemId !== itemId) {
+    setScope({ transport, projectId, itemId, generation: scope.generation + 1 }); return null;
+  }
+  if (!supportsWorkflow(transport) || !supportsBoard(transport)) return <WorkflowUnavailable />;
+  return <WorkItemScope key={scope.generation} transport={transport} projectId={projectId} itemId={itemId} onNavigate={onNavigate} />;
+}
+
+function WorkItemScope({ transport, projectId, itemId, onNavigate }: {
+  transport: WorkflowTransport & BoardTransport; projectId: string; itemId: string; onNavigate: (path: string) => void;
+}) {
+  const attached = useProjectPage(async (options) => {
+    const page = await transport.projectRepositories(projectId, options);
+    return { items: page.repositories, next: page.next_cursor };
+  });
+  return <WorkItemScreen transport={transport} projectId={projectId} itemId={itemId} repositories={attached.data?.items ?? []} onNavigate={onNavigate} />;
 }
 
 export function ProjectTaskScreen({ transport, projectId, taskId, onNavigate }: {

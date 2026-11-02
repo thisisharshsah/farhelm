@@ -28,21 +28,32 @@ import {
   type ProjectRepository,
   type TaskView,
   type Transport,
+  type WorkItemView,
   type WorkMode,
 } from "@farhelm/client-core";
 import { Icon } from "./Icon";
 import { ModePicker, ModelPicker, ModeTag, useModes } from "./ModelChoice";
+import { StatusPill, WORK_ITEM_STATUS } from "./status";
+import { workItemPath } from "./WorkBoard";
 
 /** A conversation answers in these; Agent and Review are task modes. */
 const CHAT_MODES: readonly WorkMode[] = ["ask", "plan"];
 
 type ChatTransport = Transport & Required<Pick<Transport,
-  "projectConversations" | "createProjectConversation" | "projectConversation" | "sendProjectMessage" | "startProjectTask">>;
+  "projectConversations" | "createProjectConversation" | "projectConversation" | "sendProjectMessage" | "startProjectTask"
+  | "projectWorkItems" | "createProjectWorkItem" | "startWorkItemRun">>;
 
 export function supportsProjectChat(transport: Transport | null): transport is ChatTransport {
   return transport?.kind === "loopback" && transport.supportsProjectChat === true
     && [transport.projectConversations, transport.createProjectConversation, transport.projectConversation,
-      transport.sendProjectMessage, transport.startProjectTask].every((method) => typeof method === "function");
+      transport.sendProjectMessage, transport.startProjectTask, transport.projectWorkItems,
+      transport.createProjectWorkItem, transport.startWorkItemRun].every((method) => typeof method === "function");
+}
+
+/** A task's title from a reply: its first line, cut to fit. */
+function titleFrom(reply: string): string {
+  const line = reply.split("\n").map((part) => part.replace(/^[#*\-\s]+|[*:]+$/g, "").trim()).find(Boolean) ?? "Task";
+  return line.length > 120 ? `${line.slice(0, 117).trimEnd()}…` : line;
 }
 
 function message(cause: unknown): string {
@@ -64,11 +75,13 @@ export function ProjectChat({
   projectId,
   repositories,
   onTaskStarted,
+  onNavigate,
 }: {
   transport: Transport | null;
   projectId: string;
   repositories: ProjectRepository[];
   onTaskStarted: (task: TaskView) => void;
+  onNavigate?: (path: string) => void;
 }) {
   if (!supportsProjectChat(transport)) {
     return (
@@ -79,15 +92,16 @@ export function ProjectChat({
     );
   }
   return (
-    <ChatScope transport={transport} projectId={projectId} repositories={repositories} onTaskStarted={onTaskStarted} />
+    <ChatScope transport={transport} projectId={projectId} repositories={repositories} onTaskStarted={onTaskStarted} onNavigate={onNavigate} />
   );
 }
 
-function ChatScope({ transport, projectId, repositories, onTaskStarted }: {
+function ChatScope({ transport, projectId, repositories, onTaskStarted, onNavigate }: {
   transport: ChatTransport;
   projectId: string;
   repositories: ProjectRepository[];
   onTaskStarted: (task: TaskView) => void;
+  onNavigate?: (path: string) => void;
 }) {
   const [list, setList] = useState<Conversation[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -143,6 +157,7 @@ function ChatScope({ transport, projectId, repositories, onTaskStarted }: {
         </nav>
         {current ? (
           <ConversationPane
+            onNavigate={onNavigate}
             key={current.id}
             transport={transport}
             projectId={projectId}
@@ -219,12 +234,13 @@ function NewConversation({ transport, projectId, repositories, onCreated }: {
   );
 }
 
-function ConversationPane({ transport, projectId, conversation, repository, onTaskStarted }: {
+function ConversationPane({ transport, projectId, conversation, repository, onTaskStarted, onNavigate }: {
   transport: ChatTransport;
   projectId: string;
   conversation: Conversation;
   repository: ProjectRepository | null;
   onTaskStarted: (task: TaskView) => void;
+  onNavigate?: (path: string) => void;
 }) {
   const [detail, setDetail] = useState<ChatDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -238,6 +254,24 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
   const [mode, setMode] = useState<WorkMode>("ask");
   const [model, setModel] = useState("");
   const modes = useModes(transport);
+  // The tasks this discussion produced, with where each stands.
+  const [tasks, setTasks] = useState<WorkItemView[]>([]);
+  const [tasksRevision, setTasksRevision] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    transport.projectWorkItems(projectId, { conversation: conversation.id, limit: 50 })
+      .then((page) => { if (!cancelled) setTasks(page.items); })
+      .catch(() => { /* The strip is a convenience; the conversation still works. */ });
+    return () => { cancelled = true; };
+  }, [transport, projectId, conversation.id, tasksRevision]);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = transport.onEvent((event) => {
+      if (event.type !== "task_upsert" || timer !== null) return;
+      timer = setTimeout(() => { timer = null; setTasksRevision((value) => value + 1); }, 300);
+    });
+    return () => { off(); if (timer !== null) clearTimeout(timer); };
+  }, [transport]);
   const inFlight = useRef(false);
   const alive = useRef(true);
   // The id of a send whose outcome is unknown. Retrying the same text reuses
@@ -310,6 +344,20 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
         <b>{conversation.title}</b>
         <span className="muted">{repository?.name ?? "repository not attached"}</span>
       </div>
+      {tasks.length > 0 ? (
+        <div className="chat-tasks" aria-label="Tasks from this discussion">
+          <span className="muted">Tasks:</span>
+          {tasks.map((item) => (
+            <span key={item.id}>
+              {onNavigate ? (
+                <button type="button" className="linkish" onClick={() => onNavigate(workItemPath(projectId, item.id))}>{item.title}</button>
+              ) : <b>{item.title}</b>}
+              {" "}
+              <StatusPill look={WORK_ITEM_STATUS[item.status]} size="sm" />
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       <div className="project-chat-messages" aria-live="polite">
         {detail === null && !loadError ? <p role="status" className="tile-note">Loading…</p> : null}
@@ -324,7 +372,9 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
             repoId={conversation.repo_id}
             canStart={repository !== null}
             modes={modes}
+            conversationId={conversation.id}
             onTaskStarted={onTaskStarted}
+            onTaskCreated={() => setTasksRevision((value) => value + 1)}
           />
         ))}
         {pending && !waitedOut ? (
@@ -384,17 +434,21 @@ function ConversationPane({ transport, projectId, conversation, repository, onTa
   );
 }
 
-function ChatLine({ item, transport, projectId, repoId, canStart, modes, onTaskStarted }: {
+function ChatLine({ item, transport, projectId, repoId, canStart, modes, conversationId, onTaskStarted, onTaskCreated }: {
   item: ChatMessage;
   transport: ChatTransport;
   projectId: string;
   repoId: string;
   canStart: boolean;
   modes: ModesView | null;
+  conversationId: string;
   onTaskStarted: (task: TaskView) => void;
+  onTaskCreated: () => void;
 }) {
   const [drafting, setDrafting] = useState(false);
+  const [title, setTitle] = useState(() => titleFrom(item.content));
   const [prompt, setPrompt] = useState(item.content);
+  const [runNow, setRunNow] = useState(true);
   const [model, setModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -402,15 +456,25 @@ function ChatLine({ item, transport, projectId, repoId, canStart, modes, onTaskS
 
   if (item.role === "user") return <div className="msg-user">{item.content}</div>;
 
+  // A task on the board first, linked to this discussion; then, if asked,
+  // a run on it. The run's page opens; the board already shows the task.
   const start = async () => {
     const value = prompt.trim();
-    if (!value || inFlight.current) return;
+    if (!value || !title.trim() || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
-      const task = await transport.startProjectTask(projectId, { repo_id: repoId, prompt: value, ...(model ? { model } : {}) });
-      onTaskStarted(task);
+      const created = await transport.createProjectWorkItem(projectId, {
+        title: title.trim(), description: value, repo_id: repoId, conversation_id: conversationId,
+      });
+      onTaskCreated();
+      if (runNow) {
+        const run = await transport.startWorkItemRun(projectId, created.id, { repo_id: repoId, ...(model ? { model } : {}) });
+        onTaskStarted(run);
+      } else {
+        setDrafting(false);
+      }
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -425,22 +489,26 @@ function ChatLine({ item, transport, projectId, repoId, canStart, modes, onTaskS
       <div className="chat-line-meta">
         <ModeTag mode={item.mode} model={item.model} />
         {canStart && !drafting ? (
-          <button className="btn btn-quiet btn-small" onClick={() => setDrafting(true)}>Start as task</button>
+          <button className="btn btn-quiet btn-small" onClick={() => setDrafting(true)}>Create task</button>
         ) : null}
       </div>
       {drafting ? (
         <form className="chat-task-draft" onSubmit={(event) => { event.preventDefault(); void start(); }}>
-          <label className="tile-label" htmlFor={`task-from-${item.id}`}>Task for the agent</label>
+          <label className="tile-label" htmlFor={`task-title-${item.id}`}>Task</label>
+          <input id={`task-title-${item.id}`} className="pair-input" value={title} onChange={(event) => setTitle(event.target.value)} disabled={busy} maxLength={200} />
+          <label className="tile-label" htmlFor={`task-from-${item.id}`}>What should be done (the agent reads this)</label>
           <textarea id={`task-from-${item.id}`} className="pair-input" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} disabled={busy} />
-          <p className="tile-note">The agent drafts in a worktree and stops with a diff for you to review.</p>
+          <p className="tile-note">The task goes on this project's board, linked to this discussion. A run drafts in a worktree and stops with a diff for you to review.</p>
           <div className="composer-bar">
-            <span className="mode-tag">Agent</span>
-            <ModelPicker id={`task-model-${item.id}`} value={model} mode="agent" modes={modes} onChange={setModel} disabled={busy} />
+            <label className="composer-hint"><input type="checkbox" checked={runNow} onChange={(event) => setRunNow(event.target.checked)} disabled={busy} /> Run the agent now</label>
+            {runNow ? <ModelPicker id={`task-model-${item.id}`} value={model} mode="agent" modes={modes} onChange={setModel} disabled={busy} /> : null}
           </div>
           {error ? <p className="error" role="alert">{error}</p> : null}
           <div className="approval-actions">
             <button type="button" className="btn" onClick={() => setDrafting(false)} disabled={busy}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={busy || !prompt.trim()}>{busy ? "Starting…" : "Start task"}</button>
+            <button type="submit" className="btn btn-primary" disabled={busy || !prompt.trim() || !title.trim()}>
+              {busy ? (runNow ? "Starting…" : "Creating…") : runNow ? "Create and run" : "Create task"}
+            </button>
           </div>
         </form>
       ) : null}

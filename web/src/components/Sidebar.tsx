@@ -31,6 +31,7 @@ export function sectionOf(route: Route): Section {
     case "projects":
     case "project":
     case "project-task":
+    case "project-work":
       return "projects";
     case "tasks":
     case "task":

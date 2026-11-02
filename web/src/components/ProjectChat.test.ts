@@ -29,6 +29,9 @@ function runner(projectConversation: Transport["projectConversation"], overrides
     projectConversations: vi.fn().mockResolvedValue({ conversations: [conversation], next_cursor: null }),
     createProjectConversation: vi.fn(), projectConversation,
     sendProjectMessage: vi.fn(), startProjectTask: vi.fn(),
+    projectWorkItems: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+    createProjectWorkItem: vi.fn(), startWorkItemRun: vi.fn(),
+    onEvent: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as unknown as Transport;
 }
@@ -73,17 +76,22 @@ it("resends an interrupted message with a new request id", async () => {
   expect(body.request_id).not.toBe("r1");
 });
 
-it("starts a task from a reply only after the prompt is confirmed", async () => {
-  const task = { id: "task-9" };
-  const startProjectTask = vi.fn().mockResolvedValue(task);
-  const onTaskStarted = await render(runner(vi.fn().mockResolvedValue(detail("completed")), { startProjectTask }));
-  await act(async () => button("Start as task")!.click());
-  expect(startProjectTask).not.toHaveBeenCalled();
+it("creates a task from a reply, linked to the discussion, and runs it only after confirming", async () => {
+  const run = { id: "run-9" };
+  const createProjectWorkItem = vi.fn().mockResolvedValue({ id: "work-1", title: "Cap it at 30 seconds and add a test." });
+  const startWorkItemRun = vi.fn().mockResolvedValue(run);
+  const onTaskStarted = await render(runner(vi.fn().mockResolvedValue(detail("completed")), { createProjectWorkItem, startWorkItemRun }));
+  await act(async () => button("Create task")!.click());
+  expect(createProjectWorkItem).not.toHaveBeenCalled();
   const prompt = host.querySelector<HTMLTextAreaElement>('textarea[id^="task-from-"]')!;
   expect(prompt.value).toBe("Cap it at 30 seconds and add a test.");
+  expect(host.querySelector<HTMLInputElement>('input[id^="task-title-"]')!.value).toBe("Cap it at 30 seconds and add a test.");
   await act(async () => { host.querySelector<HTMLFormElement>(".chat-task-draft")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-  expect(startProjectTask).toHaveBeenCalledExactlyOnceWith("p", { repo_id: "repo-1", prompt: "Cap it at 30 seconds and add a test." });
-  expect(onTaskStarted).toHaveBeenCalledExactlyOnceWith(task);
+  expect(createProjectWorkItem).toHaveBeenCalledExactlyOnceWith("p", {
+    title: "Cap it at 30 seconds and add a test.", description: "Cap it at 30 seconds and add a test.", repo_id: "repo-1", conversation_id: "chat-1",
+  });
+  expect(startWorkItemRun).toHaveBeenCalledExactlyOnceWith("p", "work-1", { repo_id: "repo-1" });
+  expect(onTaskStarted).toHaveBeenCalledExactlyOnceWith(run);
 });
 
 it("retries a send that timed out with the same request id, and re-reads the conversation", async () => {
