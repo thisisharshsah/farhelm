@@ -1936,6 +1936,7 @@ svg.is-open {
 .ws-side-head {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--s-1);
 }
 
@@ -2037,4 +2038,66 @@ svg.is-open {
 
 .view-wide {
   max-width: 82rem;
+}
+
+/* ------------------------------------------------------------- markdown */
+
+.markdown {
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.markdown > * + * {
+  margin-top: var(--s-3);
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 0;
+}
+
+.markdown h3 { font-size: 1.02rem; }
+.markdown h4,
+.markdown h5,
+.markdown h6 { font-size: 0.95rem; }
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.4rem;
+}
+
+.markdown li + li {
+  margin-top: var(--s-1);
+}
+
+.markdown code {
+  padding: 0.05em 0.3em;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  font-family: var(--mono);
+  font-size: 0.86em;
+}
+
+.markdown pre {
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.82rem;
+}
+
+.agent-text.markdown {
+  white-space: normal;
 }

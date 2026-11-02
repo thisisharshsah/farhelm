@@ -33,6 +33,7 @@ import {
   type WorkMode,
 } from "@farhelm/client-core";
 import { Icon } from "./Icon";
+import { Markdown } from "./Markdown";
 import { ModePicker, ModelPicker, ModeTag, useModes } from "./ModelChoice";
 import { StatusPill, WORK_ITEM_STATUS } from "./status";
 import { workItemPath } from "./WorkBoard";
@@ -340,7 +341,7 @@ function ChatLine({ item, transport, projectId, repoId, canStart, modes, convers
 
   return (
     <div className="msg-agent">
-      <p className="agent-text">{item.content}</p>
+      <Markdown className="agent-text" text={item.content} />
       <div className="chat-line-meta">
         <ModeTag mode={item.mode} model={item.model} />
         {canStart && !drafting ? (

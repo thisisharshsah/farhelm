@@ -320,7 +320,11 @@ impl AppState {
                 ))
             }),
             running_tasks: std::sync::atomic::AtomicUsize::new(0),
-            project_requests: Arc::new(tokio::sync::Semaphore::new(4)),
+            // Project reads are short SQLite queries on a blocking worker;
+            // a project screen opens with half a dozen at once (lists of
+            // conversations, tasks, runs, repositories), and a refusal here
+            // shows as "busy" on the page. Twelve covers that with room.
+            project_requests: Arc::new(tokio::sync::Semaphore::new(12)),
             output: Mutex::new(HashMap::new()),
             since_prune: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(HashMap::new()),

@@ -25,6 +25,7 @@ import {
 } from "@farhelm/client-core";
 import { ApprovalCard, AutoApproveControl } from "./Approvals";
 import { Icon } from "./Icon";
+import { Markdown } from "./Markdown";
 import { ModelPicker, ModeTag, useModes } from "./ModelChoice";
 import { DiffView, RetryButton, SecondOpinion, UndoButton, Verdict } from "./Tasks";
 import { OutputTail } from "./views";
@@ -100,7 +101,7 @@ export function TaskThread({
               </div>
             ) : null}
 
-            {task.summary ? <p className="agent-text">{task.summary}</p> : null}
+            {task.summary ? <Markdown className="agent-text" text={task.summary} /> : null}
 
             {task.error ? (
               <p className="notice error-text" role="alert">
