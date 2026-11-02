@@ -454,6 +454,7 @@ fn create_rows(state: &AppState, request: &StartTask) -> Result<(AgentTask, Sess
         &request.prompt,
         request.budget_usd,
         request.model.clone(),
+        None,
         now_ms(),
     );
     state.store.upsert_session(&session)?;
@@ -468,6 +469,7 @@ fn new_rows(
     prompt: &str,
     budget_usd: Option<f64>,
     model: Option<String>,
+    work_item_id: Option<String>,
     now: i64,
 ) -> (AgentTask, Session) {
     let session = Session {
@@ -505,6 +507,7 @@ fn new_rows(
         verify_model: None,
         mode: WorkMode::Agent,
         model,
+        work_item_id,
         decided_via: None,
         created_at: now,
         updated_at: now,
@@ -626,6 +629,25 @@ pub(crate) fn start_project(
     if !Path::new(&repo.path).is_dir() {
         return Err(TaskError::NotADirectory(repo.path).into());
     }
+    // A run on a task: the task must be this project's, and its repository
+    // (when it has one) the run's.
+    if let Some(item_id) = &request.work_item_id {
+        let items =
+            farhelm_app::work_items::WorkItems::new(Arc::clone(&state.store), &state.machine_id)
+                .map_err(|_| TaskError::Conflict("tasks are unavailable".into()))?;
+        let item = items
+            .get(project_id, item_id)
+            .map_err(|_| TaskError::NotFound(format!("task {item_id} in this project")))?;
+        if item
+            .repo_id
+            .as_deref()
+            .is_some_and(|repo_id| repo_id != request.repo_id)
+        {
+            return Err(
+                TaskError::Conflict("the run must use the task's repository".into()).into(),
+            );
+        }
+    }
     let slot = TaskSlot::claim(state).ok_or(TaskError::TooBusy(MAX_CONCURRENT_TASKS))?;
     let instruction = previous
         .as_ref()
@@ -640,9 +662,11 @@ pub(crate) fn start_project(
         &prompt,
         request.budget_usd,
         request.model.clone(),
+        request.work_item_id.clone(),
         now_ms(),
     );
     workflow.insert_task(project_id, &session, &task, request.retry_of.as_deref())?;
+    follow_run(state, &task);
     launch(
         state,
         StartTask {
@@ -960,10 +984,26 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     }
 
     let _ = state.store.upsert_task(&task);
+    follow_run(&state, &task);
     publish(&state, &task);
     state.publish(ServerEvent::SessionUpsert {
         session_id: spec.session_id.clone(),
     });
+}
+
+/// Move the task (work item) a run belongs to, if any, to where the run has
+/// taken it. Best-effort after the run's own row is written: a board that is
+/// a step behind is recoverable, a run that is not recorded is not.
+fn follow_run(state: &AppState, run: &AgentTask) {
+    if run.work_item_id.is_none() {
+        return;
+    }
+    let followed =
+        farhelm_app::work_items::WorkItems::new(Arc::clone(&state.store), &state.machine_id)
+            .and_then(|items| items.follow_run(run, now_ms()));
+    if let Err(err) = followed {
+        eprintln!("task {}: its board task did not move: {err}", run.id);
+    }
 }
 
 /* ----------------------------------------------------------------- review */
@@ -1035,6 +1075,7 @@ pub fn review(
                 decided.error = Some(err.to_string());
                 decided.updated_at = now_ms();
                 state.store.upsert_task(&decided)?;
+                follow_run(state, &decided);
                 state.push_output(&decided.session_id, format!("✗ {err}"), now_ms());
                 publish(state, &decided);
                 return Err(TaskError::Apply(err.to_string()));
@@ -1067,6 +1108,7 @@ pub fn review(
         );
     }
 
+    follow_run(state, &decided);
     publish(state, &decided);
     Ok(decided)
 }
@@ -1255,6 +1297,7 @@ pub fn revert(
     task.updated_at = now_ms();
     task.decided_at = Some(now_ms());
     state.store.upsert_task(&task)?;
+    follow_run(state, &task);
 
     state.push_output(
         &task.session_id,

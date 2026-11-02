@@ -269,6 +269,7 @@ pub fn task_view<S: Store>(
         verify_model: task.verify_model,
         mode: task.mode,
         model: task.model,
+        work_item_id: task.work_item_id,
         decided_via: task.decided_via,
         created_at: task.created_at,
         updated_at: task.updated_at,

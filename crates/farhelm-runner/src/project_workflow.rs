@@ -247,7 +247,7 @@ pub(crate) async fn operate<T: Send + 'static>(
     })?
 }
 
-fn workflow_error(error: ProjectWorkflowError) -> ApiError {
+pub(crate) fn workflow_error(error: ProjectWorkflowError) -> ApiError {
     match error {
         ProjectWorkflowError::Validation(message) => {
             ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message)

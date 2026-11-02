@@ -46,6 +46,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0018_task_step.sql"),
     include_str!("../migrations/0019_runner_identity.sql"),
     include_str!("../migrations/0020_work_modes.sql"),
+    include_str!("../migrations/0021_work_items.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -55,6 +56,7 @@ const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, 
 mod local_workspace_tests;
 mod project_chat;
 mod project_workflow;
+mod work_items;
 #[cfg(test)]
 mod workspace_integrity_tests;
 
@@ -63,7 +65,7 @@ mod workspace_integrity_tests;
 const TASK_COLUMNS: &str = "id, session_id, repo_id, prompt, status, summary, diff_json, \
      worktree_json, files_changed, lines_added, lines_removed, steps, cost_usd, error, \
      review_note, decided_via, created_at, updated_at, decided_at, verify_grade, \
-     verify_notes, verify_model, mode, model";
+     verify_notes, verify_model, mode, model, work_item_id";
 
 struct RawTask {
     id: String,
@@ -90,6 +92,7 @@ struct RawTask {
     verify_model: Option<String>,
     mode: Option<String>,
     model: Option<String>,
+    work_item_id: Option<String>,
 }
 
 fn read_task(row: &Row<'_>) -> rusqlite::Result<RawTask> {
@@ -118,6 +121,7 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<RawTask> {
         verify_model: row.get(21)?,
         mode: row.get(22)?,
         model: row.get(23)?,
+        work_item_id: row.get(24)?,
     })
 }
 
@@ -160,6 +164,7 @@ impl TryFrom<RawTask> for AgentTask {
                 .transpose()?
                 .unwrap_or(WorkMode::Agent),
             model: raw.model,
+            work_item_id: raw.work_item_id,
         })
     }
 }
@@ -1594,7 +1599,7 @@ impl TaskStore for SqliteStore {
             &format!(
                 "INSERT INTO agent_task ({TASK_COLUMNS}) VALUES
                  (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,
-                  ?20,?21,?22,?23,?24)
+                  ?20,?21,?22,?23,?24,?25)
                  ON CONFLICT(id) DO UPDATE SET
                    status = excluded.status,
                    summary = excluded.summary,
@@ -1639,6 +1644,7 @@ impl TaskStore for SqliteStore {
                 task.verify_model,
                 task.mode.as_str(),
                 task.model,
+                task.work_item_id,
             ],
         )
         .map_err(backend)?;
@@ -2716,6 +2722,7 @@ mod tests {
             verify_model: None,
             mode: WorkMode::Agent,
             model: None,
+            work_item_id: None,
             decided_via: None,
             created_at: NOW_MS,
             updated_at: NOW_MS,

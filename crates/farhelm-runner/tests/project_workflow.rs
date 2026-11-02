@@ -204,6 +204,7 @@ fn insert_task(
         verify_model: None,
         mode: farhelm_proto::types::WorkMode::Agent,
         model: None,
+        work_item_id: None,
         decided_via: None,
         created_at: 1,
         updated_at: 1,

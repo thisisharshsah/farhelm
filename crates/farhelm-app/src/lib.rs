@@ -51,6 +51,7 @@ pub mod project_workflow;
 pub mod projects;
 pub mod store;
 pub mod time;
+pub mod work_items;
 
 pub use ledger::{Call, Ledger, LedgerError, Summary};
 pub use project_workflow::{

@@ -148,6 +148,7 @@ fn base_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(crate::projects::routes())
         .merge(crate::project_chat::routes())
+        .merge(crate::project_work_items::routes())
         .route("/v1/repos", get(list_repos))
         .route("/v1/fleet", get(fleet))
         .route("/v1/sessions", get(list_sessions).post(start_session))

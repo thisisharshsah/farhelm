@@ -108,6 +108,7 @@ fn build() -> serde_json::Value {
         verify_model: Some("claude-opus-5".into()),
         mode: farhelm_proto::types::WorkMode::Agent,
         model: Some("code".into()),
+        work_item_id: None,
         decided_via: Some(DecidedVia::Web),
         created_at: AT,
         updated_at: AT + 1_000,
@@ -270,7 +271,7 @@ fn build() -> serde_json::Value {
             },
             "attach_repository": AttachProjectRepositoryRequest { repo_id: "repo-1".into() },
             "start_task": StartProjectTaskRequest {
-                repo_id: "repo-1".into(), prompt: "Bound the retry loop".into(), budget_usd: Some(1.0), max_steps: Some(12), retry_of: Some("previous-task".into()), model: Some("code".into()),
+                repo_id: "repo-1".into(), prompt: "Bound the retry loop".into(), budget_usd: Some(1.0), max_steps: Some(12), retry_of: Some("previous-task".into()), model: Some("code".into()), work_item_id: None,
             },
             "task_page": ProjectTaskPage { tasks: vec![task.clone()], next_cursor: Some(task.id.clone()) },
         },

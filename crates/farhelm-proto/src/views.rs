@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::diff::ChangeSet;
 use crate::types::{
     Approval, AutoApprove, DecidedVia, PlanStep, PlanStepStatus, SessionStatus, TaskStatus,
-    WorkMode,
+    WorkItem, WorkMode,
 };
 
 /// Budget as the UI needs it: the bar, the number, and the traffic light.
@@ -270,10 +270,35 @@ pub struct TaskView {
     /// The model it was asked to use, as named in the request; `null` is the
     /// mode's default.
     pub model: Option<String>,
+    /// The task (work item) this run is an attempt on, if any.
+    pub work_item_id: Option<String>,
     pub decided_via: Option<DecidedVia>,
     pub created_at: i64,
     pub updated_at: i64,
     pub decided_at: Option<i64>,
+}
+
+/// A task on the board, with its newest run so a card can say where the
+/// work stands without a second request.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemView {
+    #[serde(flatten)]
+    pub item: WorkItem,
+    pub latest_run: Option<TaskView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemPage {
+    pub items: Vec<WorkItemView>,
+    pub next_cursor: Option<String>,
+}
+
+/// One task with every run made on it, newest first.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemDetail {
+    #[serde(flatten)]
+    pub item: WorkItemView,
+    pub runs: Vec<TaskView>,
 }
 
 /// One mode and the model that answers it by default.

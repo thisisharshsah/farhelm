@@ -64,10 +64,14 @@ pub use types::{
     RelationKind, Repo, Risk, Session, SessionStatus, StartProjectTaskRequest, TaskStatus,
     TaskStep, TaskType, Tier, Usage, UsageEvent, WorkMode,
 };
+pub use types::{
+    CreateWorkItemRequest, StartWorkItemRunRequest, UpdateWorkItemRequest, WorkItem, WorkItemStatus,
+};
 pub use views::{
     AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, ModeView,
     ModelChoiceView, ModesView, OutputLine, PlanProgress, PlanStepView, ProjectTaskPage,
     SessionDetail, SessionKind, SessionView, SpendBucket, TaskDetail, TaskView, TierSlice,
+    WorkItemDetail, WorkItemPage, WorkItemView,
 };
 
 /// The relay channel a runner publishes on, derived from its public key.

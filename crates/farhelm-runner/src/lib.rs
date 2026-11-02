@@ -18,6 +18,7 @@ pub mod hook_cli;
 pub mod mcp;
 pub mod messages;
 pub mod project_chat;
+mod project_work_items;
 mod project_workflow;
 mod projects;
 pub mod pty;

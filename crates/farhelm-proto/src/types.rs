@@ -240,6 +240,85 @@ impl WorkMode {
 }
 
 text_enum! {
+    /// Where a task (a work item on the board) stands. A person moves it;
+    /// a run moves it too: starting puts it in progress, a proposed change
+    /// set puts it in review, an applied one marks it done, and a rejected,
+    /// failed or undone one sends it back to to do.
+    WorkItemStatus {
+        Backlog => "backlog",
+        Todo => "todo",
+        InProgress => "in_progress",
+        Review => "review",
+        Done => "done",
+    }
+}
+
+/// A task on a project's board: planned work, made from a discussion or by
+/// hand, that agent runs are attempts on. Internally a *work item*, because
+/// `agent_task` (a run) took the name first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkItem {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub description: String,
+    pub status: WorkItemStatus,
+    /// Where its runs happen; `None` until chosen.
+    pub repo_id: Option<String>,
+    /// The discussion it came from, if any.
+    pub conversation_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateWorkItemRequest {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    /// `todo` when absent.
+    #[serde(default)]
+    pub status: Option<WorkItemStatus>,
+    #[serde(default)]
+    pub repo_id: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+}
+
+/// Fields left out stay as they are.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateWorkItemRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<WorkItemStatus>,
+    #[serde(default)]
+    pub repo_id: Option<String>,
+}
+
+/// Start a run on a task. Everything may be left out: the repository is the
+/// task's, the prompt is its title and description, the model is the Agent
+/// mode's default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartWorkItemRunRequest {
+    #[serde(default)]
+    pub repo_id: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub budget_usd: Option<f64>,
+    #[serde(default)]
+    pub max_steps: Option<usize>,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+text_enum! {
     Decision {
         Approved => "approved",
         Denied => "denied",
@@ -854,6 +933,9 @@ pub struct AgentTask {
     /// records what actually ran.
     #[serde(default)]
     pub model: Option<String>,
+    /// The task (work item) this run is an attempt on, when started from one.
+    #[serde(default)]
+    pub work_item_id: Option<String>,
     pub decided_via: Option<DecidedVia>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -1007,6 +1089,10 @@ pub struct StartProjectTaskRequest {
     /// when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The task this run is an attempt on; it must be in the same project,
+    /// and the run moves it to in progress.
+    #[serde(default)]
+    pub work_item_id: Option<String>,
 }
 
 fn agent_mode() -> WorkMode {

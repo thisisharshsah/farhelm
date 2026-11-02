@@ -603,6 +603,24 @@ store_port! {
     }
 }
 
+store_port! {
+    /// Tasks on a project's board (work items), scoped like the rest of the
+    /// project workflow: the project in the workspace, repositories on this
+    /// machine.
+    WorkItemStore {
+    fn work_items(&self, scope: ProjectScope<'_>, conversation_id: Option<&str>, after: Option<&str>, limit: usize) -> Result<Vec<farhelm_proto::WorkItem>>;
+    fn work_item(&self, scope: ProjectScope<'_>, item_id: &str) -> Result<Option<farhelm_proto::WorkItem>>;
+    /// `false` when the project, repository or conversation is out of scope.
+    fn insert_work_item(&self, scope: ProjectScope<'_>, item: &farhelm_proto::WorkItem) -> Result<bool>;
+    /// `false` when the item is out of scope. Identity fields never change.
+    fn update_work_item(&self, scope: ProjectScope<'_>, item: &farhelm_proto::WorkItem) -> Result<bool>;
+    /// Every run made on the item, newest first.
+    fn work_item_runs(&self, item_id: &str) -> Result<Vec<AgentTask>>;
+    /// Move the task a run belongs to, if any; `None` when the run has none.
+    fn set_work_item_status_for_run(&self, task_id: &str, status: farhelm_proto::WorkItemStatus, at_ms: i64) -> Result<Option<farhelm_proto::WorkItem>>;
+    }
+}
+
 /// Everything, for a caller that genuinely needs everything.
 ///
 /// The runner's `AppState` holds one store and its handlers touch all of it, so
@@ -640,7 +658,7 @@ pub mod prelude {
     pub use super::{
         ApprovalStore, BatchStore, DeviceStore, FleetStore, HiveStore, LedgerStore, PlanStore,
         ProjectWorkflowStore, ResponseCache, SessionStore, Store, TaskStore, TranscriptStore,
-        WorkspaceStore,
+        WorkItemStore, WorkspaceStore,
     };
 }
 
