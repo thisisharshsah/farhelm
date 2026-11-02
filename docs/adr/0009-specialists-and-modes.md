@@ -4,7 +4,9 @@ Status: accepted, 2026-10-28; modes implemented 2026-11-02 (the registry's
 `[modes]` table names each mode's default model, a conversation answers in
 Ask or Plan, a task runs in Agent and is judged in Review, and the app's
 pickers let a message or task name another registry model; replies and
-tasks record the mode and the model asked for). Specialists beyond the
+tasks record the mode and the model asked for; since 2026-11-02 a
+conversation reads the repository with the agent's read-only tools, up to
+eight turns per reply, and never edits or runs). Specialists beyond the
 first adapters remain to do. User direction: no Claude subscription; run on
 local models, with several fine-tuned specialists for different work, chosen
 through Ask, Plan, Agent and Review modes. Extends

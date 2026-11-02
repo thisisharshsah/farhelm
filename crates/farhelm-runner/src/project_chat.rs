@@ -16,12 +16,14 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
+use farhelm_agent::tools::{self, Supervisor, Verdict};
+use farhelm_agent::{ToolCall, Workspace};
 use farhelm_app::{
     chat::{CHAT_DEFAULT_BUDGET_USD, ChatAnswer, ChatError, PreparedChatTurn, ProjectChats},
     id::new_id,
     time::now_ms,
 };
-use farhelm_gateway::prompt::{Role, StableContext, Turn};
+use farhelm_gateway::prompt::{Role, StableContext, ToolResult, Turn};
 use farhelm_gateway::{CompleteRequest, GatewayError};
 use farhelm_proto::{
     ChatDetail, ChatReply, ChatRole, CreateProjectChatRequest, ProjectChatPage,
@@ -171,6 +173,45 @@ async fn send(
     .map(Json)
 }
 
+/// How many model turns a reply may take while it reads the repository.
+/// Ask and Plan read; they never edit or run, so the only cost of a turn is
+/// time, and a question that needs more reading than this is a task.
+const CHAT_MAX_STEPS: usize = 8;
+
+/// The read-only tools a conversation may use (ADR 0009: Ask and Plan read,
+/// Agent edits and runs).
+fn reading_tools() -> Vec<serde_json::Value> {
+    tools::definitions()
+        .into_iter()
+        .filter(|tool| {
+            matches!(
+                tool["name"].as_str(),
+                Some(tools::READ_FILE | tools::LIST_FILES | tools::SEARCH)
+            )
+        })
+        .collect()
+}
+
+/// A conversation's supervisor: nothing to approve, since no tool here can
+/// change anything; what the model reads is narrated to the session so the
+/// transcript shows where an answer came from.
+struct Reading<'a> {
+    state: &'a AppState,
+    session_id: &'a str,
+}
+
+impl Supervisor for Reading<'_> {
+    async fn request(&self, tool: &str, _payload: &str) -> Verdict {
+        Verdict::Denied(format!(
+            "a conversation can read the repository but not {tool}; make it a task"
+        ))
+    }
+
+    fn note(&self, text: &str) {
+        self.state.push_output(self.session_id, text, now_ms());
+    }
+}
+
 /// What the model is told about every conversation. Stable on purpose: no
 /// dates, no ids, nothing that would make two turns' prefixes differ. Plan
 /// mode asks for steps a person can accept one by one (ADR 0009).
@@ -185,27 +226,36 @@ fn system_prompt(repo_name: &str, repo_path: &str, mode: WorkMode) -> String {
     };
     format!(
         "You are Farhelm, the assistant for a software project. This conversation is about \
-         the repository `{repo_name}` at `{repo_path}` on the developer's machine. {shape} \
-         When something should be changed in the repository, describe it as an instruction \
-         the developer can hand to an agent as a task; you cannot edit files or run commands \
-         from this conversation."
+         the repository `{repo_name}` at `{repo_path}` on the developer's machine. You can \
+         read its files, list its directories and search it with the tools; use them when \
+         the answer depends on what the code says, and read only what the question needs. \
+         {shape} When something should be changed in the repository, describe it as an \
+         instruction the developer can hand to an agent as a task; you cannot edit files or \
+         run commands from this conversation."
     )
+}
+
+fn tool_result(call: &ToolCall, body: String, is_error: bool) -> ToolResult {
+    ToolResult {
+        tool_use_id: call.id.clone(),
+        content: body,
+        is_error,
+    }
 }
 
 async fn answer(state: Arc<AppState>, project_id: String, chat_id: String, turn: PreparedChatTurn) {
     let outcome = match &state.gateway {
         None => Err("no model provider is configured on this runner".to_owned()),
         Some(gateway) => {
-            let mut request =
-                CompleteRequest::new(&turn.session_id, TaskType::Plan, &turn.instruction);
-            // The named model, else the mode's. Checked against the registry
-            // when the message was accepted.
-            request.model = turn
-                .model
-                .clone()
-                .or_else(|| gateway.client().mode_model(turn.mode));
-            request.stable = StableContext {
-                tools: Vec::new(),
+            // Reading needs the repository on disk; without it the model
+            // answers from the retrieved context alone, as it always did.
+            let mut workspace = Workspace::open(&turn.repo.path).ok();
+            let mut stable = StableContext {
+                tools: if workspace.is_some() {
+                    reading_tools()
+                } else {
+                    Vec::new()
+                },
                 system: system_prompt(&turn.repo.name, &turn.repo.path, turn.mode),
                 conventions: String::new(),
                 repo_map: String::new(),
@@ -224,14 +274,78 @@ async fn answer(state: Arc<AppState>, project_id: String, chat_id: String, turn:
                     })
                     .collect(),
             };
-            request.repo_path = Some(PathBuf::from(&turn.repo.path));
-            match gateway.complete(request).await {
-                Ok(response) => Ok((response.text, response.model)),
-                Err(GatewayError::BudgetExhausted { .. }) => Err(
-                    "this conversation's budget is spent; start a new one with a larger cap".into(),
-                ),
-                Err(err) => Err(failure_text(&err.to_string())),
+            // The named model, else the mode's. Checked against the registry
+            // when the message was accepted.
+            let model = turn
+                .model
+                .clone()
+                .or_else(|| gateway.client().mode_model(turn.mode));
+            let supervisor = Reading {
+                state: &state,
+                session_id: &turn.session_id,
+            };
+            let mut remembered = Vec::new();
+            let mut pending_results: Vec<ToolResult> = Vec::new();
+            let mut outcome = Err("the reply did not finish".to_owned());
+            for step in 0..CHAT_MAX_STEPS {
+                let mut request =
+                    CompleteRequest::new(&turn.session_id, TaskType::Plan, &turn.instruction);
+                request.model = model.clone();
+                request.stable = stable.clone();
+                request.tool_results = pending_results.clone();
+                // Retrieval once, on the first turn, as the agent does.
+                request.repo_path = (step == 0).then(|| PathBuf::from(&turn.repo.path));
+                let response = match gateway.complete(request).await {
+                    Ok(response) => response,
+                    Err(GatewayError::BudgetExhausted { .. }) => {
+                        outcome = Err("this conversation's budget is spent; start a new one with a larger cap".into());
+                        break;
+                    }
+                    Err(err) => {
+                        outcome = Err(failure_text(&err.to_string()));
+                        break;
+                    }
+                };
+                if let Some(compacted) = response.compacted_history {
+                    stable.history = compacted;
+                }
+                if response.tool_calls.is_empty() || step + 1 == CHAT_MAX_STEPS {
+                    // The answer, or the most the model said before its
+                    // reading allowance ran out; a reply that says what it
+                    // found so far beats a failed turn.
+                    let text = if response.text.trim().is_empty() {
+                        "I read the repository but did not reach an answer within this \
+                         conversation's reading limit. Ask something narrower, or make it a task."
+                            .to_owned()
+                    } else {
+                        response.text
+                    };
+                    outcome = Ok((text, response.model));
+                    break;
+                }
+                stable.history.push(Turn::user_with_results(
+                    response.submitted_instruction,
+                    std::mem::take(&mut pending_results),
+                ));
+                stable.history.push(
+                    Turn::assistant_with_tools(response.text, response.tool_calls.clone())
+                        .with_reasoning(response.reasoning.clone()),
+                );
+                for call in &response.tool_calls {
+                    supervisor.note(&format!("▸ {}", tools::summary(call)));
+                    let result = match workspace.as_mut() {
+                        Some(workspace) => {
+                            tools::execute(call, workspace, &supervisor, &mut remembered).await
+                        }
+                        None => Err(farhelm_agent::tools::ToolError::Unknown(call.name.clone())),
+                    };
+                    pending_results.push(match result {
+                        Ok(body) => tool_result(call, body, false),
+                        Err(err) => tool_result(call, err.to_string(), true),
+                    });
+                }
             }
+            outcome
         }
     };
 
