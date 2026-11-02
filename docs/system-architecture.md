@@ -2,7 +2,7 @@
 
 **Status**: Target architecture, with implementation status called out below  
 **Last Updated**: October 25, 2026  
-**Primary Reference**: [AGENTS.md](../AGENTS.md) | [Engineering Stack](engineering-stack.md) | [Platform Review](platform-review-2026-10-22.md)  
+**Primary Reference**: [AGENTS.md](../AGENTS.md) | [Engineering Stack](engineering-stack.md) | [Platform Review](reviews/2026-10-22-platform-review.md)  
 **Associated ADRs**:
 
 - [ADR 0001: Local Execution Boundaries](adr/0001-local-execution-boundaries.md)
@@ -433,7 +433,7 @@ The file capabilities and bounded process lifecycle are implemented safeguards, 
 
 ## 7. Implementation Roadmap & Milestones
 
-The phases below are planning estimates from the [Platform Review](platform-review-2026-10-22.md), not delivery promises or a mandatory sequence. Provider groundwork is underway before the unified graph; shared-runner authorization and isolation must precede untrusted hosted execution.
+The phases below are planning estimates from the [Platform Review](reviews/2026-10-22-platform-review.md), not delivery promises or a mandatory sequence. Provider groundwork is underway before the unified graph; shared-runner authorization and isolation must precede untrusted hosted execution.
 
 | Phase | Core Deliverables | Target Artifacts |
 |---|---|---|

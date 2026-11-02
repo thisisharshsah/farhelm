@@ -1,13 +1,13 @@
 # 0005: Scoped Principal Authorization and Capability Sandboxing
 
 **Status**: Pure principal/grant/role checks implemented; request authentication and enforcement integration pending. Updated October 24, 2026.  
-**Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../platform-review-2026-10-22.md), [ADR 0001](0001-local-execution-boundaries.md)
+**Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../reviews/2026-10-22-platform-review.md), [ADR 0001](0001-local-execution-boundaries.md)
 
 ---
 
 ## Context
 
-Finding 8 in [Platform Review](../platform-review-2026-10-22.md) highlights a critical trust-boundary gap:
+Finding 8 in [Platform Review](../reviews/2026-10-22-platform-review.md) highlights a critical trust-boundary gap:
 - Cloud roles, device pairing and transport credentials exist, but there is no common project/repository-scoped execution principal carried through all runner command paths (`crates/farhelm-runner/src/commands.rs`). `DecidedVia` identifies an approval surface and is not a resource authorization decision.
 - A shared-runner deployment needs verified repository scope on every route, including HTTP, relay, MCP and background work. Existing authentication must be assessed per surface; a connection alone must not imply authority over every registered repository.
 - In a team workspace where multiple developers share a host or runner pool, execution privileges must be strictly scoped to the user, project, and repository.

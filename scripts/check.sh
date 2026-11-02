@@ -6,6 +6,9 @@
 # one-line "did I break anything". Roughly a minute cold, seconds warm.
 set -euo pipefail
 
+# Every command below is written from the repository root.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 step() { printf '\n\033[1m▸ %s\033[0m\n' "$1"; }
 
 step "Web app + service worker build"

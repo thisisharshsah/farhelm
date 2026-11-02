@@ -1,7 +1,7 @@
 # 0003: Provider-Neutral Inference Layer and Model Registry
 
 **Status**: Accepted direction; initial subset implemented in [ADR 0006](0006-configurable-model-providers.md), October 23, 2026.  
-**Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../platform-review-2026-10-22.md)
+**Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../reviews/2026-10-22-platform-review.md)
 
 ---
 

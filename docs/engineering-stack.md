@@ -1,6 +1,6 @@
 # Engineering stack and implementation guide
 
-Stack research reviewed October 22, 2026; implementation status updated October 25, 2026. [AGENTS.md](../AGENTS.md) contains the operative project instructions. This document explains the stack choices, ownership and migration patterns. The [earlier platform review](platform-review-2026-10-22.md) contains the product roadmap and code findings; it is a dated assessment, not proof those issues are fixed.
+Stack research reviewed October 22, 2026; implementation status updated October 25, 2026. [AGENTS.md](../AGENTS.md) contains the operative project instructions. This document explains the stack choices, ownership and migration patterns. The [earlier platform review](reviews/2026-10-22-platform-review.md) contains the product roadmap and code findings; it is a dated assessment, not proof those issues are fixed.
 
 ## Decision and evidence
 

@@ -19,6 +19,9 @@ farhelm.credential.json
 .env.*
 !.env.example
 
+# Tauri regenerates these schemas on every desktop build.
+desktop/src-tauri/gen/schemas/
+
 # Built clients
 web/dist/
 # Staging for deploy/live-web.sh's swap.

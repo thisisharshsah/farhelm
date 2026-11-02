@@ -1,7 +1,7 @@
 # 0002: Unified Workspace Object Model and Cross-Entity Graph
 
 **Status**: DTO/storage foundation and initial local project create/list/detail API implemented; repository/run workflow implemented via ADR 0008; conversation/document APIs and broader graph pending. Updated October 25, 2026.  
-**Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../platform-review-2026-10-22.md)
+**Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../reviews/2026-10-22-platform-review.md)
 
 ---
 

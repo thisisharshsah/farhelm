@@ -3,7 +3,7 @@
 Supervise AI coding agents from your phone, your watch, or a browser, and cut
 what they cost.
 
-**New here? [QUICKSTART.md](QUICKSTART.md)**: fifteen minutes from nothing to a
+**New here? [the quick start](docs/quickstart.md)**: fifteen minutes from nothing to a
 supervised agent that buzzes your phone.
 
 **Developing Farhelm:** read [AGENTS.md](AGENTS.md) for project instructions and
@@ -14,7 +14,7 @@ repositories and starts project-owned agent tasks through review/apply/revert.
 Project content stays on a directly connected runner; shared hosted access remains pending.
 See [account sign-in](docs/account-sign-in.md) for local versus hosted service setup.
 
-The design document is [Relay System Design Claude.md](Relay%20System%20Design%20Claude.md);
+The design document is [the relay system design](docs/relay-system-design.md);
 this file is the reference for what exists today.
 
 ## Layout

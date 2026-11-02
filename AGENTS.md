@@ -93,7 +93,7 @@ cargo test --workspace
 ```
 
 - Start with the affected package/crate. Examples: `pnpm --filter @farhelm/web test`, `pnpm --filter @farhelm/client-core test`, `cargo test -p farhelm-agent`, or `cargo test -p farhelm-runner --test agent_task`.
-- Build the web frontend before full desktop/workspace verification. `./check.sh` is the current broad local check entry point; it also invokes tooling through `npx` and may need network/toolchain access. Inspect its commands when changing tooling.
+- Build the web frontend before full desktop/workspace verification. `./scripts/check.sh` is the current broad local check entry point; it also invokes tooling through `npx` and may need network/toolchain access. Inspect its commands when changing tooling.
 - Wire/crypto changes require Rust/TypeScript fixtures and the Swift fixture checks where affected: `cargo test -p farhelm-proto --test wire_fixture`, `cargo test -p farhelm-crypto --test interop`, and `swift test --package-path mobile/watch`.
 - Browser/native/package behavior needs the relevant rendered, packaged, simulator or device evidence. Current web Vitest discovery matches `.test.ts`; include `.test.tsx` when introducing component tests. Typechecking is not a native build or visual test.
 - Keep paid/live-provider tests opt-in; use deterministic fixtures for ordinary CI and a separate real-model conformance/evaluation path. Report skipped or unavailable checks clearly.
