@@ -22,4 +22,4 @@ These are reference patterns, not a claim of feature parity. No new component fr
 
 Rendered regression tests cover direct links outside the first page, list pagination and recovery, navigation disclosure, identity changes, draft preservation, duplicate submissions and partial creation. Browser checks use the running local app for navigation and responsive layout without sending model prompts, starting runs or changing customer tasks.
 
-Search operates on loaded data. The cross-project board still loads up to 50 projects and 100 tasks per project and explicitly identifies incomplete coverage. A server-side workspace query and full search remain future work. Model quality, authentication behavior and native device packaging are outside this UI increment.
+Search operates on loaded data. The cross-project board still loads up to 50 projects and 100 tasks per project and explicitly identifies incomplete coverage. Server-side search (`GET /v1/search`, added 2026-11-04) now covers what the board did not load; conversation message text is not yet searched. Model quality, authentication behavior and native device packaging are outside this UI increment.

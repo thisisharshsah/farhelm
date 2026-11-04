@@ -114,3 +114,25 @@ describe("task recovery", () => {
     ]);
   });
 });
+
+describe("workspace search", () => {
+  const hit = { kind: "run", id: "r1", project_id: "p1", project_name: "Payments", title: "Bound the backoff",
+    snippet: "…the retry delay…", status: "applied", updated_at: 3 };
+
+  it("accepts a well-formed result and rejects an unknown kind", async () => {
+    const { parseWorkspaceSearch } = await import("./index.ts");
+    expect(parseWorkspaceSearch({ query: "retry", hits: [hit], truncated: false }).hits[0]?.kind).toBe("run");
+    expect(() => parseWorkspaceSearch({ query: "retry", hits: [{ ...hit, kind: "file" }], truncated: false })).toThrow();
+    expect(() => parseWorkspaceSearch({ query: "retry", hits: [], truncated: "no" })).toThrow();
+  });
+
+  it("sends the query encoded, with the limit when given", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ query: "50% off", hits: [], truncated: false }), { status: 200 });
+    }));
+    await createRunnerApi("http://runner").searchWorkspace("50% off", 10);
+    expect(urls).toEqual(["http://runner/v1/search?q=50%25+off&limit=10"]);
+  });
+});

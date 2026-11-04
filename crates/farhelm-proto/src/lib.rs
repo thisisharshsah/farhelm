@@ -69,9 +69,9 @@ pub use types::{
 };
 pub use views::{
     AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, ModeView,
-    ModelChoiceView, ModesView, OutputLine, PlanProgress, PlanStepView, ProjectTaskPage,
-    SessionDetail, SessionKind, SessionView, SpendBucket, TaskDetail, TaskView, TierSlice,
-    WorkItemDetail, WorkItemPage, WorkItemView,
+    ModelChoiceView, ModesView, OutputLine, PlanProgress, PlanStepView, ProjectTaskPage, SearchHit,
+    SearchHitKind, SessionDetail, SessionKind, SessionView, SpendBucket, TaskDetail, TaskRecovery,
+    TaskView, TierSlice, WorkItemDetail, WorkItemPage, WorkItemView, WorkspaceSearch,
 };
 
 /// The relay channel a runner publishes on, derived from its public key.

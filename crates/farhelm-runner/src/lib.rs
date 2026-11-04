@@ -23,6 +23,7 @@ mod project_workflow;
 mod projects;
 pub mod pty;
 pub mod relay;
+mod search;
 pub mod seed;
 pub mod service;
 pub mod session;

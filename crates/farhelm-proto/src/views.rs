@@ -351,6 +351,73 @@ pub struct TaskDetail {
     pub output: Vec<OutputLine>,
 }
 
+/// What a workspace search hit is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchHitKind {
+    Project,
+    /// Planned work on a project's board (a work item).
+    Task,
+    /// One agent attempt on a project's repository.
+    Run,
+    Conversation,
+}
+
+impl SearchHitKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Task => "task",
+            Self::Run => "run",
+            Self::Conversation => "conversation",
+        }
+    }
+}
+
+impl std::str::FromStr for SearchHitKind {
+    type Err = crate::types::ParseEnumError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "project" => Ok(Self::Project),
+            "task" => Ok(Self::Task),
+            "run" => Ok(Self::Run),
+            "conversation" => Ok(Self::Conversation),
+            other => Err(crate::types::ParseEnumError {
+                kind: "search hit kind",
+                value: other.to_owned(),
+            }),
+        }
+    }
+}
+
+/// One thing in the local workspace whose text matched a search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub kind: SearchHitKind,
+    pub id: String,
+    pub project_id: String,
+    pub project_name: String,
+    /// The name, title or prompt: what a result list shows first.
+    pub title: String,
+    /// The matching passage of the longer text, on one line, when the match
+    /// was there rather than in the title.
+    pub snippet: Option<String>,
+    /// The task's or run's status word; `None` for projects and conversations.
+    pub status: Option<String>,
+    pub updated_at: i64,
+}
+
+/// `GET /v1/search`: newest first across every project in the local workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSearch {
+    /// The query as it was matched, trimmed.
+    pub query: String,
+    pub hits: Vec<SearchHit>,
+    /// More matched than were returned; narrow the query to see the rest.
+    pub truncated: bool,
+}
+
 /// Whether an interrupted run can continue where it stopped (ADR 0004).
 ///
 /// `GET /v1/tasks/{id}/recovery`. Asked of any run; only one settled by

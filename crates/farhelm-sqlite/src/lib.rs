@@ -57,6 +57,7 @@ const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, 
 mod local_workspace_tests;
 mod project_chat;
 mod project_workflow;
+mod search;
 mod work_items;
 #[cfg(test)]
 mod workspace_integrity_tests;

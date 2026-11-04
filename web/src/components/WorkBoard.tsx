@@ -24,6 +24,7 @@ import { Icon } from "./Icon";
 import { ModelPicker, useModes } from "./ModelChoice";
 import { StatusPill, TASK_STATUS, WORK_ITEM_STATUS } from "./status";
 import { TaskRow } from "./Tasks";
+import { supportsSearch, WorkspaceSearchResults } from "./WorkspaceSearch";
 
 export type BoardTransport = Transport & Required<Pick<Transport,
   "projectWorkItems" | "createProjectWorkItem" | "projectWorkItem" | "updateProjectWorkItem" | "startWorkItemRun">>;
@@ -591,7 +592,8 @@ function WorkOverviewContent({ transport, onNavigate }: {
         {search || activeProject ? <button className="btn btn-small" onClick={clearFilters}>Clear filters</button> : null}
         {projects ? <span className="muted" role="status">{filtered.length} of {all.length} loaded tasks</span> : null}
       </div>
-      {limited ? <p className="tile-note">This view shows up to 50 projects and the first 100 tasks per project. Some tasks are not loaded.</p> : null}
+      {supportsSearch(board) ? <WorkspaceSearchResults transport={board} query={search} onNavigate={onNavigate} /> : null}
+      {limited ? <p className="tile-note">This view shows up to 50 projects and the first 100 tasks per project. Some tasks are not loaded{supportsSearch(board) ? "; search looks at all of them" : ""}.</p> : null}
       {error || moves.error ? <p className="error" role="alert">{moves.error ?? error}</p> : null}
       {projects === null && !error ? <p role="status" className="tile-note">Loading tasks…</p> : null}
       {projects && all.length === 0 && !error ? <p className="tile-note">No tasks in the loaded projects. Open a project to add one or create one from a discussion.</p> : null}

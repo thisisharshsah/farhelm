@@ -1,8 +1,8 @@
 import type {
   ModesView, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
-  TaskRecovery, TaskView, TaskDetail, WorkItemDetail, WorkItemPage, WorkItemView,
+  SearchHit, TaskRecovery, TaskView, TaskDetail, WorkspaceSearch, WorkItemDetail, WorkItemPage, WorkItemView,
 } from "./api.ts";
-import { WORK_ITEM_STATUSES, WORK_MODES } from "./api.ts";
+import { SEARCH_HIT_KINDS, WORK_ITEM_STATUSES, WORK_MODES } from "./api.ts";
 
 const MAX_DESCRIPTION_BYTES = 16_000;
 const MAX_PAGE_SIZE = 100;
@@ -235,4 +235,24 @@ export function parseTaskRecovery(value: unknown): TaskRecovery {
     interrupted_at: value.interrupted_at,
     checkpoint_step: value.checkpoint_step,
   };
+}
+
+const MAX_SEARCH_HITS = 50;
+
+function isSearchHit(value: unknown): value is SearchHit {
+  return object(value)
+    && typeof value.kind === "string" && (SEARCH_HIT_KINDS as readonly string[]).includes(value.kind)
+    && identifier(value.id) && identifier(value.project_id)
+    && text(value.project_name, 4_096) && text(value.title, 4_096)
+    && (value.snippet === null || text(value.snippet, 4_096))
+    && (value.status === null || text(value.status, 64))
+    && timestamp(value.updated_at);
+}
+
+export function parseWorkspaceSearch(value: unknown): WorkspaceSearch {
+  if (!object(value) || typeof value.query !== "string" || typeof value.truncated !== "boolean"
+    || !Array.isArray(value.hits) || value.hits.length > MAX_SEARCH_HITS || !value.hits.every(isSearchHit)) {
+    throw new Error("The runner returned an invalid search result.");
+  }
+  return { query: value.query, hits: value.hits, truncated: value.truncated };
 }

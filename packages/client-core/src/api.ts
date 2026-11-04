@@ -1,6 +1,6 @@
 import {
   parseModesView, parseProject, parseProjectPage, parseProjectRepository,
-  parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskRecovery, parseTaskView,
+  parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskRecovery, parseTaskView, parseWorkspaceSearch,
   parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
 } from "./projects.ts";
 import {
@@ -342,6 +342,32 @@ export interface TaskDetail extends TaskView {
 }
 
 export type TaskReview = "approve" | "reject";
+
+export const SEARCH_HIT_KINDS = ["project", "task", "run", "conversation"] as const;
+export type SearchHitKind = typeof SEARCH_HIT_KINDS[number];
+
+/** One thing in the local workspace whose text matched a search. */
+export interface SearchHit {
+  kind: SearchHitKind;
+  id: string;
+  project_id: string;
+  project_name: string;
+  /** The name, title or prompt. */
+  title: string;
+  /** The passage that matched, when the match was not in the title. */
+  snippet: string | null;
+  /** The task's or run's status word; null for projects and conversations. */
+  status: string | null;
+  updated_at: number;
+}
+
+/** `GET /v1/search`: newest first across every project in the local workspace. */
+export interface WorkspaceSearch {
+  query: string;
+  hits: SearchHit[];
+  /** More matched than were returned. */
+  truncated: boolean;
+}
 
 /** Whether an interrupted run can continue where it stopped (ADR 0004). */
 export interface TaskRecovery {
@@ -779,6 +805,11 @@ export function createRunnerApi(baseUrl = "") {
       }));
       if (task.id !== taskId) throw new Error("The runner returned a different task.");
       return task;
+    },
+    searchWorkspace: async (query: string, limit?: number) => {
+      const params = new URLSearchParams({ q: query });
+      if (limit !== undefined) params.set("limit", String(limit));
+      return parseWorkspaceSearch(await request<unknown>(base, `/v1/search?${params.toString()}`));
     },
     projectTaskRecovery: async (id: string, taskId: string) =>
       parseTaskRecovery(await request<unknown>(base, `${projectPath(id)}/tasks/${encodeURIComponent(taskId)}/recovery`)),

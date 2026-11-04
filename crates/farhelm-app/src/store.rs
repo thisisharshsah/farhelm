@@ -691,11 +691,38 @@ pub trait Store:
 /// methods. That is the one ergonomic cost of splitting the port, and this is
 /// the answer to it: callers that genuinely want everything glob this, and
 /// callers that want four ports name four ports.
+/// A search hit as storage finds it: the matched row's own text, before the
+/// use case trims it for display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchRow {
+    pub kind: farhelm_proto::SearchHitKind,
+    pub id: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub title: String,
+    /// The longer text that was searched alongside the title (a description
+    /// or a run's summary), bounded by the store.
+    pub body: String,
+    pub status: Option<String>,
+    pub updated_at: i64,
+}
+
+store_port! {
+    /// Text search across the local workspace's projects, tasks, runs and
+    /// conversation titles.
+    SearchStore {
+    /// Rows whose title or body contains `needle`, case-insensitively for
+    /// ASCII, newest first. Runs are limited to repositories on `machine_id`,
+    /// as the project workflow is.
+    fn search_workspace(&self, workspace_id: &str, machine_id: &str, needle: &str, limit: usize) -> Result<Vec<SearchRow>>;
+    }
+}
+
 pub mod prelude {
     pub use super::{
         ApprovalStore, BatchStore, DeviceStore, FleetStore, HiveStore, LedgerStore, PlanStore,
-        ProjectWorkflowStore, ResponseCache, SessionStore, Store, TaskStore, TranscriptStore,
-        WorkItemStore, WorkspaceStore,
+        ProjectWorkflowStore, ResponseCache, SearchStore, SessionStore, Store, TaskStore,
+        TranscriptStore, WorkItemStore, WorkspaceStore,
     };
 }
 

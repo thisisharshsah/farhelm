@@ -55,6 +55,7 @@ import type {
   TaskRecovery,
   TaskReview,
   TaskView,
+  WorkspaceSearch,
 } from "./api.ts";
 import { ApiError } from "./api.ts";
 import type { ChatDetail, ChatReply, CreateProjectChatRequest, ProjectChat, ProjectChatPage, SendChatMessageRequest } from "./chat.ts";
@@ -113,6 +114,8 @@ export interface Transport {
   projectTask?(id: string, taskId: string): Promise<TaskDetail>;
   reviewProjectTask?(id: string, taskId: string, decision: TaskReview, note?: string): Promise<TaskView>;
   revertProjectTask?(id: string, taskId: string): Promise<TaskView>;
+  /** Search the local workspace's projects, tasks, runs and conversations. Direct runner HTTP only. */
+  searchWorkspace?(query: string, limit?: number): Promise<WorkspaceSearch>;
   /** Whether an interrupted run can resume. Direct runner HTTP only. */
   projectTaskRecovery?(id: string, taskId: string): Promise<TaskRecovery>;
   /** Continue an interrupted run from its last checkpoint. */
@@ -252,6 +255,7 @@ export class HttpTransport implements Transport {
   reviewProjectTask = (id: string, taskId: string, decision: TaskReview, note?: string) =>
     this.api.reviewProjectTask(id, taskId, decision, this.via, note);
   revertProjectTask = (id: string, taskId: string) => this.api.revertProjectTask(id, taskId, this.via);
+  searchWorkspace = (query: string, limit?: number) => this.api.searchWorkspace(query, limit);
   projectTaskRecovery = (id: string, taskId: string) => this.api.projectTaskRecovery(id, taskId);
   resumeProjectTask = (id: string, taskId: string) => this.api.resumeProjectTask(id, taskId);
   session = (id: string) => this.api.session(id);

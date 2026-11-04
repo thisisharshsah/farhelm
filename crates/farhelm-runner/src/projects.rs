@@ -25,6 +25,7 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/v1/projects/{id}", get(detail))
         .layer(DefaultBodyLimit::max(24 * 1024))
         .merge(crate::project_workflow::routes())
+        .merge(crate::search::routes())
 }
 
 #[derive(Deserialize)]

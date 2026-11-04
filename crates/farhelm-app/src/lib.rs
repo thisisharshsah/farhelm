@@ -49,6 +49,7 @@ pub mod ledger;
 pub mod legacy;
 pub mod project_workflow;
 pub mod projects;
+pub mod search;
 pub mod store;
 pub mod time;
 pub mod work_items;

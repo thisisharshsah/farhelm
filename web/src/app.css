@@ -2144,3 +2144,37 @@ svg.is-open {
 .agent-text.markdown {
   white-space: normal;
 }
+
+/* Workspace search: hits across every project, under the board's search box. */
+.workspace-search {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.workspace-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.workspace-search-hit {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.workspace-search-hit:first-child {
+  border-top: 0;
+}
+.workspace-search-kind {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.workspace-search-snippet {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

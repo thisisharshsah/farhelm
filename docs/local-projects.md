@@ -47,6 +47,9 @@ The endpoints use the existing local API token and CORS policy. The shipped runn
 | `GET /v1/projects?limit=50` | 200 with `{"projects":[...],"next_cursor":null}` or a cursor when more rows exist. |
 | `GET /v1/projects?limit=50&after=<cursor>` | 200 with the next page, exclusive of the cursor. |
 | `GET /v1/projects/<id>` | 200 with `Project`; 404 for a missing project or an identity belonging to another workspace. |
+| `GET /v1/search?q=retry&limit=20` | 200 with `{"query","hits":[...],"truncated"}`: projects, tasks, runs and conversation titles in this workspace whose text contains `q`, newest first. 422 for a query under 2 or over 200 characters, a limit outside 1–50, or any other parameter. |
+
+Search matches name, description, task title and description, run prompt and summary, and conversation title as a case-insensitive (ASCII) substring; `%` and `_` match themselves. Runs are limited to repositories on this machine, as everywhere else in the project workflow. A hit whose match is not in its title carries a one-line `snippet` around the match. Message text inside conversations is not searched. The Board page uses it for anything beyond the projects and tasks it has loaded.
 
 Creation accepts only `name` and `description`. The runner generates the UUIDv7 ID, local workspace ID and Unix millisecond timestamps. `created_at` and `updated_at` match at creation; `budget_cap_usd` is null. Supplying server-owned fields such as `id`, `workspace_id`, timestamps or budget is rejected.
 
