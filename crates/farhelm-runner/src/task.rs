@@ -36,10 +36,12 @@ use farhelm_app::id::new_id;
 use farhelm_app::project_workflow::{ProjectWorkflow, ProjectWorkflowError, validate_start_task};
 use farhelm_app::store::{TaskOutcome, prelude::*};
 use farhelm_app::time::now_ms;
+use farhelm_domain::recovery::{RecoveryAction, StepCheckpoint, StepStage, evaluate_recovery};
 use farhelm_proto::types::{
     Agent, AgentTask, Approval, DecidedVia, Decision, Repo, Session, SessionStatus,
-    StartProjectTaskRequest, TaskStatus, WorkMode,
+    StartProjectTaskRequest, TaskStatus, TaskStep, WorkMode,
 };
+use farhelm_proto::views::TaskRecovery;
 use serde::Deserialize;
 
 use crate::state::{AppState, ServerEvent};
@@ -74,6 +76,94 @@ pub const MAX_CONCURRENT_TASKS: usize = 3;
 /// Refusing to *store* it would throw the work away, so instead the change set
 /// is kept and flagged; the task is still reviewable, one file at a time.
 pub const MAX_CHANGE_SET_BYTES: usize = 4 * 1024 * 1024;
+
+/// How long a run's lease lasts without renewal (ADR 0004). Long enough that a
+/// slow write or a busy executor does not lose it; short enough that a loop
+/// that died is noticed within a minute.
+pub const LEASE_TTL: Duration = Duration::from_secs(30);
+
+/// How often a live loop renews its lease: a third of its life, so two missed
+/// beats still leave it owned.
+const LEASE_RENEW_EVERY: Duration = Duration::from_secs(10);
+
+/// How often the runner looks for runs whose loop stopped renewing.
+pub const LEASE_SWEEP_EVERY: Duration = Duration::from_secs(15);
+
+fn lease_ttl_ms() -> i64 {
+    LEASE_TTL.as_millis() as i64
+}
+
+/// This process, as a lease holder. New on every start, so a runner that
+/// restarts on the same machine is a different holder from the one whose
+/// leases it finds, and waits for them to expire like anyone else's.
+fn lease_holder() -> &'static str {
+    static HOLDER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HOLDER.get_or_init(new_id)
+}
+
+/// Runs whose loop is alive in this process.
+///
+/// The sweep skips these whatever their lease says. A laptop that slept for an
+/// hour wakes with every lease expired; the loops are still here and renew on
+/// their next beat, and settling them out from under themselves would turn a
+/// nap into a pile of interrupted runs.
+fn live_runs() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static LIVE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    LIVE.get_or_init(Default::default)
+}
+
+fn is_live(task_id: &str) -> bool {
+    live_runs()
+        .lock()
+        .map(|live| live.contains(task_id))
+        .unwrap_or(false)
+}
+
+/// Marks a run live for as long as its loop runs, however the loop ends.
+struct LiveRun(String);
+
+impl LiveRun {
+    fn enter(task_id: &str) -> Self {
+        if let Ok(mut live) = live_runs().lock() {
+            live.insert(task_id.to_owned());
+        }
+        Self(task_id.to_owned())
+    }
+}
+
+impl Drop for LiveRun {
+    fn drop(&mut self) {
+        if let Ok(mut live) = live_runs().lock() {
+            live.remove(&self.0);
+        }
+    }
+}
+
+/// The fencing generation a loop was started under. Its final write is
+/// refused if the run was taken over since.
+#[derive(Debug, Clone, Copy)]
+struct Lease {
+    generation: i64,
+}
+
+/// What a resumed run had already spent and done, so its totals carry on
+/// rather than restart from zero.
+#[derive(Debug, Clone, Copy, Default)]
+struct Prior {
+    cost_usd: f64,
+    steps: i64,
+}
+
+/// Aborts a spawned task when dropped, so a heartbeat cannot outlive the loop
+/// it speaks for, including one that panicked.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 /// Holds one of [`MAX_CONCURRENT_TASKS`] slots for as long as a loop runs.
 ///
@@ -251,9 +341,13 @@ pub struct RunnerSupervisor {
     /// The task whose ledger this supervisor writes. `None` for a supervisor
     /// that only clears commands (nothing durable to keep).
     task_id: Option<String>,
-    /// The ordinal of the step opened by the last `tool_started` and not yet
-    /// settled. Tools run one at a time within a run, so one slot is enough.
-    open_step: std::sync::Mutex<Option<i64>>,
+    /// Steps opened by `tool_started` and not yet settled, innermost last.
+    /// A stack, because a `delegate` step stays open while the delegate's own
+    /// tools open and settle theirs inside it.
+    open_steps: std::sync::Mutex<Vec<i64>>,
+    /// The run's checkout, once `started` has seen it: where checkpoints are
+    /// taken from.
+    worktree: std::sync::Mutex<Option<Worktree>>,
 }
 
 impl RunnerSupervisor {
@@ -262,7 +356,8 @@ impl RunnerSupervisor {
             state,
             session_id: session_id.into(),
             task_id: None,
-            open_step: std::sync::Mutex::new(None),
+            open_steps: std::sync::Mutex::new(Vec::new()),
+            worktree: std::sync::Mutex::new(None),
         }
     }
 
@@ -342,6 +437,9 @@ impl farhelm_agent::Supervisor for RunnerSupervisor {
         let Some(task_id) = &self.task_id else {
             return;
         };
+        if let Ok(mut held) = self.worktree.lock() {
+            *held = Some(worktree.clone());
+        }
         let Ok(json) = serde_json::to_string(worktree) else {
             return;
         };
@@ -363,16 +461,25 @@ impl farhelm_agent::Supervisor for RunnerSupervisor {
             .store
             .begin_task_step(task_id, tool, &bounded(input), now_ms())
         {
-            Ok(ordinal) => *self.open_step.lock().expect("step ordinal poisoned") = Some(ordinal),
+            Ok(ordinal) => self
+                .open_steps
+                .lock()
+                .expect("step ordinals poisoned")
+                .push(ordinal),
             Err(err) => eprintln!("task {task_id}: could not record a step: {err}"),
         }
     }
 
-    fn tool_finished(&self, _tool: &str, output: &str, is_error: bool) {
+    fn tool_finished(&self, tool: &str, output: &str, is_error: bool) {
         let Some(task_id) = &self.task_id else {
             return;
         };
-        let Some(ordinal) = self.open_step.lock().expect("step ordinal poisoned").take() else {
+        let Some(ordinal) = self
+            .open_steps
+            .lock()
+            .expect("step ordinals poisoned")
+            .pop()
+        else {
             return;
         };
         if let Err(err) = self.state.store.finish_task_step(
@@ -384,7 +491,42 @@ impl farhelm_agent::Supervisor for RunnerSupervisor {
         ) {
             eprintln!("task {task_id}: could not settle step {ordinal}: {err}");
         }
+        // A failed tool may still have changed files (a `run` that wrote half
+        // its output), so the snapshot is taken either way.
+        if changes_files(tool) {
+            self.checkpoint(task_id, ordinal);
+        }
     }
+}
+
+impl RunnerSupervisor {
+    /// Snapshot the checkout after step `ordinal` and record where. Logged,
+    /// never fatal: a missing checkpoint only means a later resume has to
+    /// refuse, which is what it would do without checkpoints at all.
+    fn checkpoint(&self, task_id: &str, ordinal: i64) {
+        let Some(worktree) = self.worktree.lock().ok().and_then(|held| held.clone()) else {
+            return;
+        };
+        match worktree.checkpoint(&format!("checkpoint: run {task_id} step {ordinal}")) {
+            Ok(commit) => {
+                if let Err(err) = self
+                    .state
+                    .store
+                    .set_task_step_checkpoint(task_id, ordinal, &commit)
+                {
+                    eprintln!("task {task_id}: could not record checkpoint {ordinal}: {err}");
+                }
+            }
+            Err(err) => eprintln!("task {task_id}: could not checkpoint step {ordinal}: {err}"),
+        }
+    }
+}
+
+/// Whether a tool can change the checkout. Unknown tools are assumed to: a
+/// checkpoint too many costs a commit, one too few blocks a resume.
+fn changes_files(tool: &str) -> bool {
+    use farhelm_agent::tools::{LIST_FILES, READ_FILE, REMEMBER, SEARCH};
+    !matches!(tool, READ_FILE | LIST_FILES | SEARCH | REMEMBER)
 }
 
 /// How much of a tool payload the ledger keeps. Enough to see what was asked
@@ -705,57 +847,81 @@ fn launch(
     }
     publish(state, &task);
 
+    // Claimed before the loop exists, so there is no moment when the row is
+    // `running` with nobody owning it that a sweep could mistake for a death.
+    let generation = state
+        .store
+        .claim_task_lease(&task.id, lease_holder(), now_ms(), lease_ttl_ms(), true)?
+        .ok_or_else(|| TaskError::Conflict(format!("run {} is already owned", task.id)))?;
+
+    let spec = run_spec(
+        state,
+        &task,
+        PathBuf::from(&request.repo_path),
+        instruction,
+        request.max_steps,
+        request.model.clone(),
+    );
     let spawned = Arc::clone(state);
     let task_id = task.id.clone();
-    let spec = {
-        let mut spec = TaskSpec::new(
-            session.id.clone(),
-            PathBuf::from(&request.repo_path),
-            instruction,
-        )
-        // The branch is named after the task, not the session: a retry is a new
-        // task on the same session, and sharing a branch would let one silently
-        // inherit the other's work.
-        .with_task_id(task.id.clone());
-        if let Some(max_steps) = request.max_steps.filter(|steps| *steps > 0) {
-            spec.max_steps = max_steps;
-        }
-        // The model asked for, else the Agent mode's; the Review mode's for
-        // the second opinion. A legacy client has no registry and routes by
-        // task type as before.
-        if let Some(gateway) = &state.gateway {
-            spec.model = request
-                .model
-                .clone()
-                .or_else(|| gateway.client().mode_model(WorkMode::Agent));
-            spec.review_model = gateway.client().mode_model(WorkMode::Review);
-        }
-        // What earlier sessions left about this repository. Read here rather
-        // than in the agent crate, which has no store and is better without
-        // one: the runner is the half that knows the repo id.
-        //
-        // A failure to read is not a failure to start. Working without the
-        // blackboard is how every task worked until now; refusing to run
-        // because a note could not be loaded would trade the whole feature for
-        // a nicety.
-        spec.memory = state
-            .store
-            .notes(&task.repo_id)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|note| (note.key, note.value))
-            .collect();
-        spec
-    };
-
     runtime.spawn(async move {
         // The slot moves in here and is released when this future ends, however
         // it ends.
         let _slot = slot;
-        drive(spawned, task_id, spec).await;
+        drive(
+            spawned,
+            task_id,
+            spec,
+            Lease { generation },
+            Prior::default(),
+        )
+        .await;
     });
 
     Ok(task)
+}
+
+/// The loop's specification for a run: the same for a fresh run and a resumed
+/// one, apart from the instruction and the checkout it starts in.
+fn run_spec(
+    state: &AppState,
+    task: &AgentTask,
+    repo_path: PathBuf,
+    instruction: String,
+    max_steps: Option<usize>,
+    model: Option<String>,
+) -> TaskSpec {
+    let mut spec = TaskSpec::new(task.session_id.clone(), repo_path, instruction)
+        // The branch is named after the task, not the session: a retry is a new
+        // task on the same session, and sharing a branch would let one silently
+        // inherit the other's work.
+        .with_task_id(task.id.clone());
+    if let Some(max_steps) = max_steps.filter(|steps| *steps > 0) {
+        spec.max_steps = max_steps;
+    }
+    // The model asked for, else the Agent mode's; the Review mode's for
+    // the second opinion. A legacy client has no registry and routes by
+    // task type as before.
+    if let Some(gateway) = &state.gateway {
+        spec.model = model.or_else(|| gateway.client().mode_model(WorkMode::Agent));
+        spec.review_model = gateway.client().mode_model(WorkMode::Review);
+    }
+    // What earlier sessions left about this repository. Read here rather
+    // than in the agent crate, which has no store and is better without
+    // one: the runner is the half that knows the repo id.
+    //
+    // A failure to read is not a failure to start. Working without the
+    // blackboard is how every task worked until now; refusing to run
+    // because a note could not be loaded would trade the whole feature for
+    // a nicety.
+    spec.memory = state
+        .store
+        .notes(&task.repo_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|note| (note.key, note.value))
+        .collect();
+    spec
 }
 
 /// Settle tasks left `running` by a runner that stopped.
@@ -777,16 +943,74 @@ fn launch(
 /// interrupted so the record does not claim a tool is running in a process
 /// that no longer exists.
 pub fn reconcile_after_restart(state: &Arc<AppState>) -> usize {
-    let Ok(tasks) = state.store.list_tasks(500) else {
+    settle_orphans(state, true)
+}
+
+/// Settle runs whose loop stopped renewing its lease while the runner kept
+/// going: a loop that panicked, or one owned by another runner process on
+/// this database that has since died. Unleased rows are left alone here; a
+/// fresh row is claimed by its own launch, and only startup can know that
+/// nothing else is about to claim it.
+pub fn sweep_expired_leases(state: &Arc<AppState>) -> usize {
+    settle_orphans(state, false)
+}
+
+/// Run [`sweep_expired_leases`] every [`LEASE_SWEEP_EVERY`] for as long as the
+/// runner lives.
+pub fn spawn_lease_sweep(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(LEASE_SWEEP_EVERY);
+        // The first tick is immediate, and startup has just reconciled.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            let swept = Arc::clone(&state);
+            // Store and git calls block; keep them off the executor.
+            let settled = tokio::task::spawn_blocking(move || sweep_expired_leases(&swept))
+                .await
+                .unwrap_or(0);
+            if settled > 0 {
+                println!("  {settled} run(s) stopped renewing their lease; settled as interrupted");
+            }
+        }
+    })
+}
+
+/// The shared body of startup reconciliation and the lease sweep.
+///
+/// Each run is claimed first, which bumps its fencing generation: if its loop
+/// is in fact alive somewhere, its own final write is then refused instead of
+/// landing over this one. A run whose lease a live holder still owns is
+/// skipped and looked at again next sweep.
+fn settle_orphans(state: &Arc<AppState>, include_unleased: bool) -> usize {
+    let Ok(ids) = state.store.running_task_ids() else {
         return 0;
     };
 
     let mut settled = 0;
-    for mut task in tasks {
-        if task.status != TaskStatus::Running {
+    for id in ids {
+        if is_live(&id) {
             continue;
         }
         let now = now_ms();
+        let generation = match state.store.claim_task_lease(
+            &id,
+            lease_holder(),
+            now,
+            lease_ttl_ms(),
+            include_unleased,
+        ) {
+            Ok(Some(generation)) => generation,
+            // Still owned, or it settled since the list was read.
+            Ok(None) => continue,
+            Err(err) => {
+                eprintln!("task {id}: could not claim it for recovery: {err}");
+                continue;
+            }
+        };
+        let Ok(Some(mut task)) = state.store.get_task(&id) else {
+            continue;
+        };
 
         let steps = state.store.list_task_steps(&task.id).unwrap_or_default();
         for step in steps.iter().filter(|step| step.finished_at.is_none()) {
@@ -824,6 +1048,18 @@ pub fn reconcile_after_restart(state: &Arc<AppState>) -> usize {
         }
         task.updated_at = now;
 
+        // Marked interrupted, which is what makes it eligible to resume.
+        match state
+            .store
+            .finish_task_fenced(&task, lease_holder(), generation, Some(now))
+        {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(err) => {
+                eprintln!("task {id}: could not record its recovery: {err}");
+                continue;
+            }
+        }
         if let Ok(Some(mut session)) = state.store.get_session(&task.session_id)
             && session.ended_at.is_none()
         {
@@ -831,12 +1067,267 @@ pub fn reconcile_after_restart(state: &Arc<AppState>) -> usize {
             session.ended_at = Some(now);
             let _ = state.store.upsert_session(&session);
         }
-        if state.store.upsert_task(&task).is_ok() {
-            settled += 1;
-            publish(state, &task);
-        }
+        settled += 1;
+        publish(state, &task);
     }
     settled
+}
+
+/* ----------------------------------------------------------------- resume */
+
+/// Everything a resume needs, gathered and checked before anything changes.
+struct ResumePlan {
+    worktree: Worktree,
+    repo_path: String,
+    checkpoint_step: i64,
+    steps: Vec<TaskStep>,
+}
+
+/// Whether a run can continue where it stopped, and from which step (ADR 0004).
+///
+/// Read-only and safe to ask of any run. Shares its checks with [`resume`], so
+/// the answer a client is shown is the one a resume would act on.
+pub fn recovery(state: &AppState, task_id: &str) -> Result<TaskRecovery, TaskError> {
+    let (interrupted_at, plan) = plan_resume(state, task_id)?;
+    Ok(match plan {
+        Ok(plan) => TaskRecovery {
+            resumable: true,
+            reason: None,
+            interrupted_at,
+            checkpoint_step: Some(plan.checkpoint_step),
+        },
+        Err(reason) => TaskRecovery {
+            resumable: false,
+            reason: Some(reason),
+            interrupted_at,
+            checkpoint_step: None,
+        },
+    })
+}
+
+/// The outer error is a run that cannot be read; the inner one is a run that
+/// can be read but not resumed, with the reason.
+fn plan_resume(
+    state: &AppState,
+    task_id: &str,
+) -> Result<(Option<i64>, Result<ResumePlan, String>), TaskError> {
+    let task = state
+        .store
+        .get_task(task_id)?
+        .ok_or_else(|| TaskError::NotFound(format!("task {task_id}")))?;
+    let interrupted_at = state.store.task_interrupted_at(task_id)?;
+    let steps = state.store.list_task_steps(task_id)?;
+    let checkpoints = state.store.task_step_checkpoints(task_id)?;
+    let repo = state.store.get_repo(&task.repo_id)?;
+    let plan = assess_resume(&task, interrupted_at, steps, &checkpoints, repo);
+    Ok((interrupted_at, plan))
+}
+
+fn assess_resume(
+    task: &AgentTask,
+    interrupted_at: Option<i64>,
+    steps: Vec<TaskStep>,
+    checkpoints: &[(i64, String)],
+    repo: Option<Repo>,
+) -> Result<ResumePlan, String> {
+    if interrupted_at.is_none() {
+        return Err("only a run that stopped before it finished can be resumed".into());
+    }
+    if !matches!(task.status, TaskStatus::AwaitingReview | TaskStatus::Failed) {
+        return Err(format!("this run is {}", task.status));
+    }
+    if task.worktree_json.trim().is_empty() {
+        return Err("it stopped before it had a checkout to continue in".into());
+    }
+    let worktree: Worktree = serde_json::from_str(&task.worktree_json)
+        .map_err(|_| "its checkout record could not be read".to_owned())?;
+    if !worktree.is_present() {
+        return Err("its checkout is no longer on disk".into());
+    }
+    let repo = repo.ok_or_else(|| "its repository is no longer registered".to_owned())?;
+
+    // Checkpoints exist only on steps that could change files. The latest
+    // such step is the one recovery must be sure of: if it left no
+    // checkpoint it was interrupted mid-effect, and nothing earlier can vouch
+    // for what it did.
+    let mut points: Vec<StepCheckpoint> = checkpoints
+        .iter()
+        .map(|(ordinal, commit)| StepCheckpoint {
+            ordinal: *ordinal as u32,
+            stage: StepStage::ToolResult,
+            commit_sha: Some(commit.clone()),
+            is_idempotent: true,
+        })
+        .collect();
+    match steps.iter().rev().find(|step| changes_files(&step.tool)) {
+        Some(last)
+            if !checkpoints
+                .iter()
+                .any(|(ordinal, _)| *ordinal == last.ordinal) =>
+        {
+            points.push(StepCheckpoint {
+                ordinal: last.ordinal as u32,
+                stage: StepStage::ToolCall,
+                commit_sha: None,
+                is_idempotent: false,
+            });
+        }
+        Some(_) => {}
+        // Nothing that could change a file ran, so the checkout should still
+        // be its base: that is the checkpoint.
+        None => points.push(StepCheckpoint {
+            ordinal: 0,
+            stage: StepStage::Verify,
+            commit_sha: Some(worktree.base().to_owned()),
+            is_idempotent: true,
+        }),
+    }
+
+    let (checkpoint_step, commit) = match evaluate_recovery(None, &points, now_ms()) {
+        RecoveryAction::ResumeFromCheckpoint {
+            step_ordinal,
+            commit_sha,
+        } => (i64::from(step_ordinal), commit_sha),
+        RecoveryAction::NeedsAttention { .. } => {
+            return Err(
+                "it stopped in the middle of a step that may have changed files or run a \
+                 command; review the change set instead"
+                    .into(),
+            );
+        }
+        RecoveryAction::LockedByPeer { holder, .. } => {
+            return Err(format!("it is still owned by {holder}"));
+        }
+    };
+    match worktree.matches_checkpoint(&commit) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(
+                "its checkout changed after the last checkpoint; review the change set instead"
+                    .into(),
+            );
+        }
+        Err(err) => return Err(format!("its checkout could not be compared: {err}")),
+    }
+
+    Ok(ResumePlan {
+        worktree,
+        repo_path: repo.path,
+        checkpoint_step,
+        steps,
+    })
+}
+
+/// Continue an interrupted run in its own checkout, from its last checkpoint.
+///
+/// Explicit, never automatic: resuming spends money, and recovery only knows
+/// a run stopped, not whether anyone still wants it. The run keeps its id,
+/// branch, session and totals; a reviewer who decides on the interrupted
+/// change set first wins, and the resume is refused.
+pub fn resume(
+    state: &Arc<AppState>,
+    task_id: &str,
+    runtime: &tokio::runtime::Handle,
+) -> Result<AgentTask, TaskError> {
+    if state.gateway.is_none() {
+        return Err(TaskError::NoProvider);
+    }
+    let (_, plan) = plan_resume(state, task_id)?;
+    let plan = plan.map_err(|reason| TaskError::Conflict(format!("cannot resume: {reason}")))?;
+    let slot = TaskSlot::claim(state).ok_or(TaskError::TooBusy(MAX_CONCURRENT_TASKS))?;
+    let before = state
+        .store
+        .get_task(task_id)?
+        .ok_or_else(|| TaskError::NotFound(format!("task {task_id}")))?;
+    let generation = state
+        .store
+        .resume_task(task_id, lease_holder(), now_ms(), lease_ttl_ms())?
+        .ok_or_else(|| {
+            TaskError::Conflict("cannot resume: it was resumed or decided first".into())
+        })?;
+    let task = state
+        .store
+        .get_task(task_id)?
+        .ok_or_else(|| TaskError::NotFound(format!("task {task_id}")))?;
+
+    if let Ok(Some(mut session)) = state.store.get_session(&task.session_id) {
+        session.status = SessionStatus::Running;
+        session.ended_at = None;
+        let _ = state.store.upsert_session(&session);
+    }
+    state.push_output(
+        &task.session_id,
+        format!("↻ resuming from step {}", plan.checkpoint_step),
+        now_ms(),
+    );
+    publish(state, &task);
+    follow_run(state, &task);
+
+    let mut spec = run_spec(
+        state,
+        &task,
+        PathBuf::from(&plan.repo_path),
+        resume_prompt(&task, &plan.steps),
+        None,
+        task.model.clone(),
+    );
+    spec.resume_from = Some(plan.worktree);
+    let prior = Prior {
+        cost_usd: before.cost_usd,
+        steps: before.steps,
+    };
+    let spawned = Arc::clone(state);
+    let id = task.id.clone();
+    runtime.spawn(async move {
+        let _slot = slot;
+        drive(spawned, id, spec, Lease { generation }, prior).await;
+    });
+    Ok(task)
+}
+
+/// What a resumed run is told: the original request, then the ledger's
+/// account of what was already done, so it carries on rather than starts over.
+///
+/// The request is the human's prompt. A run that was itself a retry loses the
+/// rejected attempt's notes here; its checkout already reflects them.
+fn resume_prompt(task: &AgentTask, steps: &[TaskStep]) -> String {
+    const SHOWN: usize = 30;
+    let skip = steps.len().saturating_sub(SHOWN);
+    let mut done = String::new();
+    if skip > 0 {
+        done.push_str(&format!("- ({skip} earlier steps not shown)\n"));
+    }
+    for step in &steps[skip..] {
+        let mark = match (step.is_error, step.output.as_deref()) {
+            (true, Some(output)) if output.starts_with("interrupted") => " (interrupted)",
+            (true, _) => " (failed)",
+            _ => "",
+        };
+        done.push_str(&format!(
+            "- {}. {} {}{mark}\n",
+            step.ordinal,
+            step.tool,
+            one_line(&step.input, 160)
+        ));
+    }
+    format!(
+        "{prompt}\n\n## Resuming interrupted work\n\nThe runner stopped partway through this \
+         task and it is being resumed. Your checkout already contains every edit from the \
+         steps below; nothing was undone. Read the files you need to see where things stand, \
+         then carry on from there instead of starting over. A command listed here already ran \
+         once: run it again only if you need its result now.\n\nSteps already taken:\n{done}",
+        prompt = task.prompt
+    )
+}
+
+/// `text` on one line, cut to `max` characters.
+fn one_line(text: &str, max: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        flat
+    } else {
+        format!("{}…", flat.chars().take(max).collect::<String>())
+    }
 }
 
 /// The edits an interrupted task left on its branch, if the checkout survived.
@@ -855,12 +1346,34 @@ fn surviving_changes(task: &AgentTask) -> Option<farhelm_proto::ChangeSet> {
 }
 
 /// Run the loop and record what it produced.
-async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
+async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec, lease: Lease, prior: Prior) {
+    let _live = LiveRun::enter(&task_id);
     let Some(gateway) = state.gateway.as_ref() else {
         return;
     };
+    let lost = Arc::new(tokio::sync::Notify::new());
+    let heartbeat = AbortOnDrop(tokio::spawn(keep_lease(
+        Arc::clone(&state),
+        task_id.clone(),
+        lease,
+        Arc::clone(&lost),
+    )));
     let supervisor = RunnerSupervisor::for_task(Arc::clone(&state), &spec.session_id, &task_id);
-    let outcome = farhelm_agent::run(gateway, &supervisor, &spec).await;
+    // A run whose lease was taken over stops here. Dropping the loop drops any
+    // command it was running, and the process layer kills that command's
+    // process group. Whoever took it over owns the row now.
+    let outcome = tokio::select! {
+        outcome = farhelm_agent::run(gateway, &supervisor, &spec) => outcome,
+        () = lost.notified() => {
+            state.push_output(
+                &spec.session_id,
+                "✗ stopped: this run was taken over by recovery".to_owned(),
+                now_ms(),
+            );
+            return;
+        }
+    };
+    drop(heartbeat);
 
     let Ok(Some(mut task)) = state.store.get_task(&task_id) else {
         return;
@@ -887,8 +1400,8 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
     }
 
     task.summary = outcome.summary.clone();
-    task.cost_usd = outcome.cost_usd;
-    task.steps = outcome.steps as i64;
+    task.cost_usd = prior.cost_usd + outcome.cost_usd;
+    task.steps = prior.steps + outcome.steps as i64;
     task.files_changed = outcome.changes.files.len() as i64;
     task.lines_added = outcome.changes.added() as i64;
     task.lines_removed = outcome.changes.removed() as i64;
@@ -973,6 +1486,23 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
             task.error.as_deref().unwrap_or("the task did not finish")
         ),
     };
+    // Fenced: if recovery claimed this run while the loop was finishing, its
+    // record stands and this one is dropped, rather than the two racing.
+    match state
+        .store
+        .finish_task_fenced(&task, lease_holder(), lease.generation, None)
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!("task {task_id}: its lease was taken over; the result was not recorded");
+            return;
+        }
+        Err(err) => {
+            // Left `running` under an expiring lease: the sweep settles it.
+            eprintln!("task {task_id}: could not record the result: {err}");
+            return;
+        }
+    }
     state.push_output(&spec.session_id, closing, now_ms());
 
     // The session is done either way: a task is one shot, and leaving it
@@ -983,12 +1513,44 @@ async fn drive(state: Arc<AppState>, task_id: String, spec: TaskSpec) {
         let _ = state.store.upsert_session(&session);
     }
 
-    let _ = state.store.upsert_task(&task);
     follow_run(&state, &task);
     publish(&state, &task);
     state.publish(ServerEvent::SessionUpsert {
         session_id: spec.session_id.clone(),
     });
+}
+
+/// Renew a run's lease until it is lost or this future is dropped.
+async fn keep_lease(
+    state: Arc<AppState>,
+    task_id: String,
+    lease: Lease,
+    lost: Arc<tokio::sync::Notify>,
+) {
+    let mut beat = tokio::time::interval(LEASE_RENEW_EVERY);
+    // The first tick is immediate, and the lease was just claimed.
+    beat.tick().await;
+    loop {
+        beat.tick().await;
+        match state.store.renew_task_lease(
+            &task_id,
+            lease_holder(),
+            lease.generation,
+            now_ms(),
+            lease_ttl_ms(),
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                lost.notify_one();
+                return;
+            }
+            // A failed write is not a lost lease: try again on the next beat.
+            // If writes keep failing the lease expires and the sweep settles
+            // the run, which is right for a runner that cannot write its own
+            // database.
+            Err(err) => eprintln!("task {task_id}: could not renew its lease: {err}"),
+        }
+    }
 }
 
 /// Move the task (work item) a run belongs to, if any, to where the run has

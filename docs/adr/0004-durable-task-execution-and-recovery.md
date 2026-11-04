@@ -1,9 +1,21 @@
 # 0004: Durable Task Execution, Leased State Machine, and Step-Level Recovery
 
-**Status**: First form implemented October 26, 2026. The branch is recorded before the first model call, every tool exchange is a `task_step` row (intent before effect, settled after), and restart recovery turns surviving edits into a change set awaiting review instead of a bare failure. Leases, fencing, Git checkpoint-per-step and automatic resumption remain pending; nothing is re-executed on restart.  
+**Status**: Second form implemented November 4, 2026. Every run is owned by a renewable, fenced lease; a stale loop cannot record a result over a takeover; steps that can change files leave a Git checkpoint; and an interrupted run can be resumed on request from its last checkpoint when that is provably safe. Resumption is explicit, never automatic, and model conversation state is not replayed: a resumed run is told what the ledger recorded instead.  
 **Consulted**: [AGENTS.md](../../AGENTS.md), [Engineering Stack](../engineering-stack.md), [Platform Review](../reviews/2026-10-22-platform-review.md)
 
 ---
+
+## What is implemented
+
+| Piece | Where | Behavior |
+|---|---|---|
+| Lease and fencing | `agent_task.lease_holder`, `lease_expires_at`, `lease_generation` (migration 0022) | A run is claimed before its loop starts. Each claim bumps the generation. The loop renews every 10 s with a 30 s lease. The final write (`finish_task_fenced`) lands only if holder and generation still match. |
+| Renewal | `renew_task_lease` | Fenced by generation, not expiry: a laptop that slept past its lease, with nobody taking over, keeps its run. A loop whose renewal is refused stops; dropping it kills its command's process group. |
+| Startup and sweep | `reconcile_after_restart`, `sweep_expired_leases` (every 15 s) | Startup also claims unleased rows. The sweep only takes over expired leases and skips runs whose loop is alive in this process. Each settled run is marked `interrupted_at`. |
+| Step checkpoints | `task_step.checkpoint`, `Worktree::checkpoint` | After every tool except read, list, search and remember: a commit on no branch, kept by `refs/farhelm/checkpoints/<run>/…`, removed with the checkout. The run's branch and diff are unchanged. Ignored files are not captured, hooks do not run, nothing is signed. |
+| Resume | `GET /v1/tasks/{id}/recovery`, `POST /v1/tasks/{id}/resume`, and the project-scoped equivalents | Only a run settled by recovery, still awaiting review or failed. The latest file-changing step must have a checkpoint and the checkout must match it exactly; otherwise the reason is returned and the change set stays reviewable. A review decided first wins. The run keeps its id, branch, session and totals. |
+
+Not covered: writes to the step ledger are not fenced, model reasoning is not persisted, a resumed retry is given the original prompt rather than the composed retry instruction, and checkpoints cannot capture effects outside the checkout.
 
 ## Context
 
@@ -23,7 +35,7 @@ This architecture introduces failure modes:
 
 ## Decision
 
-The target is a durable, leased state machine with a transactional step ledger and explicit recovery semantics. `farhelm-domain::recovery` now provides pure lease-expiration/renewal and recovery-decision helpers. They do not claim leases in storage or resume execution: the current runner restart behavior remains unchanged. The helper only accepts the latest recorded step's committed, idempotent checkpoint; it refuses to skip a later uncertain step in favor of an older commit.
+The target is a durable, leased state machine with a transactional step ledger and explicit recovery semantics. `farhelm-domain::recovery` now provides pure lease-expiration/renewal and recovery-decision helpers. The runner now uses them: `evaluate_recovery` decides resume eligibility from the step ledger's checkpoints, while storage owns the lease and fencing writes (see What is implemented). The helper only accepts the latest recorded step's committed, idempotent checkpoint; it refuses to skip a later uncertain step in favor of an older commit.
 
 ### 1. Leased State Machine
 

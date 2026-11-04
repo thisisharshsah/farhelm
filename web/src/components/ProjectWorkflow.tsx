@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectListOptions, ProjectRepository, TaskDetail, TaskView, Transport } from "@farhelm/client-core";
+import type { ProjectListOptions, ProjectRepository, TaskDetail, TaskRecovery, TaskView, Transport } from "@farhelm/client-core";
 import { TaskReviewScreen, TaskRow } from "./Tasks";
 import { ModelPicker, useModes } from "./ModelChoice";
 
@@ -281,6 +281,66 @@ function StartProjectTask({ transport, projectId, repositories, disabled, onStar
   </section>;
 }
 
+/**
+ * Offer to continue a run that stopped before it finished (ADR 0004).
+ *
+ * Shown only for a run recovery settled. When it cannot resume safely the
+ * runner says why, and the change set below stays reviewable as before.
+ */
+function ResumeRun({ transport, projectId, task, onResumed }: {
+  transport: WorkflowTransport;
+  projectId: string;
+  task: TaskDetail;
+  onResumed: () => void;
+}) {
+  const [recovery, setRecovery] = useState<TaskRecovery | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // A ref, not the state above: two clicks inside one render must not both pass.
+  const submitting = useRef(false);
+  const settled = task.status === "awaiting_review" || task.status === "failed";
+
+  useEffect(() => {
+    let cancelled = false;
+    setRecovery(null); setError(null);
+    if (!settled || !transport.projectTaskRecovery) return;
+    void transport.projectTaskRecovery(projectId, task.id)
+      .then((value) => { if (!cancelled) setRecovery(value); })
+      // An older runner has no recovery route: show nothing rather than an error.
+      .catch(() => { if (!cancelled) setRecovery(null); });
+    return () => { cancelled = true; };
+  }, [transport, projectId, task.id, task.updated_at, settled]);
+
+  if (!recovery || recovery.interrupted_at === null || !transport.resumeProjectTask) return null;
+  const resume = transport.resumeProjectTask;
+  const from = recovery.checkpoint_step === 0 ? "the start of its branch" : `step ${recovery.checkpoint_step}`;
+
+  const submit = async () => {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true); setError(null);
+    try {
+      await resume(projectId, task.id);
+      onResumed();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
+
+  return <section className="card" aria-label="Interrupted run">
+    {recovery.resumable
+      ? <p>This run stopped before it finished. It can continue in its own checkout from {from}, keeping the edits made so far. Resuming spends from this run's budget again.</p>
+      : <p>This run stopped before it finished and cannot be resumed: {recovery.reason}. Its change set can still be reviewed below.</p>}
+    {error ? <p className="notice error-text" role="alert">{error}</p> : null}
+    {recovery.resumable ? <div className="approval-actions">
+      <button className="btn" disabled={busy} onClick={() => void submit()}>{busy ? "Resuming…" : "Resume run"}</button>
+    </div> : null}
+  </section>;
+}
+
 export function ProjectTaskScreen({ transport, projectId, taskId, onNavigate }: {
   transport: Transport | null; projectId: string; taskId: string; onNavigate: (path: string) => void;
 }) {
@@ -374,6 +434,7 @@ function ProjectTaskScope({ transport, projectId, taskId, onNavigate }: {
       <p>Commands awaiting your approval appear in Workspace. The task keeps its project context while you review them.</p>
       <button className="btn" onClick={() => onNavigate("/")}>Open Workspace approvals</button>
     </section> : null}
+    {task && !pending && !error ? <ResumeRun transport={transport} projectId={projectId} task={task} onResumed={reload} /> : null}
     {task ? <fieldset className="project-review-content" disabled={pending || !!error}>
       <TaskReviewScreen key={task.id} task={task} transport={actions} onReviewed={reload}
         onOpenTask={(id) => { if (active.current) onNavigate(projectTaskPath(projectId, id)); }} />

@@ -1,6 +1,6 @@
 import type {
   ModesView, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
-  TaskView, TaskDetail, WorkItemDetail, WorkItemPage, WorkItemView,
+  TaskRecovery, TaskView, TaskDetail, WorkItemDetail, WorkItemPage, WorkItemView,
 } from "./api.ts";
 import { WORK_ITEM_STATUSES, WORK_MODES } from "./api.ts";
 
@@ -218,4 +218,21 @@ export function parseTaskDetail(value: unknown): TaskDetail {
     sequences.add(line.seq);
   }
   return detail as unknown as TaskDetail;
+}
+
+export function parseTaskRecovery(value: unknown): TaskRecovery {
+  if (!object(value) || typeof value.resumable !== "boolean"
+    || !(value.reason === null || text(value.reason, 4_096))
+    || !(value.interrupted_at === null || timestamp(value.interrupted_at))
+    || !(value.checkpoint_step === null || timestamp(value.checkpoint_step))
+    || value.resumable !== (value.reason === null)
+    || value.resumable !== (value.checkpoint_step !== null)) {
+    throw new Error("The runner returned an invalid recovery answer.");
+  }
+  return {
+    resumable: value.resumable,
+    reason: value.reason,
+    interrupted_at: value.interrupted_at,
+    checkpoint_step: value.checkpoint_step,
+  };
 }

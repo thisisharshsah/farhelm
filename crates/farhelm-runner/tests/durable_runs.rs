@@ -290,3 +290,303 @@ async fn the_step_ledger_is_readable_over_http() {
     assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
     server.abort();
 }
+
+/* ------------------------------------------- leases, fencing and resume */
+
+const TTL: i64 = 30_000;
+
+#[test]
+fn a_live_lease_is_left_alone_and_an_expired_one_is_taken_over() {
+    let state = state();
+    let repo = TempRepo::new("lease");
+    running_task(&state, "task-owned", &repo, String::new());
+
+    // Another runner on this database owns it, with time left.
+    let now = farhelm_app::time::now_ms();
+    let theirs = state
+        .store
+        .claim_task_lease("task-owned", "other-runner", now, TTL, true)
+        .unwrap()
+        .expect("an unleased run can be claimed");
+
+    // Neither startup nor the sweep may settle a run somebody still owns.
+    assert_eq!(farhelm_runner::task::reconcile_after_restart(&state), 0);
+    assert_eq!(farhelm_runner::task::sweep_expired_leases(&state), 0);
+    assert_eq!(
+        state.store.get_task("task-owned").unwrap().unwrap().status,
+        TaskStatus::Running
+    );
+
+    // Its lease runs out without a renewal: the sweep takes it over.
+    let later = now + TTL + 1;
+    assert!(
+        state
+            .store
+            .claim_task_lease("task-owned", "probe", now, TTL, false)
+            .unwrap()
+            .is_none(),
+        "not expired yet at `now`"
+    );
+    let taken = state
+        .store
+        .claim_task_lease("task-owned", "recovery", later, TTL, false)
+        .unwrap()
+        .expect("an expired lease can be taken over");
+    assert!(taken > theirs, "a takeover bumps the fencing generation");
+
+    // The old owner wakes up and tries to renew and to record its result.
+    assert!(
+        !state
+            .store
+            .renew_task_lease("task-owned", "other-runner", theirs, later, TTL)
+            .unwrap()
+    );
+    let mut stale = state.store.get_task("task-owned").unwrap().unwrap();
+    stale.status = TaskStatus::NoChanges;
+    assert!(
+        !state
+            .store
+            .finish_task_fenced(&stale, "other-runner", theirs, None)
+            .unwrap(),
+        "a stale writer is refused"
+    );
+    assert_eq!(
+        state.store.get_task("task-owned").unwrap().unwrap().status,
+        TaskStatus::Running,
+        "and nothing it wrote landed"
+    );
+
+    // The current owner's write lands and releases the lease.
+    assert!(
+        state
+            .store
+            .finish_task_fenced(&stale, "recovery", taken, None)
+            .unwrap()
+    );
+    assert_eq!(
+        state.store.get_task("task-owned").unwrap().unwrap().status,
+        TaskStatus::NoChanges
+    );
+}
+
+#[test]
+fn renewal_is_fenced_by_generation_not_by_expiry() {
+    let state = state();
+    let repo = TempRepo::new("renew");
+    running_task(&state, "task-nap", &repo, String::new());
+    let generation = state
+        .store
+        .claim_task_lease("task-nap", "me", NOW, TTL, true)
+        .unwrap()
+        .unwrap();
+    // A laptop that slept past its lease, with nobody taking over meanwhile,
+    // keeps its run.
+    assert!(
+        state
+            .store
+            .renew_task_lease("task-nap", "me", generation, NOW + 10 * TTL, TTL)
+            .unwrap()
+    );
+}
+
+/// A run interrupted after one checkpointed edit, its checkout untouched since.
+fn interrupted_after_an_edit(state: &Arc<AppState>, repo: &TempRepo, id: &str) -> Worktree {
+    let worktree = Worktree::create(&repo.0, id).unwrap();
+    running_task(state, id, repo, serde_json::to_string(&worktree).unwrap());
+
+    let read = state
+        .store
+        .begin_task_step(id, "read_file", r#"{"path":"README.md"}"#, NOW + 1)
+        .unwrap();
+    state
+        .store
+        .finish_task_step(id, read, "base", false, NOW + 2)
+        .unwrap();
+    let edit = state
+        .store
+        .begin_task_step(id, "write_file", r#"{"path":"src.rs"}"#, NOW + 3)
+        .unwrap();
+    std::fs::write(worktree.path().join("src.rs"), "fn bounded() {}\n").unwrap();
+    state
+        .store
+        .finish_task_step(id, edit, "wrote src.rs", false, NOW + 4)
+        .unwrap();
+    let commit = worktree.checkpoint("step 2").unwrap();
+    state
+        .store
+        .set_task_step_checkpoint(id, edit, &commit)
+        .unwrap();
+    // The process dies during the next model call: no step is open.
+    assert_eq!(farhelm_runner::task::reconcile_after_restart(state), 1);
+    worktree
+}
+
+#[test]
+fn a_run_interrupted_between_steps_can_resume_from_its_checkpoint() {
+    let state = state();
+    let repo = TempRepo::new("resumable");
+    let worktree = interrupted_after_an_edit(&state, &repo, "task-resume");
+
+    let task = state.store.get_task("task-resume").unwrap().unwrap();
+    assert_eq!(task.status, TaskStatus::AwaitingReview, "still reviewable");
+    let recovery = farhelm_runner::task::recovery(&state, "task-resume").unwrap();
+    assert!(recovery.resumable, "{recovery:?}");
+    assert_eq!(recovery.checkpoint_step, Some(2));
+    assert!(recovery.interrupted_at.is_some());
+
+    // Someone edits the checkout by hand: it is no longer the known state.
+    std::fs::write(worktree.path().join("src.rs"), "fn edited() {}\n").unwrap();
+    let recovery = farhelm_runner::task::recovery(&state, "task-resume").unwrap();
+    assert!(!recovery.resumable);
+    assert!(
+        recovery
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("changed after"),
+        "{recovery:?}"
+    );
+}
+
+#[test]
+fn a_run_interrupted_inside_a_command_is_not_resumable() {
+    let state = state();
+    let repo = TempRepo::new("mid-command");
+    let worktree = Worktree::create(&repo.0, "task-mid").unwrap();
+    running_task(
+        &state,
+        "task-mid",
+        &repo,
+        serde_json::to_string(&worktree).unwrap(),
+    );
+    std::fs::write(worktree.path().join("out.txt"), "partial\n").unwrap();
+    state
+        .store
+        .begin_task_step("task-mid", "run", r#"{"command":"make"}"#, NOW)
+        .unwrap();
+    assert_eq!(farhelm_runner::task::reconcile_after_restart(&state), 1);
+
+    let recovery = farhelm_runner::task::recovery(&state, "task-mid").unwrap();
+    assert!(!recovery.resumable);
+    assert!(
+        recovery
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("middle of a step"),
+        "{recovery:?}"
+    );
+}
+
+#[test]
+fn a_run_that_finished_on_its_own_is_not_resumable() {
+    let state = state();
+    let repo = TempRepo::new("finished");
+    let task = running_task(&state, "task-done", &repo, String::new());
+    let generation = state
+        .store
+        .claim_task_lease(&task.id, "me", NOW, TTL, true)
+        .unwrap()
+        .unwrap();
+    let mut done = task.clone();
+    done.status = TaskStatus::Failed;
+    assert!(
+        state
+            .store
+            .finish_task_fenced(&done, "me", generation, None)
+            .unwrap()
+    );
+    let recovery = farhelm_runner::task::recovery(&state, "task-done").unwrap();
+    assert!(!recovery.resumable);
+    assert!(recovery.interrupted_at.is_none());
+}
+
+#[test]
+fn a_review_decided_first_wins_over_a_resume() {
+    let state = state();
+    let repo = TempRepo::new("race");
+    interrupted_after_an_edit(&state, &repo, "task-race");
+
+    state
+        .store
+        .decide_task(
+            "task-race",
+            TaskStatus::Rejected,
+            farhelm_proto::types::DecidedVia::Web,
+            Some("not this"),
+            NOW + 10,
+        )
+        .unwrap();
+    assert!(
+        state
+            .store
+            .resume_task("task-race", "me", NOW + 11, TTL)
+            .unwrap()
+            .is_none()
+    );
+    // And the reverse: once resumed, it cannot be resumed twice.
+    let state = self::state();
+    let repo = TempRepo::new("twice");
+    interrupted_after_an_edit(&state, &repo, "task-twice");
+    assert!(
+        state
+            .store
+            .resume_task("task-twice", "me", NOW, TTL)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        state
+            .store
+            .resume_task("task-twice", "me", NOW, TTL)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        state.store.get_task("task-twice").unwrap().unwrap().status,
+        TaskStatus::Running
+    );
+}
+
+#[tokio::test]
+async fn recovery_and_resume_are_served_over_http() {
+    let state = state();
+    let repo = TempRepo::new("resume-http");
+    interrupted_after_an_edit(&state, &repo, "task-rhttp");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let router = api::router_with_auth(Arc::clone(&state), LocalAuth::open());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    let recovery: Value = http
+        .get(format!("{url}/v1/tasks/task-rhttp/recovery"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(recovery["resumable"], true);
+    assert_eq!(recovery["checkpoint_step"], 2);
+
+    // No model provider in this runner: the resume is refused for that
+    // reason, and the run stays as it was.
+    let resumed = http
+        .post(format!("{url}/v1/tasks/task-rhttp/resume"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        state.store.get_task("task-rhttp").unwrap().unwrap().status,
+        TaskStatus::AwaitingReview
+    );
+    server.abort();
+}

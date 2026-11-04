@@ -100,6 +100,12 @@ pub struct TaskSpec {
     pub model: Option<String>,
     /// The registry name that reviews the diff; `None` routes as before.
     pub review_model: Option<String>,
+    /// Continue in this existing checkout instead of cutting a new branch.
+    ///
+    /// Set only by recovery (ADR 0004), after the caller has confirmed the
+    /// checkout holds exactly its last checkpoint. A fresh run must never set
+    /// it: [`Worktree::create`] is what guarantees a run starts from its base.
+    pub resume_from: Option<Worktree>,
 }
 
 impl TaskSpec {
@@ -122,6 +128,7 @@ impl TaskSpec {
             verify: true,
             model: None,
             review_model: None,
+            resume_from: None,
         }
     }
 
@@ -429,9 +436,21 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
     // Git is required, and the two ways it can be missing are reported apart
     // because they have different fixes: one is "this is not a repository",
     // the other is "commit once first".
-    let worktree = match Worktree::create(&spec.repo_path, &spec.task_id) {
-        Ok(worktree) => worktree,
-        Err(err) => return failed(err.to_string()),
+    let resuming = spec.resume_from.is_some();
+    let worktree = match &spec.resume_from {
+        Some(existing) if existing.is_present() => existing.clone(),
+        Some(_) => return failed("the checkout this run was resuming is gone".into()),
+        None => match Worktree::create(&spec.repo_path, &spec.task_id) {
+            Ok(worktree) => worktree,
+            Err(err) => return failed(err.to_string()),
+        },
+    };
+    // A resumed checkout holds earlier work; a failure to open it must leave
+    // it for review, never discard it.
+    let abandon = |worktree: Worktree| {
+        if !resuming {
+            let _ = worktree.discard();
+        }
     };
 
     // The agent reads and writes through the checkout, never the repository.
@@ -441,7 +460,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
             // The branch exists but is unusable. Take it back out rather than
             // leaving a checkout nobody will ever look at.
             let message = err.to_string();
-            let _ = worktree.discard();
+            abandon(worktree);
             return failed(message);
         }
     };
@@ -454,7 +473,7 @@ pub async fn run<S: Store, C: ModelClient, Sup: Supervisor>(
         .and_then(|source| source.git_exclude())
         && let Err(error) = workspace.set_git_exclude(&exclude)
     {
-        let _ = worktree.discard();
+        abandon(worktree);
         return failed(error.to_string());
     }
 

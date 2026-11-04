@@ -52,6 +52,7 @@ import type {
   WorkItemListOptions,
   WorkItemPage,
   WorkItemView,
+  TaskRecovery,
   TaskReview,
   TaskView,
 } from "./api.ts";
@@ -112,6 +113,10 @@ export interface Transport {
   projectTask?(id: string, taskId: string): Promise<TaskDetail>;
   reviewProjectTask?(id: string, taskId: string, decision: TaskReview, note?: string): Promise<TaskView>;
   revertProjectTask?(id: string, taskId: string): Promise<TaskView>;
+  /** Whether an interrupted run can resume. Direct runner HTTP only. */
+  projectTaskRecovery?(id: string, taskId: string): Promise<TaskRecovery>;
+  /** Continue an interrupted run from its last checkpoint. */
+  resumeProjectTask?(id: string, taskId: string): Promise<TaskView>;
   /** Persistent text chat is currently available only on direct runner HTTP. */
   readonly supportsProjectChat?: boolean;
   projectConversations?(id: string, options?: ProjectListOptions): Promise<ProjectChatPage>;
@@ -247,6 +252,8 @@ export class HttpTransport implements Transport {
   reviewProjectTask = (id: string, taskId: string, decision: TaskReview, note?: string) =>
     this.api.reviewProjectTask(id, taskId, decision, this.via, note);
   revertProjectTask = (id: string, taskId: string) => this.api.revertProjectTask(id, taskId, this.via);
+  projectTaskRecovery = (id: string, taskId: string) => this.api.projectTaskRecovery(id, taskId);
+  resumeProjectTask = (id: string, taskId: string) => this.api.resumeProjectTask(id, taskId);
   session = (id: string) => this.api.session(id);
   dashboard = (id: string, sinceMs?: number) =>
     this.api.dashboard(id, sinceMs);

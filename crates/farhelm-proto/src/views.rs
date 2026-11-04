@@ -351,6 +351,22 @@ pub struct TaskDetail {
     pub output: Vec<OutputLine>,
 }
 
+/// Whether an interrupted run can continue where it stopped (ADR 0004).
+///
+/// `GET /v1/tasks/{id}/recovery`. Asked of any run; only one settled by
+/// recovery after its loop stopped can ever answer `resumable`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskRecovery {
+    pub resumable: bool,
+    /// Why not, in a sentence a reviewer can act on. `None` when resumable.
+    pub reason: Option<String>,
+    /// When recovery settled the run; `None` for a run that ended on its own.
+    pub interrupted_at: Option<i64>,
+    /// The step whose checkpoint a resume continues from; `0` is the branch's
+    /// base. `None` when not resumable.
+    pub checkpoint_step: Option<i64>,
+}
+
 /// What is waiting in the Batch API queue, and what it has cost so far (C6).
 #[derive(Debug, Clone, Serialize)]
 pub struct BatchQueueView {

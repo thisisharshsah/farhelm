@@ -36,6 +36,7 @@ export * from "./chat.ts";
 export {
   isProject, parseProject, parseProjectPage, parseProjectRepository,
   parseProjectRepositoryPage, parseProjectTaskPage, isTaskView, parseTaskView, parseTaskDetail,
+  parseTaskRecovery,
   parseModesView, parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
 } from "./projects.ts";
 export {

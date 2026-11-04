@@ -1,6 +1,6 @@
 import {
   parseModesView, parseProject, parseProjectPage, parseProjectRepository,
-  parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskView,
+  parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskRecovery, parseTaskView,
   parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
 } from "./projects.ts";
 import {
@@ -342,6 +342,17 @@ export interface TaskDetail extends TaskView {
 }
 
 export type TaskReview = "approve" | "reject";
+
+/** Whether an interrupted run can continue where it stopped (ADR 0004). */
+export interface TaskRecovery {
+  resumable: boolean;
+  /** Why not, in a sentence a reviewer can act on. Null when resumable. */
+  reason: string | null;
+  /** When recovery settled the run; null for a run that ended on its own. */
+  interrupted_at: number | null;
+  /** The step a resume continues from; 0 is the branch's base. */
+  checkpoint_step: number | null;
+}
 
 /** True when this status means the task is done changing on its own. */
 export function isTaskSettled(status: TaskStatus): boolean {
@@ -765,6 +776,15 @@ export function createRunnerApi(baseUrl = "") {
     reviewProjectTask: async (id: string, taskId: string, decision: TaskReview, via: DecidedVia, note?: string) => {
       const task = parseTaskView(await request<unknown>(base, `${projectPath(id)}/tasks/${encodeURIComponent(taskId)}/review`, {
         method: "POST", body: JSON.stringify({ decision, via, note: note ?? null }),
+      }));
+      if (task.id !== taskId) throw new Error("The runner returned a different task.");
+      return task;
+    },
+    projectTaskRecovery: async (id: string, taskId: string) =>
+      parseTaskRecovery(await request<unknown>(base, `${projectPath(id)}/tasks/${encodeURIComponent(taskId)}/recovery`)),
+    resumeProjectTask: async (id: string, taskId: string) => {
+      const task = parseTaskView(await request<unknown>(base, `${projectPath(id)}/tasks/${encodeURIComponent(taskId)}/resume`, {
+        method: "POST",
       }));
       if (task.id !== taskId) throw new Error("The runner returned a different task.");
       return task;

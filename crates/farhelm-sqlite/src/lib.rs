@@ -47,6 +47,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0019_runner_identity.sql"),
     include_str!("../migrations/0020_work_modes.sql"),
     include_str!("../migrations/0021_work_items.sql"),
+    include_str!("../migrations/0022_run_lease.sql"),
 ];
 
 const BATCH_COLUMNS: &str = "id, session_id, custom_id, task_type, model, tier, request_json, \
@@ -1523,6 +1524,64 @@ impl BatchStore for SqliteStore {
     }
 }
 
+/// The one statement that writes a whole task row, shared by the plain upsert
+/// and the fenced finish so the two cannot drift apart. Lease and interruption
+/// columns are deliberately absent: only the lease methods move them.
+fn write_task(conn: &Connection, task: &AgentTask) -> rusqlite::Result<usize> {
+    conn.execute(
+        &format!(
+            "INSERT INTO agent_task ({TASK_COLUMNS}) VALUES
+             (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,
+              ?20,?21,?22,?23,?24,?25)
+             ON CONFLICT(id) DO UPDATE SET
+               status = excluded.status,
+               summary = excluded.summary,
+               diff_json = excluded.diff_json,
+               worktree_json = excluded.worktree_json,
+               files_changed = excluded.files_changed,
+               lines_added = excluded.lines_added,
+               lines_removed = excluded.lines_removed,
+               steps = excluded.steps,
+               cost_usd = excluded.cost_usd,
+               error = excluded.error,
+               review_note = excluded.review_note,
+               decided_via = excluded.decided_via,
+               updated_at = excluded.updated_at,
+               decided_at = excluded.decided_at,
+               verify_grade = excluded.verify_grade,
+               verify_notes = excluded.verify_notes,
+               verify_model = excluded.verify_model"
+        ),
+        params![
+            task.id,
+            task.session_id,
+            task.repo_id,
+            task.prompt,
+            task.status.as_str(),
+            task.summary,
+            task.diff_json,
+            task.worktree_json,
+            task.files_changed,
+            task.lines_added,
+            task.lines_removed,
+            task.steps,
+            task.cost_usd,
+            task.error,
+            task.review_note,
+            task.decided_via.map(|via| via.as_str()),
+            task.created_at,
+            task.updated_at,
+            task.decided_at,
+            task.verify_grade,
+            task.verify_notes,
+            task.verify_model,
+            task.mode.as_str(),
+            task.model,
+            task.work_item_id,
+        ],
+    )
+}
+
 impl TaskStore for SqliteStore {
     fn begin_task_step(&self, task_id: &str, tool: &str, input: &str, at_ms: i64) -> Result<i64> {
         let mut conn = self.lock()?;
@@ -1593,61 +1652,202 @@ impl TaskStore for SqliteStore {
         Ok(rows)
     }
 
-    fn upsert_task(&self, task: &AgentTask) -> Result<()> {
+    fn set_task_step_checkpoint(&self, task_id: &str, ordinal: i64, commit: &str) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(
-            &format!(
-                "INSERT INTO agent_task ({TASK_COLUMNS}) VALUES
-                 (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,
-                  ?20,?21,?22,?23,?24,?25)
-                 ON CONFLICT(id) DO UPDATE SET
-                   status = excluded.status,
-                   summary = excluded.summary,
-                   diff_json = excluded.diff_json,
-                   worktree_json = excluded.worktree_json,
-                   files_changed = excluded.files_changed,
-                   lines_added = excluded.lines_added,
-                   lines_removed = excluded.lines_removed,
-                   steps = excluded.steps,
-                   cost_usd = excluded.cost_usd,
-                   error = excluded.error,
-                   review_note = excluded.review_note,
-                   decided_via = excluded.decided_via,
-                   updated_at = excluded.updated_at,
-                   decided_at = excluded.decided_at,
-                   verify_grade = excluded.verify_grade,
-                   verify_notes = excluded.verify_notes,
-                   verify_model = excluded.verify_model"
-            ),
-            params![
-                task.id,
-                task.session_id,
-                task.repo_id,
-                task.prompt,
-                task.status.as_str(),
-                task.summary,
-                task.diff_json,
-                task.worktree_json,
-                task.files_changed,
-                task.lines_added,
-                task.lines_removed,
-                task.steps,
-                task.cost_usd,
-                task.error,
-                task.review_note,
-                task.decided_via.map(|via| via.as_str()),
-                task.created_at,
-                task.updated_at,
-                task.decided_at,
-                task.verify_grade,
-                task.verify_notes,
-                task.verify_model,
-                task.mode.as_str(),
-                task.model,
-                task.work_item_id,
-            ],
+            "UPDATE task_step SET checkpoint = ?3 WHERE task_id = ?1 AND ordinal = ?2",
+            params![task_id, ordinal, commit],
         )
         .map_err(backend)?;
+        Ok(())
+    }
+
+    fn task_step_checkpoints(&self, task_id: &str) -> Result<Vec<(i64, String)>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT ordinal, checkpoint FROM task_step
+                 WHERE task_id = ?1 AND checkpoint IS NOT NULL ORDER BY ordinal",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![task_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
+    fn running_task_ids(&self) -> Result<Vec<String>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM agent_task WHERE status = 'running' ORDER BY created_at")
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(backend)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend)?;
+        Ok(rows)
+    }
+
+    fn claim_task_lease(
+        &self,
+        task_id: &str,
+        holder: &str,
+        now_ms: i64,
+        ttl_ms: i64,
+        include_unleased: bool,
+    ) -> Result<Option<i64>> {
+        let mut conn = self.lock()?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(backend)?;
+        let claimed = tx
+            .execute(
+                "UPDATE agent_task
+                 SET lease_holder = ?2, lease_expires_at = ?3 + ?4,
+                     lease_generation = lease_generation + 1
+                 WHERE id = ?1 AND status = 'running'
+                   AND ((lease_holder IS NULL AND ?5)
+                        OR (lease_holder IS NOT NULL AND lease_expires_at <= ?3))",
+                params![task_id, holder, now_ms, ttl_ms, include_unleased],
+            )
+            .map_err(backend)?;
+        let generation = if claimed == 1 {
+            Some(
+                tx.query_row(
+                    "SELECT lease_generation FROM agent_task WHERE id = ?1",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .map_err(backend)?,
+            )
+        } else {
+            None
+        };
+        tx.commit().map_err(backend)?;
+        Ok(generation)
+    }
+
+    fn renew_task_lease(
+        &self,
+        task_id: &str,
+        holder: &str,
+        generation: i64,
+        now_ms: i64,
+        ttl_ms: i64,
+    ) -> Result<bool> {
+        let conn = self.lock()?;
+        let renewed = conn
+            .execute(
+                "UPDATE agent_task SET lease_expires_at = ?4 + ?5
+                 WHERE id = ?1 AND lease_holder = ?2 AND lease_generation = ?3
+                   AND status = 'running'",
+                params![task_id, holder, generation, now_ms, ttl_ms],
+            )
+            .map_err(backend)?;
+        Ok(renewed == 1)
+    }
+
+    fn finish_task_fenced(
+        &self,
+        task: &AgentTask,
+        holder: &str,
+        generation: i64,
+        interrupted_at: Option<i64>,
+    ) -> Result<bool> {
+        let mut conn = self.lock()?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(backend)?;
+        // The check and the write share one immediate transaction, so a
+        // takeover cannot land between them.
+        let owner: Option<(Option<String>, i64)> = tx
+            .query_row(
+                "SELECT lease_holder, lease_generation FROM agent_task WHERE id = ?1",
+                params![task.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(backend)?;
+        let owns = matches!(
+            &owner,
+            Some((Some(current), current_generation))
+                if current == holder && *current_generation == generation
+        );
+        if !owns {
+            return Ok(false);
+        }
+        write_task(&tx, task).map_err(backend)?;
+        tx.execute(
+            "UPDATE agent_task
+             SET lease_holder = NULL, lease_expires_at = NULL, interrupted_at = ?2
+             WHERE id = ?1",
+            params![task.id, interrupted_at],
+        )
+        .map_err(backend)?;
+        tx.commit().map_err(backend)?;
+        Ok(true)
+    }
+
+    fn task_interrupted_at(&self, task_id: &str) -> Result<Option<i64>> {
+        let conn = self.lock()?;
+        let at: Option<Option<i64>> = conn
+            .query_row(
+                "SELECT interrupted_at FROM agent_task WHERE id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(backend)?;
+        Ok(at.flatten())
+    }
+
+    fn resume_task(
+        &self,
+        task_id: &str,
+        holder: &str,
+        now_ms: i64,
+        ttl_ms: i64,
+    ) -> Result<Option<i64>> {
+        let mut conn = self.lock()?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(backend)?;
+        // The status guard is the race with review: a reviewer who applies or
+        // rejects the interrupted change set first wins, and the resume is
+        // refused rather than running over a decided diff.
+        let resumed = tx
+            .execute(
+                "UPDATE agent_task
+                 SET status = 'running', error = NULL, interrupted_at = NULL,
+                     lease_holder = ?2, lease_expires_at = ?3 + ?4,
+                     lease_generation = lease_generation + 1, updated_at = ?3
+                 WHERE id = ?1 AND interrupted_at IS NOT NULL
+                   AND status IN ('awaiting_review', 'failed')",
+                params![task_id, holder, now_ms, ttl_ms],
+            )
+            .map_err(backend)?;
+        let generation = if resumed == 1 {
+            Some(
+                tx.query_row(
+                    "SELECT lease_generation FROM agent_task WHERE id = ?1",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .map_err(backend)?,
+            )
+        } else {
+            None
+        };
+        tx.commit().map_err(backend)?;
+        Ok(generation)
+    }
+
+    fn upsert_task(&self, task: &AgentTask) -> Result<()> {
+        let conn = self.lock()?;
+        write_task(&conn, task).map_err(backend)?;
         Ok(())
     }
 

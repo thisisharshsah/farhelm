@@ -295,3 +295,35 @@ it("bounds retained task rows while allowing the cursor to reach older tasks", a
   expect(host.textContent).toContain("Instruction number 249.");
   expect(button("Load older runs").disabled).toBe(false);
 });
+
+it("offers to resume an interrupted run and resumes it once through the project endpoint", async () => {
+  const resumed = deferred<TaskDetail>();
+  const resumeProjectTask = vi.fn().mockReturnValue(resumed.promise);
+  const projectTaskRecovery = vi.fn().mockResolvedValue({ resumable: true, reason: null, interrupted_at: 5, checkpoint_step: 2 });
+  const { transport } = runner({ projectTask: vi.fn().mockResolvedValue(task("task-one", "awaiting_review")), projectTaskRecovery, resumeProjectTask });
+  await render(transport, "project-one", "task-one");
+  expect(projectTaskRecovery).toHaveBeenCalledWith("project-one", "task-one");
+  expect(host.textContent).toContain("from step 2");
+  await act(async () => { button("Resume run").click(); button("Resume run").click(); });
+  expect(resumeProjectTask).toHaveBeenCalledExactlyOnceWith("project-one", "task-one");
+  await act(async () => resumed.resolve(task("task-one", "running")));
+});
+
+it("explains why an interrupted run cannot resume and offers no button", async () => {
+  const projectTaskRecovery = vi.fn().mockResolvedValue({
+    resumable: false, reason: "its checkout is no longer on disk", interrupted_at: 5, checkpoint_step: null,
+  });
+  const { transport } = runner({ projectTask: vi.fn().mockResolvedValue(task("task-one", "failed")), projectTaskRecovery, resumeProjectTask: vi.fn() });
+  await render(transport, "project-one", "task-one");
+  expect(host.textContent).toContain("cannot be resumed: its checkout is no longer on disk");
+  expect([...host.querySelectorAll("button")].some((item) => item.textContent === "Resume run")).toBe(false);
+});
+
+it("shows nothing about resuming for a run that ended on its own", async () => {
+  const projectTaskRecovery = vi.fn().mockResolvedValue({
+    resumable: false, reason: "only a run that stopped before it finished can be resumed", interrupted_at: null, checkpoint_step: null,
+  });
+  const { transport } = runner({ projectTask: vi.fn().mockResolvedValue(task("task-one", "awaiting_review")), projectTaskRecovery, resumeProjectTask: vi.fn() });
+  await render(transport, "project-one", "task-one");
+  expect(host.querySelector('[aria-label="Interrupted run"]')).toBeNull();
+});

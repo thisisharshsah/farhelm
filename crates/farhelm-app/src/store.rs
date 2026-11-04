@@ -400,6 +400,43 @@ store_port! {
     /// Every recorded step of a task, in order.
     fn list_task_steps(&self, task_id: &str) -> Result<Vec<TaskStep>>;
 
+    /// Record the checkpoint commit taken after a step settled.
+    fn set_task_step_checkpoint(&self, task_id: &str, ordinal: i64, commit: &str) -> Result<()>;
+
+    /// Every step that has a checkpoint, as `(ordinal, commit)`, in order.
+    fn task_step_checkpoints(&self, task_id: &str) -> Result<Vec<(i64, String)>>;
+
+    /// Ids of every task whose status is `running`: what recovery sweeps.
+    /// Ids only, so a sweep every few seconds does not read every diff.
+    fn running_task_ids(&self) -> Result<Vec<String>>;
+
+    /// Claim the run lease on a `running` task (ADR 0004).
+    ///
+    /// Succeeds when the lease has expired, or when the row has no holder and
+    /// `include_unleased` is set (a fresh row, or one written before leases
+    /// existed). Every claim bumps the fencing generation, which is returned;
+    /// `None` means a live holder still owns the run, or it is not running.
+    fn claim_task_lease(&self, task_id: &str, holder: &str, now_ms: i64, ttl_ms: i64, include_unleased: bool) -> Result<Option<i64>>;
+
+    /// Extend a lease this holder still owns at this generation. Fenced by the
+    /// generation, not by expiry: an expired lease nobody took over is still
+    /// safe to renew. `false` means it was taken over and the loop must stop.
+    fn renew_task_lease(&self, task_id: &str, holder: &str, generation: i64, now_ms: i64, ttl_ms: i64) -> Result<bool>;
+
+    /// Write a run's final row and release its lease, but only if `holder`
+    /// still owns it at `generation`. `interrupted_at` is set when recovery,
+    /// not the run's own loop, is settling it. `false` means a stale writer
+    /// was refused and nothing was written.
+    fn finish_task_fenced(&self, task: &AgentTask, holder: &str, generation: i64, interrupted_at: Option<i64>) -> Result<bool>;
+
+    /// When recovery settled this run, if it did and it has not resumed since.
+    fn task_interrupted_at(&self, task_id: &str) -> Result<Option<i64>>;
+
+    /// Put an interrupted run back to `running` under a new lease, atomically.
+    /// Only a run recovery settled, still awaiting review or failed, can be
+    /// resumed; `None` means it was not (or was resumed or decided first).
+    fn resume_task(&self, task_id: &str, holder: &str, now_ms: i64, ttl_ms: i64) -> Result<Option<i64>>;
+
     /// Settle a task, resolving the race between two devices reviewing the same
     /// diff. Returns what was stored, and whether this caller's decision is the
     /// one that stuck: the same contract as [`Store::decide_approval`],

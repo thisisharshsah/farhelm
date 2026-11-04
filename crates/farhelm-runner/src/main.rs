@@ -845,10 +845,13 @@ async fn serve_async(flags: Flags) -> Fallible {
     let orphaned = farhelm_runner::task::reconcile_after_restart(&state);
     if orphaned > 0 {
         println!(
-            "  {orphaned} task(s) were still working when the runner last stopped; \
-             marked failed"
+            "  {orphaned} run(s) were still working when the runner last stopped; \
+             settled for review or marked failed, and resumable where safe"
         );
     }
+    // Runs whose loop dies while this runner keeps going (a panic, or another
+    // runner on this database) are found by their expired lease.
+    farhelm_runner::task::spawn_lease_sweep(Arc::clone(&state));
     // Same for conversation replies: a pending turn belongs to a reply that
     // will never arrive, and must say so rather than spin forever.
     match farhelm_runner::project_chat::reconcile_after_restart(&state) {

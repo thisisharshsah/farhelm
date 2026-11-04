@@ -219,6 +219,7 @@ impl Worktree {
             &["worktree", "remove", "--force", &path_str(&path)],
         );
         let _ = git(repo_root, &["branch", "-D", &branch]);
+        drop_checkpoint_refs(repo_root, &slug);
 
         git(
             repo_root,
@@ -424,6 +425,7 @@ impl Worktree {
             &["worktree", "remove", "--force", &path_str(&self.path)],
         )?;
         git(&self.repo, &["branch", "-D", &self.branch])?;
+        drop_checkpoint_refs(&self.repo, &self.slug());
         Ok(())
     }
 
@@ -439,6 +441,7 @@ impl Worktree {
             &self.repo,
             &["worktree", "remove", "--force", &path_str(&self.path)],
         )?;
+        drop_checkpoint_refs(&self.repo, &self.slug());
         Ok(())
     }
 
@@ -457,6 +460,69 @@ impl Worktree {
     /// The commit this task's branch points at, if the branch is still there.
     pub fn tip(&self) -> Result<String> {
         git(&self.repo, &["rev-parse", &self.branch])
+    }
+
+    /// Snapshot the checkout as it stands after a step (ADR 0004).
+    ///
+    /// The snapshot is a commit on no branch: everything the task has written,
+    /// tracked or new, as a tree whose parent is the checkout's `HEAD`. The
+    /// task's branch does not move, so the diff a reviewer sees and the commit
+    /// `apply` makes are unchanged. A ref under `refs/farhelm/checkpoints/`
+    /// keeps the commit from being collected until the checkout is removed.
+    ///
+    /// Staging uses the worktree's own index, as [`Worktree::diff`] already
+    /// does, and respects `.gitignore`: ignored files (build output, local
+    /// secrets) are not captured. `commit-tree` runs no hooks and the commit
+    /// is never signed. Shell effects outside the checkout are not captured
+    /// either; a checkpoint is only a record of files.
+    pub fn checkpoint(&self, label: &str) -> Result<String> {
+        self.stage_all()?;
+        let tree = git(&self.path, &["write-tree"])?;
+        let commit = git(
+            &self.path,
+            &[
+                "-c",
+                &format!("user.name={AUTHOR_NAME}"),
+                "-c",
+                &format!("user.email={AUTHOR_EMAIL}"),
+                "commit-tree",
+                "--no-gpg-sign",
+                &tree,
+                "-p",
+                "HEAD",
+                "-m",
+                label,
+            ],
+        )?;
+        let reference = format!(
+            "{}/{}",
+            checkpoint_prefix(&self.slug()),
+            commit_short(&commit)
+        );
+        git(&self.path, &["update-ref", &reference, &commit])?;
+        Ok(commit)
+    }
+
+    /// Whether the checkout holds exactly what `commit` snapshotted.
+    ///
+    /// Resuming is only safe from a known state. A checkout someone has edited
+    /// since its last checkpoint is not that, and is reviewed rather than
+    /// continued.
+    pub fn matches_checkpoint(&self, commit: &str) -> Result<bool> {
+        self.stage_all()?;
+        let current = git(&self.path, &["write-tree"])?;
+        let recorded = git(&self.path, &["rev-parse", &format!("{commit}^{{tree}}")])?;
+        Ok(current == recorded)
+    }
+
+    /// The slug this checkout was created under: the last component of its
+    /// branch name.
+    fn slug(&self) -> String {
+        self.branch
+            .rsplit('/')
+            .next()
+            .unwrap_or(&self.branch)
+            .to_owned()
     }
 
     /// Take an applied task back off the branch it was merged into.
@@ -540,6 +606,34 @@ fn worktree_home(repo_root: &Path) -> Result<PathBuf> {
 
 fn path_str(path: &Path) -> String {
     path.display().to_string()
+}
+
+/// Where a task's checkpoint refs live.
+fn checkpoint_prefix(slug: &str) -> String {
+    format!("refs/farhelm/checkpoints/{slug}")
+}
+
+/// Enough of a commit id to name a ref by, and unique within one task.
+fn commit_short(commit: &str) -> &str {
+    &commit[..commit.len().min(12)]
+}
+
+/// Delete every checkpoint ref a task left. Best-effort: a checkpoint that
+/// outlives its checkout costs some disk until `git gc`, never correctness.
+fn drop_checkpoint_refs(repo: &Path, slug: &str) {
+    let Ok(listed) = git(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            &format!("{}/", checkpoint_prefix(slug)),
+        ],
+    ) else {
+        return;
+    };
+    for reference in listed.lines().filter(|line| !line.trim().is_empty()) {
+        let _ = git(repo, &["update-ref", "-d", reference.trim()]);
+    }
 }
 
 /// Reduce a task id to something git will accept as a branch component.
@@ -736,6 +830,47 @@ mod tests {
             "the change should now be in the working tree"
         );
         tree.release().unwrap();
+    }
+
+    #[test]
+    fn a_checkpoint_records_the_checkout_without_moving_its_branch() {
+        let repo = TempRepo::new("checkpoint");
+        let tree = Worktree::create(&repo.0, "task-ckpt").unwrap();
+        std::fs::write(tree.path().join("new.txt"), "written by a step\n").unwrap();
+
+        let commit = tree.checkpoint("step 1").unwrap();
+        // The branch, and so the diff a reviewer sees, is where it was.
+        assert_eq!(tree.tip().unwrap(), tree.base());
+        assert_eq!(tree.change_set().unwrap().files.len(), 1);
+        // The snapshot holds the new file and is kept alive by a ref.
+        assert!(tree.matches_checkpoint(&commit).unwrap());
+        let refs = git(
+            &repo.0,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/farhelm/checkpoints/",
+            ],
+        )
+        .unwrap();
+        assert_eq!(refs.lines().count(), 1, "{refs}");
+
+        // A later edit no longer matches it.
+        std::fs::write(tree.path().join("new.txt"), "edited by hand\n").unwrap();
+        assert!(!tree.matches_checkpoint(&commit).unwrap());
+
+        // Removing the checkout removes its checkpoints.
+        tree.discard().unwrap();
+        let refs = git(
+            &repo.0,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/farhelm/checkpoints/",
+            ],
+        )
+        .unwrap();
+        assert!(refs.trim().is_empty(), "{refs}");
     }
 
     #[test]

@@ -50,6 +50,14 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
             "/v1/projects/{id}/tasks/{task_id}/revert",
             post(revert_task),
         )
+        .route(
+            "/v1/projects/{id}/tasks/{task_id}/recovery",
+            get(task_recovery),
+        )
+        .route(
+            "/v1/projects/{id}/tasks/{task_id}/resume",
+            post(resume_task),
+        )
         .layer(DefaultBodyLimit::max(128 * 1024))
 }
 
@@ -214,6 +222,37 @@ async fn revert_task(
             .map_err(workflow_error)?;
         let lookups = Lookups::new(state.store.as_ref()).map_err(|_| storage_error())?;
         let task = task::revert(&state, &task_id, via).map_err(task_error)?;
+        Ok(task_view(&lookups, task))
+    })
+    .await
+    .map(Json)
+}
+
+async fn task_recovery(
+    State(state): State<Arc<AppState>>,
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<farhelm_proto::views::TaskRecovery>, ApiError> {
+    operate(state, move |state| {
+        workflow(&state)?
+            .task(&id, &task_id)
+            .map_err(workflow_error)?;
+        task::recovery(&state, &task_id).map_err(task_error)
+    })
+    .await
+    .map(Json)
+}
+
+async fn resume_task(
+    State(state): State<Arc<AppState>>,
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<TaskView>, ApiError> {
+    let runtime = tokio::runtime::Handle::current();
+    operate(state, move |state| {
+        workflow(&state)?
+            .task(&id, &task_id)
+            .map_err(workflow_error)?;
+        let task = task::resume(&state, &task_id, &runtime).map_err(task_error)?;
+        let lookups = Lookups::new(state.store.as_ref()).map_err(|_| storage_error())?;
         Ok(task_view(&lookups, task))
     })
     .await

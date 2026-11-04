@@ -167,6 +167,8 @@ fn base_router(state: Arc<AppState>) -> Router {
         .route("/v1/tasks/{id}/steps", get(task_steps))
         .route("/v1/tasks/{id}/review", post(review_task))
         .route("/v1/tasks/{id}/revert", post(revert_task))
+        .route("/v1/tasks/{id}/recovery", get(task_recovery))
+        .route("/v1/tasks/{id}/resume", post(resume_task))
         .route("/v1/complete", post(complete))
         // The same gateway, in the shape every existing tool already speaks.
         .route("/v1/messages", post(crate::messages::messages))
@@ -460,6 +462,25 @@ async fn review_task(
         body.note.as_deref().filter(|note| !note.trim().is_empty()),
         body.via.unwrap_or(DecidedVia::Web),
     )?;
+    Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
+}
+
+/// `GET /v1/tasks/{id}/recovery`: whether an interrupted run can resume, and
+/// from which step, or why not.
+async fn task_recovery(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<farhelm_proto::views::TaskRecovery> {
+    Ok(Json(crate::task::recovery(&state, &id)?))
+}
+
+/// `POST /v1/tasks/{id}/resume`: continue an interrupted run from its last
+/// checkpoint. 409 with the reason when it cannot.
+async fn resume_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<TaskView> {
+    let task = crate::task::resume(&state, &id, &tokio::runtime::Handle::current())?;
     Ok(Json(task_view(&Lookups::new(state.store.as_ref())?, task)))
 }
 

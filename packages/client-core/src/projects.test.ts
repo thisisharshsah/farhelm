@@ -78,3 +78,39 @@ describe("runner project HTTP boundary", () => {
     transport.close();
   });
 });
+
+describe("task recovery", () => {
+  it("accepts a resumable or explained answer and rejects one that contradicts itself", async () => {
+    const { parseTaskRecovery } = await import("./index.ts");
+    expect(parseTaskRecovery({ resumable: true, reason: null, interrupted_at: 5, checkpoint_step: 0 }).checkpoint_step).toBe(0);
+    expect(parseTaskRecovery({ resumable: false, reason: "its checkout is gone", interrupted_at: 5, checkpoint_step: null }).reason)
+      .toBe("its checkout is gone");
+    for (const bad of [
+      { resumable: true, reason: "but also no", interrupted_at: 5, checkpoint_step: 2 },
+      { resumable: true, reason: null, interrupted_at: 5, checkpoint_step: null },
+      { resumable: false, reason: null, interrupted_at: null, checkpoint_step: null },
+      { resumable: "yes", reason: null, interrupted_at: 5, checkpoint_step: 1 },
+    ]) expect(() => parseTaskRecovery(bad)).toThrow();
+  });
+
+  it("asks and resumes only through the nested project routes", async () => {
+    const calls: Array<[string, string]> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([init?.method ?? "GET", url]);
+      const body = url.endsWith("/recovery")
+        ? { resumable: true, reason: null, interrupted_at: 5, checkpoint_step: 2 }
+        : { id: "t1", session_id: "s1", repo_id: "r1", repo_name: "repo", repo_path: "/repo", prompt: "p", status: "running",
+          summary: "", files_changed: 0, lines_added: 0, lines_removed: 0, change_summary: "", steps: 2, cost_usd: 0,
+          error: null, review_note: null, verify_grade: null, verify_notes: null, verify_model: null, mode: "agent",
+          model: null, work_item_id: null, decided_via: null, created_at: 1, updated_at: 2, decided_at: null };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const api = createRunnerApi("http://runner");
+    expect((await api.projectTaskRecovery("p1", "t1")).resumable).toBe(true);
+    expect((await api.resumeProjectTask("p1", "t1")).status).toBe("running");
+    expect(calls).toEqual([
+      ["GET", "http://runner/v1/projects/p1/tasks/t1/recovery"],
+      ["POST", "http://runner/v1/projects/p1/tasks/t1/resume"],
+    ]);
+  });
+});
