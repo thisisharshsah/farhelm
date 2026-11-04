@@ -71,5 +71,5 @@ it("filters distinct repositories with the same name and recovers a removed sele
   await render([second]);
   expect(host.querySelector("select")).toBeNull();
   expect(host.querySelector(".task-list")?.textContent).toContain("Review two");
-  expect(host.textContent).not.toContain("No matching tasks");
+  expect(host.textContent).not.toContain("No matching runs");
 });

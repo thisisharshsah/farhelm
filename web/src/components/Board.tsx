@@ -1,5 +1,5 @@
 /**
- * The task board: every agent task on this runner, grouped by state.
+ * The run board: every agent run on this runner, grouped by state.
  *
  * Modelled on a work-management board rather than an inbox. Groups are
  * ordered by what needs a person first, each status is a filled cell with its
@@ -8,7 +8,7 @@
  * columns; which one is shown is a per-browser convenience (see
  * `tasks-view.ts`) that never blocks the board when storage is unavailable.
  *
- * Rows are not clickable as a whole. The task title is a real button, so the
+ * Rows are not clickable as a whole. The run title is a real button, so the
  * table stays a table for a screen reader and every row is reachable by Tab.
  */
 
@@ -104,7 +104,7 @@ export function TaskBoard({
     <div className="page">
       <header className="page-head">
         <div>
-          <h1 className="page-title">Board</h1>
+          <h1 className="page-title">Runs</h1>
           <p className="page-sub">
             {tasks.length} run{tasks.length === 1 ? "" : "s"} on this runner
           </p>
@@ -151,7 +151,7 @@ export function TaskBoard({
 
       {tasks.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">No tasks yet.</p>
+          <p className="empty-title">No runs yet.</p>
           {transport?.supportsTaskControl ? (
             <>
               <p className="tile-note">
@@ -162,14 +162,14 @@ export function TaskBoard({
             </>
           ) : (
             <p className="tile-note">
-              Tasks start on the runner's own machine. Once one is running you can
+              Runs start on the runner's own machine. Once one is running you can
               review its diff from anywhere.
             </p>
           )}
         </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">No matching tasks.</p>
+          <p className="empty-title">No matching runs.</p>
           <p className="tile-note">Nothing matches the search or repository filter.</p>
         </div>
       ) : viewMode === "board" ? (
@@ -181,7 +181,7 @@ export function TaskBoard({
                 <span className="count-pill">{group.tasks.length}</span>
               </h2>
               <div className="kanban-stack">
-                {group.tasks.length === 0 ? <p className="kanban-empty">No tasks</p> : group.tasks.map((task) => (
+                {group.tasks.length === 0 ? <p className="kanban-empty">No runs</p> : group.tasks.map((task) => (
                   <button
                     type="button"
                     key={task.id}
@@ -208,7 +208,7 @@ export function TaskBoard({
           <table className="board-table">
             <thead>
               <tr>
-                <th scope="col" className="col-task">Task</th>
+                <th scope="col" className="col-task">Run</th>
                 <th scope="col">Repository</th>
                 <th scope="col" className="col-status">Status</th>
                 <th scope="col">Changes</th>

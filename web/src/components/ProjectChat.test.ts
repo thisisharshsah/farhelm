@@ -36,9 +36,9 @@ function runner(projectConversation: Transport["projectConversation"], overrides
   } as unknown as Transport;
 }
 
-async function render(transport: Transport, onTaskStarted = vi.fn()) {
+async function render(transport: Transport, onTaskStarted = vi.fn(), onNavigate = vi.fn()) {
   await act(async () => root.render(createElement(ConversationPane, {
-    transport: transport as never, projectId: "p", conversation, repository: repo, onTaskStarted,
+    transport: transport as never, projectId: "p", conversation, repository: repo, onTaskStarted, onNavigate,
   })));
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   return onTaskStarted;
@@ -119,4 +119,65 @@ it("retries a send that timed out with the same request id, and re-reads the con
   const first = sendProjectMessage.mock.calls[0]![2].request_id;
   const second = sendProjectMessage.mock.calls[1]![2].request_id;
   expect(second).toBe(first);
+});
+
+
+it("keeps a created task after an uncertain run start and opens it without creating another", async () => {
+  const createProjectWorkItem = vi.fn().mockResolvedValue({ id: "work-1", title: "Cap the backoff" });
+  const startWorkItemRun = vi.fn().mockRejectedValue(new Error("The request timed out."));
+  const projectWorkItems = vi.fn().mockResolvedValue({ items: [], next_cursor: null });
+  const onNavigate = vi.fn();
+  const onTaskStarted = vi.fn();
+  await render(runner(vi.fn().mockResolvedValue(detail("completed")), {
+    createProjectWorkItem, startWorkItemRun, projectWorkItems,
+  }), onTaskStarted, onNavigate);
+  await act(async () => button("Create task")!.click());
+  const draft = host.querySelector<HTMLFormElement>("form.chat-task-draft")!;
+  await act(async () => {
+    draft.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    draft.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(createProjectWorkItem).toHaveBeenCalledTimes(1);
+  expect(startWorkItemRun).toHaveBeenCalledTimes(1);
+  expect(projectWorkItems).toHaveBeenCalledTimes(2);
+  expect(onTaskStarted).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("Task created: Cap the backoff");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Open the task to check its runs before starting another");
+  expect(host.querySelector("form.chat-task-draft")).toBeNull();
+  expect(button("Create task")).toBeUndefined();
+  const open = host.querySelector<HTMLAnchorElement>('a[href="#/p/p/w/work-1"]')!;
+  await act(async () => open.click());
+  expect(onNavigate).toHaveBeenCalledExactlyOnceWith("/p/p/w/work-1");
+  expect(createProjectWorkItem).toHaveBeenCalledTimes(1);
+  expect(startWorkItemRun).toHaveBeenCalledTimes(1);
+});
+
+it("does not start the run after leaving while task creation is pending", async () => {
+  let finish: (value: { id: string; title: string }) => void = () => {};
+  const createProjectWorkItem = vi.fn().mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  const startWorkItemRun = vi.fn();
+  const onTaskStarted = await render(runner(vi.fn().mockResolvedValue(detail("completed")), { createProjectWorkItem, startWorkItemRun }));
+  await act(async () => button("Create task")!.click());
+  await act(async () => {
+    host.querySelector<HTMLFormElement>("form.chat-task-draft")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await act(async () => root.render(null));
+  await act(async () => finish({ id: "work-1", title: "Cap the backoff" }));
+  expect(startWorkItemRun).not.toHaveBeenCalled();
+  expect(onTaskStarted).not.toHaveBeenCalled();
+});
+
+it("ignores a run response after leaving the conversation", async () => {
+  let finish: (value: { id: string }) => void = () => {};
+  const createProjectWorkItem = vi.fn().mockResolvedValue({ id: "work-1", title: "Cap the backoff" });
+  const startWorkItemRun = vi.fn().mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  const onTaskStarted = await render(runner(vi.fn().mockResolvedValue(detail("completed")), { createProjectWorkItem, startWorkItemRun }));
+  await act(async () => button("Create task")!.click());
+  await act(async () => {
+    host.querySelector<HTMLFormElement>("form.chat-task-draft")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(startWorkItemRun).toHaveBeenCalledTimes(1);
+  await act(async () => root.render(null));
+  await act(async () => finish({ id: "run-1" }));
+  expect(onTaskStarted).not.toHaveBeenCalled();
 });

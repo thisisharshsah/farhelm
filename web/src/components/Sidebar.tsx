@@ -2,7 +2,7 @@
  * The desktop sidebar: where am I, what else is there, and what is the work.
  *
  * Modelled on coding-agent apps rather than a settings menu. Above the fold
- * are the destinations and a count of what needs you; below them, the tasks
+ * are the destinations and a count of what needs you; below them, the runs
  * themselves grouped under their repositories, each with its state, so the
  * work is navigable without opening the board first. The machine being
  * supervised and the health of the link to it are stated permanently at the
@@ -146,7 +146,7 @@ export function Sidebar({
       {canStartTask ? (
         <button className="side-new" onClick={() => onNavigate("/t/new")}>
           <Icon name="plus" size={16} />
-          <span>New task</span>
+          <span>New run</span>
         </button>
       ) : null}
 
@@ -192,7 +192,7 @@ export function Sidebar({
                   }) : null}
                   {open && repo.tasks.length > TASKS_PER_REPO ? (
                     <button className="side-thread side-more" onClick={() => onNavigate("/t")}>
-                      {repo.tasks.length - TASKS_PER_REPO} more on the board
+                      {repo.tasks.length - TASKS_PER_REPO} more runs on the board
                     </button>
                   ) : null}
                 </div>

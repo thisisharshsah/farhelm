@@ -1927,7 +1927,23 @@ svg.is-open {
   gap: var(--s-4);
   min-width: 0;
   overflow-x: hidden;
+  max-height: calc(100dvh - 3rem);
+  padding-right: var(--s-4);
+  border-right: 1px solid var(--border);
 }
+
+.ws-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  overflow-y: auto;
+  min-height: 0;
+  padding: 2px;
+}
+
+.ws-nav-toggle { display: none; align-items: center; gap: var(--s-2); padding: 0 var(--s-3); }
+.ws-search { width: 100%; min-width: 0; }
+.ws-search input { width: 100%; min-width: 0; }
 
 .ws-list .side-thread {
   min-width: 0;
@@ -1938,6 +1954,7 @@ svg.is-open {
   flex-direction: column;
   align-items: flex-start;
   gap: var(--s-1);
+  min-width: 0;
 }
 
 .ws-crumb {
@@ -1957,6 +1974,7 @@ svg.is-open {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
 }
 
 .ws-actions {
@@ -1972,6 +1990,9 @@ svg.is-open {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .ws-list {
@@ -2033,7 +2054,29 @@ svg.is-open {
   }
   .ws-side {
     position: static;
+    max-height: none;
+    padding: 0 0 var(--s-3);
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    gap: var(--s-3);
   }
+  .ws-side-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--s-2);
+    align-items: center;
+  }
+  .ws-crumb { grid-column: 1 / -1; justify-self: start; }
+  .ws-title { grid-column: 1 / -1; }
+  .ws-nav-toggle { display: inline-flex; justify-self: start; min-height: 44px; }
+  .ws-side-head > .btn-quiet { justify-self: end; min-height: 44px; }
+  .ws-navigation { display: none; }
+  .ws-navigation.is-open { display: flex; max-height: 55dvh; }
+  .ws-list .side-thread { min-height: 44px; }
+  .ws-main .project-chat-pane { height: max(24rem, calc(100dvh - 20rem)); min-height: 0; }
+  .ws-main .project-chat-messages { min-height: 6rem; max-height: none; }
+  .ws-main .composer-box,
+  .ws-main .project-chat-head { flex-shrink: 0; }
 }
 
 .view-wide {

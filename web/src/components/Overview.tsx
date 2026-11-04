@@ -4,7 +4,7 @@
  * Laid out like a work-management dashboard. A row of headline numbers, then
  * the queue of things only a person can clear, then the state of the work.
  * Forms follow the job each number does: single values are stat tiles, the
- * task mix is one horizontal stacked bar (part-to-whole) with every count
+ * run mix is one horizontal stacked bar (part-to-whole) with every count
  * written in its legend, and the live sessions are a table because each row
  * carries five facts.
  *
@@ -80,7 +80,7 @@ export function Overview({
         <span className="spacer" />
         {transport?.supportsTaskControl ? (
           <button className="btn btn-primary" onClick={() => onNavigate("/t/new")}>
-            <Icon name="plus" size={14} /> New task
+            <Icon name="plus" size={14} /> New run
           </button>
         ) : null}
       </header>
@@ -103,7 +103,7 @@ export function Overview({
         <StatTile
           label="Agents working"
           value={String(busySessions + working)}
-          note={`${busySessions} of ${live.length} session${live.length === 1 ? "" : "s"} · ${working} task${working === 1 ? "" : "s"} drafting`}
+          note={`${busySessions} of ${live.length} session${live.length === 1 ? "" : "s"} · ${working} run${working === 1 ? "" : "s"} drafting`}
         />
         <StatTile
           label="Spend today"
@@ -113,7 +113,7 @@ export function Overview({
         <StatTile
           label="Applied"
           value={String(applied)}
-          note={`of ${allTasks.length} task${allTasks.length === 1 ? "" : "s"}`}
+          note={`of ${allTasks.length} run${allTasks.length === 1 ? "" : "s"}`}
         />
       </div>
 
@@ -151,16 +151,16 @@ export function Overview({
           )}
         </section>
 
-        <section className="panel" aria-labelledby="task-mix">
+        <section className="panel" aria-labelledby="run-mix">
           <div className="panel-head">
-            <h2 id="task-mix">Tasks by status</h2>
+            <h2 id="run-mix">Runs by status</h2>
             <span className="spacer" />
             <button type="button" className="btn btn-quiet btn-small" onClick={() => onNavigate("/t")}>
               Open board
             </button>
           </div>
           {allTasks.length === 0 ? (
-            <p className="panel-empty">No tasks yet.</p>
+            <p className="panel-empty">No runs yet.</p>
           ) : (
             <>
               <div className="mix-bar" role="img" aria-label={mix.filter((m) => m.count > 0).map((m) => `${m.title} ${m.count}`).join(", ")}>
@@ -248,12 +248,12 @@ export function Overview({
           )}
         </section>
 
-        <section className="panel" aria-labelledby="recent-tasks">
+        <section className="panel" aria-labelledby="recent-runs">
           <div className="panel-head">
-            <h2 id="recent-tasks">Recent tasks</h2>
+            <h2 id="recent-runs">Recent runs</h2>
           </div>
           {recent.length === 0 ? (
-            <p className="panel-empty">Finished and running tasks appear here.</p>
+            <p className="panel-empty">Recent runs appear here as the agent works.</p>
           ) : (
             <ul className="recent-list">
               {recent.map((task) => (
