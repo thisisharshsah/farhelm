@@ -144,11 +144,20 @@ pub fn router_with_auth(state: Arc<AppState>, auth: LocalAuth) -> Router {
     }
 }
 
-fn base_router(state: Arc<AppState>) -> Router {
+/// Everything a project screen needs, and nothing else. The HTTP API serves
+/// these beside the rest; a signed-in device reaches only these, through
+/// [`crate::project_calls`], so this list is what that channel can touch.
+pub(crate) fn project_routes() -> Router<Arc<AppState>> {
     Router::new()
         .merge(crate::projects::routes())
         .merge(crate::project_chat::routes())
         .merge(crate::project_work_items::routes())
+        .route("/v1/modes", get(list_modes))
+}
+
+fn base_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .merge(project_routes())
         .route("/v1/repos", get(list_repos))
         .route("/v1/fleet", get(fleet))
         .route("/v1/sessions", get(list_sessions).post(start_session))
@@ -181,7 +190,6 @@ fn base_router(state: Arc<AppState>) -> Router {
         .route("/v1/pair/claim", post(pair_claim))
         .route("/v1/devices", get(list_devices))
         .route("/v1/agents", get(list_agents))
-        .route("/v1/modes", get(list_modes))
         .route("/v1/batch", get(batch_queue))
         .route("/v1/health", get(health))
         .layer(local_cors())

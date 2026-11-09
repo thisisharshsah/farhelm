@@ -22,4 +22,12 @@ These are reference patterns, not a claim of feature parity. No new component fr
 
 Rendered regression tests cover direct links outside the first page, list pagination and recovery, navigation disclosure, identity changes, draft preservation, duplicate submissions and partial creation. Browser checks use the running local app for navigation and responsive layout without sending model prompts, starting runs or changing customer tasks.
 
-Search operates on loaded data. The cross-project board still loads up to 50 projects and 100 tasks per project and explicitly identifies incomplete coverage. Server-side search (`GET /v1/search`, added 2026-11-04) now covers what the board did not load; conversation message text is not yet searched. Model quality, authentication behavior and native device packaging are outside this UI increment.
+Project navigation search filters loaded items. The cross-project board loads up to 50 projects and 100 tasks per project and explicitly identifies incomplete coverage. On a local runner, its search also queries `GET /v1/search` (added 2026-11-04) for projects, tasks, runs and conversation titles beyond those loaded pages. Conversation message text is not yet searched. Model quality, authentication behavior and native device packaging are outside this UI increment.
+
+## Follow-up, 2026-11-04
+
+- Keep the project search field at its natural control height in the vertical navigation. The shared board toolbar's horizontal flex basis otherwise becomes a 288px height on desktop. On narrow screens, the search control has a 44px touch target.
+- Keep an already opened conversation mounted when its metadata refresh fails, so an unsent draft survives. Show the refresh failure with a retry action; initial-load errors still use the dedicated error state.
+- The installed runner currently returns the app's HTML page for `/v1/search`, so the new endpoint is not available there yet. Search shows an actionable unavailable message instead of a JSON parsing error and offers an explicit retry. Filtering loaded tasks continues to work. Installing and validating a newer runner remains a separate deployment.
+
+Verification: all 190 web tests and the web typecheck pass. The staged app and service-worker builds pass and are served locally and on the live site. Browser checks at 1440x960 and 390x844 confirm no horizontal overflow, compact search controls, mobile keyboard navigation and a visible composer. The running app also displays the unavailable-search guidance correctly. No model request, task mutation or runner restart was needed.

@@ -24,7 +24,8 @@ import { useWorkspaceList } from "./workspace-list";
 import { Icon } from "./Icon";
 import { ModePicker, ModelPicker, useModes } from "./ModelChoice";
 import { ConversationPane, supportsProjectChat, type ChatTransport } from "./ProjectChat";
-import { ProjectTaskScreen, ProjectWorkflow, projectTaskPath } from "./ProjectWorkflow";
+import { AddRepository } from "./AddRepository";
+import { ProjectTaskScreen, projectTaskPath } from "./ProjectWorkflow";
 import { StatusPill, TASK_STATUS, WORK_ITEM_STATUS } from "./status";
 import { NewWorkItem, WorkItemScreen, supportsBoard, workItemPath, type BoardTransport } from "./WorkBoard";
 
@@ -117,7 +118,12 @@ function WorkspaceContent({ transport, project, focus, onNavigate }: WorkspacePr
     void transport.projectConversation(projectId, selectedId).then((detail) => {
       if (!cancelled) setSelected({ id: selectedId, conversation: detail.conversation, error: null });
     }).catch((cause: unknown) => {
-      if (!cancelled) setSelected({ id: selectedId, conversation: null, error: message(cause) });
+      // A failed background refresh must not unmount the current composer.
+      if (!cancelled) setSelected((previous) => ({
+        id: selectedId,
+        conversation: previous?.id === selectedId ? previous.conversation : null,
+        error: message(cause),
+      }));
     });
     return () => { cancelled = true; };
   }, [transport, projectId, selectedId, revision]);
@@ -230,6 +236,8 @@ function WorkspaceContent({ transport, project, focus, onNavigate }: WorkspacePr
       </aside>
 
       <main className="ws-main">
+        {current && selectedError ? <div className="notice" role="alert"><p>Could not refresh this conversation. {selectedError}</p>
+          <button className="btn btn-small" onClick={refresh}>Retry conversation</button></div> : null}
         {focus.kind === "chat" && focus.id === "new" ? (
           <NewConversation transport={transport} projectId={projectId} repositories={repos}
             onCreated={(created) => { refresh(); onNavigate(chatPath(projectId, created.id)); }} />
@@ -262,9 +270,7 @@ function WorkspaceContent({ transport, project, focus, onNavigate }: WorkspacePr
                 <Icon name="plus" size={14} /> New conversation
               </button>
             ) : (
-              <button type="button" className="btn btn-primary" onClick={() => navigate(`/p/${encodeURIComponent(projectId)}/settings`)}>
-                Attach a repository
-              </button>
+              <AddRepository transport={transport} projectId={projectId} attached={repos} onAdded={refresh} />
             )}
           </div>
         ) : focus.kind === "work" && focus.id === "new" ? (
@@ -286,7 +292,13 @@ function WorkspaceContent({ transport, project, focus, onNavigate }: WorkspacePr
                 <div><dt>Updated</dt><dd>{since(project.updated_at)}</dd></div>
               </dl>
             </section>
-            <ProjectWorkflow transport={transport} projectId={projectId} onNavigate={onNavigate} />
+            <section className="card" aria-label="Project repositories">
+              <h2 className="chart-title">Repositories</h2>
+              {repos.length > 0 ? (
+                <ul className="project-repositories">{repos.map((repo) => <li key={repo.id}><b>{repo.name}</b><span>{repo.path}</span></li>)}</ul>
+              ) : <p className="tile-note">No repositories yet. Add one to start talking.</p>}
+              <AddRepository transport={transport} projectId={projectId} attached={repos} onAdded={refresh} />
+            </section>
           </div>
         ) : (
           <p role="status" className="tile-note">Loading…</p>

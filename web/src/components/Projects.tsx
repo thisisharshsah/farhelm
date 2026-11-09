@@ -11,7 +11,7 @@ type ProjectTransport = Transport & {
 };
 
 function supportsProjects(transport: Transport | null): transport is ProjectTransport {
-  return transport?.kind === "loopback" && transport.supportsProjects === true
+  return transport?.supportsProjects === true
     && typeof transport.projects === "function" && typeof transport.project === "function"
     && typeof transport.createProject === "function";
 }
@@ -34,7 +34,7 @@ export function ProjectsList({ transport, projectId = null, focus = { kind: "hom
         <header className="view-head"><h1 className="view-title">Projects</h1></header>
         <section className="card" aria-label="Projects unavailable">
           <p className="tile-note">
-            Connect directly to a runner to manage its local projects. Projects are not available over the relay yet.
+            Connect a runner to see its projects. If one is connected, it needs updating to the latest version.
           </p>
           <button className="btn" onClick={() => onNavigate("/t")}>
             <Icon name="tasks" size={14} /><span>View Tasks</span>

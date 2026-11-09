@@ -45,6 +45,7 @@ import type {
   SessionDetail,
   CreateWorkItemRequest,
   ModesView,
+  RepositoryDiscovery,
   StartWorkItemRunRequest,
   TaskDetail,
   UpdateWorkItemRequest,
@@ -57,7 +58,7 @@ import type {
   TaskView,
   WorkspaceSearch,
 } from "./api.ts";
-import { ApiError } from "./api.ts";
+import { ApiError, createRunnerApi } from "./api.ts";
 import type { ChatDetail, ChatReply, CreateProjectChatRequest, ProjectChat, ProjectChatPage, SendChatMessageRequest } from "./chat.ts";
 import { Identity, type Envelope, type Pairing } from "./crypto.ts";
 
@@ -109,6 +110,8 @@ export interface Transport {
   projectRepoCandidates?(id: string, options?: ProjectListOptions): Promise<ProjectRepositoryPage>;
   projectRepositories?(id: string, options?: ProjectListOptions): Promise<ProjectRepositoryPage>;
   attachProjectRepository?(id: string, repoId: string): Promise<ProjectRepository>;
+  discoverProjectRepositories?(id: string, directory?: string): Promise<RepositoryDiscovery>;
+  addProjectRepository?(id: string, path: string): Promise<ProjectRepository>;
   projectTasks?(id: string, options?: ProjectListOptions): Promise<ProjectTaskPage>;
   startProjectTask?(id: string, input: StartProjectTaskRequest): Promise<TaskView>;
   projectTask?(id: string, taskId: string): Promise<TaskDetail>;
@@ -167,8 +170,7 @@ export interface Transport {
   reviewTask(id: string, decision: TaskReview, note?: string): Promise<void>;
   /**
    * Each work mode's default model and every name a request may choose.
-   * Loopback only: the registry lives on the runner, and a phone reviews
-   * work rather than choosing what runs it.
+   * The registry lives on the runner; a device asks it, directly or by relay.
    */
   modes?(): Promise<ModesView>;
   /** Take an applied change set back off disk. Refuses if anything moved. */
@@ -242,6 +244,8 @@ export class HttpTransport implements Transport {
   projectRepoCandidates = (id: string, options?: ProjectListOptions) => this.api.projectRepoCandidates(id, options);
   projectRepositories = (id: string, options?: ProjectListOptions) => this.api.projectRepositories(id, options);
   attachProjectRepository = (id: string, repoId: string) => this.api.attachProjectRepository(id, repoId);
+  discoverProjectRepositories = (id: string, directory?: string) => this.api.discoverProjectRepositories(id, directory);
+  addProjectRepository = (id: string, path: string) => this.api.addProjectRepository(id, path);
   projectTasks = (id: string, options?: ProjectListOptions) => this.api.projectTasks(id, options);
   startProjectTask = (id: string, input: StartProjectTaskRequest) => this.api.startProjectTask(id, input);
   projectWorkItems = (id: string, options?: WorkItemListOptions) => this.api.projectWorkItems(id, options);
@@ -320,6 +324,12 @@ export class HttpTransport implements Transport {
 
 /* ---------------------------------------------------------------------- relay */
 
+interface ProjectCallReply {
+  project_call: string;
+  call_status: number;
+  call_body: unknown;
+}
+
 /** Commands the runner accepts. Mirrors `farhelm_runner::commands::Command`. */
 export type Command =
   | { type: "snapshot" }
@@ -331,6 +341,7 @@ export type Command =
     }
   | { type: "decide"; approval_id: string; decision: Decision }
   | { type: "instruct"; session_id: string; text: string }
+  | { type: "project_call"; call_id: string; method: string; path: string; body: unknown }
   | { type: "set_auto_approve"; session_id: string; level: AutoApprove }
   | { type: "set_repo_auto_approve"; repo_id: string; level: AutoApprove }
   | {
@@ -416,9 +427,61 @@ export class RelayTransport implements Transport {
    */
   readonly supportsSessionControl = true;
   readonly supportsTaskControl = true;
-  readonly supportsProjects = false;
-  readonly supportsProjectWorkflow = false;
-  readonly supportsProjectChat = false;
+  /**
+   * Project operations travel as `project_call` messages and run the runner's
+   * own HTTP handlers, so everything below shares the API client's validation.
+   * Who decided a review is the runner's to say from the verified device; the
+   * `via` these pass is replaced there.
+   */
+  readonly supportsProjects = true;
+  readonly supportsProjectWorkflow = true;
+  readonly supportsProjectChat = true;
+
+  private readonly api: RunnerApi = createRunnerApi((method, path, body) => this.projectCall(method, path, body));
+  modes = () => this.api.modes();
+  projects = (options?: ProjectListOptions) => this.api.projects(options);
+  project = (id: string) => this.api.project(id);
+  createProject = (input: CreateProjectRequest) => this.api.createProject(input);
+  projectConversations = (id: string, options?: ProjectListOptions) => this.api.projectConversations(id, options);
+  createProjectConversation = (id: string, input: CreateProjectChatRequest) => this.api.createProjectConversation(id, input);
+  projectConversation = (id: string, conversationId: string) => this.api.projectConversation(id, conversationId);
+  sendProjectMessage = (id: string, conversationId: string, input: SendChatMessageRequest) => this.api.sendProjectMessage(id, conversationId, input);
+  projectRepoCandidates = (id: string, options?: ProjectListOptions) => this.api.projectRepoCandidates(id, options);
+  projectRepositories = (id: string, options?: ProjectListOptions) => this.api.projectRepositories(id, options);
+  attachProjectRepository = (id: string, repoId: string) => this.api.attachProjectRepository(id, repoId);
+  discoverProjectRepositories = (id: string, directory?: string) => this.api.discoverProjectRepositories(id, directory);
+  addProjectRepository = (id: string, path: string) => this.api.addProjectRepository(id, path);
+  projectTasks = (id: string, options?: ProjectListOptions) => this.api.projectTasks(id, options);
+  startProjectTask = (id: string, input: StartProjectTaskRequest) => this.api.startProjectTask(id, input);
+  projectWorkItems = (id: string, options?: WorkItemListOptions) => this.api.projectWorkItems(id, options);
+  createProjectWorkItem = (id: string, input: CreateWorkItemRequest) => this.api.createProjectWorkItem(id, input);
+  projectWorkItem = (id: string, itemId: string) => this.api.projectWorkItem(id, itemId);
+  updateProjectWorkItem = (id: string, itemId: string, input: UpdateWorkItemRequest) =>
+    this.api.updateProjectWorkItem(id, itemId, input);
+  startWorkItemRun = (id: string, itemId: string, input: StartWorkItemRunRequest) =>
+    this.api.startWorkItemRun(id, itemId, input);
+  projectTask = (id: string, taskId: string) => this.api.projectTask(id, taskId);
+  reviewProjectTask = (id: string, taskId: string, decision: TaskReview, note?: string) =>
+    this.api.reviewProjectTask(id, taskId, decision, "web", note);
+  revertProjectTask = (id: string, taskId: string) => this.api.revertProjectTask(id, taskId, "web");
+  searchWorkspace = (query: string, limit?: number) => this.api.searchWorkspace(query, limit);
+  projectTaskRecovery = (id: string, taskId: string) => this.api.projectTaskRecovery(id, taskId);
+  resumeProjectTask = (id: string, taskId: string) => this.api.resumeProjectTask(id, taskId);
+
+  /** One HTTP-shaped request over the relay; a refusal throws as it does over HTTP. */
+  private async projectCall(method: string, path: string, body: unknown): Promise<unknown> {
+    const callId = `call-${++this.callSequence}`;
+    const reply = await this.request<ProjectCallReply>(
+      { type: "project_call", call_id: callId, method, path, body: body ?? null },
+      (value) => typeof value === "object" && value !== null
+        && (value as { project_call?: unknown }).project_call === callId,
+    );
+    if (reply.call_status >= 400) {
+      const error = (reply.call_body as { error?: unknown } | null)?.error;
+      throw new ApiError(typeof error === "string" ? error : `the runner answered ${reply.call_status}`, reply.call_status);
+    }
+    return reply.call_body;
+  }
 
   private socket: WebSocket | null = null;
   private identity: Identity;
@@ -432,6 +495,7 @@ export class RelayTransport implements Transport {
     open: () => void;
     fail: (reason: Error) => void;
   }>();
+  private callSequence = 0;
   /** Snapshot requests waiting for their answer. */
   private pending: Array<{
     match: (value: unknown) => boolean;

@@ -1,7 +1,7 @@
 import {
   parseModesView, parseProject, parseProjectPage, parseProjectRepository,
   parseProjectRepositoryPage, parseProjectTaskPage, parseTaskDetail, parseTaskRecovery, parseTaskView, parseWorkspaceSearch,
-  parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
+  parseRepositoryDiscovery, parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
 } from "./projects.ts";
 import {
   parseChatDetail, parseChatReply, parseProjectChatPage,
@@ -539,6 +539,20 @@ export interface AttachProjectRepositoryRequest {
   repo_id: string;
 }
 
+/** A Git checkout found on the runner's machine. */
+export interface DiscoveredRepository {
+  name: string;
+  path: string;
+}
+
+/** What a look for checkouts found, and where it looked. */
+export interface RepositoryDiscovery {
+  searched: string[];
+  repositories: DiscoveredRepository[];
+  /** The bound was reached; more may exist. */
+  truncated: boolean;
+}
+
 export interface StartProjectTaskRequest {
   repo_id: string;
   prompt: string;
@@ -608,11 +622,22 @@ export class ApiError extends Error {
  */
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * How a request reaches a runner with no HTTP route to it: a signed-in device
+ * sends it as a message over the relay and gets the answer back.
+ */
+export type RunnerCall = (method: string, path: string, body?: unknown) => Promise<unknown>;
+
 async function request<T>(
-  baseUrl: string,
+  baseUrl: string | RunnerCall,
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  if (typeof baseUrl === "function") {
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
+    return (await baseUrl(init?.method ?? "GET", path, body)) as T;
+  }
+
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS);
 
@@ -672,8 +697,8 @@ export type RunnerApi = ReturnType<typeof createRunnerApi>;
  * `baseUrl` is empty for the PWA, which is served by the runner itself and can
  * use same-origin paths. React Native has no origin, so it always passes one.
  */
-export function createRunnerApi(baseUrl = "") {
-  const base = baseUrl.replace(/\/$/, "");
+export function createRunnerApi(baseUrl: string | RunnerCall = "") {
+  const base = typeof baseUrl === "string" ? baseUrl.replace(/\/$/, "") : baseUrl;
   const projectPath = (id: string) => `/v1/projects/${encodeURIComponent(id)}`;
   const pageQuery = ({ after, limit }: ProjectListOptions = {}) => {
     const query = new URLSearchParams();
@@ -683,7 +708,7 @@ export function createRunnerApi(baseUrl = "") {
     return encoded ? `?${encoded}` : "";
   };
   return {
-    baseUrl: base,
+    baseUrl: typeof base === "string" ? base : "",
     /** Local runner metadata, newest IDs first. */
     projects: async ({ after, limit }: ProjectListOptions = {}) => {
       const query = new URLSearchParams();
@@ -770,6 +795,16 @@ export function createRunnerApi(baseUrl = "") {
       if (run.work_item_id !== itemId) throw new Error("The runner returned a run for a different task.");
       return run;
     },
+    /** An explicit look for checkouts on the runner's machine; registers nothing. */
+    discoverProjectRepositories: async (id: string, directory?: string) => {
+      const query = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+      return parseRepositoryDiscovery(await request<unknown>(base, `${projectPath(id)}/repo-discovery${query}`));
+    },
+    /** Add a checkout by its folder, registering it on the runner if needed. */
+    addProjectRepository: async (id: string, path: string) =>
+      parseProjectRepository(await request<unknown>(base, `${projectPath(id)}/repos/add`, {
+        method: "POST", body: JSON.stringify({ path }),
+      })),
     projectRepoCandidates: async (id: string, options?: ProjectListOptions) =>
       parseProjectRepositoryPage(await request<unknown>(base, `${projectPath(id)}/repo-candidates${pageQuery(options)}`)),
     projectRepositories: async (id: string, options?: ProjectListOptions) =>

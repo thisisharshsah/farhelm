@@ -1073,6 +1073,30 @@ pub struct AttachProjectRepositoryRequest {
     pub repo_id: String,
 }
 
+/// Add a repository to a project by its folder, registering it if this runner
+/// has not seen it. Registering runs nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AddProjectRepositoryRequest {
+    pub path: String,
+}
+
+/// A Git checkout found by an explicit look at one or more folders.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiscoveredRepository {
+    pub name: String,
+    pub path: String,
+}
+
+/// What a look found, and where it looked, so the app can say so. `truncated`
+/// says the bound was reached and more may exist.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepositoryDiscovery {
+    pub searched: Vec<String>,
+    pub repositories: Vec<DiscoveredRepository>,
+    pub truncated: bool,
+}
+
 /// Project context comes from the route, repository paths from registered IDs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -37,7 +37,7 @@ export {
   isProject, parseProject, parseProjectPage, parseProjectRepository,
   parseProjectRepositoryPage, parseProjectTaskPage, isTaskView, parseTaskView, parseTaskDetail,
   parseTaskRecovery, parseWorkspaceSearch,
-  parseModesView, parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
+  parseModesView, parseRepositoryDiscovery, parseWorkItemDetail, parseWorkItemPage, parseWorkItemView,
 } from "./projects.ts";
 export {
   CLOUD_SESSION_STORAGE_KEY,

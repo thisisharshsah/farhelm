@@ -15,8 +15,8 @@ use farhelm_app::{
 };
 use farhelm_proto::{
     types::{
-        AttachProjectRepositoryRequest, DecidedVia, ProjectRepository, ProjectRepositoryPage,
-        StartProjectTaskRequest,
+        AddProjectRepositoryRequest, AttachProjectRepositoryRequest, DecidedVia, ProjectRepository,
+        ProjectRepositoryPage, RepositoryDiscovery, StartProjectTaskRequest,
     },
     views::{ProjectTaskPage, TaskDetail, TaskView},
 };
@@ -25,6 +25,7 @@ use serde::Deserialize;
 
 use crate::{
     api::{ApiError, RevertBody, ReviewBody},
+    repo_discovery,
     state::AppState,
     task::{self, ProjectTaskError},
     views::{Lookups, detail_for_task, task_view},
@@ -39,6 +40,11 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route(
             "/v1/projects/{id}/repos",
             get(repositories).post(attach_repository),
+        )
+        .route("/v1/projects/{id}/repos/add", post(add_repository))
+        .route(
+            "/v1/projects/{id}/repo-discovery",
+            get(discover_repositories),
         )
         .route("/v1/projects/{id}/tasks", get(tasks).post(start_task))
         .route("/v1/projects/{id}/tasks/{task_id}", get(task_detail))
@@ -121,6 +127,59 @@ async fn attach_repository(
     operate(state, move |state| {
         workflow(&state)?
             .attach_repository(&id, &input.repo_id, now_ms())
+            .map_err(workflow_error)
+    })
+    .await
+    .map(|repo| (StatusCode::CREATED, Json(repo)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscoveryQuery {
+    directory: Option<String>,
+}
+
+/// An explicit look for checkouts, one level down; see [`repo_discovery`]. It
+/// runs only when the app asks and registers nothing.
+async fn discover_repositories(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<DiscoveryQuery>,
+) -> Result<Json<RepositoryDiscovery>, ApiError> {
+    operate(state, move |state| {
+        // A missing project is the same 404 as everywhere else.
+        workflow(&state)?
+            .repositories(&id, None, 1)
+            .map_err(workflow_error)?;
+        let known =
+            farhelm_app::store::FleetStore::list_repos(state.store.as_ref(), &state.machine_id)
+                .map_err(|_| storage_error())?;
+        repo_discovery::discover(
+            query.directory.as_deref(),
+            &known,
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .as_deref(),
+        )
+        .map_err(|message| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message))
+    })
+    .await
+    .map(Json)
+}
+
+/// Add a checkout to a project by its folder, registering it first if needed.
+async fn add_repository(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(input): Json<AddProjectRepositoryRequest>,
+) -> Result<(StatusCode, Json<ProjectRepository>), ApiError> {
+    operate(state, move |state| {
+        let flow = workflow(&state)?;
+        flow.repositories(&id, None, 1).map_err(workflow_error)?;
+        let path = repo_discovery::checkout(&input.path)
+            .map_err(|message| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message))?;
+        let repo = task::resolve_repo(&state, &path.to_string_lossy()).map_err(task_error)?;
+        flow.attach_repository(&id, &repo.id, now_ms())
             .map_err(workflow_error)
     })
     .await

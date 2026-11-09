@@ -8,7 +8,7 @@ type WorkflowTransport = Transport & Required<Pick<Transport,
   | "startProjectTask" | "projectTask" | "reviewProjectTask" | "revertProjectTask">>;
 
 function supportsWorkflow(transport: Transport | null): transport is WorkflowTransport {
-  return transport?.kind === "loopback" && transport.supportsProjectWorkflow === true
+  return transport?.supportsProjectWorkflow === true
     && [transport.projectRepoCandidates, transport.projectRepositories, transport.attachProjectRepository,
       transport.projectTasks, transport.startProjectTask, transport.projectTask,
       transport.reviewProjectTask, transport.revertProjectTask].every((method) => typeof method === "function");

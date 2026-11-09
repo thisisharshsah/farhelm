@@ -159,6 +159,20 @@ pub enum Command {
         #[serde(default)]
         model: Option<String>,
     },
+    /// A project operation, answered by the same handlers as the local HTTP
+    /// API. A signed-in device has no route to that API, only this channel, so
+    /// the request travels as a message and comes back as a
+    /// [`crate::ProjectCallReply`] carrying `call_id`. The runner decides what
+    /// it may reach: only project routes exist on the other end.
+    ProjectCall {
+        /// Chosen by the client, to match the reply.
+        call_id: String,
+        method: String,
+        /// With its query string: `/v1/projects?limit=50`.
+        path: String,
+        #[serde(default)]
+        body: Option<serde_json::Value>,
+    },
     /// Which agents this machine can actually drive.
     ///
     /// Answered by the runner rather than assumed by the client, because
@@ -190,6 +204,12 @@ mod frame_tests {
 
     fn every_command() -> Vec<Command> {
         vec![
+            Command::ProjectCall {
+                call_id: "c".into(),
+                method: "GET".into(),
+                path: "/v1/projects".into(),
+                body: None,
+            },
             Command::Decide {
                 approval_id: "a1".into(),
                 decision: Decision::Approved,

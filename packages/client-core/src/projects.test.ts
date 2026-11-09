@@ -136,3 +136,21 @@ describe("workspace search", () => {
     expect(urls).toEqual(["http://runner/v1/search?q=50%25+off&limit=10"]);
   });
 });
+
+describe("project calls over the relay", () => {
+  // The same API client validates either route, so what matters here is that a
+  // message-shaped runner is asked the HTTP-shaped question and a refusal throws.
+  it("sends the request as a call and returns the answer", async () => {
+    const call = vi.fn().mockResolvedValue({ projects: [], next_cursor: null });
+    const api = createRunnerApi(call);
+    await expect(api.projects({ limit: 50 })).resolves.toEqual({ projects: [], next_cursor: null });
+    expect(call).toHaveBeenCalledExactlyOnceWith("GET", "/v1/projects?limit=50", undefined);
+  });
+
+  it("carries a mutation's body as data", async () => {
+    const created = { id: "r", name: "lacuna", path: "/work/lacuna" };
+    const call = vi.fn().mockResolvedValue(created);
+    await createRunnerApi(call).addProjectRepository("p/1", "/work/lacuna");
+    expect(call).toHaveBeenCalledExactlyOnceWith("POST", "/v1/projects/p%2F1/repos/add", { path: "/work/lacuna" });
+  });
+});

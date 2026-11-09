@@ -48,7 +48,7 @@ it("links every kind of hit where the app routes it", () => {
 
 it("only offers search on a direct runner that has it", () => {
   expect(supportsSearch(transport(vi.fn()))).toBe(true);
-  expect(supportsSearch({ kind: "relay", searchWorkspace: vi.fn() } as unknown as Transport)).toBe(false);
+  expect(supportsSearch({ kind: "relay", searchWorkspace: vi.fn() } as unknown as Transport)).toBe(true);
   expect(supportsSearch({ kind: "loopback" } as unknown as Transport)).toBe(false);
 });
 
@@ -97,4 +97,47 @@ it("does not search for fewer than two characters, and reports failures", async 
   await render(search, "xy", onNavigate);
   await settle();
   expect(host.querySelector('[role="alert"]')?.textContent).toBe("project requests are busy; try again");
+});
+
+it("explains an unreadable search response and only retries when asked", async () => {
+  const searchWorkspace = vi.fn()
+    .mockRejectedValueOnce(new SyntaxError("Unexpected token '<', '<!doctype' is not valid JSON"))
+    .mockResolvedValue(result("retry", [hit("task", "found")]));
+  await render(transport(searchWorkspace), "retry");
+  await settle();
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "Workspace search is unavailable. Check that the runner is up to date. You can still filter loaded tasks below.",
+  );
+  expect(host.textContent).not.toContain("doctype");
+  await settle();
+  expect(searchWorkspace).toHaveBeenCalledTimes(1);
+  const retry = [...host.querySelectorAll("button")].find((item) => item.textContent === "Retry search")!;
+  await act(async () => { retry.click(); retry.click(); });
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(host.textContent).toContain("Searching…");
+  await settle();
+  expect(searchWorkspace).toHaveBeenCalledTimes(2);
+  expect(host.textContent).toContain("task found");
+});
+
+it("clears previous results when the same query fails and is explicitly retried", async () => {
+  const searchWorkspace = vi.fn()
+    .mockResolvedValueOnce(result("retry", [hit("task", "old")]))
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockResolvedValue(result("retry", [hit("task", "new")]));
+  const search = transport(searchWorkspace);
+  await render(search, "retry");
+  await settle();
+  expect(host.textContent).toContain("task old");
+  await render(search, "");
+  await render(search, "retry");
+  await settle();
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe("Offline");
+  expect(host.textContent).not.toContain("task old");
+  const retry = [...host.querySelectorAll("button")].find((item) => item.textContent === "Retry search")!;
+  await act(async () => retry.click());
+  expect(host.textContent).not.toContain("task old");
+  await settle();
+  expect(host.textContent).toContain("task new");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
 });

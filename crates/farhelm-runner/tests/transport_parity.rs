@@ -389,3 +389,114 @@ async fn a_configured_relay_channel_is_used_as_is() {
     assert_eq!(offer["channel"], "forge-configured");
     assert_eq!(offer["relay_url"], "wss://relay.example");
 }
+
+/// A project call over the relay and the same request over HTTP.
+async fn project_call(
+    state: &Arc<AppState>,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+    via: DecidedVia,
+) -> (u16, serde_json::Value) {
+    let outcome = commands::execute(
+        state,
+        Command::ProjectCall {
+            call_id: "call-1".into(),
+            method: method.into(),
+            path: path.into(),
+            body,
+        },
+        via,
+    )
+    .await
+    .unwrap();
+    let commands::Outcome::ProjectCalled(reply) = outcome else {
+        panic!("a project call is answered with its reply");
+    };
+    assert_eq!(reply.project_call, "call-1");
+    (reply.call_status, reply.call_body)
+}
+
+#[tokio::test]
+async fn project_screens_read_the_same_over_both_transports() {
+    let state = fixture();
+    let (status, project) = project_call(
+        &state,
+        "POST",
+        "/v1/projects",
+        Some(serde_json::json!({ "name": "Payments" })),
+        DecidedVia::Web,
+    )
+    .await;
+    assert_eq!(status, 201, "{project}");
+    let id = project["id"].as_str().unwrap().to_owned();
+
+    let addr = serve(Arc::clone(&state)).await;
+    for path in [
+        "/v1/projects?limit=50".to_owned(),
+        format!("/v1/projects/{id}"),
+        format!("/v1/projects/{id}/repos"),
+        format!("/v1/projects/{id}/conversations"),
+        format!("/v1/projects/{id}/work-items"),
+        format!("/v1/projects/{id}/tasks"),
+        "/v1/modes".to_owned(),
+    ] {
+        let (status, body) = project_call(&state, "GET", &path, None, DecidedVia::Phone).await;
+        assert_eq!(status, 200, "{path}: {body}");
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            serde_json::to_string(&get(addr, &path).await).unwrap(),
+            "{path} differs between transports"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_project_call_reaches_project_routes_and_nothing_else() {
+    let state = fixture();
+    // Each of these is a real route on the HTTP API.
+    for (method, path) in [
+        ("GET", "/v1/fleet"),
+        ("GET", "/v1/approvals"),
+        ("GET", "/v1/tasks"),
+        ("POST", "/v1/complete"),
+        ("POST", "/v1/messages"),
+        ("POST", "/v1/pair/offer"),
+        ("POST", "/v1/hooks/tool-request"),
+        ("GET", "/v1/projects/../fleet"),
+        ("GET", "/p/lacuna/v1/models"),
+    ] {
+        let (status, _) = project_call(&state, method, path, None, DecidedVia::Web).await;
+        assert_eq!(status, 404, "{method} {path} must not be reachable");
+    }
+    let (status, _) = project_call(&state, "DELETE", "/v1/projects", None, DecidedVia::Web).await;
+    assert_eq!(status, 405);
+}
+
+#[tokio::test]
+async fn a_watch_cannot_make_project_calls() {
+    let state = fixture();
+    for via in [DecidedVia::Watch, DecidedVia::Connector] {
+        let (status, body) = project_call(&state, "GET", "/v1/projects", None, via).await;
+        assert_eq!(status, 403, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_comes_back_as_it_does_over_http() {
+    let state = fixture();
+    let (status, body) =
+        project_call(&state, "GET", "/v1/projects/missing", None, DecidedVia::Web).await;
+    assert_eq!(status, 404);
+    assert!(body["error"].is_string(), "{body}");
+    let (status, body) = project_call(
+        &state,
+        "POST",
+        "/v1/projects",
+        Some(serde_json::json!({ "unknown": true })),
+        DecidedVia::Web,
+    )
+    .await;
+    assert!(status >= 400, "{status}: {body}");
+    assert!(body["error"].is_string(), "{body}");
+}

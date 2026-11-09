@@ -54,8 +54,12 @@ pub use chat::{
 };
 pub use commands::{Command, DeviceFrame, PlanAction, Review};
 pub use diff::{ChangeKind, ChangeSet, DiffLine, FileDiff, Hunk, Tag};
-pub use events::{CommandRejected, ServerEvent};
+pub use events::{CommandRejected, ProjectCallReply, ServerEvent};
 pub use hello::{Capability, Hello, PROTOCOL_VERSION, ProtocolVersion};
+pub use types::{
+    AddProjectRepositoryRequest, CreateWorkItemRequest, DiscoveredRepository, RepositoryDiscovery,
+    StartWorkItemRunRequest, UpdateWorkItemRequest, WorkItem, WorkItemStatus,
+};
 pub use types::{
     Agent, AgentTask, Approval, AttachProjectRepositoryRequest, AutoApprove, Avoided, BatchItem,
     BatchStatus, Budget, Conversation, CreateProjectRequest, DecidedVia, Decision, Device,
@@ -63,9 +67,6 @@ pub use types::{
     PlanStep, PlanStepStatus, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage,
     RelationKind, Repo, Risk, Session, SessionStatus, StartProjectTaskRequest, TaskStatus,
     TaskStep, TaskType, Tier, Usage, UsageEvent, WorkMode,
-};
-pub use types::{
-    CreateWorkItemRequest, StartWorkItemRunRequest, UpdateWorkItemRequest, WorkItem, WorkItemStatus,
 };
 pub use views::{
     AgentView, ApprovalView, BatchQueueView, BudgetView, DashboardView, FleetView, ModeView,

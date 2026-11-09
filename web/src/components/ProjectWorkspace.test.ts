@@ -93,6 +93,37 @@ it("keeps an open draft mounted while refreshing navigation lists", async () => 
   expect(field.value).toBe("Unsent draft");
 });
 
+it("preserves an unsent draft after a failed conversation refresh and retry", async () => {
+  const read = vi.fn().mockResolvedValueOnce({ conversation: chat("recent"), messages: [] })
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockResolvedValue({ conversation: chat("recent"), messages: [] });
+  await render(runner({ projectConversation: read }), { kind: "chat", id: "recent" });
+  const field = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Draft"]')!;
+  field.value = "Unsent draft";
+  await act(async () => button("Refresh project lists").click());
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Could not refresh this conversation. Offline");
+  expect(host.querySelector('textarea[aria-label="Draft"]')).toBe(field);
+  expect(field.value).toBe("Unsent draft");
+  await act(async () => button("Retry conversation").click());
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(host.querySelector('textarea[aria-label="Draft"]')).toBe(field);
+  expect(field.value).toBe("Unsent draft");
+});
+
+it("shows an initial conversation failure without retaining another conversation", async () => {
+  const read = vi.fn().mockResolvedValueOnce({ conversation: chat("recent"), messages: [] })
+    .mockRejectedValueOnce(new Error("Unavailable"))
+    .mockResolvedValue({ conversation: chat("older"), messages: [] });
+  const transport = runner({ projectConversation: read });
+  await render(transport, { kind: "chat", id: "recent" });
+  await render(transport, { kind: "chat", id: "older" });
+  expect(host.querySelector('[aria-label="Conversation content"]')).toBeNull();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Could not open this conversation. Unavailable");
+  await act(async () => button("Retry conversation").click());
+  expect(host.querySelector('[aria-label="Conversation content"]')?.textContent).toBe("Conversation older");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});
+
 it("clears old runner data and ignores its late responses", async () => {
   const old = deferred<{ conversations: ProjectChat[]; next_cursor: null }>();
   await render(runner({ projectConversations: vi.fn().mockReturnValue(old.promise) }));

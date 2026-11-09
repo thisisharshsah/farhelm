@@ -46,7 +46,7 @@ export type ChatTransport = Transport & Required<Pick<Transport,
   | "projectWorkItems" | "createProjectWorkItem" | "startWorkItemRun">>;
 
 export function supportsProjectChat(transport: Transport | null): transport is ChatTransport {
-  return transport?.kind === "loopback" && transport.supportsProjectChat === true
+  return transport?.supportsProjectChat === true
     && [transport.projectConversations, transport.createProjectConversation, transport.projectConversation,
       transport.sendProjectMessage, transport.startProjectTask, transport.projectWorkItems,
       transport.createProjectWorkItem, transport.startWorkItemRun].every((method) => typeof method === "function");

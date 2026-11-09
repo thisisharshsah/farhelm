@@ -1,5 +1,5 @@
 import type {
-  ModesView, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
+  ModesView, RepositoryDiscovery, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
   SearchHit, TaskRecovery, TaskView, TaskDetail, WorkspaceSearch, WorkItemDetail, WorkItemPage, WorkItemView,
 } from "./api.ts";
 import { SEARCH_HIT_KINDS, WORK_ITEM_STATUSES, WORK_MODES } from "./api.ts";
@@ -148,6 +148,17 @@ export function parseWorkItemDetail(value: unknown): WorkItemDetail {
     throw new Error("The runner returned an invalid task.");
   }
   return value as unknown as WorkItemDetail;
+}
+
+export function parseRepositoryDiscovery(value: unknown): RepositoryDiscovery {
+  const bad = () => new Error("The runner returned an invalid repository list.");
+  if (!object(value) || !Array.isArray(value.repositories) || value.repositories.length > 200
+    || !Array.isArray(value.searched) || value.searched.length > 64
+    || !value.searched.every((folder) => text(folder, 32_768)) || typeof value.truncated !== "boolean") throw bad();
+  for (const repo of value.repositories as unknown[]) {
+    if (!object(repo) || !text(repo.name, 4_096) || !repo.name || !text(repo.path, 32_768) || !repo.path) throw bad();
+  }
+  return value as unknown as RepositoryDiscovery;
 }
 
 export function parseModesView(value: unknown): ModesView {

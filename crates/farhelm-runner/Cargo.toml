@@ -47,6 +47,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # webpki-roots rather than the platform store, to match `reqwest`'s `rustls-tls`
 # here and keep one trust anchor set across the process.
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 
 [dev-dependencies]

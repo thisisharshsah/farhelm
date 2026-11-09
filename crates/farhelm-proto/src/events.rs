@@ -65,6 +65,20 @@ pub enum ServerEvent {
     },
 }
 
+/// The answer to a [`crate::commands::Command::ProjectCall`], addressed to the
+/// device that asked. Not an event, for the reason [`CommandRejected`] is not.
+/// A handler's refusal is a normal reply with its status, so a client reads it
+/// exactly as it reads the HTTP API.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectCallReply {
+    /// The call this answers.
+    pub project_call: String,
+    /// The HTTP status the handler produced.
+    pub call_status: u16,
+    /// The JSON it produced. A refusal is `{ "error": "..." }`, as over HTTP.
+    pub call_body: serde_json::Value,
+}
+
 /// Why a command did not happen.
 ///
 /// Shaped like a [`ServerEvent`] so it arrives on the client's existing event

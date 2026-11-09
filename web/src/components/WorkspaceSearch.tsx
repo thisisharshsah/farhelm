@@ -52,7 +52,7 @@ function statusLook(hit: SearchHit): StatusLook | null {
 type Searchable = Transport & Required<Pick<Transport, "searchWorkspace">>;
 
 export function supportsSearch(transport: Transport | null): transport is Searchable {
-  return transport?.kind === "loopback" && typeof transport.searchWorkspace === "function";
+  return typeof transport?.searchWorkspace === "function";
 }
 
 export function WorkspaceSearchResults({ transport, query, onNavigate }: {
@@ -64,27 +64,45 @@ export function WorkspaceSearchResults({ transport, query, onNavigate }: {
   const [result, setResult] = useState<WorkspaceSearch | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const busy = useRef(false);
   // Only the latest query's answer may land; an earlier one arriving late is dropped.
   const latest = useRef(0);
 
   useEffect(() => {
     const ticket = ++latest.current;
     setError(null);
+    setResult(null);
     if (Array.from(trimmed).length < MIN_QUERY_CHARS) {
-      setResult(null); setPending(false);
+      busy.current = false;
+      setPending(false);
       return;
     }
+    busy.current = true;
     setPending(true);
     const timer = setTimeout(() => {
       transport.searchWorkspace(trimmed)
         .then((value) => { if (ticket === latest.current) setResult(value); })
         .catch((cause: unknown) => {
-          if (ticket === latest.current) setError(cause instanceof Error ? cause.message : String(cause));
+          if (ticket === latest.current) setError(cause instanceof SyntaxError
+            ? "Workspace search is unavailable. Check that the runner is up to date. You can still filter loaded tasks below."
+            : cause instanceof Error ? cause.message : String(cause));
         })
-        .finally(() => { if (ticket === latest.current) setPending(false); });
+        .finally(() => {
+          if (ticket === latest.current) { busy.current = false; setPending(false); }
+        });
     }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [transport, trimmed]);
+    return () => { clearTimeout(timer); latest.current += 1; };
+  }, [transport, trimmed, revision]);
+
+  const retry = () => {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(true);
+    setResult(null);
+    setError(null);
+    setRevision((value) => value + 1);
+  };
 
   if (Array.from(trimmed).length < MIN_QUERY_CHARS) return null;
   const hits = result?.query === trimmed ? result.hits : null;
@@ -96,6 +114,7 @@ export function WorkspaceSearchResults({ transport, query, onNavigate }: {
         {pending ? <span className="muted" role="status"> Searching…</span> : null}
       </h3>
       {error ? <p className="error" role="alert">{error}</p> : null}
+      {error ? <button type="button" className="btn btn-small" disabled={pending} onClick={retry}>Retry search</button> : null}
       {hits && hits.length === 0 ? <p className="tile-note">Nothing in any project matches “{trimmed}”.</p> : null}
       {hits && hits.length > 0 ? (
         <ul className="workspace-search-list">

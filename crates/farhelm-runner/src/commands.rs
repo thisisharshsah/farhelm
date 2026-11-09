@@ -64,6 +64,7 @@ impl From<farhelm_app::store::StoreError> for CommandError {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Outcome {
+    ProjectCalled(Box<farhelm_proto::ProjectCallReply>),
     Decided {
         approval_id: String,
         decision: Decision,
@@ -133,6 +134,14 @@ pub async fn execute(
             decision,
         } => decide(state, &approval_id, decision, via).await,
         Command::Instruct { session_id, text } => instruct(state, &session_id, &text).await,
+        Command::ProjectCall {
+            call_id,
+            method,
+            path,
+            body,
+        } => Ok(Outcome::ProjectCalled(Box::new(
+            crate::project_calls::dispatch(state, call_id, &method, &path, body, via).await,
+        ))),
         Command::PlanControl { session_id, action } => {
             plan_control(state, &session_id, action).await
         }

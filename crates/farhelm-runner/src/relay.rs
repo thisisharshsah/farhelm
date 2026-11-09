@@ -451,6 +451,9 @@ async fn handle_envelope(
     // forgetting its reply compiles and fails at runtime. Now it does not
     // compile.
     match commands::execute(state, command, via).await {
+        Ok(commands::Outcome::ProjectCalled(reply)) => identity
+            .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &reply)
+            .ok(),
         Ok(commands::Outcome::Snapshot(fleet)) => identity
             .seal_json(&config.channel, RUNNER_SENDER_ID, &sender_key, &fleet)
             .ok(),

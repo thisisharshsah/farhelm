@@ -1942,7 +1942,7 @@ svg.is-open {
 }
 
 .ws-nav-toggle { display: none; align-items: center; gap: var(--s-2); padding: 0 var(--s-3); }
-.ws-search { width: 100%; min-width: 0; }
+.ws-search { flex: none; width: 100%; min-width: 0; }
 .ws-search input { width: 100%; min-width: 0; }
 
 .ws-list .side-thread {
@@ -2072,6 +2072,7 @@ svg.is-open {
   .ws-side-head > .btn-quiet { justify-self: end; min-height: 44px; }
   .ws-navigation { display: none; }
   .ws-navigation.is-open { display: flex; max-height: 55dvh; }
+  .ws-search { min-height: 44px; }
   .ws-list .side-thread { min-height: 44px; }
   .ws-main .project-chat-pane { height: max(24rem, calc(100dvh - 20rem)); min-height: 0; }
   .ws-main .project-chat-messages { min-height: 6rem; max-height: none; }
@@ -2177,4 +2178,74 @@ svg.is-open {
 .workspace-search-snippet {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------ add a repository */
+
+.add-repo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.add-repo h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.add-repo-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.add-repo-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+}
+
+.add-repo-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.add-repo-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.add-repo-name .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+.add-repo-other {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.add-repo-other label {
+  flex-basis: 100%;
+}
+
+.add-repo-other input {
+  flex: 1 1 16rem;
+  min-width: 0;
+  width: auto;
 }

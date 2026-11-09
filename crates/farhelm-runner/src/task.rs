@@ -547,7 +547,7 @@ fn bounded(text: &str) -> String {
 /* ------------------------------------------------------------------ start */
 
 /// Resolve (or adopt) the repo row for a path on this machine.
-fn resolve_repo(state: &AppState, repo_path: &str) -> Result<Repo, TaskError> {
+pub(crate) fn resolve_repo(state: &AppState, repo_path: &str) -> Result<Repo, TaskError> {
     if let Some(repo) = state
         .store
         .find_repo_by_path(&state.machine_id, repo_path)?

@@ -71,7 +71,7 @@ afterEach(async () => {
 it("explains local project availability without invented records or sending relay requests", async () => {
   const projects = vi.fn();
   const onNavigate = await render(runner({ kind: "relay", supportsProjects: false, projects }));
-  expect(host.textContent).toContain("Connect directly to a runner");
+  expect(host.textContent).toContain("Connect a runner");
   expect(host.querySelector("input")).toBeNull();
   expect(host.querySelector(".project-card")).toBeNull();
   expect(host.textContent).not.toContain("Uncapped");
@@ -80,7 +80,7 @@ it("explains local project availability without invented records or sending rela
   await act(async () => button("View Tasks").click());
   expect(onNavigate).toHaveBeenCalledExactlyOnceWith("/t");
   await render(null);
-  expect(host.textContent).toContain("Projects are not available over the relay yet.");
+  expect(host.textContent).toContain("it needs updating");
 });
 
 it("renders loading, an actual empty response, and the local create form", async () => {

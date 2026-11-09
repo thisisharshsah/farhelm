@@ -30,7 +30,7 @@ export type BoardTransport = Transport & Required<Pick<Transport,
   "projectWorkItems" | "createProjectWorkItem" | "projectWorkItem" | "updateProjectWorkItem" | "startWorkItemRun">>;
 
 export function supportsBoard(transport: Transport | null): transport is BoardTransport {
-  return transport?.kind === "loopback"
+  return transport !== null
     && [transport.projectWorkItems, transport.createProjectWorkItem, transport.projectWorkItem,
       transport.updateProjectWorkItem, transport.startWorkItemRun].every((method) => typeof method === "function");
 }
