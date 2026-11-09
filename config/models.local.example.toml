@@ -4,21 +4,28 @@ version = 1
 policy = "local_only"
 
 [routes]
-small = "local-code"
-large = "local-code"
-frontier = "local-code"
+small = "code"
+large = "code"
+frontier = "code"
 
-[providers.ollama]
+# One provider per model served by Farhelm's engine. `farhelm engine add-model`
+# gives each model its port (the first is 7846); `farhelm engine status`
+# lists them. Any other OpenAI-compatible local server works the same way.
+[providers.engine-qwen3-coder-30b]
 kind = "openai_compatible"
-base_url = "http://127.0.0.1:11434/v1"
+base_url = "http://127.0.0.1:7846/v1"
 data_location = "local"
 # api_key_env = "LOCAL_MODEL_API_KEY" # Only if your local server requires it.
 
-[models.local-code]
-provider = "ollama"
-model = "qwen3-coder:30b" # Must already exist on your runtime; pin in deployment.
+[models.qwen3-coder-30b]
+provider = "engine-qwen3-coder-30b"
+model = "qwen3-coder-30b" # The engine alias, as `farhelm engine add-model --alias` set it.
 tools = true # Enable only after testing this model/runtime/template combination.
 max_output_tokens = 4096
+
+# Purpose names projects ask for.
+[aliases]
+code = "qwen3-coder-30b"
 
 # An adapter trained for a model, selected per request as `model:adapter`
 # (`model:adapter@vN` pins a version). The engine loads it switched off
@@ -30,7 +37,7 @@ max_output_tokens = 4096
 # purpose = "reasoning with short thinking"
 # versions = [{ version = 1, lora_id = 0 }]
 #
-# [aliases]
+# and, under [aliases] above:
 # quick = "gpt-oss-20b:fast"
 #
 # Which name answers each work mode in the app (Ask, Plan, Agent, Review)

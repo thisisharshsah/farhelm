@@ -1189,8 +1189,12 @@ cache_read_per_mtok = 0.5
     fn checked_in_local_example_is_usable_without_credentials() {
         let source = include_str!("../../../config/models.local.example.toml");
         let client = ProviderClient::configured_from(source, |_| None).unwrap();
-        assert_eq!(client.models().unwrap().large, "local-code");
-        assert_eq!(client.billing_rates("local-code"), Some(TokenRates::zero()));
+        assert_eq!(client.models().unwrap().large, "code");
+        assert_eq!(client.billing_rates("code"), Some(TokenRates::zero()));
+        assert_eq!(
+            client.billing_rates("qwen3-coder-30b"),
+            Some(TokenRates::zero())
+        );
     }
 
     #[test]

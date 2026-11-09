@@ -1,10 +1,10 @@
 # Configuring model providers
 
-Farhelm can route the small, large and frontier slots to explicitly configured local or cloud models. The initial registry supports non-streaming text Chat Completions and function tools through Ollama, compatible llama.cpp/vLLM deployments, and OpenRouter. Compatibility and tool quality must be evaluated for the deployed model, parser and template. This does not add vision/audio, fine-tuning, automatic provider discovery, runtime installation or live-model certification.
+Farhelm can route the small, large and frontier slots to explicitly configured local or cloud models. The registry supports non-streaming text Chat Completions and function tools through Farhelm's own engine (a supervised llama.cpp server, below), other compatible llama.cpp/vLLM deployments, and OpenRouter. Compatibility and tool quality must be evaluated for the deployed model, parser and template. This does not add vision/audio, fine-tuning, automatic provider discovery, runtime installation or live-model certification.
 
 ## Local development
 
-Install and run your chosen serving runtime separately. Make sure the model in your configuration is available there. Copy [the example configuration](../config/models.local.example.toml) into your operator configuration directory, update the model identifier and limits, and point the runner at its absolute path:
+Serve models with [the Farhelm engine](#the-farhelm-engine), or run another OpenAI-compatible runtime yourself. Make sure the model in your configuration is available there. Copy [the example configuration](../config/models.local.example.toml) into your operator configuration directory, update the model identifier and limits, and point the runner at its absolute path:
 
 ```sh
 export FARHELM_MODELS_CONFIG="/absolute/path/models.toml"
@@ -109,7 +109,7 @@ Files are bounded to 1 MiB, provider/model counts to 256 each and aliases to 128
 
 Local entries must use `localhost` or a numeric loopback/private address. HTTPS is required except for loopback HTTP. URLs containing embedded credentials, query strings or fragments are rejected. Redirects and ambient HTTP proxies are disabled for configured clients. Known cloud tags (`:cloud`, `-cloud`, `cloud/…`) are rejected for local entries.
 
-A private endpoint is a trust declaration, not proof of local execution. A local server can forward requests elsewhere. In particular, Ollama supports signed-in cloud execution through its local server; for a local-only deployment, disable that runtime's cloud features and restrict runtime network egress as required. Ollama documents `OLLAMA_NO_CLOUD=1` or `disable_ollama_cloud` in its server configuration, followed by a restart. See [Ollama's local compatibility behavior](https://docs.ollama.com/api/openai-compatibility), [cloud behavior](https://docs.ollama.com/cloud), and [cloud disablement instructions](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features).
+A private endpoint is a trust declaration, not proof of local execution. A local server can forward requests elsewhere, and some runtimes offer cloud execution through their local API. The Farhelm engine runs a pinned llama.cpp build with no cloud path. For any other runtime in a local-only deployment, disable its cloud features and restrict its network egress as required.
 
 The current policy is runner configuration, not a complete per-workspace authorization/egress system. Do not offer shared hosted customer execution on that assumption. Hybrid per-task approval, authenticated serving endpoints, provider/region allowlists, and network isolation remain separate work.
 

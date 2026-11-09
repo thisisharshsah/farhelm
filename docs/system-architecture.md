@@ -79,7 +79,7 @@ flowchart TD
     subgraph InferenceLayer["Model Gateway (crates/farhelm-gateway)"]
         GW_POLICY["Data Policy & Quota Filter"]
         MODEL_REG["Provider-Neutral Model Registry"]
-        ADAPT_LOCAL["Local Adapters (vLLM / Ollama / llama.cpp)"]
+        ADAPT_LOCAL["Local Adapters (Farhelm engine / vLLM)"]
         ADAPT_CLOUD["Optional Cloud: OpenRouter / Anthropic"]
     end
 
@@ -251,8 +251,7 @@ CREATE INDEX IF NOT EXISTS idx_entity_links_target ON entity_links(target_type, 
 The existing `ModelClient` port separates gateway policy from transport. The initial configured slice adds Chat Completions transport beside the existing Anthropic Messages transport; [ADR 0006](adr/0006-configurable-model-providers.md) defines its precise scope. The broader deployment direction is:
 
 1. **Local Self-Hosted Runtimes**:
-   - **Ollama**: Developer convenience default; supports a subset of `/v1/chat/completions`. Verify the selected model is local and tool capable.
-   - **llama.cpp `server`**: Lightweight standalone quantized C++ inference with slot management.
+   - **Farhelm engine**: The default. A pinned llama.cpp `server` build per model, installed and supervised by the runner, with per-request LoRA adapters ([ADR 0009](adr/0009-specialists-and-modes.md)).
    - **vLLM**: Candidate for shared GPU serving after workload and model/parser/template conformance testing; its runtime capabilities do not imply a deployed Farhelm GPU service.
 2. **Cloud Escalation Backends**:
    - **Anthropic Messages**: Existing direct provider path; model availability is configured separately.
@@ -275,7 +274,7 @@ A future workspace policy should be checked before model selection, cache reuse,
       │                     │                     │
       ▼                     ▼                     ▼
 Trusted local routes    Local preferred,      Any authorized
-allowed (Ollama/vLLM).  Cloud allowed with    model allowed
+allowed (engine/vLLM).  Cloud allowed with    model allowed
 Cloud routes rejected  opt-in metadata       within budget.
 by gateway policy.     redaction (planned).
 ```

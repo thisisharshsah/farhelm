@@ -23,7 +23,7 @@ cargo test --locked -p farhelm-runner --test local_model_workflow
 cargo test --locked -p farhelm-gateway --example model_conformance
 ```
 
-The live example requires an explicit operator configuration file and model alias. Start the chosen runtime separately, using an already installed model. For Ollama, `ollama list` lists available models; `ollama ps` reports loaded models and their allocated context. These commands do not install a model. Configure local-only runtime settings as described in [provider setup](model-providers.md#data-policy-and-endpoint-trust).
+The live example requires an explicit operator configuration file and model alias. Start the runtime first, using an already installed model. For the Farhelm engine, `farhelm engine status` lists each model, its port and its context size; it does not install a model. Configure local-only runtime settings as described in [provider setup](model-providers.md#data-policy-and-endpoint-trust).
 
 Run the example with absolute operator paths and a new report filename:
 
@@ -124,13 +124,13 @@ Do not put API keys, authorization headers or secret launch arguments in a manif
 
 | Runtime | Check before evaluating |
 | --- | --- |
-| Ollama | Pin the model artifact and effective template. Set the actual context window in the runtime, not only Farhelm's output limit. The compatible API does not expose `num_ctx`; Ollama documents a derived Modelfile or runtime context configuration. Confirm loaded allocation with `ollama ps`. Disable cloud execution for local-only deployments. |
+| Farhelm engine | The pinned build and each model's SHA-256 are recorded in `engine.toml`. Set `ctx_size` there, not only Farhelm's output limit, and confirm it with `farhelm engine status`. A new build or model file is a new deployment and is probed again. |
 | vLLM | Use a model-compatible tool parser and template, with automatic tool choice enabled. Test the template's handling of assistant tool calls and tool-role results, not only the first generated call. Preserve IDs; Mistral's Transformers templates need specific compatibility handling. Record reasoning parser and generation configuration too. |
 | llama.cpp | Enable the documented Jinja tool path and verify the selected native/generic handler and template. Record the server build and GGUF hashes. Multiple tool calls depend on model/request configuration and are not a baseline guarantee. Check context allocation per serving slot. |
 
-These checks follow [Ollama compatibility](https://docs.ollama.com/api/openai-compatibility), [Ollama context configuration](https://docs.ollama.com/context-length), [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/), [llama.cpp function calling](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md) and [llama.cpp server configuration](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md). Flags and parser names must match the pinned runtime release; these links track upstream documentation rather than a fixed deployment. Ollama's [prompt assembly source](https://github.com/ollama/ollama/blob/main/server/prompt.go) can discard old messages when truncation is enabled, so an apparently successful response is insufficient evidence that the complete history reached the model.
+These checks follow [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/), [llama.cpp function calling](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md) and [llama.cpp server configuration](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md). Flags and parser names must match the pinned runtime release; these links track upstream documentation rather than a fixed deployment. A runtime that truncates history to fit its context can still answer successfully, so a successful response is insufficient evidence that the complete history reached the model.
 
-Reasoning is a separate compatibility constraint. Ollama's [tool guide](https://docs.ollama.com/capabilities/tool-calling) replays thinking together with tool calls; its [compatibility adapter source](https://github.com/ollama/ollama/blob/main/openai/openai.go) maps a `reasoning` field. llama.cpp also documents `reasoning_content` and template-dependent history support. Farhelm does not preserve these reasoning fields as conversation state. A deployment requiring their replay is unsupported until the contract carries them; successful text output alone cannot establish tool-loop compatibility. Do not expose internal reasoning as user-facing answer text to work around this boundary.
+Reasoning is a separate compatibility constraint. llama.cpp documents `reasoning_content` and template-dependent history support. Farhelm does not preserve these reasoning fields as conversation state. A deployment requiring their replay is unsupported until the contract carries them; successful text output alone cannot establish tool-loop compatibility. Do not expose internal reasoning as user-facing answer text to work around this boundary.
 
 ## Promotion checklist beyond the probe
 

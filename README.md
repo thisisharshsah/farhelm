@@ -846,10 +846,10 @@ to obtain a token where the daemon reads it: nothing to export and no PATH to
 get right. `--api-key` stores a key instead. The variables below still work and
 still take precedence over stored credentials, for a deployment that already sets them.
 
-For Ollama, llama.cpp/vLLM Chat Completions, or OpenRouter, use the explicit
-[model provider configuration](docs/model-providers.md). Copy
-[the local example](config/models.local.example.toml), set its installed model
-and output limit, then start the runner with its absolute path:
+For Farhelm's own engine, another llama.cpp/vLLM Chat Completions server, or
+OpenRouter, use the explicit [model provider configuration](docs/model-providers.md).
+Copy [the local example](config/models.local.example.toml), set its installed
+model and output limit, then start the runner with its absolute path:
 
 ```sh
 export FARHELM_MODELS_CONFIG="/absolute/path/models.toml"
