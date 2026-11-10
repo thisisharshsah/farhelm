@@ -1,0 +1,19 @@
+# Build output
+.build/
+build/
+dist/
+*.app
+*.dSYM/
+
+# Swift Package Manager and Xcode
+.swiftpm/
+*.xcodeproj
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Local secrets and scratch
+.env
+*.log
