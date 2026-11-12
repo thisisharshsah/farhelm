@@ -85,6 +85,9 @@ final class AppState: ObservableObject {
     /// chat box while you write; once sent they live in Details, and stay
     /// available to the chat from there.
     @Published var pendingAttachments: [UUID] = []
+    /// The attachments that went with the last message sent. Only these are
+    /// offered to the agent; files from earlier messages are not.
+    private var messageAttachments: [UUID] = []
     /// The column on the right of the chat: details of the session, or the
     /// browser. nil when it is closed.
     @Published var sidePanel: SidePanelMode?
@@ -1956,6 +1959,10 @@ final class AppState: ObservableObject {
         // files themselves stay with the chat (Details lists them).
         let sent = attachments.filter { pendingAttachments.contains($0.id) }.map(\.name)
         let before = Set(conversation.turns.map(\.id))
+        // Only what goes with this message is handed to the agent to work
+        // on; files attached to earlier messages stay with the chat but are
+        // not offered to it again.
+        messageAttachments = pendingAttachments
         pendingAttachments = []
         // One chat box for everything: a message that asks for something to
         // be done on the Mac goes to the agent, anything else is answered.
@@ -2101,7 +2108,7 @@ final class AppState: ObservableObject {
                     let folder = directory
                     let history = self.agentContext
                     let clickable = DeviceControl.shared.clickableLabels()
-                    let output = try await Self.limited(90) {
+                    let output = try await Self.limited(Self.stepTimeout) {
                         try await self.suggester.agentStep(task: brief,
                                                            directory: folder,
                                                            frontApp: seen.header,
@@ -2464,7 +2471,7 @@ final class AppState: ObservableObject {
             let output: String
             do {
                 let history = done
-                output = try await Self.limited(90) {
+                output = try await Self.limited(Self.stepTimeout) {
                     try await self.suggester.helperStep(question: question, directory: directory, done: history)
                 }
             } catch {
@@ -2665,6 +2672,12 @@ final class AppState: ObservableObject {
         }
         persist()
     }
+
+    /// How long one model step may take before the agent gives up on it.
+    /// A high-effort reasoning model can think for minutes over a single
+    /// step, so this is generous: it is there to catch a stuck call, not
+    /// to hurry the model.
+    static let stepTimeout: Double = 300
 
     /// Runs work with a time limit. If the limit passes first, an error is
     /// thrown and the caller moves on, even if the work never returns.
@@ -3450,10 +3463,18 @@ final class AppState: ObservableObject {
     /// For the agent: what the user attached and where it is. These are the
     /// things it was handed to work on.
     private var attachedPathsNote: String {
-        let located = attachments.filter { $0.path != nil }
+        let located = attachments.filter { $0.path != nil && messageAttachments.contains($0.id) }
         guard !located.isEmpty else { return "" }
-        let lines = located.map { "- \($0.path ?? "")\($0.isFolder == true ? "/ (folder)" : "")" }
-        return "\n\nAttached by the user for this conversation. You may read these and, when the task calls for it, change them:\n"
+        let pictures: Set<String> = ["png", "jpg", "jpeg", "heic", "tiff", "tif", "gif", "bmp", "webp"]
+        let lines = located.map { file -> String in
+            let path = file.path ?? ""
+            if file.isFolder == true { return "- \(path)/ (folder)" }
+            if pictures.contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
+                return "- \(path) (a picture, not text: do not READ it)"
+            }
+            return "- \(path)"
+        }
+        return "\n\nAttached by the user with this message. You may read these and, when the task calls for it, change them:\n"
             + lines.joined(separator: "\n")
     }
 
@@ -3586,6 +3607,7 @@ final class AppState: ObservableObject {
         stopAgent()
         unfinishedReport = ""
         pendingAttachments = []
+        messageAttachments = []
         agentLog = []
         agentContext = []
         agentOutputs = [:]
