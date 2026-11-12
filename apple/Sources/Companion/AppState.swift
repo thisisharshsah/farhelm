@@ -91,6 +91,9 @@ final class AppState: ObservableObject {
     /// The right column (the browser or the workspace) has the whole panel,
     /// with the chat out of the way until it is asked for again.
     @Published var sideFull = false
+    /// In code, the details open as a column of their own beside the
+    /// workspace instead of taking its place.
+    @Published var codeDetails = false
     /// Widths of the columns beside the chat. Dragging a divider changes
     /// them, and they are kept between launches.
     @Published var sidebarWidth: CGFloat = AppState.savedWidth("sidebarWidth", 236)
@@ -2760,6 +2763,12 @@ final class AppState: ObservableObject {
     /// Opens the column on the right in the given mode, closes it with nil,
     /// and gives the panel the width it needs.
     func showSide(_ mode: SidePanelMode?) {
+        // In code the details sit beside the workspace, so the files and
+        // the open code stay where they are.
+        if codeMode, mode == .details {
+            codeDetails = true
+            return
+        }
         // In code the workspace is what the right column comes back to:
         // closing the details or the browser returns to it, not to plain chat.
         let mode = (mode == nil && codeMode) ? .workspace : mode
@@ -2767,6 +2776,16 @@ final class AppState: ObservableObject {
         if mode == nil || mode == .details { sideFull = false }
         sidePanel = mode
         overlay?.setRightRoom(mode?.width ?? 0)
+    }
+
+    /// Closes the details: in code only their own column, leaving the
+    /// workspace open.
+    func closeDetails() {
+        if codeDetails {
+            codeDetails = false
+        } else {
+            showSide(nil)
+        }
     }
 
     /// Shows a page in the browser beside the chat.
@@ -3318,6 +3337,43 @@ final class AppState: ObservableObject {
         pasteboard.setString(text, forType: .string)
     }
 
+    /// Cmd+V with files or a picture on the clipboard attaches them, as
+    /// dropping them on the chat would. Text is left to the text field.
+    /// Returns whether something was attached.
+    @discardableResult
+    func pasteAttachments() -> Bool {
+        let pasteboard = NSPasteboard.general
+        // Files copied in Finder (their names also come as text, so these
+        // are looked at first).
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self],
+                                             options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            attach(urls)
+            return true
+        }
+        // Plain text is pasted as text.
+        if let text = pasteboard.string(forType: .string), !text.isEmpty { return false }
+        // A picture: a screenshot, or an image copied from a page or app.
+        guard pasteboard.availableType(from: [.png, .tiff]) != nil,
+              let image = NSImage(pasteboard: pasteboard),
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return false }
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Companion/Pasted", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let url = folder.appendingPathComponent("Pasted image \(stamp).png")
+        do {
+            try png.write(to: url)
+        } catch {
+            lastError = "Couldn't paste the image: \(error.localizedDescription)"
+            return true
+        }
+        attach([url])
+        return true
+    }
+
     // MARK: - Attached files
 
     var attachments: [Attachment] { conversation.attachments ?? [] }
@@ -3368,7 +3424,11 @@ final class AppState: ObservableObject {
                 } else {
                     text = await FileTextExtractor.extract(url)
                 }
-                if let text {
+                // A picture with no words in it is still attached, by its
+                // path, so a pasted screenshot or photo is never refused.
+                let isImage = ["png", "jpg", "jpeg", "heic", "tiff", "tif", "gif", "bmp", "webp"]
+                    .contains(url.pathExtension.lowercased())
+                if let text = text ?? (isImage ? "[A picture with no readable text: \(url.path)]" : nil) {
                     var files = conversation.attachments ?? []
                     files.removeAll { $0.path == url.path || ($0.path == nil && $0.name == url.lastPathComponent) }
                     let file = Attachment(name: url.lastPathComponent, text: text,

@@ -141,6 +141,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case ("z", false): action = Selector(("redo:"))
                 default: break
                 }
+                // A picture or files on the clipboard are attached rather
+                // than pasted as text.
+                if action == #selector(NSText.paste(_:)), AppState.shared.pasteAttachments() {
+                    return nil
+                }
                 if let action, NSApp.sendAction(action, to: nil, from: nil) {
                     return nil
                 }

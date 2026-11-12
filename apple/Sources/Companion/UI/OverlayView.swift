@@ -53,7 +53,7 @@ struct OverlayView: View {
                 // Pinned, the sidebar takes its own column and the chat
                 // sits to the right of it. In code it is on the far right
                 // instead, with the chat: see below.
-                if app.sidebarPinned, !codeLayout {
+                if app.sidebarPinned, !codeLayout, !app.showSettings {
                     SidebarView()
                         .padding(.top, topHeight)
                         .frame(width: shownSidebarWidth)
@@ -210,7 +210,23 @@ struct OverlayView: View {
                                       done: { app.saveColumnWidths() })
                             .padding(.top, topHeight)
                     }
-                    SidePanel(mode: side)
+                    Group {
+                        if codeLayout, app.codeDetails, !sideIsFull {
+                            // The details sit between the workspace and the
+                            // chat; the workspace keeps the rest.
+                            HStack(spacing: 0) {
+                                SidePanel(mode: side)
+                                Rectangle()
+                                    .fill(Theme.ink.opacity(0.08))
+                                    .frame(width: 1)
+                                SessionDetails()
+                                    .frame(width: 280)
+                            }
+                            .environment(\.layoutDirection, .leftToRight)
+                        } else {
+                            SidePanel(mode: side)
+                        }
+                    }
                         .padding(.top, topHeight)
                         .frame(width: sideIsFull || codeLayout ? nil : sideWidth(side))
                         .frame(maxWidth: sideIsFull || codeLayout ? .infinity : nil)
@@ -258,7 +274,7 @@ struct OverlayView: View {
                 }
             }
         }
-        .frame(minWidth: isPill ? 240 : 500, maxWidth: .infinity,
+        .frame(minWidth: isPill ? 240 : 540, maxWidth: .infinity,
                minHeight: isPill ? 44 : 560, maxHeight: .infinity)
         // The command palette drops from the top, over everything. A click
         // anywhere else closes it.
@@ -320,7 +336,7 @@ struct OverlayView: View {
         // Hovering the sidebar button floats the conversations over the
         // chat: pick one and it closes, or move away and it closes.
         .overlay(alignment: codeLayout ? .topTrailing : .topLeading) {
-            if sidebarPeek, !app.sidebarPinned, !isPill {
+            if sidebarPeek, !app.sidebarPinned, !isPill, !app.showSettings {
                 // A glass card the full height under the top bar, set in
                 // from the edges like the rest of Companion's surfaces.
                 SidebarView()
@@ -500,10 +516,13 @@ struct OverlayView: View {
             if !codeLayout {
                 sidebarButton
             }
-            // Every command and, in code, every file, by name.
+            // Every command and, in code, every file, by name. In a
+            // narrow panel it leaves the bar; its keys still work.
+            if panelWidth >= 640 {
             ToolbarGroup {
             IconButton("magnifyingglass", help: "Go to a file or run a command (⌘P, ⇧⌘P)") {
                 commands.openPalette(commands: !app.hasWorkFolder)
+            }
             }
             }
             // The two sides of the app, side by side: chat and code. The
@@ -631,10 +650,11 @@ struct OverlayView: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { app.sideFull = false }
                         }
                     }
+                    let detailsOpen = app.codeMode ? app.codeDetails : app.sidePanel == .details
                     IconButton("list.bullet",
-                               help: app.sidePanel == .details ? "Close the details" : "Progress, outputs and what this session used",
-                               tint: app.sidePanel == .details ? Theme.accent : nil) {
-                        app.showSide(app.sidePanel == .details ? nil : .details)
+                               help: detailsOpen ? "Close the details" : "Progress, outputs and what this session used",
+                               tint: detailsOpen ? Theme.accent : nil) {
+                        if detailsOpen { app.closeDetails() } else { app.showSide(.details) }
                     }
                 }
                 // See-through is a button of its own. (A new conversation,
@@ -940,9 +960,35 @@ struct OverlayView: View {
                 .padding(.top, 3)
             HStack(alignment: .center, spacing: 8) {
             attachMenu
-            modelMenu
-            EffortPill(isOpen: $showEffort)
-            AccessControl()
+            // The model, the effort and the agent's mode take the form
+            // that fits the room there is, fullest first, so nothing in
+            // this row is ever pushed over anything else: names are
+            // dropped before controls are.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    modelMenu(compact: false)
+                    EffortPill(isOpen: $showEffort)
+                    AccessToggles()
+                }
+                HStack(spacing: 8) {
+                    modelMenu(compact: false)
+                    EffortPill(isOpen: $showEffort, compact: true)
+                    AccessToggles()
+                }
+                HStack(spacing: 8) {
+                    modelMenu(compact: false)
+                    EffortPill(isOpen: $showEffort, compact: true)
+                    AccessPill(compact: true)
+                }
+                HStack(spacing: 6) {
+                    modelMenu(compact: true)
+                    EffortPill(isOpen: $showEffort, compact: true)
+                    AccessPill(compact: true)
+                }
+            }
+            // Offered the row's room before the gap after it, or it
+            // would be given half and choose a smaller form than it need.
+            .layoutPriority(1)
             Spacer(minLength: 4)
             IconButton("text.viewfinder",
                        help: app.attachScreen
@@ -1105,8 +1151,8 @@ struct OverlayView: View {
         .help("Add files, images or a folder (or drop them here)")
     }
 
-    private var modelMenu: some View {
-        ModelPill(isOpen: $showModels) { modelHover = $0 }
+    private func modelMenu(compact: Bool) -> some View {
+        ModelPill(isOpen: $showModels, compact: compact) { modelHover = $0 }
             .onChange(of: showModels) { _, open in
                 // One card above the chat box at a time.
                 if open { showEffort = false }
