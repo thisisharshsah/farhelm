@@ -88,6 +88,10 @@ final class AppState: ObservableObject {
     /// The column on the right of the chat: details of the session, or the
     /// browser. nil when it is closed.
     @Published var sidePanel: SidePanelMode?
+    /// Which of the chat's sessions (days of work) the details show: a
+    /// day, or the whole chat. Unset shows the newest session.
+    @Published var detailsDay: Date?
+    @Published var detailsWholeChat = false
     /// The right column (the browser or the workspace) has the whole panel,
     /// with the chat out of the way until it is asked for again.
     @Published var sideFull = false
@@ -2014,7 +2018,9 @@ final class AppState: ObservableObject {
     /// Nothing that changes anything runs without a yes. Commands that only
     /// read (ls, cat, git status) are allowed as they are, and "always
     /// allow" remembers a program so it is not asked about again. Stop ends
-    /// it at any point, and it never runs more than 40 steps for one task.
+    /// it at any point. After a set number of steps (Settings > Agent) it
+    /// stops to ask whether to carry on, so a long task is never cut off
+    /// and never runs away either.
     func runAgent(_ task: String, in existing: UUID? = nil) {
         // Problems are reported in the chat turn when the task came from one.
         func refuse(_ message: String) {
@@ -2057,12 +2063,33 @@ final class AppState: ObservableObject {
                 }
             }
             var directory = self.agentStartDirectory
+            // The repository's own instructions and the skills on hand go
+            // with every task, so none of it has to be said in the chat.
+            // A task that ended early leaves its report for the next message
+            // in the same chat, so "continue" picks up where it stopped.
+            let carried = self.unfinishedReport.isEmpty ? "" :
+                "\n\nThe previous task in this chat ended before it was complete. Its report:\n"
+                + self.unfinishedReport
+                + "\nIf this message asks to continue, pick up from what is left and do not redo finished steps."
             let brief = task + self.repositoryNote + self.attachedPathsNote
+                + (self.hasWorkFolder ? ProjectContext.note(for: self.agentStartDirectory) : ProjectContext.note(for: ""))
+                + carried
             var keyboardAllowed = false
             var usedKeyboard = false
             var stepsRun = 0
-            for _ in 0..<14 {
+            // How many steps it takes before it checks in with the user.
+            let stepBudget = max(10, AppSettings.shared.agentStepBudget)
+            var stepLimit = stepBudget
+            // Rounds are counted too, as a backstop: a task that goes
+            // round and round without taking steps is ended.
+            var rounds = 0
+            while true {
                 if Task.isCancelled { return }
+                rounds += 1
+                if rounds > stepLimit * 2 {
+                    self.finishAgent(self.reportUnfinished("Stopped: \(rounds) rounds went by without the task getting anywhere."), failed: true)
+                    return
+                }
                 self.isPlanning = true
                 self.agentStatus = "Working out the next step"
                 // One look gives the app, window, page address and text.
@@ -2139,7 +2166,9 @@ final class AppState: ObservableObject {
                     case .read:
                         if AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory)) { return true }
                         return access == .manual && !autoReads
-                    case .search, .fetch, .web: return access == .manual && !autoReads
+                    // A helper only reads and searches, and is refused
+                    // keys and credentials outright.
+                    case .search, .fetch, .web, .delegate: return access == .manual && !autoReads
                     // A change to a file is shown first in Manual. On its
                     // own, edits stay in the repository unless access is
                     // full, and nothing writes to keys or credentials.
@@ -2250,6 +2279,11 @@ final class AppState: ObservableObject {
                             self.workspace.reloadIfOpen(target)
                         }
                         self.noteTool("Edited", step.value, outcome)
+                    case .delegate:
+                        self.agentStatus = "A helper is looking into it"
+                        let outcome = await self.delegate(step.value, in: directory)
+                        if Task.isCancelled { return }
+                        self.noteTool("Delegated", step.value, outcome)
                     case .fetch:
                         self.agentStatus = "Reading a web page"
                         let outcome = await AgentTools.fetch(step.value)
@@ -2371,9 +2405,31 @@ final class AppState: ObservableObject {
                         self.stepSuccesses += 1
                     }
                     stepsRun += 1
-                    if stepsRun >= 40 {
-                        self.finishAgent("Stopped after 40 steps without finishing.", failed: true)
-                        return
+                    if stepsRun >= stepLimit {
+                        // A long task is not cut off: it checks in, and
+                        // carries on for as many steps again on a yes.
+                        let question = AgentQuestion("I have taken \(stepsRun) steps and the task is not finished yet. Carry on? | Carry on | Stop here")
+                        self.agentStatus = "Waiting for your answer"
+                        self.pendingQuestion = question
+                        self.publishProgress()
+                        if !self.panelVisible { self.hasUnseen = true }
+                        let answer: String? = await withCheckedContinuation { self.questionAnswer = $0 }
+                        self.pendingQuestion = nil
+                        if Task.isCancelled { return }
+                        let said = (answer ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let lowered = said.lowercased()
+                        if said.isEmpty || lowered.hasPrefix("stop") || lowered == "no" {
+                            // What was done and what is left is reported,
+                            // and kept for the next message in this chat.
+                            self.finishAgent(self.reportUnfinished("Stopped after \(stepsRun) steps, before the task was finished."), failed: true)
+                            return
+                        }
+                        stepLimit += stepBudget
+                        // Anything else typed there is direction for the rest.
+                        self.agentContext.append("ASK: \(stepsRun) steps taken, carry on?\nResult: the user answered: \(said)")
+                        // The rest of this round was planned before the
+                        // answer, so the next round starts from it.
+                        break
                     }
                 }
                 if usedKeyboard {
@@ -2381,7 +2437,6 @@ final class AppState: ObservableObject {
                     try? await Task.sleep(nanoseconds: 700_000_000)
                 }
             }
-            self.finishAgent("Stopped after 14 rounds without finishing.", failed: true)
         }
     }
 
@@ -2393,6 +2448,70 @@ final class AppState: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
         return false
+    }
+
+    /// Hands one question to a helper and waits for its report. The helper
+    /// is a second, smaller agent with a context of its own: it reads and
+    /// searches for up to eight rounds and only its report comes back, so
+    /// a long look through files costs the task a few hundred words
+    /// instead of everything that was read.
+    ///
+    /// It cannot change anything: no commands, no edits, no apps. Keys and
+    /// credentials are refused to it, since there is nobody to ask.
+    private func delegate(_ question: String, in directory: String) async -> AgentTools.Outcome {
+        var done: [String] = []
+        for _ in 0..<8 {
+            if Task.isCancelled { return AgentTools.Outcome(ok: false, text: "Stopped.") }
+            let output: String
+            do {
+                let history = done
+                output = try await Self.limited(90) {
+                    try await self.suggester.helperStep(question: question, directory: directory, done: history)
+                }
+            } catch {
+                return AgentTools.Outcome(ok: false, text: "The helper could not go on: \(error.localizedDescription)")
+            }
+            if Task.isCancelled { return AgentTools.Outcome(ok: false, text: "Stopped.") }
+            let steps = DeviceControl.parsePlan(output).steps
+            // An answer in plain words instead of steps is the report.
+            if steps.isEmpty {
+                let said = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                return AgentTools.Outcome(ok: !said.isEmpty,
+                                          text: said.isEmpty ? "The helper gave no report." : String(said.prefix(3_000)))
+            }
+            for step in steps.prefix(6) {
+                switch step.kind {
+                case .done:
+                    return AgentTools.Outcome(ok: true, text: String(step.value.prefix(3_000)))
+                case .read:
+                    if AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory)) {
+                        done.append("READ: \(step.value)\nResult: FAILED. Keys and credentials are not a helper's to read.")
+                    } else {
+                        self.agentStatus = "Helper: reading \((step.value as NSString).lastPathComponent)"
+                        let file = AgentTools.read(step.value, in: directory)
+                        done.append("READ: \(step.value)\nResult: \(file.text)")
+                    }
+                case .search:
+                    self.agentStatus = "Helper: searching files"
+                    let found = await AgentShell.shared.run(AgentTools.searchCommand(step.value), in: directory)
+                    let text = found.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let shown = text.isEmpty ? "No matches." : String(text.prefix(AgentTools.limit))
+                    done.append("SEARCH: \(step.value)\nResult: \(shown)")
+                case .fetch:
+                    self.agentStatus = "Helper: reading a web page"
+                    let page = await AgentTools.fetch(step.value)
+                    done.append("FETCH: \(step.value)\nResult: \(page.text)")
+                case .web:
+                    self.agentStatus = "Helper: searching the web"
+                    let results = await AgentTools.search(web: step.value)
+                    done.append("WEB: \(step.value)\nResult: \(results.text)")
+                default:
+                    done.append("\(step.label)\nResult: FAILED. A helper only reads and searches.")
+                }
+                if Task.isCancelled { return AgentTools.Outcome(ok: false, text: "Stopped.") }
+            }
+        }
+        return AgentTools.Outcome(ok: false, text: "The helper ran out of rounds before it could report. Ask it something narrower, or look yourself.")
     }
 
     /// Records what one of the agent's file or web tools did: a line for
@@ -2423,7 +2542,7 @@ final class AppState: ObservableObject {
             // The file and web tools: "Read `path`", "Edited `path`" and so on.
             let tools: [(prefix: String, kind: WorkStep.Kind)] = [
                 ("Searched the web for `", .web), ("Fetched `", .web), ("Read `", .read),
-                ("Searched `", .search), ("Wrote `", .edit), ("Edited `", .edit)
+                ("Searched `", .search), ("Wrote `", .edit), ("Edited `", .edit), ("Delegated `", .search)
             ]
             if let tool = tools.first(where: { line.hasPrefix($0.prefix) }) {
                 let output = agentOutputs[index].flatMap { $0.isEmpty ? nil : $0 }
@@ -2488,7 +2607,37 @@ final class AppState: ObservableObject {
         lastAgentReport = message
         if failed {
             stepFailures += 1
+        } else {
+            // A task that completed leaves nothing to pick up.
+            unfinishedReport = ""
         }
+    }
+
+    /// The report for a task that ended early: why it stopped, the steps
+    /// that ran and the plan items still open. It is kept for the next
+    /// message in this chat; nothing resumes by itself.
+    private func reportUnfinished(_ reason: String) -> String {
+        let done = agentLog.suffix(12).map { "- " + String($0.prefix(160)) }
+        let left = agentPlan.filter { $0.state != .done }
+            .map { "- " + $0.text + ($0.state == .doing ? " (in progress)" : "") }
+        if done.isEmpty && left.isEmpty { return reason }
+        var lines = [reason]
+        if !done.isEmpty {
+            lines.append("")
+            lines.append(agentLog.count > done.count
+                         ? "Done (last \(done.count) of \(agentLog.count) steps):" : "Done:")
+            lines.append(contentsOf: done)
+        }
+        if !left.isEmpty {
+            lines.append("")
+            lines.append("Left:")
+            lines.append(contentsOf: left)
+        }
+        lines.append("")
+        lines.append("Say \"continue\" to pick up from here.")
+        let report = lines.joined(separator: "\n")
+        unfinishedReport = report
+        return report
     }
 
     /// Clears everything that says a task is running. Called exactly once
@@ -2511,7 +2660,8 @@ final class AppState: ObservableObject {
             streamingTurns.remove(id)
             // Ended without a verdict: say so in the chat.
             if conversation.turns.first(where: { $0.id == id })?.answer.isEmpty == true {
-                updateTurn(id) { $0.answer = "Stopped." }
+                let report = reportUnfinished("Stopped.")
+                updateTurn(id) { $0.answer = report }
             }
         }
         persist()
@@ -2631,14 +2781,69 @@ final class AppState: ObservableObject {
         if let url = BrowserModel.url(from: text) { browse(url) }
     }
 
-    /// Every step the agent has taken in this conversation.
-    private var sessionSteps: [WorkStep] {
-        conversation.turns.flatMap { $0.steps ?? [] }
+    // A chat can hold many days of work. Each day worked in it is a
+    // session, and the details beside the chat show one session at a time:
+    // the newest unless another is chosen, or the whole chat.
+
+    /// The days this chat was worked in, newest first.
+    var workDays: [Date] {
+        let calendar = Calendar.current
+        var days: [Date] = []
+        for turn in conversation.turns {
+            let day = calendar.startOfDay(for: turn.date)
+            if !days.contains(day) { days.append(day) }
+        }
+        return days.sorted(by: >)
     }
 
-    /// The checklist of the newest task that kept one.
+    /// The session whose details are showing; nil for the whole chat. A
+    /// choice made in another chat does not carry over to one without
+    /// that day.
+    var shownDay: Date? {
+        if detailsWholeChat { return nil }
+        let days = workDays
+        if let chosen = detailsDay, days.contains(chosen) { return chosen }
+        return days.first
+    }
+
+    /// Chooses the session to show details for, or the whole chat for nil.
+    func showDetails(of day: Date?) {
+        detailsWholeChat = day == nil
+        detailsDay = day
+    }
+
+    /// A session's name: "Today", "Yesterday", or its date.
+    static func name(ofDay day: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        let sameYear = calendar.isDate(day, equalTo: Date(), toGranularity: .year)
+        return sameYear
+            ? day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+            : day.formatted(.dateTime.day().month(.abbreviated).year())
+    }
+
+    /// The turns of the session that is showing.
+    private var sessionTurns: [ChatTurn] {
+        guard let day = shownDay else { return conversation.turns }
+        let calendar = Calendar.current
+        return conversation.turns.filter { calendar.isDate($0.date, inSameDayAs: day) }
+    }
+
+    /// How many requests were made in a session.
+    func requests(on day: Date) -> Int {
+        let calendar = Calendar.current
+        return conversation.turns.filter { calendar.isDate($0.date, inSameDayAs: day) }.count
+    }
+
+    /// Every step the agent took in the session that is showing.
+    private var sessionSteps: [WorkStep] {
+        sessionTurns.flatMap { $0.steps ?? [] }
+    }
+
+    /// The checklist of the newest task that kept one, in that session.
     var sessionPlan: [PlanItem]? {
-        conversation.turns.last { $0.plan?.isEmpty == false }?.plan
+        sessionTurns.last { $0.plan?.isEmpty == false }?.plan
     }
 
     private func subjects(of prefixes: [String], kind: WorkStep.Kind) -> [String] {
@@ -3183,6 +3388,7 @@ final class AppState: ObservableObject {
     /// reopened conversation starts without it.
     private func forgetAgentWork() {
         stopAgent()
+        unfinishedReport = ""
         pendingAttachments = []
         agentLog = []
         agentContext = []
