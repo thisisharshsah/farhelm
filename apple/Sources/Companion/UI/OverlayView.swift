@@ -12,6 +12,10 @@ struct OverlayView: View {
     @ObservedObject private var usage = UsageStore.shared
     /// The command palette, open over the panel when asked for.
     @ObservedObject private var commands = CommandRegistry.shared
+    /// How wide the details are when they sit beside the workspace.
+    @AppStorage("codeDetailsWidth") private var codeDetailsWidth: Double = 280
+    /// The chat's share of the width in code; 0 until the divider is dragged.
+    @AppStorage("codeChatShare") private var codeChatShare: Double = 0
     @FocusState private var inputFocused: Bool
     @State private var showNotes = false
     /// The engine and model picker, open above the chat box.
@@ -153,26 +157,38 @@ struct OverlayView: View {
                         .overlay(alignment: .bottomLeading) {
                             if showModels {
                                 ModelPicker(isOpen: $showModels)
-                                    .frame(width: 326)
-                                    .padding(.leading, Theme.gutter)
-                                    .padding(.bottom, 2)
-                                    .transition(.opacity.combined(with: .offset(y: 6)))
+                                    // As wide as it likes to be, but never
+                                    // wider than the chat it hangs over: in a
+                                    // narrow chat column it narrows with it.
+                                    .frame(maxWidth: 326)
+                                    .padding(.horizontal, Theme.gutter)
+                                    // A small gap between it and the pill it
+                                    // hangs from.
+                                    .padding(.bottom, 6)
+                                    // It grows out of the pill's edge and
+                                    // fades, in one spring, so it floats in
+                                    // rather than jumping.
+                                    .transition(.scale(scale: 0.95, anchor: .bottom).combined(with: .opacity))
+                                    .zIndex(10)
                             } else if showEffort {
                                 EffortBar(isOpen: $showEffort)
-                                    .padding(.leading, Theme.gutter)
+                                    .padding(.horizontal, Theme.gutter)
                                     .padding(.bottom, 2)
                                     .transition(.opacity.combined(with: .offset(y: 6)))
                             } else if modelHover {
                                 // Hovering the model button: which engine
                                 // answers and what is left of the plan.
                                 ModelHoverCard()
-                                    .padding(.leading, Theme.gutter)
+                                    .padding(.horizontal, Theme.gutter)
                                     .padding(.bottom, 2)
                                     .transition(.opacity.combined(with: .offset(y: 4)))
                             }
                         }
                         .animation(.easeOut(duration: 0.16), value: modelHover)
-                        .zIndex(2)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showModels)
+                        // Above the chat box and its controls, so it floats
+                        // over them instead of overlapping with them.
+                        .zIndex(10)
                     inputBar
                         .padding(.bottom, 6)
                     }
@@ -197,9 +213,12 @@ struct OverlayView: View {
                         // workspace has the rest.
                         ColumnDivider(width: { codeChatShown },
                                       direction: -1,
-                                      resize: { app.codeChatWidth = min(max($0, 300), max(300, panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0) - 380)) },
-                                      reset: { app.codeChatWidth = 380 },
-                                      done: { app.saveColumnWidths() })
+                                      resize: {
+                                          let width = min(max($0, 300), max(300, codeRoom - codeLeftLeast))
+                                          codeChatShare = Double(width / max(codeRoom, 1))
+                                      },
+                                      reset: { codeChatShare = 0 },
+                                      done: {})
                             .padding(.top, topHeight)
                     } else if !sideIsFull {
                         // Drag to give the column more or less room.
@@ -216,11 +235,14 @@ struct OverlayView: View {
                             // chat; the workspace keeps the rest.
                             HStack(spacing: 0) {
                                 SidePanel(mode: side)
-                                Rectangle()
-                                    .fill(Theme.ink.opacity(0.08))
-                                    .frame(width: 1)
+                                // Drag to give the details more or less room.
+                                ColumnDivider(width: { CGFloat(codeDetailsWidth) },
+                                              direction: -1,
+                                              resize: { codeDetailsWidth = Double(min(max($0, 220), 460)) },
+                                              reset: { codeDetailsWidth = 280 },
+                                              done: {})
                                 SessionDetails()
-                                    .frame(width: 280)
+                                    .frame(width: CGFloat(min(max(codeDetailsWidth, 220), 460)))
                             }
                             .environment(\.layoutDirection, .leftToRight)
                         } else {
@@ -474,7 +496,22 @@ struct OverlayView: View {
     private var codeLayout: Bool { app.codeMode && app.sidePanel == .workspace && !app.showSettings }
     /// The chat column's width in code, kept to what the panel can give.
     private var codeChatShown: CGFloat {
-        min(max(app.codeChatWidth, 300), max(300, panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0) - 380))
+        // The chat has a share of the room, not a set width, so it grows
+        // and shrinks with the panel. Until the divider is dragged the
+        // share is a little over a third.
+        let room = codeRoom
+        let wanted = codeChatShare > 0 ? room * CGFloat(codeChatShare) : max(380, room * 0.36)
+        return min(max(wanted, 300), max(300, room - codeLeftLeast))
+    }
+    /// The width the chat and the workspace share in code.
+    private var codeRoom: CGFloat {
+        panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0)
+    }
+    /// The least the workspace (and the details beside it, when open) may
+    /// have, so the chat can never grow and push them off the screen.
+    private var codeLeftLeast: CGFloat {
+        let details = app.codeDetails ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + 8 : 0
+        return 320 + details
     }
 
     /// The pinned sidebar's width: its set width when the panel has room,
@@ -549,7 +586,7 @@ struct OverlayView: View {
                         .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.ink.opacity(0.96))
                         .focused($renameFocused)
-                        .frame(minWidth: 90, maxWidth: 190)
+                        .frame(minWidth: 90, maxWidth: 420)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.09)))
@@ -586,10 +623,11 @@ struct OverlayView: View {
                         .help(app.statusLine)
                 }
             }
-            // The name always keeps some room; in a narrow panel it is cut
+            // The name is shown in full whenever the bar has the room, ahead
+            // of the empty stretch beside it; in a narrow panel it is cut
             // short with an ellipsis and never squeezed out altogether.
             .frame(minWidth: 72, alignment: .leading)
-            .layoutPriority(-1)
+            .layoutPriority(1)
             // The empty stretch of the top bar is a real title bar area, laid
             // out as a view of its own so it is certain to get the mouse:
             // drag it to move the panel, double-click it to fill the screen.
