@@ -88,10 +88,6 @@ final class AppState: ObservableObject {
     /// The column on the right of the chat: details of the session, or the
     /// browser. nil when it is closed.
     @Published var sidePanel: SidePanelMode?
-    /// Which of the chat's sessions (days of work) the details show: a
-    /// day, or the whole chat. Unset shows the newest session.
-    @Published var detailsDay: Date?
-    @Published var detailsWholeChat = false
     /// The right column (the browser or the workspace) has the whole panel,
     /// with the chat out of the way until it is asked for again.
     @Published var sideFull = false
@@ -2031,7 +2027,7 @@ final class AppState: ObservableObject {
             }
         }
         guard !agentRunning else {
-            refuse("The agent is still working on the last task. Press Stop (in the header, or Cmd+Shift+period) to end it, then ask again.")
+            refuse("The agent is still working on the last task. Press Stop (in the chat box, or Cmd+Shift+period) to end it, then ask again.")
             return
         }
         followUpTask?.cancel()
@@ -2781,75 +2777,150 @@ final class AppState: ObservableObject {
         if let url = BrowserModel.url(from: text) { browse(url) }
     }
 
-    // A chat can hold many days of work. Each day worked in it is a
-    // session, and the details beside the chat show one session at a time:
-    // the newest unless another is chosen, or the whole chat.
-
-    /// The days this chat was worked in, newest first.
-    var workDays: [Date] {
-        let calendar = Calendar.current
-        var days: [Date] = []
-        for turn in conversation.turns {
-            let day = calendar.startOfDay(for: turn.date)
-            if !days.contains(day) { days.append(day) }
-        }
-        return days.sorted(by: >)
-    }
-
-    /// The session whose details are showing; nil for the whole chat. A
-    /// choice made in another chat does not carry over to one without
-    /// that day.
-    var shownDay: Date? {
-        if detailsWholeChat { return nil }
-        let days = workDays
-        if let chosen = detailsDay, days.contains(chosen) { return chosen }
-        return days.first
-    }
-
-    /// Chooses the session to show details for, or the whole chat for nil.
-    func showDetails(of day: Date?) {
-        detailsWholeChat = day == nil
-        detailsDay = day
-    }
-
-    /// A session's name: "Today", "Yesterday", or its date.
-    static func name(ofDay day: Date) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(day) { return "Today" }
-        if calendar.isDateInYesterday(day) { return "Yesterday" }
-        let sameYear = calendar.isDate(day, equalTo: Date(), toGranularity: .year)
-        return sameYear
-            ? day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
-            : day.formatted(.dateTime.day().month(.abbreviated).year())
-    }
-
-    /// The turns of the session that is showing.
-    private var sessionTurns: [ChatTurn] {
-        guard let day = shownDay else { return conversation.turns }
-        let calendar = Calendar.current
-        return conversation.turns.filter { calendar.isDate($0.date, inSameDayAs: day) }
-    }
-
-    /// How many requests were made in a session.
-    func requests(on day: Date) -> Int {
-        let calendar = Calendar.current
-        return conversation.turns.filter { calendar.isDate($0.date, inSameDayAs: day) }.count
-    }
-
-    /// Every step the agent took in the session that is showing.
+    /// Every step the agent has taken in this conversation.
     private var sessionSteps: [WorkStep] {
-        sessionTurns.flatMap { $0.steps ?? [] }
+        conversation.turns.flatMap { $0.steps ?? [] }
     }
 
-    /// The checklist of the newest task that kept one, in that session.
+    /// The checklist of the newest task that kept one.
     var sessionPlan: [PlanItem]? {
-        sessionTurns.last { $0.plan?.isEmpty == false }?.plan
+        conversation.turns.last { $0.plan?.isEmpty == false }?.plan
+    }
+
+    /// What one request in the session drew on and produced, for the
+    /// details beside the chat.
+    struct TaskUse: Identifiable {
+        let id: UUID
+        /// The request, as it was written.
+        let title: String
+        let date: Date
+        /// The engine and model that did the work ("Claude Code · Opus").
+        var model = ""
+        /// Names of the files attached with it.
+        var uploads: [String] = []
+        var web: [String] = []
+        var reads: [String] = []
+        /// Files it created or changed, as full paths.
+        var edits: [String] = []
+        /// The commands it ran, in order.
+        var commands: [String] = []
+        /// When the request after it was made, if there is one: the end
+        /// of the stretch this request's changes fall in.
+        var until: Date?
+        /// Which of the user's material the answer drew on.
+        var sources: [String] = []
+
+        var isEmpty: Bool {
+            uploads.isEmpty && web.isEmpty && reads.isEmpty && edits.isEmpty && commands.isEmpty && sources.isEmpty
+        }
+    }
+
+    /// The requests in this chat that used something, oldest first.
+    var sessionTasks: [TaskUse] {
+        let turns = conversation.turns
+        return turns.enumerated().compactMap { index, turn -> TaskUse? in
+            let steps = turn.steps ?? []
+            var use = TaskUse(id: turn.id, title: turn.prompt, date: turn.date)
+            use.until = index + 1 < turns.count ? turns[index + 1].date : nil
+            use.model = turn.model
+            use.uploads = turn.attached ?? []
+            use.web = subjects(in: steps, of: ["Fetched ", "Searched the web for "], kind: .web).map {
+                $0.contains("://") || $0.contains(" ") || !$0.contains(".") ? $0 : "https://" + $0
+            }
+            use.reads = subjects(in: steps, of: ["Read "], kind: .read)
+            use.edits = subjects(in: steps, of: ["Wrote ", "Edited "], kind: .edit).map {
+                AgentTools.resolve($0, in: agentStartDirectory)
+            }
+            use.commands = steps.filter { $0.kind == .run }.map(\.title)
+            use.sources = turn.sources ?? []
+            return use.isEmpty ? nil : use
+        }
+    }
+
+    /// Opens a file in the workspace's editor, bringing the workspace up.
+    /// The path may be as the agent wrote it: relative to its folder, and
+    /// with a range of lines on the end ("src/app.py:40-90").
+    func openInWorkspace(_ path: String) {
+        var target = path
+        if let colon = target.lastIndex(of: ":"),
+           target[target.index(after: colon)...].allSatisfy({ $0.isNumber || $0 == "-" }) {
+            target = String(target[..<colon])
+        }
+        let full = AgentTools.resolve(target, in: agentStartDirectory)
+        // Opening a file always brings up code mode.
+        if !codeMode { setCode(true) }
+        if sidePanel != .workspace { showSide(.workspace) }
+        workspace.use(root: workspaceRoot)
+        // Edits to the file being left are kept, not dropped.
+        if workspace.dirty { workspace.save(conversation: conversation.id) }
+        workspace.open(full)
+    }
+
+    /// Opens several files at once, each in its own tab of the editor,
+    /// bringing up code mode. The last one chosen is shown.
+    func openInWorkspace(all paths: [String]) {
+        guard !paths.isEmpty else { return }
+        if !codeMode { setCode(true) }
+        if sidePanel != .workspace { showSide(.workspace) }
+        workspace.use(root: workspaceRoot)
+        let full = paths.map { AgentTools.resolve($0, in: agentStartDirectory) }
+        workspace.open(all: full, conversation: conversation.id)
+    }
+
+    /// Asks for any number of files and opens them all in code mode.
+    func pickFilesToOpen() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.prompt = "Open"
+        panel.message = "Choose one or more files. Each opens in its own tab (⌘-click or ⇧-click to pick several)."
+        panel.directoryURL = URL(fileURLWithPath: workspaceRoot)
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK else { return }
+        openInWorkspace(all: panel.urls.map(\.path))
+    }
+
+    /// Shows what a request changed in a file, side by side in the
+    /// workspace: the file as it was before the request's first change to
+    /// it, and as it was after its last. A file with no change on record
+    /// is simply opened.
+    func showEdit(_ path: String, of task: TaskUse) {
+        let from = task.date.addingTimeInterval(-1)
+        // Changes are kept newest first.
+        let changes = ChangeStore.shared.changes.filter {
+            $0.path == path && $0.conversation == conversation.id && $0.date >= from
+                && (task.until == nil || $0.date < task.until!)
+        }
+        guard let newest = changes.first, let oldest = changes.last else {
+            openInWorkspace(path)
+            return
+        }
+        if !codeMode { setCode(true) }
+        if sidePanel != .workspace { showSide(.workspace) }
+        workspace.use(root: workspaceRoot)
+        let count = changes.count
+        workspace.showDiff(DiffDocument(
+            title: workspace.relative(path),
+            subtitle: "\(count) change\(count == 1 ? "" : "s")  ·  " + String(task.title.prefix(80)),
+            before: ChangeStore.shared.text(oldest.before),
+            after: ChangeStore.shared.text(newest.after),
+            path: FileManager.default.fileExists(atPath: path) ? path : nil))
+    }
+
+    /// A site's own icon, when its page has been open in the browser here.
+    func siteIcon(for address: String) -> NSImage? {
+        webHistory.icon(for: address)
     }
 
     private func subjects(of prefixes: [String], kind: WorkStep.Kind) -> [String] {
+        subjects(in: sessionSteps, of: prefixes, kind: kind)
+    }
+
+    private func subjects(in steps: [WorkStep], of prefixes: [String], kind: WorkStep.Kind) -> [String] {
         var seen: Set<String> = []
         var found: [String] = []
-        for step in sessionSteps where step.kind == kind && !step.failed {
+        for step in steps where step.kind == kind && !step.failed {
             guard let prefix = prefixes.first(where: { step.title.hasPrefix($0) }) else { continue }
             let subject = String(step.title.dropFirst(prefix.count))
             if seen.insert(subject).inserted { found.append(subject) }
@@ -3173,6 +3244,68 @@ final class AppState: ObservableObject {
         }
         conversation.turns.removeAll { $0.id == turnID }
         persist()
+    }
+
+    // MARK: Checkpoints
+
+    // Every message is a checkpoint: the chat and its files as they were
+    // just before it. Going back to one puts the files back, takes the
+    // messages from there on out of the chat, and so also returns the
+    // session's outputs and what it used to that stage.
+
+    /// Whether files have been changed in this chat since a message was
+    /// sent, so there is something to go back to before it.
+    func hasCheckpoint(_ turn: ChatTurn) -> Bool {
+        guard let last = ChangeStore.shared.lastChange(of: conversation.id) else { return false }
+        return last >= turn.date
+    }
+
+    /// What going back to before a message would do: how many files would
+    /// be put back and how many messages would leave the chat.
+    func checkpoint(before turnID: UUID) -> (files: Int, turns: Int)? {
+        guard let index = conversation.turns.firstIndex(where: { $0.id == turnID }) else { return nil }
+        let since = conversation.turns[index].date.addingTimeInterval(-1)
+        let files = ChangeStore.shared.stage(of: conversation.id, at: since).count
+        return (files, conversation.turns.count - index)
+    }
+
+    /// Goes back to just before a message: the files this chat changed
+    /// since are put back as they were, the message and everything after
+    /// it leave the chat, and its words return to the chat box to be sent
+    /// again or changed. In a git repository the result is committed as a
+    /// new commit; no history is rewritten. What commands did outside of
+    /// files (installs, pushes) is not undone.
+    func restoreCheckpoint(before turnID: UUID) {
+        guard let index = conversation.turns.firstIndex(where: { $0.id == turnID }) else { return }
+        if agentRunning { stopAgent() }
+        cancelRuns()
+        let turn = conversation.turns[index]
+        let label = String(turn.prompt.prefix(60))
+        let result = ChangeStore.shared.rewind(conversation: conversation.id,
+                                               to: turn.date.addingTimeInterval(-1), label: label)
+        for later in conversation.turns[index...] {
+            if let file = later.imageFile {
+                store.deleteImage(conversation: conversation.id, file: file)
+            }
+        }
+        conversation.turns.removeSubrange(index...)
+        // The agent's own record of what it did is of work now undone.
+        agentLog = []
+        agentContext = []
+        agentOutputs = [:]
+        agentPlan = []
+        unfinishedReport = ""
+        draft = turn.prompt
+        lastError = result.failed > 0
+            ? "\(result.failed) file\(result.failed == 1 ? "" : "s") could not be put back. See Changes in the workspace."
+            : nil
+        persist()
+        workspace.refreshAll()
+        if let open = workspace.openPath { workspace.reloadIfOpen(open) }
+        Task { @MainActor in
+            await ChangeStore.shared.commitPending(message: "restore checkpoint before \(label)")
+            GitModel.shared.refresh()
+        }
     }
 
     func copy(_ text: String) {
