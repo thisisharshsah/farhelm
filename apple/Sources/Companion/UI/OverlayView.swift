@@ -16,6 +16,8 @@ struct OverlayView: View {
     @State private var showNotes = false
     /// The engine and model picker, open above the chat box.
     @State private var showModels = false
+    /// The bar that sets the effort, open above the chat box.
+    @State private var showEffort = false
     /// The pointer is over the model button: its card shows.
     @State private var modelHover = false
     /// The sidebar floating open because the pointer is on its button or on
@@ -49,8 +51,9 @@ struct OverlayView: View {
                 ZStack(alignment: .top) {
                 HStack(spacing: 0) {
                 // Pinned, the sidebar takes its own column and the chat
-                // sits to the right of it.
-                if app.sidebarPinned {
+                // sits to the right of it. In code it is on the far right
+                // instead, with the chat: see below.
+                if app.sidebarPinned, !codeLayout {
                     SidebarView()
                         .padding(.top, topHeight)
                         .frame(width: shownSidebarWidth)
@@ -137,6 +140,8 @@ struct OverlayView: View {
                     VStack(spacing: 0) {
                     actionCard
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.agentRunning)
+                        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.pendingApproval?.id)
+                        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.pendingQuestion?.id)
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.nextSteps?.steps)
                     // The model picker hangs from a line of no height just
                     // above the chat box and grows upward from it, over the
@@ -149,6 +154,11 @@ struct OverlayView: View {
                             if showModels {
                                 ModelPicker(isOpen: $showModels)
                                     .frame(width: 326)
+                                    .padding(.leading, Theme.gutter)
+                                    .padding(.bottom, 2)
+                                    .transition(.opacity.combined(with: .offset(y: 6)))
+                            } else if showEffort {
+                                EffortBar(isOpen: $showEffort)
                                     .padding(.leading, Theme.gutter)
                                     .padding(.bottom, 2)
                                     .transition(.opacity.combined(with: .offset(y: 6)))
@@ -212,6 +222,22 @@ struct OverlayView: View {
                 // put the chat on the right; each column reads left to
                 // right as ever.
                 .environment(\.layoutDirection, codeLayout ? .rightToLeft : .leftToRight)
+                // In code the conversations keep to the chat's side: the
+                // workspace has the left and the middle, the chat is on the
+                // right, and the list of chats is beyond it at the edge.
+                if app.sidebarPinned, codeLayout {
+                    // Dragging left gives the sidebar more room here.
+                    ColumnDivider(width: { app.sidebarWidth },
+                                  direction: -1,
+                                  resize: { app.overlay?.dragColumn(left: true, to: $0) },
+                                  reset: { app.overlay?.resetColumn(left: true) },
+                                  done: { app.saveColumnWidths() })
+                        .padding(.top, topHeight)
+                    SidebarView()
+                        .padding(.top, topHeight)
+                        .frame(width: shownSidebarWidth)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
                 }
                 // The floating top: the app bar, and under it the live
                 // indicator or a warning when there is one.
@@ -293,7 +319,7 @@ struct OverlayView: View {
         }
         // Hovering the sidebar button floats the conversations over the
         // chat: pick one and it closes, or move away and it closes.
-        .overlay(alignment: .topLeading) {
+        .overlay(alignment: codeLayout ? .topTrailing : .topLeading) {
             if sidebarPeek, !app.sidebarPinned, !isPill {
                 // A glass card the full height under the top bar, set in
                 // from the edges like the rest of Companion's surfaces.
@@ -308,10 +334,11 @@ struct OverlayView: View {
                         pointerOnSidebar = inside
                         if !inside { closePeekSoon() }
                     }
-                    .padding(.leading, 8)
+                    // It floats on the side its column would be on.
+                    .padding(codeLayout ? .trailing : .leading, 8)
                     .padding(.bottom, 8)
                     .padding(.top, topHeight + 4)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .transition(.move(edge: codeLayout ? .trailing : .leading).combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.86), value: sidebarPeek)
@@ -350,7 +377,7 @@ struct OverlayView: View {
     private var pill: some View {
         HStack(spacing: 9) {
             if app.agentRunning {
-                PulsingDot(color: app.pendingApproval == nil ? Theme.accent : Theme.amber)
+                LoadingMark(state: app.pendingApproval == nil ? .working : .waiting, size: 14)
             } else if app.isListening {
                 PulsingDot(color: Theme.mint)
             } else {
@@ -468,28 +495,10 @@ struct OverlayView: View {
     private var header: some View {
         HStack(spacing: 8) {
             WindowControls()
-            ToolbarGroup {
-            // Opens the sidebar of conversations, from the left.
-            // Hover: the conversations float open. Click: they are pinned
-            // beside the chat, which moves over to make room.
-            IconButton("sidebar.left",
-                       help: app.sidebarPinned ? "Close the sidebar" : "Conversations. Hover to peek, click to keep open.",
-                       tint: app.sidebarPinned ? Theme.accent : nil) {
-                sidebarPeek = false
-                app.refreshHistory()
-                app.sidebarPinned.toggle()
-                app.overlay?.setSidebar(app.sidebarPinned)
-            }
-            .onHover { inside in
-                pointerOnSidebarButton = inside
-                if inside {
-                    guard !app.sidebarPinned, !sidebarPeek else { return }
-                    app.refreshHistory()
-                    sidebarPeek = true
-                } else {
-                    closePeekSoon()
-                }
-            }
+            // The button for the conversations is on the side they open
+            // on: the left, or in code the right (at the end of the bar).
+            if !codeLayout {
+                sidebarButton
             }
             // Every command and, in code, every file, by name.
             ToolbarGroup {
@@ -649,12 +658,41 @@ struct OverlayView: View {
                     })
                 }
             }
+            if codeLayout, !isPill {
+                sidebarButton
+            }
         }
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 12)
         .padding(.bottom, 9)
         .background(DragHandle())
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: app.agentRunning)
+    }
+
+    /// Opens the sidebar of conversations. Hover: the conversations float
+    /// open. Click: they are pinned beside the chat, which moves over to
+    /// make room. Its symbol points to the side they open on.
+    private var sidebarButton: some View {
+        ToolbarGroup {
+            IconButton(codeLayout ? "sidebar.right" : "sidebar.left",
+                       help: app.sidebarPinned ? "Close the sidebar" : "Conversations. Hover to peek, click to keep open.",
+                       tint: app.sidebarPinned ? Theme.accent : nil) {
+                sidebarPeek = false
+                app.refreshHistory()
+                app.sidebarPinned.toggle()
+                app.overlay?.setSidebar(app.sidebarPinned)
+            }
+            .onHover { inside in
+                pointerOnSidebarButton = inside
+                if inside {
+                    guard !app.sidebarPinned, !sidebarPeek else { return }
+                    app.refreshHistory()
+                    sidebarPeek = true
+                } else {
+                    closePeekSoon()
+                }
+            }
+        }
     }
 
     /// The agent at work: what it is doing, how far along it is, and a Stop
@@ -664,7 +702,10 @@ struct OverlayView: View {
     /// shakes the card.
     @ViewBuilder
     private var actionCard: some View {
-        if app.agentRunning {
+        // What the agent is doing shows in the chat itself, under its
+        // message: the checklist, the steps and the step in hand. The card
+        // comes up here only when it needs the user, for a yes or an answer.
+        if app.agentRunning, app.pendingApproval != nil || app.pendingQuestion != nil {
             AgentCard()
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 8)
@@ -782,9 +823,7 @@ struct OverlayView: View {
                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.accent)
                 if app.isSummarizing || app.isWritingUp {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.55)
+                    LoadingMark(state: .thinking, size: 14)
                 }
                 Spacer(minLength: 4)
                 IconButton("wand.and.stars",
@@ -902,8 +941,8 @@ struct OverlayView: View {
             HStack(alignment: .center, spacing: 8) {
             attachMenu
             modelMenu
-            EffortPill()
-            AccessPill()
+            EffortPill(isOpen: $showEffort)
+            AccessControl()
             Spacer(minLength: 4)
             IconButton("text.viewfinder",
                        help: app.attachScreen
@@ -1068,6 +1107,13 @@ struct OverlayView: View {
 
     private var modelMenu: some View {
         ModelPill(isOpen: $showModels) { modelHover = $0 }
+            .onChange(of: showModels) { _, open in
+                // One card above the chat box at a time.
+                if open { showEffort = false }
+            }
+            .onChange(of: showEffort) { _, open in
+                if open { showModels = false }
+            }
     }
 
     @ViewBuilder
@@ -1669,9 +1715,7 @@ struct ThreadActions: View {
     var body: some View {
         HStack(spacing: 6) {
             if app.isRescanning {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.55)
+                LoadingMark(state: .working, size: 16)
                     .frame(width: 18, height: 18)
                 Text("Rechecking \(app.rescanProgress)")
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -1842,9 +1886,14 @@ struct TurnView: View {
 
                 if turn.answer.isEmpty {
                     if streaming {
-                        Text(turn.steps == nil ? "Thinking…" : (app.agentStatus ?? "Working…"))
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.ink.opacity(0.4))
+                        // The mark turns slowly while the model has not
+                        // answered, quickly while the agent is at work.
+                        HStack(spacing: 7) {
+                            LoadingMark(state: turn.steps == nil ? .thinking : .working, size: 18)
+                            Text(turn.steps == nil ? "Thinking…" : (app.agentStatus ?? "Working…"))
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.ink.opacity(0.4))
+                        }
                     }
                 } else {
                     // An answer that came back formatted (lists, tables, bold) is
@@ -1911,7 +1960,6 @@ struct TurnView: View {
                 BubbleShape(side: .left).strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.5)
             }
         }
-        .overlay(ShimmerOverlay(active: streaming).clipShape(BubbleShape(side: .left)))
         .onHover { hover = $0 }
         // Right-click anywhere on the answer copies all of it.
         .contextMenu {
@@ -2058,10 +2106,7 @@ struct WorkTrail: View {
             // The one-line summary. Click to see the steps.
             HStack(spacing: 6) {
                 if working {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
+                    LoadingMark(state: .working, size: 12)
                 }
                 Text(working ? (steps.last?.title ?? "Working") : WorkStep.summary(of: steps))
                     .font(.system(size: 11.5, design: working && steps.last?.kind == .run ? .monospaced : .default))
@@ -2409,7 +2454,6 @@ struct TurnThumbnail: View {
                         .padding(5)
                 }
             }
-            .overlay(ShimmerOverlay(active: processing))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
