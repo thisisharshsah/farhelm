@@ -39,6 +39,22 @@ struct EngineLogo: View {
 
     private static var loaded: [String: NSImage?] = [:]
 
+    /// The engine behind a turn's label ("Claude Code · Opus", "Farhelm ·
+    /// auto"): the name before the dot is an engine's, or a subscription
+    /// tool's. nil when it is neither, as for a tool since removed.
+    static func mark(of label: String) -> (kind: LLMProviderKind, tool: String?)? {
+        let name = (label.components(separatedBy: " · ").first ?? label).trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        if let kind = LLMProviderKind.allCases.first(where: { $0 != .subscription && $0.shortName == name }) {
+            return (kind, nil)
+        }
+        // A tool's name, also as it was written before ("Codex (ChatGPT)").
+        if let adapter = CLIAgents.shared.adapters.first(where: { name == $0.name || name.hasPrefix($0.name + " ") }) {
+            return (.subscription, adapter.id)
+        }
+        return nil
+    }
+
     private static func image(_ name: String) -> NSImage? {
         if let known = loaded[name] { return known }
         var image: NSImage?
@@ -131,6 +147,8 @@ enum ModelName {
 struct ModelPill: View {
     @EnvironmentObject var settings: AppSettings
     @Binding var isOpen: Bool
+    /// With little room it is the engine's mark alone, without the name.
+    var compact = false
     /// Told when the pointer comes over the button and leaves it.
     var onHover: (Bool) -> Void = { _ in }
     @State private var hover = false
@@ -158,23 +176,31 @@ struct ModelPill: View {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) { isOpen.toggle() }
         } label: {
             HStack(spacing: 5) {
+                // The engine's mark sits on a small disc, like the mark
+                // inside Auto beside it.
                 EngineLogo(kind: settings.provider,
                            tool: settings.provider == .subscription ? settings.cliAgent : nil,
-                           size: 11)
-                    .foregroundStyle(isOpen ? Theme.accent : Theme.ink.opacity(0.7))
+                           size: 10)
+                    .foregroundStyle(isOpen ? Theme.accent : Theme.ink.opacity(0.75))
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill((isOpen ? Theme.accent : Theme.ink).opacity(isOpen ? 0.22 : 0.12)))
+                    .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)
                 // The icon says which engine; only the model is spelled out.
-                Text(model)
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Theme.ink.opacity(0.9))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if !compact {
+                    Text(model)
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.ink.opacity(0.9))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 Image(systemName: "chevron.up")
                     .font(.system(size: 7, weight: .bold))
                     .foregroundStyle(Theme.ink.opacity(0.5))
                     .rotationEffect(.degrees(isOpen ? 180 : 0))
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .padding(.leading, 3)
+            .padding(.trailing, 9)
+            .padding(.vertical, 3)
             .frame(maxWidth: 210)
             .background(Capsule().fill((isOpen ? Theme.accent : Theme.ink).opacity(isOpen ? 0.14 : (hover ? 0.12 : 0.08))))
             .overlay(Capsule().strokeBorder((isOpen ? Theme.accent : Theme.ink).opacity(isOpen ? 0.40 : 0.16), lineWidth: 0.75))
@@ -196,6 +222,140 @@ struct ModelPill: View {
             agents.refreshModels()
             agents.refreshLimits()
         }
+    }
+}
+
+/// Manual asks about every step. Auto runs steps without asking, and comes
+/// in two kinds, shown by a mark that sits inside the Auto side itself: a
+/// pencil for Edit (file edits and commands inside the chat's repository;
+/// the rest still asks) and a bolt for Full (nothing asks but keys and
+/// credentials). A click on the mark changes the kind. The choice is kept
+/// with the chat and read each round, so it applies from the agent's next
+/// steps on.
+struct AccessToggles: View {
+    @EnvironmentObject var app: AppState
+
+    private func side<Content: View>(on: Bool, tint: Color, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+            .foregroundStyle(on ? tint : Theme.ink.opacity(0.55))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(on ? tint.opacity(0.18) : Color.clear))
+            .contentShape(Capsule())
+    }
+
+    var body: some View {
+        let access = app.agentAccess
+        let auto = access != .manual
+        let tint = access == .full ? Theme.rose : Theme.amber
+        HStack(spacing: 2) {
+            side(on: !auto, tint: Theme.ink) {
+                Text("Manual")
+            }
+            .onTapGesture { app.setAgentAccess(.manual) }
+            .help(AgentAccess.manual.detail)
+
+            // Auto and its kind are one piece: the word, then the mark.
+            side(on: auto, tint: tint) {
+                HStack(spacing: 5) {
+                    Text("Auto")
+                    if auto {
+                        Image(systemName: access.icon)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .frame(width: 16, height: 16)
+                            .background(Circle().fill(tint.opacity(0.22)))
+                            .contentShape(Circle())
+                            .onTapGesture {
+                                app.setAgentAccess(access == .full ? .autoEdit : .full)
+                            }
+                            .help(access == .full
+                                  ? "Full access. \(AgentAccess.full.detail)\nClick for edits only."
+                                  : "Edits. \(AgentAccess.autoEdit.detail)\nClick for full access.")
+                            .transition(.scale(scale: 0.5).combined(with: .opacity))
+                    }
+                }
+            }
+            .onTapGesture {
+                // From Manual, Auto starts as edits; the mark goes further.
+                if !auto { app.setAgentAccess(.autoEdit) }
+            }
+            .help(auto ? "Auto: steps run without asking. The mark says how far: click it to change." : "Let steps run without asking.")
+        }
+        .padding(2)
+        .background(Capsule().fill(Theme.ink.opacity(0.06)))
+        .overlay(Capsule().strokeBorder((auto ? tint : Theme.ink).opacity(auto ? 0.4 : 0.12), lineWidth: 0.75))
+        .fixedSize()
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: access)
+    }
+}
+
+/// The same choice as one small button with a menu, for a chat box with no
+/// room for the switches. It is colored while anything runs on its own, so
+/// that is never forgotten.
+struct AccessPill: View {
+    @EnvironmentObject var app: AppState
+    @EnvironmentObject var settings: AppSettings
+    /// With little room it is the mark alone.
+    var compact = false
+    @State private var hover = false
+
+    private func tint(_ access: AgentAccess) -> Color {
+        switch access {
+        case .manual: return Theme.ink
+        case .autoEdit: return Theme.amber
+        case .full: return Theme.rose
+        }
+    }
+
+    private func item(_ access: AgentAccess, chosen: AgentAccess) -> some View {
+        Button {
+            app.setAgentAccess(access)
+        } label: {
+            if access == chosen {
+                Label(access.title, systemImage: "checkmark")
+            } else {
+                Text(access.title)
+            }
+        }
+        .help(access.detail)
+    }
+
+    var body: some View {
+        let chosen = app.agentAccess
+        let color = tint(chosen)
+        Menu {
+            item(.manual, chosen: chosen)
+            Section("Auto: nothing to accept") {
+                item(.autoEdit, chosen: chosen)
+                item(.full, chosen: chosen)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: chosen.icon)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(chosen == .manual ? Theme.ink.opacity(0.7) : color)
+                // Manual is the quiet state: only the automatic ones are
+                // spelled out, and not even those with little room.
+                if chosen != .manual, !compact {
+                    Text(chosen.short)
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(color.opacity(chosen == .manual ? (hover ? 0.12 : 0.08) : 0.16)))
+            .overlay(Capsule().strokeBorder(color.opacity(chosen == .manual ? 0.16 : 0.45), lineWidth: 0.75))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hover = $0 }
+        .help("\(chosen.title). \(chosen.detail)")
     }
 }
 
@@ -308,7 +468,7 @@ struct ModelHoverCard: View {
             }
         }
         .padding(10)
-        .frame(width: 240, alignment: .leading)
+        .frame(maxWidth: 240, alignment: .leading)
         // It sits over the conversation, so it needs a solid base under the glass.
         .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(Theme.shade.opacity(0.82)))
         .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
@@ -321,6 +481,10 @@ struct ModelHoverCard: View {
 struct EffortPill: View {
     @EnvironmentObject var settings: AppSettings
     @ObservedObject private var agents = CLIAgents.shared
+    /// The bar that sets it, open above the chat box.
+    @Binding var isOpen: Bool
+    /// With little room it is the ball alone, without the level's name.
+    var compact = false
     @State private var hover = false
 
     var body: some View {
@@ -328,53 +492,221 @@ struct EffortPill: View {
         let chosen = settings.chosenEffort
         // An engine with no levels of its own has nothing to set.
         if !levels.isEmpty {
-            Menu {
-                ForEach([""] + levels, id: \.self) { level in
-                    Button {
-                        settings.chosenEffort = level
-                    } label: {
-                        Label(AppSettings.effortLabel(level),
-                              systemImage: level == chosen ? "checkmark" : Self.icon(level))
-                    }
-                }
+            // The button takes its color from the ball: neutral while the
+            // choice is left to the model, and the look's color, deeper
+            // the hotter it burns, once a level is set.
+            let heat = EffortBar.heat(of: chosen, in: levels)
+            let lit = !chosen.isEmpty
+            let color = lit ? Theme.accent : Theme.ink
+            let fill = lit ? 0.10 + 0.16 * heat : 0.08
+            let edge = lit ? 0.22 + 0.38 * heat : 0.16
+            Button {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) { isOpen.toggle() }
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: Self.icon(chosen))
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(chosen.isEmpty ? Theme.ink.opacity(0.7) : Theme.accent)
-                        .contentTransition(.symbolEffect(.replace))
-                    Text(AppSettings.effortLabel(chosen))
-                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Theme.ink.opacity(0.9))
-                        .lineLimit(1)
+                HStack(spacing: 5) {
+                    // The same ball of fire as on the bar, small: it burns
+                    // brighter the harder the model is asked to think.
+                    Fireball(heat: heat, size: 11, alive: lit)
+                    if !compact {
+                        Text(AppSettings.effortLabel(chosen))
+                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                            .foregroundStyle(lit ? Theme.accent : Theme.ink.opacity(0.9))
+                            .lineLimit(1)
+                    }
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(Theme.ink.opacity(hover ? 0.12 : 0.08)))
-                .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.75))
+                .background(Capsule().fill(color.opacity(fill + (hover || isOpen ? 0.05 : 0))))
+                .overlay(Capsule().strokeBorder(color.opacity(isOpen ? max(edge, 0.45) : edge), lineWidth: 0.75))
+                .shadow(color: Theme.accent.opacity(lit ? 0.10 + 0.22 * heat : 0), radius: 2 + 4 * heat)
                 .contentShape(Capsule())
+                .animation(.easeOut(duration: 0.2), value: chosen)
             }
-            .menuStyle(.button)
             .buttonStyle(.plain)
-            .menuIndicator(.hidden)
             .fixedSize()
             .onHover { hover = $0 }
-            .help("Effort for this model: how hard it thinks before answering. Auto leaves it to the model.")
+            .help("Effort for this model: how hard it thinks before answering. Click to set it.")
         }
     }
+}
 
-    /// The symbol for an effort level: a gauge that fills as the model is
-    /// asked to think harder. Auto, left to the model, shows a brain.
-    static func icon(_ level: String) -> String {
-        switch level.lowercased() {
-        case "": return "brain"
-        case "minimal", "none", "off": return "gauge.with.dots.needle.0percent"
-        case "low": return "gauge.with.dots.needle.33percent"
-        case "medium": return "gauge.with.dots.needle.50percent"
-        case "high": return "gauge.with.dots.needle.67percent"
-        case "xhigh", "max", "maximum": return "gauge.with.dots.needle.100percent"
-        default: return "gauge.with.dots.needle.bottom.50percent"
+/// A ball of fire in the look's own colors. `heat` runs from 0, an ember,
+/// to 1, burning at its brightest: it grows a brighter heart and a wider
+/// glow, and flickers faster.
+struct Fireball: View {
+    var heat: Double
+    var size: CGFloat = 14
+    /// Whether it burns at all. Left to the model, it is a quiet ember.
+    var alive = true
+    @State private var flicker = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let warmth = min(max(heat, 0), 1)
+        let color = Theme.accent
+        ZStack {
+            // The glow around it.
+            Circle()
+                .fill(RadialGradient(colors: [color.opacity(alive ? 0.30 + 0.35 * warmth : 0.12), color.opacity(0)],
+                                     center: .center, startRadius: 0, endRadius: size * (0.75 + 0.45 * warmth)))
+                .frame(width: size * (1.5 + 0.9 * warmth), height: size * (1.5 + 0.9 * warmth))
+                .scaleEffect(flicker ? 1.08 : 0.92)
+            // The ball: a bright heart, the look's color, a soft edge.
+            Circle()
+                .fill(RadialGradient(stops: [
+                    .init(color: Color.white.opacity(alive ? 0.55 + 0.45 * warmth : 0.25), location: 0),
+                    .init(color: Theme.lilac.opacity(alive ? 0.95 : 0.5), location: 0.28 + 0.12 * warmth),
+                    .init(color: color.opacity(alive ? 0.95 : 0.45), location: 0.68),
+                    .init(color: color.opacity(0), location: 1)
+                ], center: UnitPoint(x: 0.5, y: 0.52), startRadius: 0, endRadius: size / 2))
+                .frame(width: size, height: size)
+                .scaleEffect(flicker ? 1.04 : 0.97)
         }
+        .frame(width: size, height: size)
+        .animation(alive && !reduceMotion
+                   ? .easeInOut(duration: 0.9 - 0.5 * warmth).repeatForever(autoreverses: true)
+                   : .default,
+                   value: flicker)
+        .onAppear { flicker = true }
+        .allowsHitTesting(false)
+    }
+}
+
+/// The bar that sets the effort: the levels the engine takes, lowest to
+/// highest, with a ball of fire to drag along it. The track behind the
+/// ball fills in the look's colors, and the ball burns brighter the
+/// further it goes. The first stop leaves the choice to the model.
+struct EffortBar: View {
+    @EnvironmentObject var settings: AppSettings
+    @Binding var isOpen: Bool
+
+    /// How hot a level is, from 0 for the model's own choice to 1 for the
+    /// highest the engine takes.
+    static func heat(of level: String, in levels: [String]) -> Double {
+        guard let index = levels.firstIndex(of: level), !levels.isEmpty else { return 0 }
+        return Double(index + 1) / Double(levels.count)
+    }
+
+    var body: some View {
+        // Auto first, then the engine's own levels.
+        let stops = [""] + settings.effortLevels
+        let chosen = settings.chosenEffort
+        let index = stops.firstIndex(of: chosen) ?? 0
+        let last = max(1, stops.count - 1)
+        let fraction = Double(index) / Double(last)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Effort")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.ink.opacity(0.94))
+                Spacer(minLength: 6)
+                Text(AppSettings.effortLabel(chosen))
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(chosen.isEmpty ? Theme.ink.opacity(0.6) : Theme.accent)
+                    .contentTransition(.opacity)
+            }
+            GeometryReader { geometry in
+                let inset: CGFloat = 12
+                let width = max(1, geometry.size.width - inset * 2)
+                let x = inset + width * fraction
+                ZStack(alignment: .leading) {
+                    // The track, and the trail of fire behind the ball.
+                    Capsule()
+                        .fill(Theme.ink.opacity(0.10))
+                        .frame(height: 6)
+                        .padding(.horizontal, inset - 3)
+                    Capsule()
+                        .fill(LinearGradient(colors: [Theme.accent.opacity(0.15), Theme.lilac.opacity(0.75), Theme.accent],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(6, x - inset + 6), height: 6)
+                        .padding(.leading, inset - 3)
+                        .shadow(color: Theme.accent.opacity(0.35 + 0.35 * fraction), radius: 4)
+                    // A mark at each level.
+                    ForEach(stops.indices, id: \.self) { stop in
+                        Circle()
+                            .fill(stop <= index ? Color.white.opacity(0.7) : Theme.ink.opacity(0.28))
+                            .frame(width: 3, height: 3)
+                            .position(x: inset + width * Double(stop) / Double(last), y: geometry.size.height / 2)
+                    }
+                    Fireball(heat: fraction, size: 16 + 8 * fraction, alive: index > 0)
+                        .position(x: x, y: geometry.size.height / 2)
+                }
+                // The whole bar takes the pointer: a click or a drag
+                // anywhere on it moves the ball to the nearest level.
+                .overlay {
+                    BarTrack { place in
+                        let along = min(max((place - inset) / width, 0), 1)
+                        let nearest = Int((along * Double(last)).rounded())
+                        let level = stops[min(max(nearest, 0), stops.count - 1)]
+                        if level != settings.chosenEffort {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                                settings.chosenEffort = level
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(height: 30)
+            // The levels by name, under their marks.
+            HStack(spacing: 0) {
+                ForEach(stops.indices, id: \.self) { stop in
+                    Text(AppSettings.effortLabel(stops[stop]))
+                        .font(.system(size: 9.5, weight: stop == index ? .semibold : .regular))
+                        .foregroundStyle(stop == index ? Theme.accent : Theme.ink.opacity(0.5))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: stop == 0 ? .leading : (stop == last ? .trailing : .center))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                                settings.chosenEffort = stops[stop]
+                            }
+                        }
+                }
+            }
+            Text("How hard this model thinks before it answers. Higher is more careful and slower. Kept for each model.")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.ink.opacity(0.48))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: 280, alignment: .leading)
+        // It sits over the conversation, so it needs a solid base under the glass.
+        .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(Theme.shade.opacity(0.82)))
+        .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .onExitCommand { isOpen = false }
+    }
+}
+
+/// Takes the mouse for a bar that is dragged along. It is an AppKit view so
+/// that a press on it is never taken for a drag of the whole panel. It
+/// reports where the pointer is across it, from its left edge.
+private struct BarTrack: NSViewRepresentable {
+    let moved: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> TrackView {
+        let view = TrackView()
+        view.moved = moved
+        return view
+    }
+
+    func updateNSView(_ view: TrackView, context: Context) {
+        view.moved = moved
+    }
+
+    final class TrackView: NSView {
+        var moved: ((CGFloat) -> Void)?
+
+        override var mouseDownCanMoveWindow: Bool { false }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        private func report(_ event: NSEvent) {
+            moved?(convert(event.locationInWindow, from: nil).x)
+        }
+
+        override func mouseDown(with event: NSEvent) { report(event) }
+        override func mouseDragged(with event: NSEvent) { report(event) }
+        override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
     }
 }
 
