@@ -2760,6 +2760,9 @@ final class AppState: ObservableObject {
     /// Opens the column on the right in the given mode, closes it with nil,
     /// and gives the panel the width it needs.
     func showSide(_ mode: SidePanelMode?) {
+        // In code the workspace is what the right column comes back to:
+        // closing the details or the browser returns to it, not to plain chat.
+        let mode = (mode == nil && codeMode) ? .workspace : mode
         // Closing the column, or switching to the details, brings the chat back.
         if mode == nil || mode == .details { sideFull = false }
         sidePanel = mode
