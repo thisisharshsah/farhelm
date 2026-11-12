@@ -149,8 +149,6 @@ struct AgentCard: View {
                     .lineLimit(1)
                     .contentTransition(.opacity)
             }
-            // How steps are approved, next to Allow and Deny.
-            AccessToggles()
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 11)
@@ -195,70 +193,6 @@ struct AgentCard: View {
     }
 }
 
-/// How the agent's steps are approved in this chat. Manual asks about every
-/// step. Auto shows a second choice: Edit lets file edits, writes and
-/// read-only commands through and asks about the rest; Full asks about
-/// nothing. The choice is kept with the chat and read each round, so it
-/// applies from the agent's next steps on.
-private struct AccessToggles: View {
-    @EnvironmentObject var app: AppState
-
-    var body: some View {
-        let access = app.agentAccess
-        HStack(spacing: 8) {
-            SegmentToggle(titles: ["Manual", "Auto"],
-                          selected: access == .manual ? 0 : 1,
-                          tint: access == .manual ? Theme.ink : Theme.amber) { index in
-                if index == 0 {
-                    app.setAgentAccess(.manual)
-                } else if access == .manual {
-                    app.setAgentAccess(.autoEdit)
-                }
-            }
-            .help("Manual asks before every step. Auto lets steps run without asking.")
-            if access != .manual {
-                SegmentToggle(titles: ["Edit", "Full"],
-                              selected: access == .full ? 1 : 0,
-                              tint: access == .full ? Theme.rose : Theme.amber) { index in
-                    app.setAgentAccess(index == 0 ? .autoEdit : .full)
-                }
-                .help("Edit runs file edits, writes and read-only commands without asking, and asks about the rest. Full runs every step without asking.")
-                .transition(.opacity)
-            }
-            Spacer(minLength: 0)
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: access)
-    }
-}
-
-/// A few choices side by side in one capsule, the chosen one filled in.
-private struct SegmentToggle: View {
-    let titles: [String]
-    let selected: Int
-    let tint: Color
-    let pick: (Int) -> Void
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
-                Button { pick(index) } label: {
-                    Text(title)
-                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                        .foregroundStyle(index == selected ? tint : Theme.ink.opacity(0.55))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(index == selected ? tint.opacity(0.18) : Color.clear))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(2)
-        .background(Capsule().fill(Theme.ink.opacity(0.06)))
-        .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.75))
-    }
-}
-
 /// One step the agent is asking to take.
 private struct StepCard: View {
     let step: ActionStep
@@ -276,6 +210,7 @@ private struct StepCard: View {
         case .write: return "doc.badge.plus"
         case .edit: return "pencil"
         case .fetch, .web: return "globe"
+        case .delegate: return "person.2"
         case .wait, .done, .ask, .plan: return "circle"
         }
     }
@@ -293,6 +228,7 @@ private struct StepCard: View {
         case .edit: return "Change a file"
         case .fetch: return "Read a web page"
         case .web: return "Search the web"
+        case .delegate: return "Hand a question to a helper (it only reads and searches)"
         case .wait, .done, .ask, .plan: return ""
         }
     }
