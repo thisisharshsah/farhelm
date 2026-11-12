@@ -1647,6 +1647,11 @@ struct ChatThread: View {
                         Color.clear
                             .frame(height: 1 + bottomInset)
                             .id(Self.endID)
+                        // About one view's height of free room below the end,
+                        // so the newest message can be scrolled to the top
+                        // even when its reply is short.
+                        Color.clear
+                            .frame(height: outer.size.height)
                     }
                     .background(GeometryReader { inner in
                         Color.clear.preference(key: ThreadMetricsKey.self,
@@ -1678,21 +1683,15 @@ struct ChatThread: View {
                 }
                 .animation(.easeOut(duration: 0.15), value: pinnedTurn)
                 .onPreferenceChange(ThreadMetricsKey.self) { metrics in
-                    let grew = abs(metrics.content - scrollState.content) > 0.5
-                        || abs(metrics.viewport - scrollState.viewport) > 0.5
                     scrollState.content = metrics.content
                     scrollState.viewport = metrics.viewport
-                    if grew {
-                        // New content, a growing answer or a resized panel:
-                        // keep to the bottom only if that is where you were.
-                        if followNewest {
-                            proxy.scrollTo(Self.endID, anchor: .bottom)
-                        }
-                    } else {
-                        // You scrolled. Near the bottom means "follow".
-                        let atBottom = metrics.bottom - metrics.viewport < 40
-                        if atBottom != followNewest { followNewest = atBottom }
-                    }
+                    // Nothing scrolls here: a growing answer, new entries or a
+                    // resized panel leave the view where it is. This only
+                    // notes whether the end of the conversation is in view,
+                    // not counting the free room below it.
+                    let end = metrics.bottom - metrics.viewport
+                    let atBottom = end - metrics.viewport < 40
+                    if atBottom != followNewest { followNewest = atBottom }
                 }
                 .onAppear {
                     DispatchQueue.main.async { proxy.scrollTo(Self.endID, anchor: .bottom) }
@@ -1702,6 +1701,18 @@ struct ChatThread: View {
                     shownLimit = Self.pageSize
                     followNewest = true
                     DispatchQueue.main.async { proxy.scrollTo(Self.endID, anchor: .bottom) }
+                }
+                .onChange(of: sendMark) { old, new in
+                    // A message was just sent: scroll once so it sits at the
+                    // top, with its reply filling in below it. Nothing else
+                    // scrolls until the next message is sent.
+                    guard old.first == new.first, old.last != new.last,
+                          let id = new.last.flatMap(UUID.init(uuidString:)) else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo(Self.sendAnchorID(id), anchor: .top)
+                        }
+                    }
                 }
                 .overlay(alignment: .bottom) {
                     if !followNewest {
