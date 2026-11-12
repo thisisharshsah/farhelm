@@ -17,6 +17,12 @@ struct OverlayView: View {
     /// The chat's share of the width in code; 0 until the divider is dragged.
     @AppStorage("codeChatShare") private var codeChatShare: Double = 0
     @FocusState private var inputFocused: Bool
+    /// The files of the repository, for @mentions in the chat box.
+    @ObservedObject private var fileIndex = FileIndex.shared
+    /// Which file of the @mention list is picked, and the text the list
+    /// was closed on (Esc), so it stays closed until something is typed.
+    @State private var mentionSelection = 0
+    @State private var mentionClosedOn: String?
     @State private var showNotes = false
     /// The engine and model picker, open above the chat box.
     @State private var showModels = false
@@ -106,11 +112,13 @@ struct OverlayView: View {
                     // The conversation is drawn at the content zoom
                     // (Cmd+Plus, Cmd+Minus, Cmd+0). Its insets are given in
                     // its own, zoomed, measure so it still clears the bars.
-                    let zoom = CGFloat(settings.contentZoom)
+                    // The chat's own text size comes on top of it (the Aa
+                    // button), so it can be read comfortably on its own.
+                    let zoom = CGFloat(settings.contentZoom * settings.chatTextScale)
                     ChatThread(topInset: (fixedAbove ? 6 : topHeight) / zoom,
                                bottomInset: bottomHeight / zoom)
                         .padding(.horizontal, Theme.gutter / zoom)
-                        .contentZoom(settings.contentZoom)
+                        .contentZoom(settings.contentZoom * settings.chatTextScale)
                         .frame(maxHeight: .infinity)
                         // The conversation's tools and its context ring
                         // appear at the top right while the pointer is on
@@ -125,6 +133,7 @@ struct OverlayView: View {
                                         .frame(height: 28)
                                         .background(Capsule().fill(Theme.shade.opacity(0.55)))
                                         .liquidGlass(in: Capsule())
+                                    TextSizeButton()
                                     ThreadActions()
                                         .background(Capsule().fill(Theme.shade.opacity(0.55)))
                                 }
@@ -313,6 +322,8 @@ struct OverlayView: View {
             }
         }
         .animation(.easeOut(duration: 0.14), value: commands.paletteOpen)
+        // An attachment being looked at, over everything in the panel.
+        .overlay { AttachmentPreviewOverlay() }
         .background {
             GeometryReader { geometry in
                 Color.clear
@@ -976,7 +987,7 @@ struct OverlayView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(pending) { file in
-                            AttachmentThumb(file: file) {
+                            AttachmentThumb(file: file, among: pending) {
                                 app.removeAttachment(file.id)
                             }
                         }
@@ -984,14 +995,35 @@ struct OverlayView: View {
                     .padding(.top, 2)
                 }
             }
-            TextField(app.pendingQuestion != nil ? "Your answer" : (app.attachScreen ? "Ask about your screen" : "Ask anything"),
+            // Typing "@" lists the repository's files; one chosen is attached.
+            if !mentionFiles.isEmpty {
+                MentionList(files: mentionFiles, selection: min(mentionSelection, mentionFiles.count - 1)) { file in
+                    chooseMention(file)
+                }
+            }
+            TextField(app.pendingQuestion != nil ? "Your answer" : (app.attachScreen ? "Ask about your screen" : (app.hasWorkFolder ? "Ask anything, @ to attach a file" : "Ask anything")),
                       text: $app.draft,
                       axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12.5))
+                .font(.system(size: 13.5 * settings.chatTextScale / AppSettings.chatTextDefault))
                 .foregroundStyle(Theme.ink.opacity(0.95))
                 .lineLimit(1...6)
                 .focused($inputFocused)
+                .onKeyPress(keys: [.upArrow, .downArrow, .return, .tab, .escape]) { press in
+                    let files = mentionFiles
+                    guard !files.isEmpty else { return .ignored }
+                    switch press.key {
+                    case .upArrow: mentionSelection = (mentionSelection - 1 + files.count) % files.count
+                    case .downArrow: mentionSelection = (mentionSelection + 1) % files.count
+                    case .escape: mentionClosedOn = app.draft
+                    default: chooseMention(files[min(mentionSelection, files.count - 1)])
+                    }
+                    return .handled
+                }
+                .onChange(of: Mention.query(in: app.draft)) { _, query in
+                    mentionSelection = 0
+                    if query != nil, app.hasWorkFolder { fileIndex.use(root: app.workspaceRoot) }
+                }
                 .onSubmit { app.sendDraft() }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 4)
@@ -1157,6 +1189,22 @@ struct OverlayView: View {
 
     /// Switch engine and model without leaving the conversation.
     /// One "+" for everything that can be handed to Companion.
+    /// The files that fit the @mention being typed, if one is.
+    private var mentionFiles: [String] {
+        guard app.hasWorkFolder, mentionClosedOn != app.draft,
+              let query = Mention.query(in: app.draft) else { return [] }
+        return fileIndex.matches(query, limit: 6)
+    }
+
+    /// Puts the chosen file in the text and attaches it to the message.
+    private func chooseMention(_ file: String) {
+        app.draft = Mention.complete(app.draft, with: file)
+        mentionSelection = 0
+        fileIndex.noteOpened(file)
+        let root = app.workspaceRoot
+        app.attach([URL(fileURLWithPath: (root as NSString).appendingPathComponent(file))])
+    }
+
     private var attachMenu: some View {
         Menu {
             Button {
@@ -1677,7 +1725,10 @@ struct NextStepsCard: View {
 /// cross takes it off again.
 struct AttachmentThumb: View {
     let file: Attachment
-    let remove: () -> Void
+    /// The other files of the same message, to step through in the preview.
+    var among: [Attachment] = []
+    /// Shown as a small x on hover, while it is still in the chat box.
+    var remove: (() -> Void)?
     @State private var hover = false
 
     private static let pictures: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "bmp", "webp"]
@@ -1715,8 +1766,11 @@ struct AttachmentThumb: View {
         }
         .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
             .strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        // A click opens it: a preview over the chat, or the editor in code.
+        .onTapGesture { Previewer.shared.open(file, among: among) }
         .overlay(alignment: .topTrailing) {
-            if hover {
+            if hover, let remove {
                 Button(action: remove) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 13))
@@ -1729,7 +1783,7 @@ struct AttachmentThumb: View {
             }
         }
         .onHover { hover = $0 }
-        .help(file.path ?? file.name)
+        .help("Open \(file.name)")
         .animation(.easeOut(duration: 0.12), value: hover)
     }
 }
@@ -1965,7 +2019,7 @@ struct TurnView: View {
                     .padding(.vertical, 2)
                 }
                 if let steps = turn.steps, !steps.isEmpty {
-                    WorkTrail(steps: steps, working: streaming && turn.answer.isEmpty, tint: tint)
+                    WorkTimeline(steps: steps, working: streaming && turn.answer.isEmpty, tint: tint)
                 }
 
                 if turn.answer.isEmpty {
@@ -2160,6 +2214,62 @@ struct TurnView: View {
 /// The work an answer took, shown the way an assistant shows its working:
 /// one line that says what was done ("Ran 2 commands and opened 1 app"),
 /// which opens into the steps; a command opens further into its output.
+/// The work behind an answer in the order it happened: what the agent said
+/// along the way as text, and each stretch of work between those notes
+/// folded to one line ("Ran 2 commands and read 3 files"), to be opened.
+struct WorkTimeline: View {
+    let steps: [WorkStep]
+    let working: Bool
+    let tint: Color
+
+    private enum Part: Identifiable {
+        case note(Int, String)
+        case work(Int, [WorkStep])
+        var id: Int {
+            switch self {
+            case .note(let index, _), .work(let index, _): return index
+            }
+        }
+    }
+
+    private var parts: [Part] {
+        var parts: [Part] = []
+        var run: [WorkStep] = []
+        var start = 0
+        for (index, step) in steps.enumerated() {
+            if step.kind == .note {
+                if !run.isEmpty { parts.append(.work(start, run)); run = [] }
+                parts.append(.note(index, step.title))
+            } else {
+                if run.isEmpty { start = index }
+                run.append(step)
+            }
+        }
+        if !run.isEmpty { parts.append(.work(start, run)) }
+        return parts
+    }
+
+    var body: some View {
+        let parts = self.parts
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(parts) { part in
+                switch part {
+                case .note(_, let text):
+                    Text(text)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.ink.opacity(0.86))
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .work(let index, let run):
+                    // Only the stretch still going shows its latest step live.
+                    WorkTrail(steps: run, working: working && index == parts.last?.id, tint: tint)
+                }
+            }
+        }
+    }
+}
+
 struct WorkTrail: View {
     let steps: [WorkStep]
     /// Still going: the line shows the latest step.
@@ -2180,6 +2290,7 @@ struct WorkTrail: View {
         case .edit: return "pencil"
         case .web: return "globe"
         case .other: return "circle"
+        case .note: return "text.bubble"
         }
     }
 
@@ -2440,7 +2551,20 @@ struct TurnInputBubble: View {
             }
             // What was attached with this message.
             if let attached = turn.attached, !attached.isEmpty {
-                ForEach(attached, id: \.self) { name in
+                // The files themselves, as in the chat box: pictures show,
+                // anything else is a card; a click opens it.
+                let files = attached.compactMap { name in app.attachments.first { $0.name == name } }
+                if !files.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(files) { file in
+                                AttachmentThumb(file: file, among: files)
+                            }
+                        }
+                    }
+                }
+                // Names of files no longer with the chat.
+                ForEach(attached.filter { name in !files.contains { $0.name == name } }, id: \.self) { name in
                     HStack(spacing: 4) {
                         Image(systemName: "paperclip")
                             .font(.system(size: 9, weight: .semibold))
@@ -2690,9 +2814,15 @@ struct MarkdownNotes: View {
                 continue
             }
             closeTable()
-            if line.isEmpty || line.allSatisfy({ $0 == "-" || $0 == "*" || $0 == "_" }) { continue }
-            // Lines that follow one another are kept as one piece of text,
-            // so a selection can run across lines and paragraphs.
+            // Preserve paragraph boundaries without accumulating empty lines.
+            let isBreak = line.isEmpty || line.allSatisfy({ $0 == "-" || $0 == "*" || $0 == "_" })
+            if isBreak {
+                if case .line(let before)? = result.last, !before.hasSuffix("\n") {
+                    result[result.count - 1] = .line(before + "\n")
+                }
+                continue
+            }
+            // Keep text together so selection can cross paragraphs and lists.
             if case .line(let before)? = result.last {
                 result[result.count - 1] = .line(before + "\n" + line)
             } else {
@@ -2708,7 +2838,7 @@ struct MarkdownNotes: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: size * 0.7) {
             ForEach(blocks, id: \.offset) { item in
                 switch item.block {
                 case .line(let line):
@@ -2764,24 +2894,41 @@ struct MarkdownNotes: View {
         .padding(.vertical, 2)
     }
 
-    /// Lines that follow one another, drawn as a single piece of text: a
-    /// selection cannot leave the `Text` it started in, so headings, bullets
-    /// and paragraphs are joined into one instead of one view per line.
+    /// Keep selection continuous while giving paragraphs and sections room.
     private func row(_ lines: String) -> some View {
         var whole = Text("")
-        for (index, line) in lines.components(separatedBy: "\n").enumerated() {
-            if index > 0 {
+        var previous: String?
+        var paragraphBreak = false
+
+        func isHeading(_ line: String) -> Bool {
+            line.hasPrefix("#") ||
+                (line.hasPrefix("**") && line.hasSuffix("**") && line.count > 4)
+        }
+
+        func isListItem(_ line: String) -> Bool {
+            bullet(line) != nil ||
+                line.range(of: #"^\d+[.)]\s+"#, options: .regularExpression) != nil
+        }
+
+        for line in lines.components(separatedBy: "\n") {
+            guard !line.isEmpty else {
+                paragraphBreak = true
+                continue
+            }
+            if let previous {
                 whole = whole + Text("\n")
-                // A smaller heading, or a line that is all bold, is a
-                // section title: give it air.
-                if line.hasPrefix("##") || (line.hasPrefix("**") && line.hasSuffix("**")) {
-                    whole = whole + Text(" \n").font(.system(size: 4))
+                let sectionBoundary = isHeading(previous) || isHeading(line)
+                let listBoundary = isListItem(previous) != isListItem(line)
+                if paragraphBreak || sectionBoundary || listBoundary {
+                    whole = whole + Text(" \n").font(.system(size: size * 0.55))
                 }
             }
             whole = whole + piece(line)
+            previous = line
+            paragraphBreak = false
         }
         return whole
-            .lineSpacing(2)
+            .lineSpacing(size * 0.3)
             .fixedSize(horizontal: false, vertical: true)
     }
 
