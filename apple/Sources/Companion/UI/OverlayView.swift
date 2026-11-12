@@ -569,29 +569,6 @@ struct OverlayView: View {
                          minimize: { app.overlay?.setCompact(true) })
                 .frame(minWidth: 8, maxWidth: .infinity)
                 .frame(height: 30)
-            // While the agent has a task there is always a way to end it,
-            // here as well as on its card.
-            if app.agentRunning {
-                Button {
-                    app.stopAgent()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 9.5, weight: .bold))
-                        Text("Stop agent")
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                    }
-                    .foregroundStyle(Theme.rose)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(Theme.rose.opacity(0.16)))
-                    .overlay(Capsule().strokeBorder(Theme.rose.opacity(0.4), lineWidth: 0.75))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Stop the agent's task (\(keys.label(.stopAgent)))")
-                .transition(.scale(scale: 0.8).combined(with: .opacity))
-            }
             if !isPill {
                 // This conversation's switches: mode, auto-reply, screen
                 // watch, notes. Colored means on.
@@ -949,18 +926,35 @@ struct OverlayView: View {
             }
             .buttonStyle(.plain)
             .help(app.isListening ? "Stop listening (\(keys.label(.listen)))" : "Listen to the conversation (\(keys.label(.listen)))")
-            Button(action: { app.sendDraft() }) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Theme.ink.opacity(canSend ? 1 : 0.4))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(canSend
-                                              ? AnyShapeStyle(Theme.accentGradient)
-                                              : AnyShapeStyle(Theme.ink.opacity(0.10))))
+            // The one place the agent is stopped from: while it works,
+            // Stop stands where Send does. With something typed (an answer
+            // to its question, a word of direction) Send is there as well.
+            if app.agentRunning {
+                Button(action: { app.stopAgent() }) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Theme.rose))
+                }
+                .buttonStyle(.plain)
+                .help("Stop the agent (\(keys.label(.stopAgent)))")
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
-            .help("Send (Return)")
+            if !app.agentRunning || canSend {
+                Button(action: { app.sendDraft() }) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Theme.ink.opacity(canSend ? 1 : 0.4))
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(canSend
+                                                  ? AnyShapeStyle(Theme.accentGradient)
+                                                  : AnyShapeStyle(Theme.ink.opacity(0.10))))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .help("Send (Return)")
+            }
             }
         }
         .padding(.horizontal, 9)
@@ -1919,6 +1913,12 @@ struct TurnView: View {
         }
         .overlay(ShimmerOverlay(active: streaming).clipShape(BubbleShape(side: .left)))
         .onHover { hover = $0 }
+        // Right-click anywhere on the answer copies all of it.
+        .contextMenu {
+            if !turn.answer.isEmpty {
+                Button("Copy") { app.copy(turn.answer) }
+            }
+        }
     }
 
     /// What kind of answer it is, its state, and when.
@@ -2009,7 +2009,7 @@ struct TurnView: View {
     private var actions: some View {
         HStack(spacing: 6) {
             if !turn.answer.isEmpty {
-                tool(copied ? "checkmark" : "doc.on.doc", help: "Copy answer", tint: copied ? Theme.mint : nil) {
+                tool(copied ? "checkmark" : "doc.on.doc", help: "Copy", tint: copied ? Theme.mint : nil) {
                     app.copy(turn.answer)
                     copied = true
                     Task {
@@ -2373,6 +2373,12 @@ struct TurnInputBubble: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .animation(.easeOut(duration: 0.14), value: hover)
+        // Right-click anywhere on the bubble copies all of it.
+        .contextMenu {
+            if !turn.prompt.isEmpty {
+                Button("Copy") { app.copy(turn.prompt) }
+            }
+        }
         // Your own input is on the right, like what was heard.
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 56)
@@ -2557,7 +2563,13 @@ struct MarkdownNotes: View {
             }
             closeTable()
             if line.isEmpty || line.allSatisfy({ $0 == "-" || $0 == "*" || $0 == "_" }) { continue }
-            result.append(.line(line))
+            // Lines that follow one another are kept as one piece of text,
+            // so a selection can run across lines and paragraphs.
+            if case .line(let before)? = result.last {
+                result[result.count - 1] = .line(before + "\n" + line)
+            } else {
+                result.append(.line(line))
+            }
         }
         closeTable()
         // A fence still open (the answer is arriving) shows what it has.
@@ -2624,42 +2636,56 @@ struct MarkdownNotes: View {
         .padding(.vertical, 2)
     }
 
-    @ViewBuilder
-    private func row(_ line: String) -> some View {
+    /// Lines that follow one another, drawn as a single piece of text: a
+    /// selection cannot leave the `Text` it started in, so headings, bullets
+    /// and paragraphs are joined into one instead of one view per line.
+    private func row(_ lines: String) -> some View {
+        var whole = Text("")
+        for (index, line) in lines.components(separatedBy: "\n").enumerated() {
+            if index > 0 {
+                whole = whole + Text("\n")
+                // A smaller heading, or a line that is all bold, is a
+                // section title: give it air.
+                if line.hasPrefix("##") || (line.hasPrefix("**") && line.hasSuffix("**")) {
+                    whole = whole + Text(" \n").font(.system(size: 4))
+                }
+            }
+            whole = whole + piece(line)
+        }
+        return whole
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// One line of Markdown as styled text: a heading, a bullet or a plain line.
+    private func piece(_ line: String) -> Text {
         if line.hasPrefix("#") {
             let level = line.prefix(while: { $0 == "#" }).count
             let title = String(line.dropFirst(level)).trimmingCharacters(in: .whitespaces)
             if level == 1 {
-                Text(inline(title))
+                return Text(inline(title))
                     .font(.system(size: size + 1.5, weight: .semibold))
-                    .foregroundStyle(Theme.ink.opacity(0.95))
-            } else {
-                Text(inline(title))
-                    .font(.system(size: size - 1.5, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.accent)
-                    .padding(.top, 5)
+                    .foregroundColor(Theme.ink.opacity(0.95))
             }
-        } else if let item = bullet(line) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: item.symbol)
-                    .font(.system(size: item.symbol == "circle.fill" ? 4 : 10, weight: .semibold))
-                    .foregroundStyle(item.symbol == "circle.fill" ? Theme.ink.opacity(0.5) : Theme.mint)
-                    .frame(width: 12)
-                Text(inline(item.text))
-                    .font(.system(size: size))
-                    .lineSpacing(2)
-                    .foregroundStyle(Theme.ink.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } else {
-            Text(inline(line))
-                .font(.system(size: size))
-                .lineSpacing(2)
-                .foregroundStyle(Theme.ink.opacity(0.9))
-                .fixedSize(horizontal: false, vertical: true)
-                // A line that is all bold is a section title: give it air.
-                .padding(.top, line.hasPrefix("**") && line.hasSuffix("**") ? 5 : 0)
+            return Text(inline(title))
+                .font(.system(size: size - 1.5, weight: .bold, design: .rounded))
+                .foregroundColor(Theme.accent)
         }
+        if let item = bullet(line) {
+            let mark = item.symbol == "circle.fill"
+                ? Text(" •  ")
+                    .font(.system(size: size, weight: .semibold))
+                    .foregroundColor(Theme.ink.opacity(0.5))
+                : (Text(Image(systemName: item.symbol)) + Text("  "))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Theme.mint)
+            return mark + Text(inline(item.text))
+                .font(.system(size: size))
+                .foregroundColor(Theme.ink.opacity(0.9))
+        }
+        return Text(inline(line))
+            .font(.system(size: size))
+            .foregroundColor(Theme.ink.opacity(0.9))
     }
 
     private func bullet(_ line: String) -> (symbol: String, text: String)? {
@@ -2754,6 +2780,12 @@ struct SegmentRow: View {
         .onHover { showDetails = $0 }
         .animation(.easeOut(duration: 0.14), value: showDetails)
         .animation(.easeInOut(duration: 0.2), value: beingRechecked)
+        // Right-click anywhere on the bubble copies the whole line.
+        .contextMenu {
+            if !group.finalText.isEmpty {
+                Button("Copy") { app.copy(group.finalText) }
+            }
+        }
     }
 
     /// Who said it (click to fix), when, and the line's tools.
@@ -2802,7 +2834,7 @@ struct SegmentRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Copy this line")
+            .help("Copy")
         }
     }
 
