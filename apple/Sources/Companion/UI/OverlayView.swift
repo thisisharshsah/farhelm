@@ -566,7 +566,11 @@ struct OverlayView: View {
             }
             // Every command and, in code, every file, by name. In a
             // narrow panel it leaves the bar; its keys still work.
-            if panelWidth >= 640 {
+            if codeLayout, app.hasWorkFolder, panelWidth >= 900 {
+                // As in an editor: back and forward between files, and a
+                // search box named for the folder that opens the palette.
+                WorkspaceNavBar(model: app.workspace)
+            } else if panelWidth >= 640 {
             ToolbarGroup {
             IconButton("magnifyingglass", help: "Go to a file or run a command (⌘P, ⇧⌘P)") {
                 commands.openPalette(commands: !app.hasWorkFolder)
@@ -726,6 +730,11 @@ struct OverlayView: View {
                             }
                     })
                 }
+            }
+            if codeLayout, !isPill, app.hasWorkFolder {
+                // The workspace's layout, as an editor's title bar has it:
+                // the file tree and the bottom panel, shown or put away.
+                WorkspaceLayoutButtons(model: app.workspace)
             }
             if codeLayout, !isPill {
                 sidebarButton
@@ -995,6 +1004,9 @@ struct OverlayView: View {
                     .padding(.top, 2)
                 }
             }
+            // The file open in the editor goes with the message, as in an
+            // editor's chat; the cross keeps it out.
+            OpenFileChip(model: app.workspace)
             // Typing "@" lists the repository's files; one chosen is attached.
             if !mentionFiles.isEmpty {
                 MentionList(files: mentionFiles, selection: min(mentionSelection, mentionFiles.count - 1)) { file in
@@ -1239,6 +1251,8 @@ struct OverlayView: View {
 
     private func modelMenu(compact: Bool) -> some View {
         ModelPill(isOpen: $showModels, compact: compact) { modelHover = $0 }
+            // Right-click: another model of the same engine, in one step.
+            .contextMenu { CurrentEngineModels(showAll: { showModels = true }) }
             .onChange(of: showModels) { _, open in
                 // One card above the chat box at a time.
                 if open { showEffort = false }
@@ -1513,6 +1527,26 @@ struct ChatThread: View {
         .help(kind == nil ? "Show everything" : "Show only \(label) turns")
     }
 
+    /// The request pinned at the top, and where the top is (below the bar
+    /// and the filters floating over the conversation).
+    @State private var pinnedTurn: UUID?
+    private var pinLine: CGFloat { topInset + (hasFilters || busyTint != nil ? 30 : 0) + 4 }
+
+    /// Room kept above the first entry for the bar and the filters. It stays
+    /// the same when the "Writing" note comes and goes, so nothing in the
+    /// conversation shifts while a reply is written.
+    private var topRoom: CGFloat { topInset + 30 }
+
+    /// The newest message the user typed, and the conversation it is in.
+    /// When only the message changes, one was just sent.
+    private var sendMark: [String] {
+        ["\(app.conversation.id)", allTurns.last { $0.origin == .typed }?.id.uuidString ?? ""]
+    }
+
+    /// A mark just above a typed message, so scrolling to it leaves the
+    /// message clear of the bars floating over the top.
+    static func sendAnchorID(_ id: UUID) -> String { "sent-\(id.uuidString)" }
+
     /// The newest entries, as many as are being shown.
     private var shownItems: [TimelineItem] {
         Array(items.suffix(shownLimit))
@@ -1537,7 +1571,7 @@ struct ChatThread: View {
                         // filters, when they show), so the first entry can
                         // be scrolled clear of them.
                         Color.clear
-                            .frame(height: topInset + (hasFilters || busyTint != nil ? 30 : 0))
+                            .frame(height: topRoom)
                         if items.count > shownLimit {
                             Button {
                                 let anchor = shownItems.first?.id
@@ -1583,6 +1617,27 @@ struct ChatThread: View {
                                     .padding(.trailing, 56)
                             }
                             .id(turn.id)
+                            // A mark above a typed message, for the one
+                            // scroll made when it is sent.
+                            .overlay(alignment: .top) {
+                                if turn.origin == .typed {
+                                    Color.clear
+                                        .frame(height: topRoom + 4)
+                                        .alignmentGuide(.top) { $0[.bottom] }
+                                        .allowsHitTesting(false)
+                                        .id(Self.sendAnchorID(turn.id))
+                                }
+                            }
+                            // Where the request sits, to pin it while its
+                            // reply is read.
+                            .background {
+                                if turn.origin == .typed, !turn.prompt.isEmpty {
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(key: TurnFramesKey.self,
+                                                               value: [turn.id: geometry.frame(in: .named("thread"))])
+                                    }
+                                }
+                            }
                         }
                         }
                     }
@@ -1601,6 +1656,27 @@ struct ChatThread: View {
                     })
                 }
                 .coordinateSpace(name: "thread")
+                // The request whose reply fills the view, held at the top
+                // once its own bubble has scrolled away.
+                .onPreferenceChange(TurnFramesKey.self) { frames in
+                    let line = pinLine
+                    let found = frames
+                        .filter { $0.value.minY < line - 6 && $0.value.maxY > line + 90 }
+                        .max { $0.value.minY < $1.value.minY }?.key
+                    if found != pinnedTurn { pinnedTurn = found }
+                }
+                .overlay(alignment: .top) {
+                    if let id = pinnedTurn,
+                       let turn = app.conversation.turns.first(where: { $0.id == id }) {
+                        PinnedRequest(text: turn.prompt) {
+                            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
+                        }
+                        // Below the icons that sit at the top right on hover.
+                        .padding(.top, pinLine + 38)
+                        .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: pinnedTurn)
                 .onPreferenceChange(ThreadMetricsKey.self) { metrics in
                     let grew = abs(metrics.content - scrollState.content) > 0.5
                         || abs(metrics.viewport - scrollState.viewport) > 0.5
@@ -1970,7 +2046,7 @@ struct TurnView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: collapsed ? 4 : 10) {
             // A folded older answer is one line: its facts, then its start.
             if collapsed {
                 HStack(alignment: .center, spacing: 6) {
@@ -1999,7 +2075,9 @@ struct TurnView: View {
                 // run, opened or clicked. It fills in live while the agent
                 // is working and stays with the answer afterwards.
                 // The agent's checklist for a longer task, ticked off as it goes.
-                if let plan = turn.plan, !plan.isEmpty {
+                // Once the task is over the checklist lives in Details, so
+                // the finished reply reads as notes, work and the answer.
+                if let plan = turn.plan, !plan.isEmpty, streaming {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(plan.enumerated()), id: \.offset) { _, item in
                             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -2251,14 +2329,14 @@ struct WorkTimeline: View {
 
     var body: some View {
         let parts = self.parts
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(parts) { part in
                 switch part {
                 case .note(_, let text):
                     Text(text)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Theme.ink.opacity(0.86))
-                        .lineSpacing(2)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.ink.opacity(0.9))
+                        .lineSpacing(3.9)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 case .work(let index, let run):
@@ -2291,10 +2369,18 @@ struct WorkTrail: View {
         case .web: return "globe"
         case .other: return "circle"
         case .note: return "text.bubble"
+        case .think: return "sparkles"
+        case .ask: return "questionmark.bubble"
         }
     }
 
     private var failures: Int { steps.filter(\.failed).count }
+    /// Work stays open when asked to in Settings > Look.
+    @AppStorage("workAlwaysOpen") private var alwaysOpen = false
+    /// Opened or folded by hand; nil follows the default: open while the
+    /// agent works (or always, by the setting), folded once it is done.
+    @State private var chosen: Bool?
+    private var showing: Bool { chosen ?? (working || alwaysOpen) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2316,33 +2402,21 @@ struct WorkTrail: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(Theme.ink.opacity(0.45))
-                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .rotationEffect(.degrees(showing ? 90 : 0))
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 3)
             .contentShape(Rectangle())
             .onTapGesture {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { open.toggle() }
+                let next = !showing
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { chosen = next }
             }
-            .help(open ? "Hide the steps" : "Show the steps")
+            .help(showing ? "Hide the steps" : "Show the steps")
 
-            if open {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                        if index > 0 {
-                            Rectangle()
-                                .fill(Theme.ink.opacity(0.07))
-                                .frame(height: 1)
-                        }
-                        row(index, step)
-                    }
-                }
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.ink.opacity(0.05)))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
-                .padding(.top, 3)
-                .padding(.bottom, 4)
-                .transition(.opacity)
+            // The steps on a rail, each with what went in and came out.
+            if showing {
+                WorkRail(steps: steps, working: working)
+                    .transition(.opacity)
             }
         }
     }
@@ -2685,22 +2759,22 @@ struct ReadAlongText: View {
     var body: some View {
         if let cut = splitIndex(afterWords: spokenWords), cut > text.startIndex {
             Text(String(text[..<cut]))
-                .font(.system(size: 12.5))
-                .lineSpacing(3)
+                .font(.system(size: 13))
+                .lineSpacing(3.9)
                 .foregroundStyle(tint.opacity(0.5))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(String(text[cut...]).trimmingCharacters(in: .whitespaces))
-                .font(.system(size: 12.5))
-                .lineSpacing(3)
+                .font(.system(size: 13))
+                .lineSpacing(3.9)
                 .foregroundStyle(Theme.ink.opacity(0.96))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .id(cursorID)
         } else {
             Text(text)
-                .font(.system(size: 12.5))
-                .lineSpacing(3)
+                .font(.system(size: 13))
+                .lineSpacing(3.9)
                 .foregroundStyle(Theme.ink.opacity(0.96))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2842,7 +2916,7 @@ struct MarkdownNotes: View {
             ForEach(blocks, id: \.offset) { item in
                 switch item.block {
                 case .line(let line):
-                    row(line)
+                    lineGroup(line)
                 case .table(let rows):
                     table(rows)
                 case .code(let source):
@@ -2892,6 +2966,79 @@ struct MarkdownNotes: View {
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
         .padding(.vertical, 2)
+    }
+
+    /// Running text, or one item of a list.
+    private enum Segment {
+        case text(String)
+        /// A list item: its mark (a bullet, a number like "2.", a checkbox
+        /// symbol) and its text.
+        case item(mark: String, symbol: String?, text: String)
+    }
+
+    /// Lines split into running text and list items, in order. Lines that
+    /// are not list items stay together, so a selection can run across them.
+    private func segments(_ lines: String) -> [Segment] {
+        var result: [Segment] = []
+        var running: [String] = []
+        func flush() {
+            while running.first?.isEmpty == true { running.removeFirst() }
+            while running.last?.isEmpty == true { running.removeLast() }
+            if !running.isEmpty { result.append(.text(running.joined(separator: "\n"))) }
+            running = []
+        }
+        for line in lines.components(separatedBy: "\n") {
+            if let item = bullet(line) {
+                flush()
+                result.append(.item(mark: "•", symbol: item.symbol == "circle.fill" ? nil : item.symbol, text: item.text))
+            } else if let range = line.range(of: #"^\d+[.)]\s+"#, options: .regularExpression) {
+                flush()
+                let mark = line[range].trimmingCharacters(in: .whitespaces)
+                result.append(.item(mark: mark, symbol: nil, text: String(line[range.upperBound...])))
+            } else {
+                running.append(line)
+            }
+        }
+        flush()
+        return result
+    }
+
+    /// A block of lines: running text as one piece, each list item as its
+    /// own row with the mark hanging to the left, so wrapped lines start
+    /// under the text and not under the bullet.
+    private func lineGroup(_ lines: String) -> some View {
+        let parts = segments(lines)
+        return VStack(alignment: .leading, spacing: size * 0.5) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                switch part {
+                case .text(let text):
+                    row(text)
+                case .item(let mark, let symbol, let text):
+                    HStack(alignment: .firstTextBaseline, spacing: size * 0.5) {
+                        Group {
+                            if let symbol {
+                                Image(systemName: symbol)
+                                    .font(.system(size: size - 2.5, weight: .semibold))
+                                    .foregroundStyle(Theme.mint)
+                            } else {
+                                Text(mark)
+                                    .font(.system(size: size, weight: mark == "•" ? .bold : .medium))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Theme.ink.opacity(0.5))
+                            }
+                        }
+                        .frame(minWidth: size * 0.9, alignment: .trailing)
+                        Text(inline(text))
+                            .font(.system(size: size))
+                            .foregroundColor(Theme.ink.opacity(0.9))
+                            .lineSpacing(size * 0.3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.leading, size * 0.2)
+                }
+            }
+        }
     }
 
     /// Keep selection continuous while giving paragraphs and sections room.
@@ -2976,7 +3123,16 @@ struct MarkdownNotes: View {
     /// Bold, italics and code inside a line.
     private func inline(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        var result = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        // Code in a sentence (a command, a path) as a small tinted chip.
+        let code = result.runs
+            .filter { $0.inlinePresentationIntent?.contains(.code) == true }
+            .map(\.range)
+        for range in code {
+            result[range].swiftUI.backgroundColor = Theme.ink.opacity(0.09)
+            result[range].swiftUI.foregroundColor = Theme.amber
+        }
+        return result
     }
 }
 
