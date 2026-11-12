@@ -1405,8 +1405,10 @@ struct ChatThread: View {
                                          // folded away to a single line.
                                          collapsed: false,
                                          onToggle: nil)
-                                    // Answers run the full width, like a page.
+                                    // Answers sit on the left and keep free room on
+                                    // their right, so they don't span the full width.
                                     .padding(.top, 2)
+                                    .padding(.trailing, 56)
                             }
                             .id(turn.id)
                         }
@@ -2215,7 +2217,7 @@ struct SpeechBubble: View {
         // sit on the left. Which side says who it came from.
         SegmentRow(group: group)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, 44)
+            .padding(.leading, 56)
     }
 }
 
@@ -2373,7 +2375,7 @@ struct TurnInputBubble: View {
         .animation(.easeOut(duration: 0.14), value: hover)
         // Your own input is on the right, like what was heard.
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 44)
+        .padding(.leading, 56)
     }
 }
 
