@@ -212,6 +212,11 @@ final class AppState: ObservableObject {
     private var agentContext: [String] = []
     /// What the agent last told the user, so the follow-up does not repeat it.
     private var lastAgentReport = ""
+    /// The report from a task that ended before it was complete: what was
+    /// done and what is still left. The next task in the same chat is given
+    /// it, so "continue" picks up where the work stopped. Nothing resumes
+    /// by itself.
+    private var unfinishedReport = ""
     /// The end of each command's output, by its place in `agentLog`.
     private var agentOutputs: [Int: String] = [:]
 
@@ -2109,20 +2114,45 @@ final class AppState: ObservableObject {
                 // Ask first: anything that is not known to be harmless.
                 let remembered = AppSettings.shared.agentAllowed
                 let autoReads = AppSettings.shared.agentAutoApproveReads
+                // The chat's mode is read each round, so changing it
+                // takes effect in the middle of a task.
+                let access = self.agentAccess
+                let repository = self.hasWorkFolder ? self.agentStartDirectory : ""
                 let asking = steps.filter { step in
                     switch step.kind {
                     case .run:
-                        return !AgentPermissions.isAllowed(step.value, remembered: remembered, autoApproveReads: autoReads)
-                    case .type, .key, .open, .click: return !keyboardAllowed
+                        // Keys and credentials are asked about in every mode.
+                        if AgentPermissions.touchesSecrets(step.value) { return true }
+                        if access == .full { return false }
+                        if AgentPermissions.isAllowed(step.value, remembered: remembered, autoApproveReads: autoReads) {
+                            return false
+                        }
+                        // Editing on its own covers commands that keep to
+                        // the chat's repository.
+                        return !(access == .autoEdit
+                                 && AgentPermissions.staysInside(step.value, repository: repository, directory: directory))
+                    case .type, .key, .open, .click: return access != .full && !keyboardAllowed
                     case .wait, .done, .ask, .plan: return false
-                    // Looking never changes anything, so it follows the
-                    // "read-only without asking" setting; keys and
-                    // credentials are asked about regardless.
+                    // Looking never changes anything, so in Manual it
+                    // follows the "read-only without asking" setting; keys
+                    // and credentials are asked about regardless.
                     case .read:
-                        return !autoReads || AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory))
-                    case .search, .fetch, .web: return !autoReads
-                    // A change to a file is always shown first.
-                    case .write, .edit: return true
+                        if AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory)) { return true }
+                        return access == .manual && !autoReads
+                    case .search, .fetch, .web: return access == .manual && !autoReads
+                    // A change to a file is shown first in Manual. On its
+                    // own, edits stay in the repository unless access is
+                    // full, and nothing writes to keys or credentials.
+                    case .write, .edit:
+                        let target = AgentTools.resolve(step.value, in: directory)
+                        if AgentTools.isSensitive(target) { return true }
+                        switch access {
+                        case .manual: return true
+                        case .full: return false
+                        case .autoEdit:
+                            return repository.isEmpty
+                                || !(target == repository || target.hasPrefix(repository + "/"))
+                        }
                     }
                 }
                 if !asking.isEmpty {
@@ -3038,6 +3068,18 @@ final class AppState: ObservableObject {
     /// chosen for it, or one attached to the chat.
     var hasWorkFolder: Bool {
         conversation.workFolder != nil || attachments.contains { $0.isFolder == true }
+    }
+
+    /// How much the agent does in this chat without asking: the chat's own
+    /// choice, or the setting for new chats.
+    var agentAccess: AgentAccess {
+        AgentAccess(rawValue: conversation.access ?? "")
+            ?? AgentAccess(rawValue: AppSettings.shared.agentAccess) ?? .manual
+    }
+
+    func setAgentAccess(_ access: AgentAccess) {
+        conversation.access = access.rawValue
+        persist()
     }
 
     /// Switches between the two sides of the app. Chat and code share the
