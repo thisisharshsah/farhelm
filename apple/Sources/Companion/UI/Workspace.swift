@@ -22,6 +22,8 @@ final class WorkspaceModel: ObservableObject {
         case changes = "Changes"
         /// The repository: what changed, commits and branches.
         case source = "Git"
+        /// Errors and warnings from the build, by place.
+        case problems = "Problems"
         /// The folder's files, when there is no room for them at the side.
         case files = "Files"
 
@@ -34,6 +36,7 @@ final class WorkspaceModel: ObservableObject {
             case .search: return "magnifyingglass"
             case .changes: return "clock.arrow.circlepath"
             case .source: return "arrow.triangle.branch"
+            case .problems: return "exclamationmark.triangle"
             }
         }
     }
@@ -69,7 +72,12 @@ final class WorkspaceModel: ObservableObject {
     @Published var openPath: String?
     /// Every file opened and not yet closed, shown as tabs over the editor.
     @Published var openFiles: [String] = []
-    @Published var text = ""
+    @Published var text = "" {
+        didSet {
+            // The language server sees edits as they are typed.
+            if let openPath, text != oldValue { LanguageServers.shared.changed(openPath, text: text, root: root) }
+        }
+    }
     @Published private(set) var saved = ""
     @Published var editorNote = ""
     /// A comparison showing where the open file would be.
@@ -84,9 +92,9 @@ final class WorkspaceModel: ObservableObject {
     // Changes
     @Published var shownChange: UUID?
 
-    // Terminal: what has been run in this folder, kept while the
+    // Terminal: a live shell in this folder, kept running while the
     // workspace stays on it.
-    private var terminal: TerminalLog?
+    private var terminal: TerminalSession?
 
     var dirty: Bool { openPath != nil && text != saved }
 
@@ -98,6 +106,7 @@ final class WorkspaceModel: ObservableObject {
         guard folder != root else { return }
         root = folder
         // The terminal belonged to the folder before this one.
+        terminal?.end()
         terminal = nil
         diff = nil
         expanded = []
@@ -108,6 +117,16 @@ final class WorkspaceModel: ObservableObject {
 
     func savePanelHeight() {
         UserDefaults.standard.set(Double(panelHeight), forKey: "workspacePanelHeight")
+    }
+
+    /// How wide the files are when they sit at the side.
+    @Published var filesWidth: CGFloat = {
+        let saved = UserDefaults.standard.double(forKey: "workspaceFilesWidth")
+        return saved > 0 ? CGFloat(saved) : 220
+    }()
+
+    func saveFilesWidth() {
+        UserDefaults.standard.set(Double(filesWidth), forKey: "workspaceFilesWidth")
     }
 
     /// The files have room at the side, so they are not a tab of the panel.
@@ -122,17 +141,55 @@ final class WorkspaceModel: ObservableObject {
     }
 
     /// The folder's terminal, made the first time it is asked for.
-    func terminalLog() -> TerminalLog {
+    func terminalSession() -> TerminalSession {
         if let terminal { return terminal }
-        let log = TerminalLog(folder: root)
-        log.finished = { [weak self] in self?.refreshAll() }
-        terminal = log
-        return log
+        let session = TerminalSession(folder: root)
+        // What the shell changed shows in the files once it is looked away
+        // from or ends.
+        session.changed = { [weak self] in self?.refreshAll() }
+        terminal = session
+        return session
     }
 
     /// Shows a comparison where the open file would be.
     func showDiff(_ document: DiffDocument) {
         diff = document
+    }
+
+    /// Puts one block of a comparison back as it was, in the file itself.
+    /// The file is checked first: if it changed since the comparison was
+    /// made, the comparison is brought up to date instead, to look again.
+    /// The undo goes into Changes like any other change, so it can be
+    /// undone in turn.
+    func revert(_ hunk: DiffHunk, in document: DiffDocument, conversation: UUID?) {
+        guard let path = document.path,
+              let current = try? String(contentsOfFile: path, encoding: .utf8) else {
+            editorNote = "That file could not be read, so nothing was changed."
+            return
+        }
+        guard current == document.after else {
+            var fresh = document
+            fresh.after = current
+            diff = fresh
+            editorNote = "The file had changed since; the comparison is up to date now. Try again."
+            return
+        }
+        let updated = hunk.revert(before: document.before, after: current)
+        let before = ChangeStore.shared.snapshot(path)
+        do {
+            try updated.write(toFile: path, atomically: true, encoding: .utf8)
+        } catch {
+            editorNote = "Could not write \((path as NSString).lastPathComponent): \(error.localizedDescription)"
+            return
+        }
+        _ = ChangeStore.shared.record(path: path, before: before,
+                                      task: "Undid one change in \((path as NSString).lastPathComponent)",
+                                      conversation: conversation)
+        reloadIfOpen(path)
+        var fresh = document
+        fresh.after = updated
+        diff = fresh
+        editorNote = ""
     }
 
     // MARK: Files
@@ -173,6 +230,21 @@ final class WorkspaceModel: ObservableObject {
 
     // MARK: Editor
 
+    /// A line to bring into view and select in the open file. Each ask is
+    /// its own, so asking for the same line twice still moves there.
+    struct Reveal: Equatable {
+        let line: Int
+        let id = UUID()
+    }
+    @Published var reveal: Reveal?
+
+    /// Opens a file at a line, as a problem or a search result points to.
+    func open(_ path: String, line: Int) {
+        open(path)
+        guard openPath == path else { return }
+        reveal = Reveal(line: max(1, line))
+    }
+
     func open(_ path: String) {
         // A file takes the place of a comparison.
         diff = nil
@@ -186,6 +258,7 @@ final class WorkspaceModel: ObservableObject {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             return
         }
+        LanguageServers.shared.opened(path, text: content, root: root)
         openPath = path
         if !openFiles.contains(path) { openFiles.append(path) }
         text = content
@@ -236,6 +309,7 @@ final class WorkspaceModel: ObservableObject {
             try text.write(toFile: path, atomically: true, encoding: .utf8)
             saved = text
             editorNote = "Saved"
+            LanguageServers.shared.saved(path, root: root)
             ChangeStore.shared.record(path: path, before: before, task: "Edited by you", conversation: conversation)
             Task { await ChangeStore.shared.commitPending(message: "edit \((path as NSString).lastPathComponent)") }
         } catch {
@@ -343,6 +417,8 @@ private struct WorkspaceBody: View {
     @ObservedObject var history: ChangeStore
     /// The repository the folder is in, for the branch on its tab.
     @ObservedObject private var git = GitModel.shared
+    /// The build's errors and warnings, for the tab and the status bar.
+    @ObservedObject private var problems = ProblemsModel.shared
 
     /// How wide and tall the pane is: whether the files fit at the side,
     /// and how much of it the panel may take.
@@ -351,15 +427,22 @@ private struct WorkspaceBody: View {
     /// Wide enough to work like an editor: files on the left, always
     /// there, and what is open beside them.
     private var split: Bool { paneWidth >= 560 }
+    /// The files' width, never so wide that what is open has no room.
+    private var filesShown: CGFloat {
+        min(max(model.filesWidth, 150), max(150, paneWidth - 320))
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             if split {
                 FilesTab(model: model, part: .tree)
-                    .frame(width: 220)
-                Rectangle()
-                    .fill(Theme.ink.opacity(0.09))
-                    .frame(width: 1)
+                    .frame(width: filesShown)
+                // Drag to give the files more or less room.
+                ColumnDivider(width: { filesShown },
+                              direction: 1,
+                              resize: { model.filesWidth = min(max($0, 150), max(150, paneWidth - 320)) },
+                              reset: { model.filesWidth = 220 },
+                              done: { model.saveFilesWidth() })
             }
             // What is being worked on, with the panel of tools under it.
             VStack(spacing: 0) {
@@ -374,6 +457,7 @@ private struct WorkspaceBody: View {
                         .frame(height: panelShown)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                WorkspaceStatusBar(model: model)
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.86), value: model.panelOpen)
         }
@@ -457,7 +541,10 @@ private struct WorkspaceBody: View {
             if let diff = model.diff {
                 DiffPane(document: diff,
                          open: diff.path.map { path -> (() -> Void) in { model.open(path) } },
-                         close: { model.diff = nil })
+                         close: { model.diff = nil },
+                         revert: diff.path == nil ? nil : { hunk in
+                             model.revert(hunk, in: diff, conversation: app.conversation.id)
+                         })
             } else {
                 FilesTab(model: model, part: .editor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -487,6 +574,16 @@ private struct WorkspaceBody: View {
                                     .truncationMode(.middle)
                                     .frame(maxWidth: 110)
                                     .fixedSize()
+                            }
+                            // How many errors the last build found.
+                            if tab == .problems, problems.root == model.root, problems.errors + problems.warnings > 0 {
+                                Text("\(problems.errors + problems.warnings)")
+                                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(problems.errors > 0 ? Theme.rose : Theme.amber)
+                                    .padding(.horizontal, 4)
+                                    .frame(minWidth: 15, minHeight: 15)
+                                    .background(Capsule().fill((problems.errors > 0 ? Theme.rose : Theme.amber).opacity(0.2)))
                             }
                             // How many files git sees a change in.
                             if tab == .source, git.count > 0 {
@@ -521,11 +618,12 @@ private struct WorkspaceBody: View {
                 case .search: SearchTab(model: model)
                 case .changes: ChangesTab(model: model, history: history)
                 case .source: SourceTab(model: model, git: git)
+                case .problems: ProblemsTab(model: model)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .background(Theme.shade.opacity(0.14))
+        .liquidGlass(in: Rectangle())
     }
 }
 
@@ -545,6 +643,8 @@ private struct FilesTab: View {
     @ObservedObject var model: WorkspaceModel
     /// Watched so the editor follows the content zoom.
     @ObservedObject private var settings = AppSettings.shared
+    /// Watched so the lines with problems are marked.
+    @ObservedObject private var problems = ProblemsModel.shared
     /// Which part to show. In a narrow pane one view is both: the files,
     /// then the file that is opened. In a wide one they sit side by side.
     enum Part { case both, tree, editor }
@@ -712,7 +812,20 @@ private struct FilesTab: View {
                 .fill(Theme.ink.opacity(0.07))
                 .frame(height: 1)
             CodeEditor(text: $model.text, language: (path as NSString).pathExtension.lowercased(),
-                       zoom: settings.contentZoom)
+                       zoom: settings.contentZoom,
+                       marks: problems.marks(in: path),
+                       reveal: model.reveal,
+                       path: path,
+                       root: model.root,
+                       goTo: { file, line in
+                           // Same file: just go there, keeping what is typed.
+                           if file == model.openPath {
+                               model.reveal = WorkspaceModel.Reveal(line: line)
+                           } else {
+                               if model.dirty { model.save(conversation: app.conversation.id) }
+                               model.open(file, line: line)
+                           }
+                       })
                 .id(path)
         }
     }
@@ -779,6 +892,15 @@ private struct CodeEditor: NSViewRepresentable {
     let language: String
     /// The content zoom: the code's size follows it.
     var zoom: Double = 1
+    /// Lines the build has errors or warnings on, tinted.
+    var marks: [Int: Problem.Severity] = [:]
+    /// A line to scroll to and select.
+    var reveal: WorkspaceModel.Reveal?
+    /// The file and its folder, for the language server.
+    var path = ""
+    var root = ""
+    /// Opens a file at a line: where go to definition leads.
+    var goTo: ((String, Int) -> Void)? = nil
 
     var font: NSFont { NSFont.monospacedSystemFont(ofSize: 11.5 * zoom, weight: .regular) }
 
@@ -806,20 +928,28 @@ private struct CodeEditor: NSViewRepresentable {
         view.string = text
         context.coordinator.view = view
         context.coordinator.color()
+        context.coordinator.show(reveal)
+        context.coordinator.install()
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? NSTextView else { return }
         let resized = abs(context.coordinator.parent.zoom - zoom) > 0.001
+        let remarked = context.coordinator.parent.marks != marks
         context.coordinator.parent = self
         if view.string != text {
             // The file changed from outside (an undo, a reload).
             view.string = text
             context.coordinator.color()
-        } else if resized {
+        } else if resized || remarked {
             context.coordinator.color()
         }
+        context.coordinator.show(reveal)
+    }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        coordinator.uninstall()
     }
 
     @MainActor
@@ -829,6 +959,157 @@ private struct CodeEditor: NSViewRepresentable {
         private var pending: Task<Void, Never>?
 
         init(_ parent: CodeEditor) { self.parent = parent }
+        private var shown: UUID?
+
+        // MARK: Language server: hover and go to definition
+
+        private var monitor: Any?
+        private var hoverTask: Task<Void, Never>?
+        private var popover: NSPopover?
+        private var lastHover = -1
+
+        /// Watches the pointer over the text (hover), and F12 and
+        /// Cmd-click (go to definition).
+        func install() {
+            guard let view, monitor == nil else { return }
+            view.addTrackingArea(NSTrackingArea(rect: .zero,
+                                                options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                                owner: self, userInfo: nil))
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
+                guard let self, let view = self.view, event.window === view.window else { return event }
+                if event.type == .keyDown, event.keyCode == 111, view.window?.firstResponder === view {
+                    self.goToDefinition(at: view.selectedRange().location)
+                    return nil
+                }
+                if event.type == .leftMouseDown, event.modifierFlags.contains(.command) {
+                    let point = view.convert(event.locationInWindow, from: nil)
+                    guard view.visibleRect.contains(point), let index = self.index(at: point) else { return event }
+                    self.goToDefinition(at: index)
+                    return nil
+                }
+                return event
+            }
+        }
+
+        func uninstall() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            hoverTask?.cancel()
+            popover?.close()
+        }
+
+        /// The character under a point in the text view, if any.
+        private func index(at point: NSPoint) -> Int? {
+            guard let view, let layout = view.layoutManager, let container = view.textContainer else { return nil }
+            let inner = NSPoint(x: point.x - view.textContainerOrigin.x, y: point.y - view.textContainerOrigin.y)
+            var fraction: CGFloat = 0
+            let index = layout.characterIndex(for: inner, in: container, fractionOfDistanceBetweenInsertionPoints: &fraction)
+            return index < (view.string as NSString).length ? index : nil
+        }
+
+        /// Line and column from 0, the column in UTF-16 units as LSP counts.
+        private static func position(of index: Int, in text: NSString) -> (line: Int, character: Int) {
+            var line = 0
+            var lineStart = 0
+            var i = 0
+            while i < index {
+                if text.character(at: i) == 10 {
+                    line += 1
+                    lineStart = i + 1
+                }
+                i += 1
+            }
+            return (line, index - lineStart)
+        }
+
+        private static func isWord(_ unit: unichar) -> Bool {
+            guard let scalar = UnicodeScalar(unit) else { return false }
+            return CharacterSet.alphanumerics.contains(scalar) || unit == 95
+        }
+
+        @objc func mouseMoved(with event: NSEvent) {
+            guard let view, !parent.root.isEmpty, !parent.path.isEmpty else { return }
+            let point = view.convert(event.locationInWindow, from: nil)
+            let found = index(at: point) ?? -1
+            guard found != lastHover else { return }
+            lastHover = found
+            hoverTask?.cancel()
+            popover?.close()
+            popover = nil
+            let text = view.string as NSString
+            guard found >= 0, Self.isWord(text.character(at: found)) else { return }
+            // Resting on a word for a moment asks the server about it.
+            hoverTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard let self, !Task.isCancelled else { return }
+                let place = Self.position(of: found, in: text)
+                guard let info = await LanguageServers.shared.hover(self.parent.path, line: place.line,
+                                                                    character: place.character, root: self.parent.root),
+                      !info.isEmpty, !Task.isCancelled, self.lastHover == found else { return }
+                self.showHover(info, at: found)
+            }
+        }
+
+        @objc func mouseExited(with event: NSEvent) {
+            hoverTask?.cancel()
+            lastHover = -1
+        }
+
+        private func showHover(_ info: String, at index: Int) {
+            guard let view, let layout = view.layoutManager, let container = view.textContainer else { return }
+            let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+            var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            rect.origin.x += view.textContainerOrigin.x
+            rect.origin.y += view.textContainerOrigin.y
+            let cleaned = info
+                .components(separatedBy: "\n")
+                .filter { !$0.hasPrefix("```") }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let pop = NSPopover()
+            pop.behavior = .transient
+            pop.animates = false
+            pop.contentViewController = NSHostingController(rootView: HoverCard(text: cleaned))
+            pop.show(relativeTo: rect, of: view, preferredEdge: .maxY)
+            popover = pop
+        }
+
+        private func goToDefinition(at index: Int) {
+            guard let view, !parent.root.isEmpty, !parent.path.isEmpty else { return }
+            let place = Self.position(of: index, in: view.string as NSString)
+            popover?.close()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let found = await LanguageServers.shared.definition(self.parent.path, line: place.line,
+                                                                       character: place.character, root: self.parent.root) {
+                    self.parent.goTo?(found.path, found.line)
+                } else {
+                    NSSound.beep()
+                }
+            }
+        }
+
+        /// Scrolls to a line and selects it, once per ask.
+        func show(_ reveal: WorkspaceModel.Reveal?) {
+            guard let reveal, reveal.id != shown, let view else { return }
+            shown = reveal.id
+            let text = view.string as NSString
+            var location = 0
+            var line = 1
+            while line < reveal.line, location < text.length {
+                let range = text.lineRange(for: NSRange(location: location, length: 0))
+                location = NSMaxRange(range)
+                line += 1
+            }
+            let target = text.lineRange(for: NSRange(location: min(location, text.length), length: 0))
+            // After the view has laid out, so the scroll lands.
+            DispatchQueue.main.async {
+                view.setSelectedRange(target)
+                view.scrollRangeToVisible(target)
+                view.showFindIndicator(for: target)
+                view.window?.makeFirstResponder(view)
+            }
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let view else { return }
@@ -870,6 +1151,21 @@ private struct CodeEditor: NSViewRepresentable {
                 paint(Self.strings, Theme.mint)
                 let hash = ["py", "sh", "zsh", "bash", "rb", "yaml", "yml", "toml"].contains(parent.language)
                 paint(hash ? Self.hashComments : Self.slashComments, Theme.ink.opacity(0.45))
+            }
+            // Lines the build complains about, tinted the whole way across.
+            if !parent.marks.isEmpty {
+                let text = storage.string as NSString
+                var location = 0
+                var line = 1
+                while location < text.length {
+                    let range = text.lineRange(for: NSRange(location: location, length: 0))
+                    if let severity = parent.marks[line] {
+                        let tint = severity == .error ? Theme.rose : Theme.amber
+                        storage.addAttribute(.backgroundColor, value: NSColor(tint.opacity(0.18)), range: range)
+                    }
+                    location = NSMaxRange(range)
+                    line += 1
+                }
             }
             storage.endEditing()
         }
@@ -915,7 +1211,7 @@ private struct SearchTab: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(model.hits) { hit in
-                        HitRow(hit: hit, name: model.relative(hit.path)) { model.open(hit.path) }
+                        HitRow(hit: hit, name: model.relative(hit.path)) { model.open(hit.path, line: hit.line) }
                     }
                 }
                 .padding(.horizontal, 6)
@@ -1225,5 +1521,193 @@ struct DiffLine: View {
             .background(row.kind == .added ? Theme.mint.opacity(0.16)
                         : (row.kind == .removed ? Theme.rose.opacity(0.16) : Color.clear))
         }
+    }
+}
+
+
+// MARK: - Problems
+
+/// The build's errors and warnings, grouped by file. A row opens the file
+/// at the line; the button runs the build again.
+private struct ProblemsTab: View {
+    @ObservedObject var model: WorkspaceModel
+    @ObservedObject private var problems = ProblemsModel.shared
+
+    private var mine: [Problem] { problems.root == model.root ? problems.problems : [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                if problems.running {
+                    LoadingMark(state: .working, size: 14)
+                    Text("Running \(problems.lastCommand)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink.opacity(0.6))
+                        .lineLimit(1)
+                } else {
+                    Text(summary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink.opacity(0.6))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if problems.running {
+                    IconButton("stop.fill", help: "Stop the build", tint: Theme.rose) { problems.stop() }
+                } else {
+                    IconButton("hammer", help: "Build and list problems (⇧⌘B)", tint: Theme.accent) {
+                        problems.run(in: model.root)
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            Rectangle().fill(Theme.ink.opacity(0.07)).frame(height: 1)
+            if mine.isEmpty {
+                workspaceNote(problems.root == model.root && !problems.note.isEmpty
+                              ? problems.note
+                              : "Build to see errors and warnings here. Companion picks the build from the folder (swift build, cargo, go vet, tsc, make), or uses the command in .companion/build.")
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(groups, id: \.file) { group in
+                            Text(model.relative(group.file))
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(Theme.ink.opacity(0.75))
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                                .padding(.horizontal, 10)
+                                .padding(.top, 7)
+                                .padding(.bottom, 2)
+                            ForEach(group.items) { problem in
+                                ProblemRow(problem: problem) { model.open(problem.file, line: problem.line) }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
+            }
+        }
+    }
+
+    private var summary: String {
+        guard problems.root == model.root, let date = problems.lastRun else { return "Not built yet" }
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if mine.isEmpty { return problems.lastOK ? "No problems · \(time)" : "Build failed · \(time)" }
+        return "\(problems.errors) errors, \(problems.warnings) warnings · \(time)"
+    }
+
+    private var groups: [(file: String, items: [Problem])] {
+        var order: [String] = []
+        var byFile: [String: [Problem]] = [:]
+        for problem in mine {
+            if byFile[problem.file] == nil { order.append(problem.file) }
+            byFile[problem.file, default: []].append(problem)
+        }
+        return order.map { ($0, byFile[$0] ?? []) }
+    }
+}
+
+private struct ProblemRow: View {
+    let problem: Problem
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Image(systemName: problem.severity == .error ? "xmark.octagon.fill"
+                      : (problem.severity == .warning ? "exclamationmark.triangle.fill" : "info.circle"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(problem.severity == .error ? Theme.rose
+                                     : (problem.severity == .warning ? Theme.amber : Theme.ink.opacity(0.5)))
+                Text(problem.message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.ink.opacity(0.88))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(problem.column > 0 ? "\(problem.line):\(problem.column)" : "\(problem.line)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.ink.opacity(0.45))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(hover ? Theme.ink.opacity(0.06) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("Open at line \(problem.line)")
+    }
+}
+
+/// The line along the bottom of the workspace, as in an editor: the
+/// branch, the build's errors and warnings, and a button to build.
+private struct WorkspaceStatusBar: View {
+    @ObservedObject var model: WorkspaceModel
+    @ObservedObject private var git = GitModel.shared
+    @ObservedObject private var problems = ProblemsModel.shared
+
+    private var here: Bool { problems.root == model.root }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if git.isRepository, !git.branch.isEmpty {
+                Button { model.showPanel(.source) } label: {
+                    Label(git.branch, systemImage: "arrow.triangle.branch")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 160, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .help("Git: \(git.branch)")
+            }
+            Button { model.showPanel(.problems) } label: {
+                HStack(spacing: 8) {
+                    Label("\(here ? problems.errors : 0)", systemImage: "xmark.octagon")
+                        .foregroundStyle(here && problems.errors > 0 ? Theme.rose : Theme.ink.opacity(0.6))
+                    Label("\(here ? problems.warnings : 0)", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(here && problems.warnings > 0 ? Theme.amber : Theme.ink.opacity(0.6))
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Problems (⇧⌘M)")
+            Spacer(minLength: 4)
+            if problems.running {
+                LoadingMark(state: .working, size: 12)
+                Text("Building")
+            } else {
+                Button { problems.run(in: model.root) } label: {
+                    Label("Build", systemImage: "hammer")
+                }
+                .buttonStyle(.plain)
+                .help("Build and list problems (⇧⌘B)")
+            }
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .foregroundStyle(Theme.ink.opacity(0.6))
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 10)
+        .frame(height: 22)
+        .background(Theme.ink.opacity(0.04))
+        .overlay(alignment: .top) { Rectangle().fill(Theme.ink.opacity(0.08)).frame(height: 1) }
+    }
+}
+
+
+/// What the language server says about a symbol, under the pointer.
+private struct HoverCard: View {
+    let text: String
+
+    var body: some View {
+        ScrollView(.vertical) {
+            Text(text)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(Theme.ink.opacity(0.92))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 440, alignment: .leading)
+                .padding(10)
+        }
+        .frame(maxHeight: 260)
     }
 }
