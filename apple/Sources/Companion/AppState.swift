@@ -2,6 +2,8 @@ import Foundation
 import AppKit
 import AVFoundation
 import Combine
+import UniformTypeIdentifiers
+import WebKit
 import os
 
 enum Speaker: Hashable {
@@ -37,6 +39,14 @@ struct TranscriptSegment: Identifiable, Equatable {
     /// The speaker was settled from the recorded voice by the recheck, so the
     /// text-based pass must not change it.
     var voiceVerified = false
+    /// The user set this line's speaker by clicking its badge. No automatic
+    /// pass changes it again.
+    var speakerByHand = false
+}
+
+/// Set by whichever of two racing pieces of work finishes first.
+private final class OnceFlag {
+    var done = false
 }
 
 @MainActor
@@ -46,7 +56,7 @@ final class AppState: ObservableObject {
 
     // Listening
     @Published var isListening = false
-    @Published var statusText = "Idle"
+    @Published var statusText = "Ready"
     @Published var modelReady = false
     @Published var segments: [TranscriptSegment] = []
     @Published var lastError: String?
@@ -54,6 +64,10 @@ final class AppState: ObservableObject {
     @Published var systemLevel: Float = 0
     @Published var voiceEnrolled = false
     @Published var isEnrollingVoice = false
+    /// How many public "other people" voices the voice check has learned
+    /// from, and the progress line while more are being added.
+    @Published var referenceVoices = 0
+    @Published var referenceImport: String?
     // Guided voice setup
     @Published var enrollStep = 0
     @Published var enrollStepProgress: Double = 0
@@ -65,10 +79,105 @@ final class AppState: ObservableObject {
     @Published var conversation = Conversation()
     @Published var history: [ConversationSummary] = []
     @Published var showHistory = false
+    /// The agent's checklist for the task it is on.
+    private var agentPlan: [PlanItem] = []
+    /// Attachments added since the last message was sent. They show in the
+    /// chat box while you write; once sent they live in Details, and stay
+    /// available to the chat from there.
+    @Published var pendingAttachments: [UUID] = []
+    /// The column on the right of the chat: details of the session, or the
+    /// browser. nil when it is closed.
+    @Published var sidePanel: SidePanelMode?
+    /// The right column (the browser or the workspace) has the whole panel,
+    /// with the chat out of the way until it is asked for again.
+    @Published var sideFull = false
+    /// Widths of the columns beside the chat. Dragging a divider changes
+    /// them, and they are kept between launches.
+    @Published var sidebarWidth: CGFloat = AppState.savedWidth("sidebarWidth", 236)
+    @Published var detailsWidth: CGFloat = AppState.savedWidth("detailsWidth", SidePanelMode.details.width)
+    @Published var browserWidth: CGFloat = AppState.savedWidth("browserWidth", SidePanelMode.browser.width)
+    @Published var workspaceWidth: CGFloat = AppState.savedWidth("workspaceWidth", SidePanelMode.workspace.width)
+    /// In code, the chat is a column on the right of the editor; this is
+    /// how wide it is.
+    @Published var codeChatWidth: CGFloat = AppState.savedWidth("codeChatWidth", 380)
+
+    private static func savedWidth(_ key: String, _ usual: CGFloat) -> CGFloat {
+        let saved = UserDefaults.standard.double(forKey: key)
+        return saved >= 150 && saved <= 4000 ? CGFloat(saved) : usual
+    }
+
+    /// The width the right column has in a mode.
+    func width(of mode: SidePanelMode) -> CGFloat {
+        switch mode {
+        case .details: return detailsWidth
+        case .browser: return browserWidth
+        case .workspace: return workspaceWidth
+        }
+    }
+
+    func setWidth(_ width: CGFloat, of mode: SidePanelMode) {
+        switch mode {
+        case .details: detailsWidth = width
+        case .browser: browserWidth = width
+        case .workspace: workspaceWidth = width
+        }
+    }
+
+    /// The workspace beside the chat: files, editor, search, changes, terminal.
+    lazy var workspace = WorkspaceModel()
+    /// The folder the workspace shows: the one attached to this chat, or
+    /// the agent's working folder when none is.
+    var workspaceRoot: String { agentStartDirectory }
+
+    func saveColumnWidths() {
+        UserDefaults.standard.set(Double(sidebarWidth), forKey: "sidebarWidth")
+        UserDefaults.standard.set(Double(detailsWidth), forKey: "detailsWidth")
+        UserDefaults.standard.set(Double(workspaceWidth), forKey: "workspaceWidth")
+        UserDefaults.standard.set(Double(browserWidth), forKey: "browserWidth")
+        UserDefaults.standard.set(Double(codeChatWidth), forKey: "codeChatWidth")
+    }
+    /// Pages visited, for the suggestions on a new tab. Shared by every
+    /// chat's browser.
+    private lazy var webHistory = BrowserHistory(directory: ContextStore.shared.baseDir)
+    /// The code side of the app is in use, rather than plain chat.
+    @Published var codeMode = false
+    /// A browser session for each chat that has opened one: its own tabs
+    /// and its own sign-ins, apart from every other chat's. Sessions are
+    /// kept in memory only, so they all end when the app quits.
+    private var webSessions: [UUID: BrowserModel] = [:]
+    /// The browser session of the chat that is showing. Its tabs survive
+    /// closing the pane and switching to another chat and back.
+    var web: BrowserModel {
+        if let session = webSessions[conversation.id] { return session }
+        let session = BrowserModel(history: webHistory)
+        let id = conversation.id
+        session.onRunning = { [weak self] running in
+            if running { self?.webRunning.insert(id) } else { self?.webRunning.remove(id) }
+        }
+        webSessions[id] = session
+        return session
+    }
+    /// The chats whose browser session has a page open right now, for the
+    /// mark on the browser button and beside the chat in the list.
+    @Published private(set) var webRunning = Set<UUID>()
+    /// Ends a chat's browser session, when the chat itself goes.
+    private func endWebSession(of id: UUID) {
+        webSessions.removeValue(forKey: id)?.end()
+        webRunning.remove(id)
+    }
+    /// A question the agent is waiting on, with its choices.
+    @Published var pendingQuestion: AgentQuestion?
+    private var questionAnswer: CheckedContinuation<String?, Never>?
+    /// The sidebar of conversations is pinned open beside the chat.
+    @Published var sidebarPinned = false
+    /// Settings are shown inside the panel, in place of the conversation.
+    @Published var showSettings = false
     /// What the history list is filtered by.
     @Published var historyQuery = ""
     /// The panel is shrunk to a strip with just the newest answer.
     @Published var compact = false
+    /// In pill mode, the pill is opened up for now (the pointer is on it).
+    @Published var pillExpanded = false
     /// The panel is enlarged to fill most of the screen.
     @Published var zoomed = false
     /// The agent is reading the screen and deciding what to do next.
@@ -84,6 +193,18 @@ final class AppState: ObservableObject {
     @Published var focusInputRequest = 0
     /// What the agent is doing between steps, for the bar above the input.
     @Published var agentStatus: String?
+    /// An agent task is in progress. The one flag the interface goes by:
+    /// while it is true there is a Stop button, and when the task ends for
+    /// any reason (done, failed, denied, timed out, stopped) it goes false.
+    @Published var agentRunning = false
+    /// Counts tasks, so a task that was force-stopped cannot touch the
+    /// state of the one that came after it.
+    private var agentGeneration = 0
+    /// Works out next-step suggestions after a task; never blocks a new one.
+    private var followUpTask: Task<Void, Never>?
+    /// Bumped when a step succeeds or fails, to drive the checkmark and shake.
+    @Published var stepSuccesses = 0
+    @Published var stepFailures = 0
     /// Steps the agent wants to take, waiting for the user's yes or no.
     @Published var pendingApproval: AgentProposal?
     private var approval: CheckedContinuation<AgentDecision, Never>?
@@ -114,6 +235,10 @@ final class AppState: ObservableObject {
     /// Automatic replies whose question may still be unfinished. Such a reply
     /// is a draft; it is confirmed once the question is complete.
     @Published var draftTurns: Set<UUID> = []
+    /// Answers being re-checked in the background. They stay on screen as
+    /// they are, with no "thinking" effect, and change only if the new
+    /// version really differs.
+    @Published var quietTurns: Set<UUID> = []
     private var lastReadingAt = Date.distantPast
     /// When each answer's text first appeared. Only speech that began after
     /// that can be a reading of it.
@@ -139,6 +264,10 @@ final class AppState: ObservableObject {
     @Published var panelVisible = false {
         didSet { if panelVisible { hasUnseen = false } }
     }
+    /// Where the click-through button sits in the panel (from its top
+    /// left), so a click on it can be recognised while the panel itself
+    /// ignores the mouse.
+    var clickThroughButtonFrame: CGRect = .zero
     @Published var clickThrough = false {
         didSet { overlay?.applyClickThrough(clickThrough) }
     }
@@ -171,6 +300,9 @@ final class AppState: ObservableObject {
     /// What the last recheck replaced, so it can be undone.
     private var rescanUndo: (current: [UUID], original: [TranscriptSegment])?
     private var rescanTask: Task<Void, Never>?
+    /// The by-voice pass that runs by itself while listening.
+    private var voicePassTask: Task<Void, Never>?
+    private var voicePassBusy = false
     private var polishBackoffUntil = Date.distantPast
     private var bag = Set<AnyCancellable>()
     /// Last identified voice on the mic, so short or ambiguous utterances can
@@ -180,6 +312,9 @@ final class AppState: ObservableObject {
     private var lastAutoRunKey: UUID?
     private var lastAutoTurnID: UUID?
     private var lastAutoQuestion = ""
+    /// Everything the others said up to this moment is covered by a reply
+    /// the user has already started saying.
+    private var autoSettledBefore: Date?
     /// The listening session mic lines currently belong to.
     private var micSessionID = 0
     /// After a recheck by voice: what each live label turned out to be, so
@@ -241,10 +376,33 @@ final class AppState: ObservableObject {
             .store(in: &bag)
         Task { @MainActor in
             voiceEnrolled = await speakerID.enrolled()
+            referenceVoices = await speakerID.referenceVoiceCount()
         }
         suggester.attachedFiles = { [weak self] in self?.attachments ?? [] }
         suggester.conversationID = { [weak self] in self?.conversation.id }
         suggester.agentActivity = { [weak self] in self?.agentActivity ?? "" }
+        // Memories recalled for a request are noted on the conversation
+        // they were recalled for.
+        KnowledgeIndex.shared.onMemoriesUsed = { [weak self] items in
+            guard let self else { return }
+            var used = self.conversation.usedMemories ?? []
+            for item in items where !used.contains(item.text) {
+                used.append(item.text)
+            }
+            if used != (self.conversation.usedMemories ?? []) {
+                self.conversation.usedMemories = Array(used.suffix(30))
+            }
+        }
+        suggester.sourcesUsed = { [weak self] sources in
+            guard let self else { return }
+            var used = self.conversation.usedSources ?? []
+            for source in sources where !used.contains(source) {
+                used.append(source)
+            }
+            if used != (self.conversation.usedSources ?? []) {
+                self.conversation.usedSources = used
+            }
+        }
         suggester.conversationNotes = { [weak self] in self?.conversation.summary ?? "" }
         suggester.earlierTurns = { [weak self] in
             guard let self else { return [] }
@@ -282,6 +440,13 @@ final class AppState: ObservableObject {
             return "OpenAI · \(settings.openAIModel)"
         case .ollama:
             return "Ollama · \(settings.ollamaModel)"
+        case .subscription:
+            let agents = CLIAgents.shared
+            let name = agents.name(of: settings.cliAgent)
+            if settings.cliModel.isEmpty {
+                return agents.version(of: "", for: settings.cliAgent).map { "\(name) · \($0)" } ?? name
+            }
+            return "\(name) · \(agents.title(of: settings.cliModel, for: settings.cliAgent))"
         }
     }
 
@@ -295,7 +460,7 @@ final class AppState: ObservableObject {
         guard !isListening else { return }
         let settings = AppSettings.shared
         guard settings.captureMic || settings.captureSystemAudio else {
-            lastError = "Enable at least one audio source in Settings > Behavior."
+            lastError = "Enable at least one audio source in Settings > Listening."
             return
         }
         lastError = nil
@@ -330,6 +495,7 @@ final class AppState: ObservableObject {
                         micSessionID = 0
                         if separationReady {
                             micSessionID = await speakerID.sessionID()
+                            startVoicePasses()
                         }
                         voiceRemap = [:]
                     }
@@ -353,8 +519,9 @@ final class AppState: ObservableObject {
 
     func stop() {
         isListening = false
-        statusText = "Idle"
+        statusText = "Ready"
         autoSuggestWork?.cancel()
+        voicePassTask?.cancel()
         mic.stop()
         // Kept so a start() right after this stop waits for the teardown
         // instead of racing it.
@@ -388,7 +555,7 @@ final class AppState: ObservableObject {
 
     private func failStart(_ message: String) {
         isListening = false
-        statusText = "Idle"
+        statusText = "Ready"
         lastError = message
     }
 
@@ -414,10 +581,10 @@ final class AppState: ObservableObject {
             if !isListening { statusText = "Loading speech model" }
             do {
                 try await prepareSpeechModel()
-                if !isListening { statusText = "Idle" }
+                if !isListening { statusText = "Ready" }
             } catch {
                 if !isListening {
-                    statusText = "Idle"
+                    statusText = "Ready"
                     lastError = "The speech model could not be loaded: \(error.localizedDescription). It needs a network connection the first time."
                 }
             }
@@ -761,13 +928,52 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// While listening, the accurate by-voice pass (the one Recheck uses)
+    /// runs by itself every so often and quietly corrects who said what. The
+    /// live labels are a first guess made on the spot; this pass hears the
+    /// whole session before deciding, and what it finds also teaches the
+    /// live check. It only runs when there is something new to check, and
+    /// backs off as a long session makes each pass take longer.
+    private func startVoicePasses() {
+        voicePassTask?.cancel()
+        voicePassTask = Task { @MainActor [weak self] in
+            var wait: TimeInterval = 45
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                guard let self, !Task.isCancelled, self.isListening else { return }
+                let session = self.micSessionID
+                guard AppSettings.shared.autoVoiceRecheck, !self.isRescanning, session != 0 else { continue }
+                let fresh = self.segments.contains {
+                    $0.isFinal && !$0.systemAudio && $0.micSession == session
+                        && !$0.voiceVerified && !$0.speakerByHand
+                }
+                guard fresh else { continue }
+                let began = Date()
+                if await self.relabelByVoice(quiet: true) {
+                    self.afterTranscriptRearranged()
+                    self.persist()
+                }
+                wait = min(max(45, Date().timeIntervalSince(began) * 10), 300)
+            }
+        }
+    }
+
     /// Re-labels every mic line of this session from the recorded audio, with
     /// the offline diarization pipeline. Returns whether anything changed.
-    private func relabelByVoice() async -> Bool {
+    ///
+    /// `quiet` is the automatic pass: it reports no errors. Lines whose
+    /// speaker the user set by hand are never changed.
+    private func relabelByVoice(quiet: Bool = false) async -> Bool {
+        // One pass at a time.
+        while voicePassBusy {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        voicePassBusy = true
+        defer { voicePassBusy = false }
         let session = micSessionID
         let lines = segments.filter {
             $0.isFinal && !$0.systemAudio && $0.micSession == session && session != 0
-                && $0.micStart != nil && $0.micEnd != nil
+                && $0.micStart != nil && $0.micEnd != nil && !$0.speakerByHand
         }
         guard !lines.isEmpty else { return false }
         let ranges = lines.map { $0.micStart!..<max($0.micEnd!, $0.micStart! + 1) }
@@ -775,7 +981,7 @@ final class AppState: ObservableObject {
         do {
             labels = try await speakerID.relabel(session: session, ranges: ranges)
         } catch {
-            lastError = error.localizedDescription
+            if !quiet { lastError = error.localizedDescription }
             return false
         }
         var changed = false
@@ -801,6 +1007,11 @@ final class AppState: ObservableObject {
                 segments[index].tag = tag
                 segments[index].speakerCorrected = true
                 changed = true
+            }
+            // The offline pipeline's verdicts calibrate the live check. Each
+            // line teaches it once, the first time it is verified.
+            if !segments[index].voiceVerified {
+                teachVoice(segments[index], isMe: speaker == .me, tag: tag)
             }
             segments[index].voiceVerified = true
         }
@@ -836,6 +1047,16 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    /// Gives the live voice check a labeled example: this line's audio was
+    /// the user, or was not. It adjusts where the line between "me" and
+    /// "someone else" is drawn, and is remembered across sessions.
+    private func teachVoice(_ segment: TranscriptSegment, isMe: Bool, tag: String?) {
+        guard segment.micSession == micSessionID, micSessionID != 0,
+              let start = segment.micStart, let end = segment.micEnd else { return }
+        let number = tag.flatMap { Int($0.dropFirst()) }
+        Task { await speakerID.learn(startSample: start, endSample: end, isMe: isMe, other: number) }
+    }
+
     /// Manual fix: gives a stretch of transcript to the next speaker in turn
     /// (You, Them, then any P1, P2, ... present). A hand-corrected line is
     /// left alone by the automatic passes.
@@ -856,6 +1077,10 @@ final class AppState: ObservableObject {
             segments[index].speaker = next.speaker
             segments[index].tag = next.tag
             segments[index].speakerCorrected = true
+            segments[index].speakerByHand = true
+            // The correction teaches the voice check: this stretch of audio
+            // is now a known example of that person.
+            teachVoice(segments[index], isMe: next.speaker == .me, tag: next.tag)
             if segments[index].original == nil {
                 segments[index].original = segments[index].text
             }
@@ -1421,6 +1646,8 @@ final class AppState: ObservableObject {
         streamingTurns.insert(turnID)
         if draft.isEmpty {
             answerStartedAt[turnID] = nil
+        } else {
+            quietTurns.insert(turnID)
         }
         updateTurn(turnID) {
             // A kept draft stays on screen and the new answer grows out of it.
@@ -1440,6 +1667,7 @@ final class AppState: ObservableObject {
             overlay?.showPanel()
         }
         tasks[kind] = Task { @MainActor in
+            defer { self.quietTurns.remove(turnID) }
             do {
                 let stream = try await make()
                 // What the answer is drawing on, shown under it.
@@ -1452,13 +1680,13 @@ final class AppState: ObservableObject {
                     if self.answerStartedAt[turnID] == nil {
                         self.answerStartedAt[turnID] = Date()
                     }
-                    // While the new answer is still retracing the kept draft,
-                    // nothing changes on screen. It takes over where it first
-                    // differs or grows past the draft.
                     // A hand-off to the agent is an instruction, not an answer:
                     // it is not shown while it arrives.
                     if Self.startsAgentHandOff(fresh) { continue }
-                    if draft.isEmpty || !draft.hasPrefix(fresh) {
+                    // A first answer streams in. A re-check of an answer that
+                    // is already on screen is written out of sight: the text
+                    // the user is looking at does not move while it arrives.
+                    if draft.isEmpty {
                         let text = fresh
                         self.updateTurn(turnID) { $0.answer = text }
                     }
@@ -1472,10 +1700,13 @@ final class AppState: ObservableObject {
                     self.runAgent(task, in: turnID)
                     return
                 }
-                if !Task.isCancelled, !draft.isEmpty,
-                   !fresh.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let text = fresh
-                    self.updateTurn(turnID) { $0.answer = text }
+                // The re-check is in. If it says the same thing, the answer on
+                // screen is left exactly as it is. Only a real difference
+                // replaces it, in one step, with the changed version.
+                let revised = fresh.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !Task.isCancelled, !draft.isEmpty, !revised.isEmpty,
+                   Self.similarity(draft, revised) < 0.9 {
+                    self.updateTurn(turnID) { $0.answer = revised }
                 }
             } catch is CancellationError {
                 // replaced by a newer run
@@ -1503,6 +1734,7 @@ final class AppState: ObservableObject {
         streamingTurns = []
         draftTurns = []
         answeredQuestions = []
+        autoSettledBefore = nil
         recheckedIDs = []
         writeUpSignature = nil
         lastAutoRunKey = nil
@@ -1588,6 +1820,22 @@ final class AppState: ObservableObject {
             if segment.speaker == .me { break }
             theirTurn.insert(segment, at: 0)
         }
+        // Listening goes on while the user is replying. A reply the user has
+        // started saying settles everything it was written for; what the
+        // others say after that is a new turn with its own reply, even
+        // though the user's own sentence is not finished yet.
+        if auto {
+            if let id = lastAutoTurnID,
+               let turn = conversation.turns.first(where: { $0.id == id }),
+               (turn.spoken ?? 0) > 0,
+               let covered = turn.anchor,
+               covered > (autoSettledBefore ?? .distantPast) {
+                autoSettledBefore = covered
+            }
+            if let settled = autoSettledBefore {
+                theirTurn.removeAll { $0.timestamp <= settled }
+            }
+        }
         let question = theirTurn.map(\.text).joined(separator: " ")
         // Compare questions on what was heard, so polishing a line never
         // looks like a new question.
@@ -1603,6 +1851,12 @@ final class AppState: ObservableObject {
             if first.utteranceID == lastAutoRunKey,
                let existingID = lastAutoTurnID,
                let existing = conversation.turns.first(where: { $0.id == existingID }) {
+                // Once the user has started saying a reply, its words are
+                // theirs to finish: it is never rewritten under them.
+                if (existing.spoken ?? 0) > 0 {
+                    draftTurns.remove(existingID)
+                    return
+                }
                 let sameQuestion = Self.similarity(lastAutoQuestion, heard) >= 0.85
                 let answered = !existing.answer.isEmpty || streamingTurns.contains(existingID)
                 if sameQuestion, answered, existing.error == nil {
@@ -1676,16 +1930,38 @@ final class AppState: ObservableObject {
     func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        // Code works on a repository: before the first message of a code
+        // chat goes anywhere, it has one. What was typed is kept and sent
+        // as soon as the folder is chosen.
+        if codeMode, !hasWorkFolder, pendingQuestion == nil {
+            pickWorkFolder { [weak self] in self?.sendDraft() }
+            return
+        }
         draft = ""
         lastError = nil
+        // The agent is waiting on a question: what is typed is the answer.
+        if pendingQuestion != nil {
+            answerAgent(text)
+            return
+        }
+        // What was attached while writing goes with this message; the
+        // files themselves stay with the chat (Details lists them).
+        let sent = attachments.filter { pendingAttachments.contains($0.id) }.map(\.name)
+        let before = Set(conversation.turns.map(\.id))
+        pendingAttachments = []
         // One chat box for everything: a message that asks for something to
         // be done on the Mac goes to the agent, anything else is answered.
-        if Self.looksLikeTask(text) {
+        // In code, every message is work on the repository, so it goes to
+        // the agent, which reads and changes files there.
+        if codeMode || Self.looksLikeTask(text) {
             runAgent(text)
         } else if attachScreen {
             answerScreenNow(question: text)
         } else {
             ask(text)
+        }
+        if !sent.isEmpty, let made = conversation.turns.last(where: { !before.contains($0.id) }) {
+            updateTurn(made.id) { $0.attached = sent }
         }
     }
 
@@ -1743,15 +2019,20 @@ final class AppState: ObservableObject {
                 lastError = message
             }
         }
-        guard agentRun == nil else {
-            refuse("The agent is still working on the last task. Press Stop to end it first.")
+        guard !agentRunning else {
+            refuse("The agent is still working on the last task. Press Stop (in the header, or Cmd+Shift+period) to end it, then ask again.")
             return
         }
+        followUpTask?.cancel()
         lastError = nil
         agentTask = task
+        agentRunning = true
+        agentGeneration += 1
+        let generation = agentGeneration
         agentLog = []
         agentContext = []
         agentOutputs = [:]
+        agentPlan = []
         // The task and its outcome live in the chat like any other message.
         if let existing {
             agentTurnID = existing
@@ -1763,24 +2044,15 @@ final class AppState: ObservableObject {
         showHistory = false
         overlay?.showPanel()
         agentRun = Task { @MainActor in
+            // However the task ends, the running state is cleared, unless a
+            // forced stop already did it and a newer task now owns the state.
             defer {
-                self.isPlanning = false
-                self.isActing = false
-                self.agentRun = nil
-                self.pendingApproval = nil
-                self.overlay?.restoreKeyboard()
-                self.agentStatus = nil
-                self.agentTask = nil
-                if let id = self.agentTurnID {
-                    self.streamingTurns.remove(id)
-                    // Stopped without a verdict: say so in the chat.
-                    if self.conversation.turns.first(where: { $0.id == id })?.answer.isEmpty == true {
-                        self.finishAgent("Stopped.", failed: true)
-                    }
+                if generation == self.agentGeneration {
+                    self.endAgent()
                 }
-                self.persist()
             }
-            var directory = AppSettings.shared.agentDirectory
+            var directory = self.agentStartDirectory
+            let brief = task + self.repositoryNote + self.attachedPathsNote
             var keyboardAllowed = false
             var usedKeyboard = false
             var stepsRun = 0
@@ -1789,19 +2061,38 @@ final class AppState: ObservableObject {
                 self.isPlanning = true
                 self.agentStatus = "Working out the next step"
                 // One look gives the app, window, page address and text.
-                let seen = await ScreenReader.read()
+                // Neither is allowed to hang the task: each has a time limit.
+                let seen = (try? await Self.limited(10) { await ScreenReader.read() })
+                    ?? ScreenContext(app: NSWorkspace.shared.frontmostApplication?.localizedName ?? "", window: "", url: "", text: "")
+                if Task.isCancelled { return }
                 let steps: [ActionStep]
                 do {
-                    let output = try await self.suggester.agentStep(task: task,
-                                                                    directory: directory,
-                                                                    frontApp: seen.header,
-                                                                    screenText: seen.text,
-                                                                    clickable: DeviceControl.shared.clickableLabels(),
-                                                                    done: self.agentContext)
+                    let folder = directory
+                    let history = self.agentContext
+                    let clickable = DeviceControl.shared.clickableLabels()
+                    let output = try await Self.limited(90) {
+                        try await self.suggester.agentStep(task: brief,
+                                                           directory: folder,
+                                                           frontApp: seen.header,
+                                                           screenText: seen.text,
+                                                           clickable: clickable,
+                                                           done: history)
+                    }
+                    if Task.isCancelled { return }
                     let plan = DeviceControl.parsePlan(output)
                     if let refusal = plan.refusal {
                         self.finishAgent("Can't do that: \(refusal)", failed: true)
                         return
+                    }
+                    // The model answered in plain words instead of steps (a
+                    // greeting, a question that needs no action): that is
+                    // its answer, not a failure.
+                    if plan.steps.isEmpty {
+                        let said = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !said.isEmpty {
+                            self.finishAgent(said, failed: false)
+                            return
+                        }
                     }
                     steps = Array(plan.steps.prefix(4))
                 } catch {
@@ -1823,7 +2114,15 @@ final class AppState: ObservableObject {
                     case .run:
                         return !AgentPermissions.isAllowed(step.value, remembered: remembered, autoApproveReads: autoReads)
                     case .type, .key, .open, .click: return !keyboardAllowed
-                    case .wait, .done, .ask: return false
+                    case .wait, .done, .ask, .plan: return false
+                    // Looking never changes anything, so it follows the
+                    // "read-only without asking" setting; keys and
+                    // credentials are asked about regardless.
+                    case .read:
+                        return !autoReads || AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory))
+                    case .search, .fetch, .web: return !autoReads
+                    // A change to a file is always shown first.
+                    case .write, .edit: return true
                     }
                 }
                 if !asking.isEmpty {
@@ -1846,7 +2145,7 @@ final class AppState: ObservableObject {
                             allowed.append(name)
                         }
                         AppSettings.shared.agentAllowed = allowed
-                        if asking.contains(where: { $0.kind != .run }) {
+                        if asking.contains(where: { $0.kind.usesKeyboard }) {
                             keyboardAllowed = true
                         }
                     case .allow:
@@ -1858,12 +2157,79 @@ final class AppState: ObservableObject {
                     if Task.isCancelled { return }
                     switch step.kind {
                     case .done:
-                        self.finishAgent(step.value, failed: false, keepOpen: true)
-                        await self.followUp(task: task, waitForScreen: usedKeyboard)
+                        // The task is over here. Suggestions are worked out
+                        // afterwards on their own and never hold up a new task.
+                        self.finishAgent(step.value, failed: false)
+                        self.startFollowUp(task: task, waitForScreen: usedKeyboard)
                         return
                     case .ask:
-                        self.finishAgent(step.value, failed: true)
-                        return
+                        // The task pauses on the question and carries on
+                        // with the answer, like an assistant that checks
+                        // with you and then keeps going.
+                        let question = AgentQuestion(step.value)
+                        self.agentStatus = "Waiting for your answer"
+                        self.pendingQuestion = question
+                        self.publishProgress()
+                        if !self.panelVisible { self.hasUnseen = true }
+                        let answer: String? = await withCheckedContinuation { self.questionAnswer = $0 }
+                        self.pendingQuestion = nil
+                        if Task.isCancelled { return }
+                        guard let answer, !answer.isEmpty else {
+                            self.finishAgent(question.question, failed: true)
+                            return
+                        }
+                        self.agentLog.append("Asked: \(question.question) You said: \(answer)")
+                        self.agentContext.append("ASK: \(question.question)\nResult: the user answered: \(answer)")
+                        self.publishProgress()
+                    case .plan:
+                        // The checklist is the agent's own; it only needs showing.
+                        self.agentPlan = PlanItem.parse(step.value)
+                        self.agentContext.append("PLAN: \(step.value)")
+                    case .read:
+                        self.agentStatus = "Reading \((step.value as NSString).lastPathComponent)"
+                        let outcome = AgentTools.read(step.value, in: directory)
+                        self.noteTool("Read", step.value, outcome)
+                    case .search:
+                        self.agentStatus = "Searching files"
+                        let found = await AgentShell.shared.run(AgentTools.searchCommand(step.value), in: directory)
+                        if Task.isCancelled { return }
+                        let text = found.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                        self.noteTool("Searched", step.value,
+                                      AgentTools.Outcome(ok: true, text: text.isEmpty ? "No matches." : String(text.prefix(AgentTools.limit))))
+                    case .write:
+                        self.agentStatus = "Writing \((step.value as NSString).lastPathComponent)"
+                        // The file as it was is kept first, so the write can
+                        // be seen and undone from the workspace's Changes.
+                        let target = AgentTools.resolve(step.value, in: directory)
+                        let before = ChangeStore.shared.snapshot(target)
+                        let outcome = AgentTools.write(step.value, content: step.body, in: directory)
+                        if outcome.ok {
+                            ChangeStore.shared.record(path: target, before: before, task: self.agentTask ?? "",
+                                                      conversation: self.conversation.id)
+                            self.workspace.reloadIfOpen(target)
+                        }
+                        self.noteTool("Wrote", step.value, outcome)
+                    case .edit:
+                        self.agentStatus = "Editing \((step.value as NSString).lastPathComponent)"
+                        let target = AgentTools.resolve(step.value, in: directory)
+                        let before = ChangeStore.shared.snapshot(target)
+                        let outcome = AgentTools.edit(step.value, old: step.body, new: step.replacement, in: directory)
+                        if outcome.ok {
+                            ChangeStore.shared.record(path: target, before: before, task: self.agentTask ?? "",
+                                                      conversation: self.conversation.id)
+                            self.workspace.reloadIfOpen(target)
+                        }
+                        self.noteTool("Edited", step.value, outcome)
+                    case .fetch:
+                        self.agentStatus = "Reading a web page"
+                        let outcome = await AgentTools.fetch(step.value)
+                        if Task.isCancelled { return }
+                        self.noteTool("Fetched", step.value, outcome)
+                    case .web:
+                        self.agentStatus = "Searching the web"
+                        let outcome = await AgentTools.search(web: step.value)
+                        if Task.isCancelled { return }
+                        self.noteTool("Searched the web for", step.value, outcome)
                     case .wait:
                         let seconds = min(max(Double(step.value.filter { $0.isNumber || $0 == "." }) ?? 2, 1), 10)
                         self.agentStatus = "Waiting"
@@ -1872,6 +2238,8 @@ final class AppState: ObservableObject {
                     case .run:
                         self.agentStatus = "Running a command"
                         let result = await AgentShell.shared.run(step.value, in: directory)
+                        // Stopped while it ran: this task no longer owns the state.
+                        if Task.isCancelled { return }
                         directory = result.directory
                         let verdict = result.timedOut
                             ? "stopped after 2 minutes"
@@ -1895,6 +2263,10 @@ final class AppState: ObservableObject {
                             }
                             confirmed = await self.waitUntilFront(step.value)
                         }
+                        if Task.isCancelled { return }
+                        if confirmed {
+                            AgentOrbit.shared.flash(.open, at: DeviceControl.shared.focusPoint())
+                        }
                         let outcome = confirmed ? "confirmed in front" : "NOT confirmed: it did not come to the front"
                         self.agentLog.append(confirmed ? step.label : "\(step.label) (did not come to the front)")
                         self.agentContext.append("\(step.label)\nResult: \(outcome)")
@@ -1910,6 +2282,7 @@ final class AppState: ObservableObject {
                         }
                         usedKeyboard = true
                         if result.ok {
+                            AgentOrbit.shared.flash(.click, at: DeviceControl.shared.lastClickPoint)
                             self.agentLog.append("Clicked the \(result.detail)")
                             self.agentContext.append("\(step.label)\nResult: pressed the \(result.detail)")
                             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -1926,14 +2299,19 @@ final class AppState: ObservableObject {
                             usedKeyboard = true
                         }
                         self.agentStatus = "Typing for you"
+                        // The orbit rides the caret for as long as this types.
+                        AgentOrbit.shared.beginTyping()
+                        defer { AgentOrbit.shared.endTyping() }
                         self.isActing = true
                         do {
                             try await DeviceControl.shared.run([step])
                         } catch {
+                            if Task.isCancelled { return }
                             self.isActing = false
                             self.finishAgent(error.localizedDescription, failed: true)
                             return
                         }
+                        if Task.isCancelled { return }
                         self.isActing = false
                         // Self-check: typed text should now be on screen. It is
                         // never retyped (that would double it); the result just
@@ -1941,8 +2319,9 @@ final class AppState: ObservableObject {
                         var note = ""
                         if step.kind == .type, Self.normalizedWords(step.value).count >= 2 {
                             try? await Task.sleep(nanoseconds: 500_000_000)
-                            let after = await ScreenReader.read()
-                            let seen = Self.containment(of: step.value, in: after.text) >= 0.5
+                            let after = try? await Self.limited(10) { await ScreenReader.read() }
+                            if Task.isCancelled { return }
+                            let seen = Self.containment(of: step.value, in: after?.text ?? "") >= 0.5
                             note = seen
                                 ? "\nResult: confirmed, the text is on screen"
                                 : "\nResult: NOT confirmed, the text was not seen on screen afterwards (the field may be hidden, or the cursor was elsewhere)"
@@ -1953,6 +2332,14 @@ final class AppState: ObservableObject {
                         self.agentContext.append(step.label + note)
                     }
                     self.publishProgress()
+                    // A checkmark for a step that went through, a shake for one that did not.
+                    let latest = self.agentContext.last ?? ""
+                    if latest.contains("FAILED") || latest.contains("NOT confirmed") || latest.contains("failed, exit")
+                        || latest.contains("stopped after") {
+                        self.stepFailures += 1
+                    } else {
+                        self.stepSuccesses += 1
+                    }
                     stepsRun += 1
                     if stepsRun >= 40 {
                         self.finishAgent("Stopped after 40 steps without finishing.", failed: true)
@@ -1978,81 +2365,308 @@ final class AppState: ObservableObject {
         return false
     }
 
-    /// The steps as chat lines; optionally with the latest command's output.
-    private func agentLines(withLatestOutput: Bool) -> [String] {
+    /// Records what one of the agent's file or web tools did: a line for
+    /// the chat, the start of what came back for the step's detail, and
+    /// the whole result for the model.
+    private func noteTool(_ verb: String, _ subject: String, _ outcome: AgentTools.Outcome) {
+        agentLog.append("\(verb) `\(subject)`" + (outcome.ok ? "" : " (failed)"))
+        agentOutputs[agentLog.count - 1] = String(outcome.text.prefix(900))
+        agentContext.append("\(verb.uppercased()): \(subject)\nResult: \(outcome.ok ? "" : "FAILED. ")\(outcome.text)")
+    }
+
+    /// What has been done so far, as steps for the chat: each log line
+    /// becomes the thing done (the command itself, the app, the label), how
+    /// it went, and a command's output.
+    private var workSteps: [WorkStep] {
         agentLog.enumerated().map { index, line in
-            if withLatestOutput, index == agentLog.count - 1, let output = agentOutputs[index], !output.isEmpty {
-                return "- \(line)\n```\n\(output)\n```"
+            if line.hasPrefix("Ran `"), let end = line.range(of: "` (", options: .backwards) {
+                let command = String(line[line.index(line.startIndex, offsetBy: 5)..<end.lowerBound])
+                let verdict = String(line[end.upperBound...].dropLast())
+                let output = agentOutputs[index].flatMap { $0.isEmpty ? nil : $0 }
+                return WorkStep(kind: .run,
+                                title: verdict == "ok" ? command : "\(command)  (\(verdict))",
+                                output: output,
+                                failed: verdict != "ok")
             }
-            return "- \(line)"
+            let failed = line.contains("(failed:") || line.contains("(did not come to the front)")
+                || line.hasSuffix("(failed)")
+            // The file and web tools: "Read `path`", "Edited `path`" and so on.
+            let tools: [(prefix: String, kind: WorkStep.Kind)] = [
+                ("Searched the web for `", .web), ("Fetched `", .web), ("Read `", .read),
+                ("Searched `", .search), ("Wrote `", .edit), ("Edited `", .edit)
+            ]
+            if let tool = tools.first(where: { line.hasPrefix($0.prefix) }) {
+                let output = agentOutputs[index].flatMap { $0.isEmpty ? nil : $0 }
+                return WorkStep(kind: tool.kind, title: line.replacingOccurrences(of: "`", with: ""),
+                                output: output, failed: failed)
+            }
+            if line.hasPrefix("Open: ") {
+                return WorkStep(kind: .open, title: "Opened " + line.dropFirst(6), failed: failed)
+            }
+            if line.hasPrefix("Clicked the ") || line.hasPrefix("Click: ") {
+                return WorkStep(kind: .click, title: line, failed: failed)
+            }
+            if line.hasPrefix("Type: ") {
+                return WorkStep(kind: .type, title: "Typed " + line.dropFirst(6), failed: failed)
+            }
+            if line.hasPrefix("Press: ") {
+                return WorkStep(kind: .key, title: "Pressed " + line.dropFirst(7), failed: failed)
+            }
+            return WorkStep(kind: .other, title: line, failed: failed)
         }
     }
 
     /// Shows what has been done so far in the chat while the task goes on.
     private func publishProgress() {
         guard let id = agentTurnID else { return }
-        let text = agentLines(withLatestOutput: true).joined(separator: "\n")
-        updateTurn(id) { $0.answer = text }
+        let steps = workSteps
+        let plan = agentPlan
+        updateTurn(id) {
+            $0.steps = steps.isEmpty ? nil : steps
+            $0.plan = plan.isEmpty ? nil : plan
+            $0.answer = ""
+        }
     }
 
-    /// Writes the one result into the chat turn: the steps as short lines,
-    /// then the outcome, the agent's question, or why it stopped. A failure
-    /// keeps the output of the last command, since that is where the reason is.
-    private func finishAgent(_ message: String, failed: Bool, keepOpen: Bool = false) {
-        var lines = agentLines(withLatestOutput: failed)
-        lines.append(failed ? message : "**Done.** \(message)")
-        let text = lines.joined(separator: "\n")
+    /// Writes the result into the chat turn the way an assistant reports
+    /// back: the answer on its own, with the work it took kept behind it as
+    /// steps that can be opened. A failure keeps the reason as the answer;
+    /// the failing command's output is in its step.
+    private func finishAgent(_ message: String, failed: Bool) {
+        // What the task changed goes into git where the folder is a
+        // repository, and the workspace's file list catches up.
+        let finished = agentTask ?? "agent task"
+        Task { @MainActor in
+            await ChangeStore.shared.commitPending(message: finished)
+            self.workspace.refreshAll()
+        }
         if let id = agentTurnID {
-            updateTurn(id) { $0.answer = text }
+            let steps = workSteps
+            // Whatever was still marked as being done is done now.
+            var plan = agentPlan
+            if !failed {
+                for index in plan.indices where plan[index].state == .doing { plan[index].state = .done }
+            }
+            updateTurn(id) {
+                $0.steps = steps.isEmpty ? nil : steps
+                $0.plan = plan.isEmpty ? nil : plan
+                $0.answer = message
+            }
         } else if failed {
             lastError = message
         }
         lastAgentReport = message
-        if !keepOpen {
-            agentTask = nil
+        if failed {
+            stepFailures += 1
         }
     }
 
-    /// After the agent has finished: if it worked in an app, waits for what
-    /// it set in motion to settle on screen; then adds to the chat how it
-    /// turned out and what the user may want to do next.
-    private func followUp(task: String, waitForScreen: Bool) async {
+    /// Clears everything that says a task is running. Called exactly once
+    /// per task, whichever way it ended.
+    private func endAgent() {
+        isPlanning = false
+        isActing = false
+        agentRun = nil
+        approval?.resume(returning: .deny)
+        approval = nil
+        pendingApproval = nil
+        questionAnswer?.resume(returning: nil)
+        questionAnswer = nil
+        pendingQuestion = nil
+        overlay?.restoreKeyboard()
+        agentStatus = nil
+        agentTask = nil
+        agentRunning = false
+        if let id = agentTurnID {
+            streamingTurns.remove(id)
+            // Ended without a verdict: say so in the chat.
+            if conversation.turns.first(where: { $0.id == id })?.answer.isEmpty == true {
+                updateTurn(id) { $0.answer = "Stopped." }
+            }
+        }
+        persist()
+    }
+
+    /// Runs work with a time limit. If the limit passes first, an error is
+    /// thrown and the caller moves on, even if the work never returns.
+    private static func limited<T>(_ seconds: Double,
+                                   _ work: @escaping @MainActor () async throws -> T) async throws -> T {
+        let once = OnceFlag()
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            Task { @MainActor in
+                do {
+                    let value = try await work()
+                    if !once.done {
+                        once.done = true
+                        continuation.resume(returning: value)
+                    }
+                } catch {
+                    if !once.done {
+                        once.done = true
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                if !once.done {
+                    once.done = true
+                    continuation.resume(throwing: NSError(domain: "Companion", code: 7, userInfo: [
+                        NSLocalizedDescriptionKey: "That took longer than \(Int(seconds)) seconds, so the agent stopped waiting for it."
+                    ]))
+                }
+            }
+        }
+    }
+
+    /// After a task has ended: works out how it turned out and what the
+    /// user may want next, and adds that to the chat turn. It runs on its
+    /// own, so the agent is free for a new task straight away; starting one
+    /// (or pressing Stop) cancels it.
+    private func startFollowUp(task: String, waitForScreen: Bool) {
         guard let id = agentTurnID else { return }
-        if waitForScreen {
-            agentStatus = "Waiting for it to finish"
-            await ScreenWatcher.waitForScreenToSettle()
+        let done = agentContext
+        let report = lastAgentReport
+        followUpTask?.cancel()
+        followUpTask = Task { @MainActor in
+            var screen = "(not relevant: the work was done in the shell)"
+            if waitForScreen {
+                await ScreenWatcher.waitForScreenToSettle(limit: 45)
+                if Task.isCancelled { return }
+                if let seen = try? await Self.limited(10, { await ScreenReader.read() }) {
+                    screen = seen.header + "\n\n" + seen.text
+                }
+            }
             if Task.isCancelled { return }
-        }
-        agentStatus = "Thinking about next steps"
-        var screen = "(not relevant: the work was done in the shell)"
-        if waitForScreen {
-            let seen = await ScreenReader.read()
-            screen = seen.header + "\n\n" + seen.text
-        }
-        guard let output = try? await suggester.nextSteps(task: task,
-                                                          done: agentContext,
-                                                          report: lastAgentReport,
-                                                          screenText: screen),
-              !Task.isCancelled else { return }
-        var outcome: [String] = []
-        var next: [String] = []
-        for raw in output.components(separatedBy: .newlines) {
-            let line = raw.trimmingCharacters(in: CharacterSet(charactersIn: "-*• \t"))
-            guard !line.isEmpty else { continue }
-            if line.uppercased().hasPrefix("NEXT:") {
-                let step = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                if !step.isEmpty { next.append(step) }
-            } else {
-                outcome.append(line)
+            guard let output = try? await Self.limited(60, {
+                try await self.suggester.nextSteps(task: task, done: done, report: report, screenText: screen)
+            }), !Task.isCancelled else { return }
+            var outcome: [String] = []
+            var next: [String] = []
+            for raw in output.components(separatedBy: .newlines) {
+                let line = raw.trimmingCharacters(in: CharacterSet(charactersIn: "-*• \t"))
+                guard !line.isEmpty else { continue }
+                if line.uppercased().hasPrefix("NEXT:") {
+                    let step = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                    if !step.isEmpty { next.append(step) }
+                } else {
+                    outcome.append(line)
+                }
             }
-        }
-        let summary = outcome.joined(separator: " ")
-        updateTurn(id) {
-            if !summary.isEmpty {
-                $0.answer += "\n\n\(summary)"
+            let summary = outcome.joined(separator: " ")
+            self.updateTurn(id) {
+                if !summary.isEmpty {
+                    $0.answer += "\n\n\(summary)"
+                }
+                $0.suggestions = next.isEmpty ? nil : Array(next.prefix(3))
             }
-            $0.suggestions = next.isEmpty ? nil : Array(next.prefix(3))
+            self.persist()
         }
+    }
+
+    private var quitArmedUntil = Date.distantPast
+
+    /// Quits Companion. If it is in the middle of something (listening, or
+    /// the agent working), the first request only asks; a second within
+    /// three seconds quits. A slip does not end a live session.
+    func requestQuit() {
+        let busy = isListening || agentRunning
+        if busy, Date() > quitArmedUntil {
+            quitArmedUntil = Date().addingTimeInterval(3)
+            lastError = "Companion is \(agentRunning ? "working on a task" : "listening"). Quit again to close it."
+            return
+        }
+        NSApp.terminate(nil)
+    }
+
+    // MARK: - Side panel: details and browser
+
+    /// Opens the column on the right in the given mode, closes it with nil,
+    /// and gives the panel the width it needs.
+    func showSide(_ mode: SidePanelMode?) {
+        // Closing the column, or switching to the details, brings the chat back.
+        if mode == nil || mode == .details { sideFull = false }
+        sidePanel = mode
+        overlay?.setRightRoom(mode?.width ?? 0)
+    }
+
+    /// Shows a page in the browser beside the chat.
+    func browse(_ url: URL) {
+        showSide(.browser)
+        web.open(url)
+    }
+
+    /// An address as typed: a full one, a bare domain, or words to search for.
+    func browse(_ text: String) {
+        if let url = BrowserModel.url(from: text) { browse(url) }
+    }
+
+    /// Every step the agent has taken in this conversation.
+    private var sessionSteps: [WorkStep] {
+        conversation.turns.flatMap { $0.steps ?? [] }
+    }
+
+    /// The checklist of the newest task that kept one.
+    var sessionPlan: [PlanItem]? {
+        conversation.turns.last { $0.plan?.isEmpty == false }?.plan
+    }
+
+    private func subjects(of prefixes: [String], kind: WorkStep.Kind) -> [String] {
+        var seen: Set<String> = []
+        var found: [String] = []
+        for step in sessionSteps where step.kind == kind && !step.failed {
+            guard let prefix = prefixes.first(where: { step.title.hasPrefix($0) }) else { continue }
+            let subject = String(step.title.dropFirst(prefix.count))
+            if seen.insert(subject).inserted { found.append(subject) }
+        }
+        return found
+    }
+
+    /// Files the agent wrote or changed, as full paths.
+    var sessionOutputs: [String] {
+        subjects(of: ["Wrote ", "Edited "], kind: .edit).map {
+            AgentTools.resolve($0, in: agentStartDirectory)
+        }
+    }
+
+    /// Pages fetched (addresses) and web searches (their words).
+    var sessionWeb: [String] {
+        subjects(of: ["Fetched ", "Searched the web for "], kind: .web).map {
+            $0.contains("://") || $0.contains(" ") || !$0.contains(".") ? $0 : "https://" + $0
+        }
+    }
+
+    /// Files the agent read.
+    var sessionReads: [String] {
+        subjects(of: ["Read "], kind: .read)
+    }
+
+    var sessionCommandCount: Int {
+        sessionSteps.filter { $0.kind == .run }.count
+    }
+
+    /// Next steps suggested after the newest answer, for the card above the
+    /// chat box. Only the newest answer's are offered: older ones are stale.
+    var nextSteps: (turn: UUID, steps: [String])? {
+        guard let last = conversation.turns.last, !streamingTurns.contains(last.id),
+              let steps = last.suggestions, !steps.isEmpty else { return nil }
+        return (last.id, steps)
+    }
+
+    /// Puts an answer's suggestions away, once one is chosen or they are
+    /// dismissed.
+    func dismissSuggestions(_ turnID: UUID) {
+        updateTurn(turnID) { $0.suggestions = nil }
+        persist()
+    }
+
+    /// The user's answer to the agent's question: a choice they picked, or
+    /// what they typed. The task carries on with it.
+    func answerAgent(_ text: String) {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty, pendingQuestion != nil else { return }
+        questionAnswer?.resume(returning: answer)
+        questionAnswer = nil
     }
 
     /// The user's answer to the steps the agent is waiting on.
@@ -2065,6 +2679,7 @@ final class AppState: ObservableObject {
     /// without switching away from that app.
     func askFromAnywhere() {
         showHistory = false
+        if compact { overlay?.setCompact(false) }
         overlay?.focusInput()
         focusInputRequest += 1
     }
@@ -2075,13 +2690,22 @@ final class AppState: ObservableObject {
         sendDraft()
     }
 
-    /// Stops the agent in mid-task: a running command is ended, typing
-    /// stops, and a pending question is answered with no.
+    /// Stops the agent, whatever it is doing, and always leaves it ready
+    /// for a new task: the running command is ended, typing stops, a pending
+    /// question is answered with no, and the running state is cleared here
+    /// and now rather than when the task gets round to noticing.
     func stopAgent() {
+        followUpTask?.cancel()
+        guard agentRunning else { return }
         DeviceControl.shared.cancel()
         agentRun?.cancel()
         Task { await AgentShell.shared.cancel() }
-        decide(.deny)
+        if let id = agentTurnID, conversation.turns.first(where: { $0.id == id })?.answer.isEmpty == false {
+            updateTurn(id) { $0.answer += "\n\nStopped." }
+        }
+        // From here the old task no longer owns the state.
+        agentGeneration += 1
+        endAgent()
     }
 
     private func ask(_ question: String, reusing existing: UUID? = nil) {
@@ -2125,6 +2749,8 @@ final class AppState: ObservableObject {
                 if question == nil,
                    let previous = conversation.turns.last(where: { $0.kind == .screen && $0.id != placeholder }),
                    let context = previous.context,
+                   // An answer being read aloud is left exactly as it is.
+                   (previous.spoken ?? 0) == 0,
                    Self.similarity(context, shot.text) >= 0.85 {
                     conversation.turns.removeAll { $0.id == placeholder }
                     streamingTurns.remove(placeholder)
@@ -2141,7 +2767,10 @@ final class AppState: ObservableObject {
                 // The picture itself goes to engines that can see, so
                 // diagrams and figures are read, not just the text.
                 let picture = ScreenReader.jpeg(shot.image)
-                run(turnID: target, kind: .screen, reveal: true) {
+                // Refreshing an answer that is already there: keep it on
+                // screen and change it only if the new one differs.
+                let kept = target == placeholder ? "" : (conversation.turns.first { $0.id == target }?.answer ?? "")
+                run(turnID: target, kind: .screen, reveal: true, keeping: kept) {
                     // The app, window and page address go along with the text.
                     let info = ScreenReader.frontInfo()
                     let header = ScreenContext(app: info.app, window: info.window, url: info.url, text: "").header
@@ -2170,7 +2799,7 @@ final class AppState: ObservableObject {
             }
             if overlap >= 0.5, last.origin == .auto {
                 updateTurn(last.id) { $0.context = text }
-                run(turnID: last.id, kind: .screen, reveal: true) {
+                run(turnID: last.id, kind: .screen, reveal: false, keeping: last.answer) {
                     try await self.suggester.screenAnswerStream(screenText: text,
                                                                 question: nil,
                                                                 transcript: Array(self.segments.suffix(10)))
@@ -2322,12 +2951,26 @@ final class AppState: ObservableObject {
 
     var attachments: [Attachment] { conversation.attachments ?? [] }
 
-    /// Opens a file picker and attaches the chosen files as context.
-    func pickAttachments() {
+    /// What the "+" menu can add.
+    enum AttachmentKind {
+        case files, images, folder
+    }
+
+    /// Opens a picker and attaches what was chosen: files of any kind,
+    /// images, or a whole folder.
+    func pickAttachments(_ kind: AttachmentKind = .files) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.message = "Attach files as context for this conversation"
+        panel.canChooseDirectories = kind == .folder
+        panel.canChooseFiles = kind != .folder
+        if kind == .images {
+            panel.allowedContentTypes = [.image]
+        }
+        switch kind {
+        case .files: panel.message = "Attach files as context: documents, reports, code, anything readable"
+        case .images: panel.message = "Attach images. Text in them is read."
+        case .folder: panel.message = "Attach a folder. Companion reads it, and the agent can work in it."
+        }
         panel.prompt = "Attach"
         // Above the overlay, which floats at status-bar level.
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
@@ -2339,16 +2982,29 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Extracts each file's text and keeps it with the conversation.
+    /// Reads each file or folder and keeps it with the conversation, along
+    /// with where it lives so the agent can open or change it.
     func attach(_ urls: [URL]) {
         Task { @MainActor in
             var unreadable: [String] = []
             for url in urls.prefix(8) {
-                if let text = await FileTextExtractor.extract(url) {
+                var isDirectory: ObjCBool = false
+                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                let folder = isDirectory.boolValue
+                let text: String?
+                if folder {
+                    text = FileTextExtractor.extractFolder(url)
+                } else {
+                    text = await FileTextExtractor.extract(url)
+                }
+                if let text {
                     var files = conversation.attachments ?? []
-                    files.removeAll { $0.name == url.lastPathComponent }
-                    files.append(Attachment(name: url.lastPathComponent, text: text))
+                    files.removeAll { $0.path == url.path || ($0.path == nil && $0.name == url.lastPathComponent) }
+                    let file = Attachment(name: url.lastPathComponent, text: text,
+                                          path: url.path, isFolder: folder ? true : nil)
+                    files.append(file)
                     conversation.attachments = Array(files.suffix(8))
+                    pendingAttachments.append(file.id)
                 } else {
                     unreadable.append(url.lastPathComponent)
                 }
@@ -2360,8 +3016,81 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// For the agent: what the user attached and where it is. These are the
+    /// things it was handed to work on.
+    private var attachedPathsNote: String {
+        let located = attachments.filter { $0.path != nil }
+        guard !located.isEmpty else { return "" }
+        let lines = located.map { "- \($0.path ?? "")\($0.isFolder == true ? "/ (folder)" : "")" }
+        return "\n\nAttached by the user for this conversation. You may read these and, when the task calls for it, change them:\n"
+            + lines.joined(separator: "\n")
+    }
+
+    /// Where the agent's shell starts: the folder attached last, or else the
+    /// working folder from Settings.
+    var agentStartDirectory: String {
+        conversation.workFolder
+            ?? attachments.last { $0.isFolder == true }?.path
+            ?? AppSettings.shared.agentDirectory
+    }
+
+    /// Whether this chat has a folder for the code side to work in: one
+    /// chosen for it, or one attached to the chat.
+    var hasWorkFolder: Bool {
+        conversation.workFolder != nil || attachments.contains { $0.isFolder == true }
+    }
+
+    /// Switches between the two sides of the app. Chat and code share the
+    /// same list of conversations, search and "new"; code adds the
+    /// workspace, and what is sent there is work on the chat's repository.
+    func setCode(_ on: Bool) {
+        codeMode = on
+        if on {
+            showSide(.workspace)
+        } else if sidePanel == .workspace {
+            showSide(nil)
+        }
+    }
+
+    /// A note for the agent on the repository a code chat works in.
+    private var repositoryNote: String {
+        guard codeMode, hasWorkFolder else { return "" }
+        let folder = agentStartDirectory
+        return "\n\nThis is a code chat. The repository to work in and maintain is \(folder). Keep your work inside it unless told otherwise."
+    }
+
+    /// Asks for the folder this chat's code side works in, and opens the
+    /// workspace on it. The agent's shell starts there too. `then` runs
+    /// once a folder has been chosen.
+    func pickWorkFolder(then: (() -> Void)? = nil) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.message = "Choose the folder to work in. Files, search, changes and the terminal all start here."
+        panel.prompt = "Work here"
+        if let current = conversation.workFolder {
+            panel.directoryURL = URL(fileURLWithPath: current)
+        }
+        // Above the overlay, which floats at status-bar level.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                self.conversation.workFolder = url.path
+                self.persist()
+                self.showSide(.workspace)
+                then?()
+            }
+        }
+    }
+
     func removeAttachment(_ id: UUID) {
         conversation.attachments?.removeAll { $0.id == id }
+        pendingAttachments.removeAll { $0 == id }
         persist()
     }
 
@@ -2401,14 +3130,28 @@ final class AppState: ObservableObject {
                 conversation.title = String(seed.prefix(48))
             }
         }
-        conversation.updatedAt = Date()
+        // The time of the last thing said or answered, not of this save:
+        // reading an old conversation must not move it to the top.
+        conversation.updatedAt = conversation.lastActivity
         store.save(conversation)
         refreshHistory()
+    }
+
+    /// What the agent did belongs to the conversation it did it in: a new or
+    /// reopened conversation starts without it.
+    private func forgetAgentWork() {
+        stopAgent()
+        pendingAttachments = []
+        agentLog = []
+        agentContext = []
+        agentOutputs = [:]
+        agentPlan = []
     }
 
     func newConversation() {
         persist()
         cancelRuns()
+        forgetAgentWork()
         conversation = Conversation()
         segments = []
         replySpokenWords = 0
@@ -2425,6 +3168,7 @@ final class AppState: ObservableObject {
         }
         persist()
         cancelRuns()
+        forgetAgentWork()
         guard let loaded = store.load(id) else {
             refreshHistory()
             return
@@ -2453,7 +3197,30 @@ final class AppState: ObservableObject {
         showHistory = false
     }
 
+    /// Gives a conversation a name of the user's choosing. A named
+    /// conversation keeps its name; only an unnamed one is titled from
+    /// its first words.
+    func renameConversation(_ id: UUID, to name: String) {
+        let title = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard !title.isEmpty else { return }
+        if id == conversation.id {
+            conversation.title = title
+            persist()
+        } else if var other = store.load(id) {
+            other.title = title
+            store.save(other)
+        }
+        refreshHistory()
+    }
+
+    /// How much the open conversation holds, counting what has been heard
+    /// since it was last saved.
+    var contextUse: ContextUse {
+        conversation.contextUse(spoken: segments.reduce(0) { $0 + $1.text.utf8.count })
+    }
+
     func deleteConversation(_ id: UUID) {
+        endWebSession(of: id)
         store.delete(id)
         if id == conversation.id {
             cancelRuns()
@@ -2574,6 +3341,43 @@ final class AppState: ObservableObject {
 
     private func stopScreenWatcher() {
         screenWatcher?.stop()
+    }
+
+    /// Opens Settings inside the panel, bringing the panel up if needed.
+    /// `tab` names the section to open on ("Engine", "You", "Listening"…),
+    /// matching the raw values of SettingsView's tabs.
+    func openSettings(tab: String? = nil) {
+        if let tab { UserDefaults.standard.set(tab, forKey: "settingsTab") }
+        showHistory = false
+        showSettings = true
+        overlay?.setCompact(false)
+        overlay?.showPanel()
+    }
+
+    // MARK: - Reference voices
+
+    /// Learns what other people sound like from a folder of recordings (for
+    /// example LibriSpeech), one voiceprint per person.
+    func importReferenceVoices(from folder: URL) {
+        guard referenceImport == nil else { return }
+        referenceImport = "Loading the voice models…"
+        Task { @MainActor in
+            do {
+                let added = try await speakerID.importReferenceVoices(from: folder) { done, total in
+                    Task { @MainActor in
+                        if self.referenceImport != nil {
+                            self.referenceImport = "Listening to voice \(min(done + 1, total)) of \(total)…"
+                        }
+                    }
+                }
+                referenceVoices = await speakerID.referenceVoiceCount()
+                referenceImport = nil
+                statusText = "Added \(added) reference voices"
+            } catch {
+                referenceImport = nil
+                statusText = "Could not add voices: \(error.localizedDescription)"
+            }
+        }
     }
 
     // MARK: - Voice enrollment (who is "You" on the mic)

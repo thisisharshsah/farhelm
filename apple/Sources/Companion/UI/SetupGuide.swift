@@ -30,6 +30,8 @@ struct SetupGuide: View {
         case .anthropic: return has("anthropic", "ANTHROPIC_API_KEY")
         case .openai: return has("openai", "OPENAI_API_KEY")
         case .ollama: return true
+        // The tool holds its own sign-in; choosing it is all there is to do here.
+        case .subscription: return true
         }
     }
 
@@ -43,15 +45,15 @@ struct SetupGuide: View {
             HStack(spacing: 6) {
                 Label("Get set up", systemImage: "checklist")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.95))
+                    .foregroundStyle(Theme.ink.opacity(0.95))
                 Text("\(doneCount) of 5 done")
                     .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(Theme.ink.opacity(0.5))
                 Spacer(minLength: 4)
                 Button("Hide") { settings.setupDismissed = true }
                     .buttonStyle(.plain)
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(Theme.ink.opacity(0.6))
             }
 
             row(done: micStatus == .authorized,
@@ -70,12 +72,12 @@ struct SetupGuide: View {
             row(done: Self.modelConfigured,
                 title: "AI model",
                 detail: "Pick an engine and add its key. This writes the replies.") {
-                settingsLink
+                settingsLink("Engine")
             }
             row(done: !settings.userDetails.isEmpty,
                 title: "Your details",
                 detail: "Your background, resume or product notes, so replies sound like you.") {
-                settingsLink
+                settingsLink("You")
             }
             row(done: screenAllowed,
                 title: "Screen Recording",
@@ -88,12 +90,12 @@ struct SetupGuide: View {
             row(done: app.voiceEnrolled,
                 title: "Your voice",
                 detail: "Optional. Lets Companion tell you apart from other people on the microphone.") {
-                settingsLink
+                settingsLink("Listening")
             }
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-            .fill(Color.black.opacity(0.28)))
+            .fill(Theme.shade.opacity(0.28)))
         .glassBorder(radius: Theme.cardRadius, tint: Theme.accent)
         .onReceive(refresh) { _ in
             micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -108,16 +110,16 @@ struct SetupGuide: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: done ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(done ? Theme.mint : Color.white.opacity(0.35))
+                .foregroundStyle(done ? Theme.mint : Theme.ink.opacity(0.35))
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(done ? 0.6 : 0.95))
+                    .foregroundStyle(Theme.ink.opacity(done ? 0.6 : 0.95))
                 if !done {
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(Theme.ink.opacity(0.5))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -135,8 +137,10 @@ struct SetupGuide: View {
         .buttonStyle(.plain)
     }
 
-    private var settingsLink: some View {
-        SettingsLink {
+    private func settingsLink(_ tab: String) -> some View {
+        Button {
+            AppState.shared.openSettings(tab: tab)
+        } label: {
             Chip("Open Settings", tint: Theme.accent)
         }
         .buttonStyle(.plain)
@@ -190,7 +194,7 @@ struct WindowControls: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            light(.close, help: "Close the panel (⌘⇧Space brings it back)") {
+            light(.close, help: "Close the panel (\(Shortcuts.shared.label(.panel)) brings it back)") {
                 app.overlay?.hidePanel()
             }
             light(.minimize,
