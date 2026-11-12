@@ -8,7 +8,10 @@ APP_NAME=Companion
 BUNDLE_DIR="dist/$APP_NAME.app"
 
 build() {
-  swift build -c release
+  # Run through xcrun with the macOS SDK: SwiftTerm has a Metal shader, and
+  # the metal compiler only finds the downloaded Metal Toolchain when it is
+  # started with an SDK set. A plain `swift build` fails on Shaders.metal.
+  xcrun --sdk macosx swift build -c release
 }
 
 # Sign with a stable identity so macOS permission grants (mic, screen
@@ -39,6 +42,15 @@ bundle() {
   mkdir -p "$BUNDLE_DIR/Contents/MacOS" "$BUNDLE_DIR/Contents/Resources"
   cp ".build/release/$APP_NAME" "$BUNDLE_DIR/Contents/MacOS/"
   cp Resources/Info.plist "$BUNDLE_DIR/Contents/"
+  cp Resources/AppIcon.icns "$BUNDLE_DIR/Contents/Resources/"
+  # The engines' logos, one SVG each, named after the engine or tool.
+  cp -R Resources/Engines "$BUNDLE_DIR/Contents/Resources/"
+  # SwiftPM resource bundles, such as SwiftTerm's compiled Metal shaders
+  # (SwiftTerm_SwiftTerm.bundle). The packages look for them in
+  # Contents/Resources, so the terminal's renderer needs this in the app.
+  for b in .build/release/*.bundle; do
+    cp -R "$b" "$BUNDLE_DIR/Contents/Resources/"
+  done
   sign
   echo "Built $BUNDLE_DIR"
 }
