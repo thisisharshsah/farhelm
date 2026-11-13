@@ -86,9 +86,10 @@ struct OverlayView: View {
                 // its end and nothing is ever hidden for good.
                 ZStack(alignment: .top) {
                 HStack(spacing: 0) {
-                // Pinned, the sidebar takes its own column on the left, in
-                // code as in chat.
-                if app.sidebarPinned, !app.showSettings {
+                // Pinned, the sidebar takes its own column on the left in
+                // chat. In code it sits between the workspace and the chat
+                // instead (see below).
+                if app.sidebarPinned, !app.showSettings, !codeLayout {
                     SidebarView(toggle: AnyView(sidebarToggle))
                         .panelCard()
                         .padding(.top, topHeight)
@@ -308,6 +309,24 @@ struct OverlayView: View {
                 .opacity(sideIsFull ? 0 : 1)
                 .allowsHitTesting(!sideIsFull)
                 .environment(\.layoutDirection, .leftToRight)
+                // In code the pinned conversations sit between the
+                // workspace and the chat. This row is laid out right to
+                // left there, so coming after the chat puts them on its
+                // left; dragging their divider left widens them.
+                if codeLayout, app.sidebarPinned, !sideIsFull {
+                    ColumnDivider(width: { app.sidebarWidth },
+                                  direction: -1,
+                                  resize: { app.overlay?.dragColumn(left: true, to: $0) },
+                                  reset: { app.overlay?.resetColumn(left: true) },
+                                  done: { app.saveColumnWidths() })
+                        .padding(.top, topHeight)
+                    SidebarView(toggle: AnyView(sidebarToggle))
+                        .panelCard()
+                        .padding(.top, topHeight)
+                        .frame(width: shownSidebarWidth)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
                 // The column on the right: details of the session, the
                 // browser, or the workspace.
                 if let side = app.sidePanel {
@@ -627,7 +646,7 @@ struct OverlayView: View {
     /// The least the workspace takes in code: the activity bar, the files
     /// (always shown there) and room for the code beside them, so opening
     /// the details never squeezes either away.
-    private var codeWorkspaceLeast: CGFloat { 36 + 2 * Theme.panelGap + 150 + 320 }
+    private var codeWorkspaceLeast: CGFloat { 40 + 150 + Theme.panelGap + 320 }
     /// The width the chat and the workspace share in code.
     private var codeRoom: CGFloat {
         panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0) - gapsWidth
