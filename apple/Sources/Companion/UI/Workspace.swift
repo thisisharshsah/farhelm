@@ -42,14 +42,14 @@ final class WorkspaceModel: ObservableObject {
         var icon: String {
             switch self {
             case .terminal: return "terminal"
-            case .output: return "text.alignleft"
+            case .output: return "doc.plaintext"
             case .files: return "folder"
             case .search: return "magnifyingglass"
-            case .changes: return "clock.arrow.circlepath"
+            case .changes: return "pencil.and.list.clipboard"
             case .source: return "arrow.triangle.branch"
             case .problems: return "exclamationmark.triangle"
-            case .tests: return "checkmark.diamond"
-            case .ports: return "network"
+            case .tests: return "testtube.2"
+            case .ports: return "antenna.radiowaves.left.and.right"
             case .github: return "arrow.triangle.pull"
             case .debug: return "ladybug"
             }
@@ -90,10 +90,10 @@ final class WorkspaceModel: ObservableObject {
 
         var icon: String {
             switch self {
-            case .files: return "doc.on.doc"
+            case .files: return "folder"
             case .search: return "magnifyingglass"
             case .source: return "arrow.triangle.branch"
-            case .changes: return "clock.arrow.circlepath"
+            case .changes: return "pencil.and.list.clipboard"
             case .outline: return "list.bullet.indent"
             case .timeline: return "calendar.day.timeline.left"
             }
@@ -1260,7 +1260,7 @@ private struct WorkspaceBody: View {
                 .lineLimit(1)
                 .help(model.root)
             Spacer(minLength: 4)
-            IconButton("rectangle.bottomthird.inset.filled",
+            IconButton("inset.filled.bottomthird.rectangle",
                        help: model.panelOpen ? "Hide the panel (terminal, search, changes, git)" : "Show the panel",
                        tint: model.panelOpen ? Theme.accent : nil) {
                 model.panelOpen.toggle()

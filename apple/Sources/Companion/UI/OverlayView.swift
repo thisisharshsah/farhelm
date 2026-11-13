@@ -1271,7 +1271,7 @@ struct OverlayView: View {
                 }
                 .buttonStyle(.plain)
                 .help(app.isListening ? "Stop listening (\(keys.label(.listen)))" : "Listen to the conversation (\(keys.label(.listen)))")
-                IconButton("text.viewfinder",
+                IconButton("camera.viewfinder",
                            help: app.attachScreen
                                ? "Screen capture will be attached. Click to turn off."
                                : "Attach a screen capture to this message",
@@ -1603,33 +1603,23 @@ struct ChatThread: View {
                 }
             }
             if !app.isListening {
-                VStack(alignment: .leading, spacing: 8) {
-                    startHint("mic.fill", "Listen", "and get replies as it goes")
-                    startHint("keyboard", "Type", "a question or a task")
-                    startHint("plus", "Attach", "files, images or a folder")
-                }
-                .padding(.top, 4)
+                // The ways to start, as bubbles: one click starts listening,
+                // puts the cursor in the chat box or opens the files to attach.
+                let ways = starts
+                ChoiceBubbles(ways.map { $0.bubble }) { ways[$0].start() }
+                    .frame(maxWidth: 440)
+                    .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: app.isListening)
     }
 
-    private func startHint(_ icon: String, _ title: String, _ detail: String) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(0.7))
-                .frame(width: 24, height: 24)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.ink.opacity(0.08)))
-            Text(title)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(0.88))
-            Text(detail)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.ink.opacity(0.45))
-                .lineLimit(1)
-        }
+    /// The three ways to start a conversation, and what each does.
+    private var starts: [(bubble: Bubble, start: () -> Void)] {
+        [(Bubble("Listen", icon: "mic.fill", detail: "and get replies as it goes"), { app.toggleListening() }),
+         (Bubble("Type", icon: "keyboard", detail: "a question or a task"), { app.focusInputRequest += 1 }),
+         (Bubble("Attach", icon: "plus", detail: "files, images or a folder"), { app.pickAttachments() })]
     }
 
     private var emptyHint: String {
@@ -1986,9 +1976,9 @@ struct NextStepsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Theme.accent)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Theme.accentGradient)
                     .frame(width: 16, height: 16)
                 Text("Next step")
                     .font(.system(size: 11.5, weight: .semibold))
@@ -1998,34 +1988,12 @@ struct NextStepsCard: View {
                     app.dismissSuggestions(turnID)
                 }
             }
-            VStack(alignment: .leading, spacing: 5) {
-                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                    Button {
-                        app.dismissSuggestions(turnID)
-                        app.send(step)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text("\(index + 1)")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .foregroundStyle(Theme.accent)
-                                .frame(width: 18, height: 18)
-                                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.accent.opacity(0.16)))
-                            Text(step)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.ink.opacity(0.92))
-                                .multilineTextAlignment(.leading)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.ink.opacity(0.06)))
-                        .glassBorder(radius: 9)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Do this next")
-                }
+            // Each step a bubble; one click does it.
+            ChoiceBubbles(steps) { step in
+                app.dismissSuggestions(turnID)
+                app.send(step)
             }
+            .id(turnID)
             Text("Or type what you want instead.")
                 .font(.system(size: 10.5))
                 .foregroundStyle(Theme.ink.opacity(0.48))
@@ -2287,7 +2255,7 @@ struct TurnView: View {
             if kinds.contains(.read) || kinds.contains(.search) { return ("doc.text.magnifyingglass", "Read files") }
         }
         if turn.kind == .screen {
-            return (turn.origin == .auto ? "eye.fill" : "text.viewfinder", "Answer from the screen")
+            return (turn.origin == .auto ? "eye.fill" : "camera.viewfinder", "Answer from the screen")
         }
         switch turn.origin {
         case .typed: return ("bubble.left.fill", "Answer to what you wrote")
@@ -2998,7 +2966,7 @@ struct TurnInputBubble: View {
                                   processing: streaming && turn.answer.isEmpty)
                 } else if streaming && turn.context == nil {
                     HStack(spacing: 6) {
-                        Image(systemName: "text.viewfinder")
+                        Image(systemName: "camera.viewfinder")
                         Text("Capturing screen…")
                     }
                     .font(.system(size: 11))
@@ -3069,7 +3037,7 @@ struct TurnInputBubble: View {
             // the same buttons as under an answer.
             HStack(spacing: 2) {
                 if turn.kind == .screen {
-                    Image(systemName: "text.viewfinder")
+                    Image(systemName: "camera.viewfinder")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(tint)
                         .help("Screen capture")

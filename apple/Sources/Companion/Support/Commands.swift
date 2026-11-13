@@ -339,7 +339,7 @@ extension CommandRegistry {
                     keys: .cmdShift(3, "F"), available: inCode) {
                 workspaceTab(.search)
             },
-            Command(id: "view.changes", title: "Show Changes", category: "View", icon: "clock.arrow.circlepath",
+            Command(id: "view.changes", title: "Show Changes", category: "View", icon: "pencil.and.list.clipboard",
                     available: inCode) {
                 workspaceTab(.changes)
             },
@@ -366,7 +366,7 @@ extension CommandRegistry {
                 GitModel.shared.push()
             },
             Command(id: "view.panel", title: "Toggle Panel", category: "View",
-                    icon: "rectangle.bottomthird.inset.filled", keys: .cmd(38, "J"), available: inCode) {
+                    icon: "inset.filled.bottomthird.rectangle", keys: .cmd(38, "J"), available: inCode) {
                 if app.sidePanel != .workspace { app.showSide(.workspace) }
                 app.workspace.panelOpen.toggle()
             },
@@ -383,6 +383,82 @@ extension CommandRegistry {
                     app.workspace.showPanel(.terminal)
                 }
             },
+            Command(id: "build.run", title: "Build and Show Problems", category: "Build", icon: "hammer",
+                    keys: .cmdShift(11, "B"), available: inCode) {
+                workspaceTab(.problems)
+                ProblemsModel.shared.run(in: app.workspace.root)
+            },
+            Command(id: "view.splitEditor", title: "Open Editor to the Side", category: "View",
+                    icon: "rectangle.split.2x1", keys: .cmd(42, "\\"), available: inCode) {
+                let workspace = app.workspace
+                if workspace.sidePath != nil {
+                    workspace.closeSide()
+                } else if let path = workspace.openPath {
+                    workspace.openToSide(path)
+                }
+            },
+            Command(id: "view.outline", title: "Show Outline", category: "View", icon: "list.bullet.indent",
+                    available: inCode) {
+                app.workspace.activity = .outline
+                app.workspace.filesHidden = false
+            },
+            Command(id: "view.timeline", title: "Show Timeline", category: "View",
+                    icon: "calendar.day.timeline.left", available: inCode) {
+                app.workspace.activity = .timeline
+                app.workspace.filesHidden = false
+            },
+            Command(id: "view.preview", title: "Toggle Preview", category: "View", icon: "eye",
+                    available: { inCode() && AppState.shared.workspace.canPreview }) {
+                app.workspace.previewing.toggle()
+            },
+            Command(id: "debug.start", title: "Start Debugging / Continue", category: "Debug", icon: "ladybug",
+                    keys: KeyChord(keyCode: 96, modifiers: [], display: "F5"), available: inCode) {
+                workspaceTab(.debug)
+                DebugModel.shared.start(in: app.workspace.root)
+            },
+            Command(id: "debug.stop", title: "Stop Debugging", category: "Debug", icon: "stop.fill",
+                    keys: KeyChord(keyCode: 96, modifiers: .shift, display: "⇧F5"),
+                    available: { DebugModel.shared.active }) {
+                DebugModel.shared.stop()
+            },
+            Command(id: "debug.stepOver", title: "Step Over", category: "Debug", icon: "arrow.uturn.forward",
+                    keys: KeyChord(keyCode: 109, modifiers: [], display: "F10"),
+                    available: { DebugModel.shared.isStopped }) {
+                DebugModel.shared.stepOver()
+            },
+            Command(id: "debug.stepIn", title: "Step Into", category: "Debug", icon: "arrow.down.to.line",
+                    keys: KeyChord(keyCode: 103, modifiers: [], display: "F11"),
+                    available: { DebugModel.shared.isStopped }) {
+                DebugModel.shared.stepIn()
+            },
+            Command(id: "debug.stepOut", title: "Step Out", category: "Debug", icon: "arrow.up.to.line",
+                    keys: KeyChord(keyCode: 103, modifiers: .shift, display: "⇧F11"),
+                    available: { DebugModel.shared.isStopped }) {
+                DebugModel.shared.stepOut()
+            },
+            Command(id: "debug.clearBreakpoints", title: "Remove All Breakpoints", category: "Debug", icon: "xmark.circle",
+                    available: { !DebugModel.shared.breakpoints.isEmpty }) {
+                DebugModel.shared.clearBreakpoints()
+            },
+            Command(id: "test.run", title: "Run Tests", category: "Build", icon: "testtube.2", available: inCode) {
+                workspaceTab(.tests)
+                TestModel.shared.run(in: app.workspace.root)
+            },
+            Command(id: "task.again", title: "Run Last Task Again", category: "Build", icon: "play",
+                    available: { AppState.shared.workspace.lastTask != nil }) {
+                if let task = app.workspace.lastTask { app.workspace.run(task) }
+            },
+            Command(id: "view.ports", title: "Show Ports", category: "View", icon: "antenna.radiowaves.left.and.right", available: inCode) {
+                workspaceTab(.ports)
+            },
+            Command(id: "view.github", title: "Show Pull Requests and Runs", category: "View",
+                    icon: "arrow.triangle.pull", available: inCode) {
+                workspaceTab(.github)
+            },
+            Command(id: "view.problems", title: "Show Problems", category: "View",
+                    icon: "exclamationmark.triangle", keys: .cmdShift(46, "M"), available: inCode) {
+                workspaceTab(.problems)
+            },
             Command(id: "view.browser", title: "Open Browser", category: "View", icon: "globe") {
                 app.showSide(.browser)
             },
@@ -396,18 +472,6 @@ extension CommandRegistry {
             Command(id: "view.settings", title: "Open Settings", category: "View", icon: "gearshape",
                     keys: .cmd(43, ",")) {
                 app.openSettings()
-            },
-            Command(id: "view.zoomIn", title: "Zoom In", category: "View", icon: "plus.magnifyingglass",
-                    shortcut: { "⌘+" }) {
-                AppSettings.shared.zoom(1)
-            },
-            Command(id: "view.zoomOut", title: "Zoom Out", category: "View", icon: "minus.magnifyingglass",
-                    shortcut: { "⌘-" }) {
-                AppSettings.shared.zoom(-1)
-            },
-            Command(id: "view.zoomReset", title: "Reset Zoom", category: "View", icon: "1.magnifyingglass",
-                    shortcut: { "⌘0" }) {
-                AppSettings.shared.zoom(0)
             },
 
             // Chat
@@ -449,8 +513,16 @@ extension CommandRegistry {
                 app.pickFilesToOpen()
             },
             Command(id: "file.save", title: "Save", category: "File", icon: "square.and.arrow.down",
-                    shortcut: { "⌘S" }, available: { AppState.shared.workspace.dirty }) {
-                app.workspace.save(conversation: app.conversation.id)
+                    shortcut: { "⌘S" }, available: { AppState.shared.workspace.dirty || AppState.shared.workspace.sideDirty }) {
+                app.workspace.saveAll(conversation: app.conversation.id)
+            },
+            Command(id: "file.newFile", title: "New File…", category: "File", icon: "doc.badge.plus",
+                    available: { !AppState.shared.workspace.root.isEmpty }) {
+                app.workspace.startNew(folder: false)
+            },
+            Command(id: "file.newFolder", title: "New Folder…", category: "File", icon: "folder.badge.plus",
+                    available: { !AppState.shared.workspace.root.isEmpty }) {
+                app.workspace.startNew(folder: true)
             },
             Command(id: "file.close", title: "Close File", category: "File", icon: "xmark", available: fileOpen) {
                 // Closes the file's tab and moves to the next open one.
