@@ -682,19 +682,6 @@ struct OverlayView: View {
             // The button for the conversations sits inside the sidebar
             // while it is open, and at the end of this bar while it is
             // closed (see `sidebarToggle`).
-            // Every command and, in code, every file, by name. In a
-            // narrow panel it leaves the bar; its keys still work.
-            if codeLayout, app.hasWorkFolder, panelWidth >= 900 {
-                // As in an editor: back and forward between files, and a
-                // search box named for the folder that opens the palette.
-                WorkspaceNavBar(model: app.workspace)
-            } else if panelWidth >= 640 {
-            ToolbarGroup {
-            IconButton("magnifyingglass", help: "Go to a file or run a command (⌘P, ⇧⌘P)") {
-                commands.openPalette(commands: !app.hasWorkFolder)
-            }
-            }
-            }
             // The two sides of the app, side by side: chat and code. The
             // one in use is colored.
             ToolbarGroup {
@@ -761,6 +748,20 @@ struct OverlayView: View {
             // short with an ellipsis and never squeezed out altogether.
             .frame(minWidth: 72, alignment: .leading)
             .layoutPriority(1)
+            // Every command and, in code, every file, by name, just after the
+            // conversation's name. In a narrow panel it leaves the bar; its
+            // keys still work.
+            if codeLayout, app.hasWorkFolder, panelWidth >= 900 {
+                // As in an editor: back and forward between files, and a
+                // search box named for the folder that opens the palette.
+                WorkspaceNavBar(model: app.workspace)
+            } else if panelWidth >= 640 {
+                ToolbarGroup {
+                    IconButton("magnifyingglass", help: "Go to a file or run a command (⌘P, ⇧⌘P)") {
+                        commands.openPalette(commands: !app.hasWorkFolder)
+                    }
+                }
+            }
             // The empty stretch of the top bar is a real title bar area, laid
             // out as a view of its own so it is certain to get the mouse:
             // drag it to move the panel, double-click it to fill the screen.
