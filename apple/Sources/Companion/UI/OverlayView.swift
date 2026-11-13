@@ -76,26 +76,31 @@ struct OverlayView: View {
             if app.compact && !app.pillExpanded {
                 pill
             } else {
-                // The top bar and the chat box float over the conversation,
-                // which runs the full height of the panel behind them, the
-                // way content passes under a toolbar in a Mac app. Their
-                // heights are measured so the conversation can leave room
-                // at its ends and nothing is ever hidden for good.
+                // The top bar runs across the window on its own glass, and
+                // under it each part is a panel of its own (the sidebar, the
+                // chat, the browser, details, the workspace's files, editor
+                // and terminal), a gap apart, as in an editor. The gaps are
+                // the handles that resize them. In the chat's panel the
+                // chat box floats over the end of the conversation; its
+                // height is measured so the conversation can leave room at
+                // its end and nothing is ever hidden for good.
                 ZStack(alignment: .top) {
                 HStack(spacing: 0) {
                 // Pinned, the sidebar takes its own column on the left, in
                 // code as in chat.
                 if app.sidebarPinned, !app.showSettings {
                     SidebarView(toggle: AnyView(sidebarToggle))
+                        .panelCard()
                         .padding(.top, topHeight)
                         .frame(width: shownSidebarWidth)
                         .transition(.move(edge: .leading).combined(with: .opacity))
-                    // Drag to give the sidebar more or less room.
+                    // Drag the gap to give the sidebar more or less room.
                     ColumnDivider(width: { app.sidebarWidth },
                                   direction: 1,
                                   resize: { app.overlay?.dragColumn(left: true, to: $0) },
                                   reset: { app.overlay?.resetColumn(left: true) },
                                   done: { app.saveColumnWidths() })
+                        .padding(.top, topHeight)
                 }
                 // The chat and what sits beside it. In code the two trade
                 // places, as in an editor: the workspace (files and the
@@ -106,16 +111,12 @@ struct OverlayView: View {
                 VStack(spacing: 0) {
                 if app.showSettings {
                     SettingsView()
-                        .padding(.top, topHeight)
                         .transition(.opacity)
                 } else {
-                    // Notes, a warning or the setup guide sit below the top
-                    // bar; with none of them, the conversation itself runs
-                    // up behind it.
+                    // Notes, a warning or the setup guide sit at the top of
+                    // the chat's panel; with none of them, the conversation
+                    // runs up to the panel's top edge and fades out there.
                     let fixedAbove = showNotes || app.lastError != nil || setupShown
-                    if fixedAbove {
-                        Color.clear.frame(height: topHeight)
-                    }
                     if showNotes {
                         notesView(app.conversation.record ?? app.conversation.summary ?? "")
                             .frame(height: 190)
@@ -137,23 +138,20 @@ struct OverlayView: View {
                     let zoom = CGFloat(settings.contentZoom * settings.chatTextScale)
                     // Room under the bar for the sidebar's toggle row, so the
                     // first message starts below it.
-                    ChatThread(topInset: ((fixedAbove ? 6 : topHeight) + (toggleInChat ? 38 : 0)) / zoom,
+                    ChatThread(topInset: (10 + (toggleInChat ? 38 : 0)) / zoom,
                                bottomInset: bottomHeight / zoom,
-                               toolsBottom: ((fixedAbove ? 0 : topHeight) + 8 + toolsHeight) / zoom)
+                               toolsBottom: (8 + toolsHeight) / zoom)
                         .padding(.horizontal, Theme.gutter / zoom)
                         .contentZoom(settings.contentZoom * settings.chatTextScale)
                         .frame(maxHeight: .infinity)
-                        // The conversation ends below the top bar and above the
-                        // chat box and whatever sits over it (the plan, the
-                        // agent's card): it fades out at their edges and never
-                        // shows behind them.
+                        // The conversation fades out at the top of its panel and
+                        // above the chat box and whatever sits over it (the
+                        // plan, the agent's card), and never shows behind them.
                         .mask(alignment: .top) {
                             VStack(spacing: 0) {
                                 if !fixedAbove {
-                                    Color.clear
-                                        .frame(height: max(0, topHeight - 14))
                                     LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                                        .frame(height: 14)
+                                        .frame(height: 10)
                                 }
                                 Rectangle()
                                 LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
@@ -170,7 +168,7 @@ struct OverlayView: View {
                             if toggleInChat {
                                 sidebarToggle
                                     .padding(.leading, Theme.gutter)
-                                    .padding(.top, (fixedAbove ? 0 : topHeight) + 8)
+                                    .padding(.top, 8)
                             }
                         }
                         // The conversation's tools and its context ring
@@ -198,7 +196,7 @@ struct OverlayView: View {
                                         .onChange(of: geometry.size.height) { _, height in toolsHeight = height }
                                 })
                                 .padding(.trailing, Theme.gutter)
-                                .padding(.top, (fixedAbove ? 0 : topHeight) + 8)
+                                .padding(.top, 8)
                                 .transition(.opacity)
                             }
                         }
@@ -292,13 +290,16 @@ struct OverlayView: View {
                         .animation(.easeOut(duration: 0.18), value: app.chatScrolledUp)
                         .zIndex(9)
                     inputBar
-                        .padding(.bottom, 6)
+                        .padding(.bottom, 2)
                     }
                     .padding(.top, 14)
                     .background(edgeFade(from: .bottom))
                     .background(measure { if abs($0 - bottomHeight) > 0.5 { bottomHeight = $0 } })
                 }
                 }
+                // A panel of its own, under the top bar, like each column.
+                .panelCard()
+                .padding(.top, topHeight)
                 // When the right column is given the whole panel, the chat
                 // steps aside: it keeps its place and its state, takes no
                 // room, and comes back the moment it is asked for.
@@ -344,6 +345,8 @@ struct OverlayView: View {
                                               reset: { codeDetailsWidth = 280 },
                                               done: {})
                                 SessionDetails()
+                                    .frame(maxHeight: .infinity, alignment: .top)
+                                    .panelCard()
                                     .frame(width: CGFloat(min(max(codeDetailsWidth, 220), 460)))
                             }
                             .environment(\.layoutDirection, .leftToRight)
@@ -351,23 +354,19 @@ struct OverlayView: View {
                             SidePanel(mode: side)
                         }
                     }
+                        // Each part is a panel of its own (SidePanel, and
+                        // the workspace's files, editor and terminal), with
+                        // the gaps of the window between them.
                         .padding(.top, topHeight)
-                        // Code and files sit on a solid surface: the glass
-                        // lets the desktop through, which no one can read
-                        // code over.
-                        .background {
-                            if side == .workspace {
-                                ZStack {
-                                    Theme.workSurface
-                                    Theme.accent.opacity(0.03)
-                                }
-                            }
-                        }
                         .frame(width: sideIsFull || codeLayout ? nil : sideWidth(side))
                         // In code the workspace takes what is left, down to
                         // nothing, and never more: it gives way first.
+                        // Pinned to the left: if the workspace is ever wider
+                        // than its room, the editor's far edge gives way, not
+                        // the activity bar.
                         .frame(minWidth: sideIsFull || codeLayout ? 0 : nil,
-                               maxWidth: sideIsFull || codeLayout ? .infinity : nil)
+                               maxWidth: sideIsFull || codeLayout ? .infinity : nil,
+                               alignment: .topLeading)
                         .clipped()
                         .environment(\.layoutDirection, .leftToRight)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -378,6 +377,10 @@ struct OverlayView: View {
                 // right as ever.
                 .environment(\.layoutDirection, codeLayout ? .rightToLeft : .leftToRight)
                 }
+                // The panels sit a gap in from the window's edges, as they
+                // sit a gap apart.
+                .padding(.horizontal, Theme.panelGap)
+                .padding(.bottom, Theme.panelGap)
                 // The floating top: the app bar, and under it the live
                 // indicator or a warning when there is one.
                 VStack(spacing: 0) {
@@ -392,8 +395,7 @@ struct OverlayView: View {
                 // panel, double-click it to fill the screen.
                 .background(TitleBarArea(zoom: { app.overlay?.toggleZoom() },
                                          minimize: { app.overlay?.setCompact(true) }))
-                .background(edgeFade(from: .top))
-                .background(measure { if abs($0 - 8 - topHeight) > 0.5 { topHeight = $0 - 8 } })
+                .background(measure { if abs($0 - 10 - topHeight) > 0.5 { topHeight = $0 - 10 } })
                 }
             }
         }
@@ -476,9 +478,9 @@ struct OverlayView: View {
                         if !inside { closePeekSoon() }
                     }
                     // It floats on the left, where its column would be.
-                    .padding(.leading, 8)
-                    .padding(.bottom, 8)
-                    .padding(.top, topHeight + 4)
+                    .padding(.leading, Theme.panelGap)
+                    .padding(.bottom, Theme.panelGap)
+                    .padding(.top, topHeight)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
@@ -588,8 +590,16 @@ struct OverlayView: View {
     /// whatever is left beside the chat when it does not, so nothing is
     /// ever pushed out of the panel.
     private func sideWidth(_ side: SidePanelMode) -> CGFloat {
-        let taken = (app.sidebarPinned ? shownSidebarWidth : 0) + OverlayController.chatLeast
+        let taken = (app.sidebarPinned ? shownSidebarWidth : 0) + OverlayController.chatLeast + gapsWidth
         return min(app.width(of: side), max(OverlayController.sideLeast(side), panelWidth - taken))
+    }
+
+    /// The room the gaps take across the panel: one at each side and one
+    /// between every two columns.
+    private var gapsWidth: CGFloat {
+        let sidebar = app.sidebarPinned && !app.showSettings
+        let columns = 1 + (sidebar ? 1 : 0) + (app.sidePanel != nil ? 1 : 0)
+        return CGFloat(columns + 1) * Theme.panelGap
     }
 
     /// The right column has the whole panel and the chat is out of the way.
@@ -617,15 +627,15 @@ struct OverlayView: View {
     /// The least the workspace takes in code: the activity bar, the files
     /// (always shown there) and room for the code beside them, so opening
     /// the details never squeezes either away.
-    private var codeWorkspaceLeast: CGFloat { 37 + 150 + 320 }
+    private var codeWorkspaceLeast: CGFloat { 36 + 2 * Theme.panelGap + 150 + 320 }
     /// The width the chat and the workspace share in code.
     private var codeRoom: CGFloat {
-        panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0)
+        panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0) - gapsWidth
     }
     /// The least the workspace (and the details beside it, when open) may
     /// have, so the chat can never grow and push them off the screen.
     private var codeLeftLeast: CGFloat {
-        let details = codeDetailsShown ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + 8 : 0
+        let details = codeDetailsShown ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + Theme.panelGap : 0
         return codeWorkspaceLeast + details
     }
 
@@ -635,7 +645,7 @@ struct OverlayView: View {
     private var shownSidebarWidth: CGFloat {
         let other = app.sidePanel.map(OverlayController.sideLeast) ?? 0
         return min(app.sidebarWidth,
-                   max(OverlayController.sidebarLeast, panelWidth - OverlayController.chatLeast - other))
+                   max(OverlayController.sidebarLeast, panelWidth - OverlayController.chatLeast - other - gapsWidth))
     }
 
     /// Reports a view's height whenever it changes.

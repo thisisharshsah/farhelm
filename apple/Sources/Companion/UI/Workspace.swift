@@ -1008,6 +1008,7 @@ struct WorkspacePane: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .panelCard(.work)
         }
     }
 }
@@ -1030,7 +1031,7 @@ private struct WorkspaceBody: View {
     /// Room for the activity bar and the side bar.
     /// In code the files are always at the side, however narrow the pane.
     private var wide: Bool { app.codeMode || paneWidth >= 560 }
-    private var split: Bool { wide && (app.codeMode || !model.filesHidden) }
+    private var split: Bool { wide && !model.filesHidden }
 
     /// What the side bar shows: the files, or another view of the work.
     @ViewBuilder
@@ -1062,18 +1063,21 @@ private struct WorkspaceBody: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
         HStack(spacing: 0) {
             // The activity bar: what the side bar shows. Clicking the one
-            // showing puts the side bar away, as in an editor.
+            // showing puts the side bar away, as in an editor. It sits on
+            // the window's glass, beside the panels.
             if wide {
-                ActivityBar(model: model, keepsOpen: app.codeMode)
-                Rectangle().fill(Theme.ink.opacity(0.08)).frame(width: 1)
+                ActivityBar(model: model)
+                Color.clear.frame(width: Theme.panelGap)
             }
             if split {
                 sideView
                     .frame(width: filesShown, alignment: .leading)
-                    .clipped()
-                // Drag to give the files more or less room.
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .panelCard(.work)
+                // Drag the gap to give the files more or less room.
                 ColumnDivider(width: { filesShown },
                               direction: 1,
                               resize: { model.filesWidth = min(max($0, 150), max(150, paneWidth - 320)) },
@@ -1084,6 +1088,7 @@ private struct WorkspaceBody: View {
             VStack(spacing: 0) {
                 document
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .panelCard(.work)
                 if model.panelOpen {
                     RowDivider(height: { panelShown },
                                resize: { model.panelHeight = min(max($0, 120), max(120, paneHeight - 150)) },
@@ -1091,11 +1096,14 @@ private struct WorkspaceBody: View {
                                done: { model.savePanelHeight() })
                     panel
                         .frame(height: panelShown)
+                        .panelCard(.work)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                WorkspaceStatusBar(model: model)
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.86), value: model.panelOpen)
+        }
+        // Branch, problems, the cursor and the build, under all of it.
+        WorkspaceStatusBar(model: model)
         }
         .background {
             GeometryReader { geometry in
@@ -1103,7 +1111,7 @@ private struct WorkspaceBody: View {
                     .onAppear {
                         paneWidth = geometry.size.width
                         paneHeight = geometry.size.height
-                        model.filesAtSide = app.codeMode || geometry.size.width >= 560
+                        model.filesAtSide = (app.codeMode || geometry.size.width >= 560) && !model.filesHidden
                         if model.filesAtSide, model.tab == .files { model.tab = .terminal }
                     }
                     .onChange(of: geometry.size.width) { _, width in
@@ -1323,7 +1331,6 @@ private struct WorkspaceBody: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .liquidGlass(in: Rectangle())
     }
 }
 
@@ -3337,8 +3344,7 @@ private struct WorkspaceStatusBar: View {
         .labelStyle(.titleAndIcon)
         .padding(.horizontal, 10)
         .frame(height: 22)
-        .background(Theme.ink.opacity(0.04))
-        .overlay(alignment: .top) { Rectangle().fill(Theme.ink.opacity(0.08)).frame(height: 1) }
+        .padding(.top, 2)
     }
 }
 
@@ -3385,26 +3391,28 @@ private struct ActivityBar: View {
                 } label: {
                     Image(systemName: activity.icon)
                         .font(.system(size: 13, weight: on ? .semibold : .regular))
-                        .foregroundStyle(on ? Theme.ink.opacity(0.95) : Theme.ink.opacity(0.45))
+                        .foregroundStyle(on ? Theme.accent : Theme.ink.opacity(0.5))
                         .frame(width: 34, height: 32)
-                        .overlay(alignment: .leading) {
+                        .background {
                             if on {
-                                RoundedRectangle(cornerRadius: 1)
-                                    .fill(Theme.accent)
-                                    .frame(width: 2, height: 18)
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(Theme.accent.opacity(0.15))
+                                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .strokeBorder(Theme.accent.opacity(0.28), lineWidth: 0.75))
+                                    .frame(width: 30, height: 28)
                             }
                         }
                         .overlay(alignment: .topTrailing) {
                             if activity == .source, git.count > 0 {
                                 Text(git.count > 99 ? "99+" : "\(git.count)")
-                                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                                    .font(.system(size: 7, weight: .bold, design: .rounded))
                                     .monospacedDigit()
                                     .foregroundStyle(.white)
-                                    .padding(.horizontal, 2.5)
-                                    .frame(minWidth: 11, minHeight: 11)
+                                    .padding(.horizontal, 2)
+                                    .frame(minWidth: 10, minHeight: 10)
                                     .background(Capsule().fill(Theme.accent))
                                     .fixedSize()
-                                    .offset(x: -1, y: 2)
+                                    .offset(x: 1, y: 3)
                             }
                         }
                         .contentShape(Rectangle())
