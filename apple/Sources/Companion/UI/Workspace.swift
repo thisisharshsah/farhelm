@@ -1065,24 +1065,32 @@ private struct WorkspaceBody: View {
     var body: some View {
         VStack(spacing: 0) {
         HStack(spacing: 0) {
-            // The activity bar: what the side bar shows. Clicking the one
-            // showing puts the side bar away, as in an editor. It sits on
-            // the window's glass, beside the panels.
+            // The activity bar and the side bar it opens are one panel, as
+            // in an editor: the bar is a strip down the panel's left side
+            // and the side bar fills the rest, apart from the editor but
+            // joined to what opens and closes it. Clicking the one showing
+            // puts the side bar away, and the panel is just the strip.
             if wide {
-                ActivityBar(model: model)
-                Color.clear.frame(width: Theme.panelGap)
-            }
-            if split {
-                sideView
-                    .frame(width: filesShown, alignment: .leading)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .panelCard(.work)
-                // Drag the gap to give the files more or less room.
-                ColumnDivider(width: { filesShown },
-                              direction: 1,
-                              resize: { model.filesWidth = min(max($0, 150), max(150, paneWidth - 320)) },
-                              reset: { model.filesWidth = 220 },
-                              done: { model.saveFilesWidth() })
+                HStack(spacing: 0) {
+                    ActivityBar(model: model)
+                    if split {
+                        sideView
+                            .frame(width: filesShown, alignment: .leading)
+                            .transition(.opacity)
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+                .panelCard(.work)
+                if split {
+                    // Drag the gap to give the side bar more or less room.
+                    ColumnDivider(width: { filesShown },
+                                  direction: 1,
+                                  resize: { model.filesWidth = min(max($0, 150), max(150, paneWidth - 320)) },
+                                  reset: { model.filesWidth = 220 },
+                                  done: { model.saveFilesWidth() })
+                } else {
+                    Color.clear.frame(width: Theme.panelGap)
+                }
             }
             // What is being worked on, with the panel of tools under it.
             VStack(spacing: 0) {
@@ -1185,9 +1193,9 @@ private struct WorkspaceBody: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(0.6))
-                .frame(width: 24, height: 24)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.ink.opacity(0.68))
+                .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
@@ -1255,7 +1263,7 @@ private struct WorkspaceBody: View {
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.accent)
             Text((model.root as NSString).lastPathComponent)
-                .font(.system(size: 11.5, weight: .semibold))
+                .font(.system(size: 11.5, weight: .bold))
                 .foregroundStyle(Theme.ink.opacity(0.9))
                 .lineLimit(1)
                 .help(model.root)
@@ -1305,12 +1313,16 @@ private struct WorkspaceBody: View {
                     HStack(spacing: 2) { ForEach(barTabs) { tabButton($0, named: false) } }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // With one shell its + sits here; with more, in the list.
+                if model.tab == .terminal, model.terminals.count <= 1 {
+                    IconButton("plus", help: "New terminal") { model.newTerminal() }
+                }
                 moreTabs
                 RunTaskMenu(model: model)
                 IconButton("chevron.down", help: "Hide the panel (⌃`)") { model.panelOpen = false }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .frame(height: 34)
             Rectangle()
                 .fill(Theme.ink.opacity(0.09))
                 .frame(height: 1)
@@ -1444,9 +1456,9 @@ private struct FilesTab: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.ink.opacity(0.6))
-                        .frame(width: 22, height: 22)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Theme.ink.opacity(0.68))
+                        .frame(width: 26, height: 26)
                         .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
@@ -1454,9 +1466,11 @@ private struct FilesTab: View {
                 .fixedSize()
                 .help("New file, folder and more")
             }
-            .frame(height: 28)
-            .padding(.leading, 8)
-            .padding(.trailing, 6)
+            .padding(.horizontal, 8)
+            .frame(height: 34)
+            Rectangle()
+                .fill(Theme.ink.opacity(0.09))
+                .frame(height: 1)
             if !model.editorNote.isEmpty {
                 workspaceNote(model.editorNote)
             }
@@ -3360,10 +3374,13 @@ private struct HoverCard: View {
 /// The strip down the left of the workspace, as in an editor: what the side
 /// bar shows. The one showing is marked; the side bar is always open.
 private struct ActivityBar: View {
+    @EnvironmentObject var app: AppState
     @ObservedObject var model: WorkspaceModel
     /// In code the side bar never closes: a click only changes what it shows.
     var keepsOpen = false
     @ObservedObject private var git = GitModel.shared
+    /// The well under the one showing slides to the one chosen.
+    @Namespace private var showing
 
     var body: some View {
         VStack(spacing: 4) {
@@ -3384,12 +3401,15 @@ private struct ActivityBar: View {
                         .foregroundStyle(on ? Theme.accent : Theme.ink.opacity(0.5))
                         .frame(width: 34, height: 32)
                         .background {
+                            // The one showing sits in a small well, a shade
+                            // deeper than the strip, edged in the primary.
                             if on {
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(Theme.accent.opacity(0.15))
-                                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .strokeBorder(Theme.accent.opacity(0.28), lineWidth: 0.75))
-                                    .frame(width: 30, height: 28)
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Theme.shade.opacity(Theme.isLight ? 0.7 : 0.35))
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Theme.accent.opacity(0.3), lineWidth: 0.75))
+                                    .frame(width: 32, height: 30)
+                                    .matchedGeometryEffect(id: "showing", in: showing)
                             }
                         }
                         .overlay(alignment: .topTrailing) {
@@ -3411,10 +3431,73 @@ private struct ActivityBar: View {
                 .help(on ? "Put the side bar away" : activity.rawValue)
             }
             Spacer(minLength: 0)
+            // In code, Settings and Quit sit at the foot of the bar, as in
+            // an editor; in chat they stay at the foot of the chats.
+            if app.codeMode {
+                BarFootButton("gearshape.fill", help: "Settings", on: app.showSettings) {
+                    if app.showSettings {
+                        app.showSettings = false
+                    } else {
+                        app.openSettings()
+                    }
+                }
+                BarFootButton("power", help: "Quit Companion (⌘Q)", tint: Theme.rose) {
+                    app.requestQuit()
+                }
+                .padding(.bottom, 6)
+            }
         }
         .padding(.top, 6)
-        .frame(width: 36)
+        .frame(width: 40)
         .clipped()
+        // The strip is a shade lighter than the side bar beside it, as an
+        // editor's bar is.
+        .background(Theme.ink.opacity(Theme.isLight ? 0.035 : 0.045))
+    }
+}
+
+/// A button at the foot of the activity bar: the same size as the bar's own,
+/// quiet until the pointer is on it. On (Settings open) it sits in the
+/// bar's well, in the primary.
+private struct BarFootButton: View {
+    let symbol: String
+    let help: String
+    var tint: Color?
+    var on = false
+    let action: () -> Void
+    @State private var hover = false
+
+    init(_ symbol: String, help: String, tint: Color? = nil, on: Bool = false, action: @escaping () -> Void) {
+        self.symbol = symbol
+        self.help = help
+        self.tint = tint
+        self.on = on
+        self.action = action
+    }
+
+    var body: some View {
+        let color = on ? Theme.accent : (tint ?? Theme.ink)
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12.5, weight: on ? .semibold : .regular))
+                .foregroundStyle(on || hover ? color : color.opacity(tint == nil ? 0.5 : 0.7))
+                .frame(width: 34, height: 32)
+                .background {
+                    if on || hover {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(on ? Theme.shade.opacity(Theme.isLight ? 0.7 : 0.35) : color.opacity(0.12))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Theme.accent.opacity(on ? 0.3 : 0), lineWidth: 0.75))
+                            .frame(width: 32, height: 30)
+                            .transition(.opacity)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
+        .help(help)
     }
 }
 

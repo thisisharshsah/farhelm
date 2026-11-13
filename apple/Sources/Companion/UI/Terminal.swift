@@ -9,7 +9,8 @@ import SwiftUI
 ///
 /// One session belongs to one folder. It keeps running while the panel is
 /// closed or another tab is showing, so nothing is lost by looking away.
-final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalViewDelegate {
+final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProcessTerminalViewDelegate {
+    let id = UUID()
     /// The folder the shell started in.
     let folder: String
     let view: LocalProcessTerminalView
@@ -89,13 +90,105 @@ private struct TerminalSurface: NSViewRepresentable {
     func updateNSView(_ view: LocalProcessTerminalView, context: Context) {}
 }
 
-/// The Terminal tab of the workspace's bottom panel.
+/// The Terminal tab of the workspace's bottom panel: the shell showing, and
+/// beside it the list of open shells once there is more than one, as in an
+/// editor. + opens another; the cross on a row ends that one.
 struct TerminalPane: View {
     @ObservedObject var model: WorkspaceModel
 
     var body: some View {
-        // The session is made the first time the tab shows, and kept.
-        TerminalHost(session: model.terminalSession())
+        HStack(spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                if let session = model.terminalShowing {
+                    TerminalHost(session: session)
+                        .id(ObjectIdentifier(session))
+                } else {
+                    SwiftUI.Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.terminals.count > 1 {
+                Rectangle().fill(Theme.ink.opacity(0.08)).frame(width: 1)
+                TerminalList(model: model)
+                    .frame(width: 150)
+            }
+        }
+        // The first shell starts the first time the tab shows, and is kept.
+        .onAppear { if model.terminals.isEmpty { model.newTerminal() } }
+    }
+}
+
+/// The open shells, one row each.
+private struct TerminalList: View {
+    @ObservedObject var model: WorkspaceModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                Text("TERMINALS")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .kerning(0.5)
+                    .foregroundStyle(Theme.ink.opacity(0.45))
+                Spacer(minLength: 0)
+                IconButton("plus", help: "New terminal") { model.newTerminal() }
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, 2)
+            .frame(height: 28)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(model.terminals.enumerated()), id: \.element.id) { index, session in
+                        TerminalRow(session: session, number: index + 1,
+                                    showing: model.terminalShowing === session,
+                                    choose: { model.currentTerminal = index },
+                                    close: { model.closeTerminal(session) })
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+        }
+    }
+}
+
+private struct TerminalRow: View {
+    @ObservedObject var session: TerminalSession
+    let number: Int
+    let showing: Bool
+    let choose: () -> Void
+    let close: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(session.ended ? Theme.ink.opacity(0.35) : Theme.ink.opacity(0.6))
+            Text(session.title.isEmpty ? "zsh \(number)" : session.title)
+                .font(.system(size: 11, weight: showing ? .semibold : .regular))
+                .foregroundStyle(Theme.ink.opacity(showing ? 0.95 : 0.7))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            if hover {
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Theme.ink.opacity(0.55))
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("End this terminal")
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(showing ? Theme.accent.opacity(0.16) : (hover ? Theme.ink.opacity(0.06) : SwiftUI.Color.clear)))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: choose)
+        .onHover { hover = $0 }
+        .help(session.title.isEmpty ? "zsh \(number)" : session.title)
     }
 }
 
