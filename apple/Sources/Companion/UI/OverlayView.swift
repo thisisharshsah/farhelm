@@ -269,26 +269,6 @@ struct OverlayView: View {
                                 .padding(.horizontal, Theme.gutter)
                                 .padding(.bottom, 2)
                         }
-                        // Scrolled up: a round arrow in the middle back to the
-                        // newest, with what is going on beside it while work
-                        // goes on (the arrow stays centered).
-                        .overlay(alignment: .bottom) {
-                            if app.chatScrolledUp, !app.conversation.turns.isEmpty {
-                                let jump = { app.jumpToNewest += 1 }
-                                JumpToLatest(action: jump)
-                                    .overlay(alignment: .leading) {
-                                        if let activity = liveActivity {
-                                            LiveActivityPill(text: activity, thinking: !app.agentHere, action: jump)
-                                                .fixedSize()
-                                                .alignmentGuide(.leading) { _ in -40 }
-                                                .transition(.opacity.combined(with: .move(edge: .leading)))
-                                        }
-                                    }
-                                    .padding(.bottom, statusLineShown ? 38 : 8)
-                                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                            }
-                        }
-                        .animation(.easeOut(duration: 0.18), value: app.chatScrolledUp)
                         .zIndex(9)
                     inputBar
                         .padding(.bottom, 2)
@@ -487,7 +467,7 @@ struct OverlayView: View {
                 if Theme.behindBlur > 0 {
                     VisualEffectView(light: Theme.isLight, strength: Theme.behindBlur)
                 }
-                Theme.shade.opacity(Theme.baseDim(.center))
+                Theme.shade.opacity(Theme.baseDim)
                 Theme.accent.opacity(0.05)
             }
         }
@@ -597,13 +577,12 @@ struct OverlayView: View {
     /// out toward the conversation, so what scrolls under it softens away
     /// instead of being cut off at a line.
     private func edgeFade(from edge: VerticalEdge) -> some View {
-        let zone: Look.Zone = edge == .top ? .top : .bottom
         let _ = settings.look
         return ZStack {
-            if let material = Theme.barMaterial(zone) {
+            if let material = Theme.barMaterial {
                 Rectangle().fill(material)
             }
-            Theme.shade.opacity(Theme.barDim(zone))
+            Theme.shade.opacity(Theme.barDim)
         }
             .mask(LinearGradient(stops: [.init(color: .black, location: 0),
                                          .init(color: .black, location: 0.62),
@@ -654,7 +633,7 @@ struct OverlayView: View {
     /// The least the workspace takes in code: the activity bar, the files
     /// (always shown there) and room for the code beside them, so opening
     /// the details never squeezes either away.
-    private var codeWorkspaceLeast: CGFloat { 40 + 150 + Theme.panelGap + 320 }
+    private var codeWorkspaceLeast: CGFloat { OverlayController.codeWorkspaceLeast }
     /// The width the chat and the workspace share in code.
     private var codeRoom: CGFloat {
         panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0) - gapsWidth
@@ -1142,18 +1121,6 @@ struct OverlayView: View {
         !app.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// What is going on in this chat, while something is: shown beside the
-    /// arrow to the newest when scrolled up.
-    private var liveActivity: String? {
-        if app.agentHere { return app.agentStatus ?? "Working…" }
-        if app.replyStreamingHere { return "Writing a reply…" }
-        return nil
-    }
-
-    /// The status line or the plan ring floats just above the chat box.
-    private var statusLineShown: Bool {
-        liveActivity != nil || app.conversation.turns.last?.plan?.isEmpty == false
-    }
 
     /// Sends what is in the chat box and keeps the cursor in it, ready for
     /// the next message. (Return ends editing in a macOS text field, and the
@@ -3795,17 +3762,18 @@ struct GoBackChoices: View {
 }
 
 
-/// The round arrow that goes back to the newest message.
-private struct JumpToLatest: View {
+/// The round arrow that goes back to the newest message, on the status
+/// line beside the plan ring.
+struct JumpToLatest: View {
     let action: () -> Void
     @State private var hover = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.down")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.ink.opacity(hover ? 1 : 0.85))
-                .frame(width: 30, height: 30)
+                .frame(width: 24, height: 24)
                 .background(Circle().fill(Theme.shade.opacity(0.45)))
                 .liquidGlass(in: Circle())
                 .overlay(Circle().strokeBorder(Theme.ink.opacity(hover ? 0.22 : 0.12), lineWidth: 0.5))
@@ -3817,24 +3785,6 @@ private struct JumpToLatest: View {
     }
 }
 
-/// What the chat is doing right now, next to the arrow: one click goes to
-/// it.
-private struct LiveActivityPill: View {
-    let text: String
-    let thinking: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            // The shared status pill, kept to a readable length.
-            StatusPill(text, thinking: thinking, size: 11)
-                .frame(maxWidth: 260, alignment: .leading)
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help("See what it is doing now")
-    }
-}
 
 
 /// A message sent while the agent works in this chat: in the chat as

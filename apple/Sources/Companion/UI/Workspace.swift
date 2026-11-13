@@ -3452,7 +3452,7 @@ private struct ActivityBar: View {
         .clipped()
         // The strip is a shade lighter than the side bar beside it, as an
         // editor's bar is.
-        .background(Theme.ink.opacity(Theme.isLight ? 0.035 : 0.045))
+        .background(Theme.card)
     }
 }
 

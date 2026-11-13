@@ -49,8 +49,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     /// Text takes the app's ink color.
     func restyle(light: Bool, zoom: Double) {
         view.font = NSFont.monospacedSystemFont(ofSize: 11.5 * zoom, weight: .regular)
-        view.nativeBackgroundColor = light ? NSColor.white : NSColor.black
+        view.nativeBackgroundColor = NSColor.clear
         view.backgroundOpacity = 0
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.clear.cgColor
+        view.layer?.isOpaque = false
         view.nativeForegroundColor = light
             ? NSColor(calibratedRed: 0.11, green: 0.10, blue: 0.17, alpha: 1)
             : NSColor(calibratedWhite: 1, alpha: 0.92)
