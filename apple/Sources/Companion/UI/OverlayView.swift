@@ -308,6 +308,36 @@ struct OverlayView: View {
                 .clipped()
                 .opacity(sideIsFull ? 0 : 1)
                 .allowsHitTesting(!sideIsFull)
+                // Hovering the sidebar button floats the conversations over
+                // the chat, from the chat's leading edge, under the top bar.
+                // It takes no room: the chat, the workspace and its files,
+                // editor and terminal stay exactly where they are. Pick one
+                // and it closes, or move the pointer off it and it closes.
+                .overlay(alignment: .topLeading) {
+                    if sidebarPeek, !app.sidebarPinned, !isPill, !app.showSettings, !sideIsFull {
+                        SidebarView()
+                            .frame(width: 258)
+                            .frame(maxHeight: .infinity)
+                            .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                                .fill(Theme.shade.opacity(0.30)))
+                            .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                            .glassBorder(radius: Theme.cardRadius, tint: Theme.accent)
+                            .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 4)
+                            .onHover { inside in
+                                pointerOnSidebar = inside
+                                if !inside { closePeekSoon() }
+                            }
+                            // It starts just under the sidebar button (8 from
+                            // the chat's top, 30 tall) and ends just above the
+                            // ask bar, so both stay in view and clickable.
+                            .padding(.top, topHeight + 8 + 30 + 6)
+                            .padding(.bottom, max(0, bottomHeight - 14) + 6)
+                            .padding(.leading, Theme.gutter)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
+                }
+                // Above the chat it floats over.
+                .zIndex(sidebarPeek ? 1 : 0)
                 .environment(\.layoutDirection, .leftToRight)
                 // In code the pinned conversations sit between the
                 // workspace and the chat. This row is laid out right to
@@ -479,30 +509,8 @@ struct OverlayView: View {
                 .frame(height: 64)
                 .allowsHitTesting(false)
         }
-        // Hovering the sidebar button floats the conversations over the
-        // chat: pick one and it closes, or move away and it closes.
-        .overlay(alignment: .topLeading) {
-            if sidebarPeek, !app.sidebarPinned, !isPill, !app.showSettings {
-                // A glass card the full height under the top bar, set in
-                // from the edges like the rest of Companion's surfaces.
-                SidebarView()
-                    .frame(width: 258)
-                    .frame(maxHeight: .infinity)
-                    .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                        .fill(Theme.shade.opacity(0.30)))
-                    .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-                    .glassBorder(radius: Theme.cardRadius, tint: Theme.accent)
-                    .onHover { inside in
-                        pointerOnSidebar = inside
-                        if !inside { closePeekSoon() }
-                    }
-                    // It floats on the left, where its column would be.
-                    .padding(.leading, Theme.panelGap)
-                    .padding(.bottom, Theme.panelGap)
-                    .padding(.top, topHeight)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-        }
+        // The floating conversations (on hover) sit over the chat column;
+        // see the chat's own overlay above.
         .animation(.spring(response: 0.3, dampingFraction: 0.86), value: sidebarPeek)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.sidebarPinned)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.sidePanel)
