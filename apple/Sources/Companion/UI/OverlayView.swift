@@ -34,6 +34,9 @@ struct OverlayView: View {
     /// the sidebar itself. It closes when the pointer leaves both.
     /// The pointer is over the conversation.
     @State private var chatHover = false
+    /// How tall the tools at the top right of the conversation are, so a
+    /// message held at the top keeps clear of them.
+    @State private var toolsHeight: CGFloat = 30
     /// Heights of the floating top bar and the floating bottom, so the
     /// conversation can leave room for them at its ends.
     @State private var topHeight: CGFloat = 52
@@ -47,8 +50,28 @@ struct OverlayView: View {
     @State private var sidebarPeek = false
     @State private var pointerOnSidebarButton = false
     @State private var pointerOnSidebar = false
+    /// Carries the sidebar toggle between the top bar (sidebar closed) and
+    /// the sidebar's search row (open), so it springs from one to the other.
+    @Namespace private var sidebarToggleSpace
+    /// The text size popover is open: the tools at the top right stay up
+    /// while it is, though the pointer has left the conversation for it.
+    @State private var textSizeOpen = false
 
+    /// Everything is laid out in the panel's real width, measured from
+    /// outside the content, so no column can make the panel's content wider
+    /// than the panel and push the chat off the edge.
     var body: some View {
+        GeometryReader { geometry in
+            panelContent
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .onAppear { panelWidth = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, width in
+                    if abs(width - panelWidth) > 0.5 { panelWidth = width }
+                }
+        }
+    }
+
+    private var panelContent: some View {
         VStack(spacing: 0) {
             if app.compact && !app.pillExpanded {
                 pill
@@ -64,7 +87,7 @@ struct OverlayView: View {
                 // sits to the right of it. In code it is on the far right
                 // instead, with the chat: see below.
                 if app.sidebarPinned, !codeLayout, !app.showSettings {
-                    SidebarView()
+                    SidebarView(toggle: AnyView(sidebarToggle))
                         .padding(.top, topHeight)
                         .frame(width: shownSidebarWidth)
                         .transition(.move(edge: .leading).combined(with: .opacity))
@@ -109,34 +132,59 @@ struct OverlayView: View {
                             .padding(.horizontal, Theme.gutter)
                             .padding(.top, 10)
                     }
-                    // The conversation is drawn at the content zoom
-                    // (Cmd+Plus, Cmd+Minus, Cmd+0). Its insets are given in
-                    // its own, zoomed, measure so it still clears the bars.
-                    // The chat's own text size comes on top of it (the Aa
-                    // button), so it can be read comfortably on its own.
+                    // The conversation is drawn at the chat's text size (the
+                    // Aa button); its insets are given in its own, scaled,
+                    // measure so it still clears the bars.
                     let zoom = CGFloat(settings.contentZoom * settings.chatTextScale)
                     ChatThread(topInset: (fixedAbove ? 6 : topHeight) / zoom,
-                               bottomInset: bottomHeight / zoom)
+                               bottomInset: bottomHeight / zoom,
+                               toolsBottom: ((fixedAbove ? 0 : topHeight) + 8 + toolsHeight) / zoom)
                         .padding(.horizontal, Theme.gutter / zoom)
                         .contentZoom(settings.contentZoom * settings.chatTextScale)
                         .frame(maxHeight: .infinity)
+                        // The conversation ends below the top bar and above the
+                        // chat box and whatever sits over it (the plan, the
+                        // agent's card): it fades out at their edges and never
+                        // shows behind them.
+                        .mask(alignment: .top) {
+                            VStack(spacing: 0) {
+                                if !fixedAbove {
+                                    Color.clear
+                                        .frame(height: max(0, topHeight - 14))
+                                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                                        .frame(height: 14)
+                                }
+                                Rectangle()
+                                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                                    .frame(height: 14)
+                                Color.clear
+                                    .frame(height: max(0, bottomHeight - 14))
+                            }
+                        }
                         // The conversation's tools and its context ring
                         // appear at the top right while the pointer is on
                         // the conversation, and stay out of the way
                         // otherwise. A recheck in progress keeps them up.
                         .overlay(alignment: .topTrailing) {
-                            if chatHover || app.isRescanning {
+                            if chatHover || app.isRescanning || textSizeOpen {
                                 HStack(spacing: 6) {
                                     ContextMeter(use: app.contextUse, window: ContextBudget.current.window,
                                                  spent: usage.cost(of: usage.records(for: app.conversation.id)))
                                         .padding(.horizontal, 9)
-                                        .frame(height: 28)
+                                        // The height of a toolbar group, like
+                                        // the buttons beside it.
+                                        .frame(height: 30)
                                         .background(Capsule().fill(Theme.shade.opacity(0.55)))
                                         .liquidGlass(in: Capsule())
-                                    TextSizeButton()
+                                    TextSizeButton(open: $textSizeOpen)
                                     ThreadActions()
                                         .background(Capsule().fill(Theme.shade.opacity(0.55)))
                                 }
+                                .background(GeometryReader { geometry in
+                                    Color.clear
+                                        .onAppear { toolsHeight = geometry.size.height }
+                                        .onChange(of: geometry.size.height) { _, height in toolsHeight = height }
+                                })
                                 .padding(.trailing, Theme.gutter)
                                 .padding(.top, (fixedAbove ? 0 : topHeight) + 8)
                                 .transition(.opacity)
@@ -198,6 +246,39 @@ struct OverlayView: View {
                         // Above the chat box and its controls, so it floats
                         // over them instead of overlapping with them.
                         .zIndex(10)
+                    // What the agent is doing, and the plan's progress,
+                    // just above the chat box.
+                    // It floats over the end of the conversation, taking
+                    // no room: no blank band opens above the chat box.
+                    Color.clear
+                        .frame(height: 0)
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .bottom) {
+                            WorkStatusBar()
+                                .padding(.horizontal, Theme.gutter)
+                                .padding(.bottom, 2)
+                        }
+                        // Scrolled up: a round arrow in the middle back to the
+                        // newest, with what is going on beside it while work
+                        // goes on (the arrow stays centered).
+                        .overlay(alignment: .bottom) {
+                            if app.chatScrolledUp, !app.conversation.turns.isEmpty {
+                                let jump = { app.jumpToNewest += 1 }
+                                JumpToLatest(action: jump)
+                                    .overlay(alignment: .leading) {
+                                        if let activity = liveActivity {
+                                            LiveActivityPill(text: activity, thinking: !app.agentHere, action: jump)
+                                                .fixedSize()
+                                                .alignmentGuide(.leading) { _ in -40 }
+                                                .transition(.opacity.combined(with: .move(edge: .leading)))
+                                        }
+                                    }
+                                    .padding(.bottom, statusLineShown ? 38 : 8)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                            }
+                        }
+                        .animation(.easeOut(duration: 0.18), value: app.chatScrolledUp)
+                        .zIndex(9)
                     inputBar
                         .padding(.bottom, 6)
                     }
@@ -239,7 +320,7 @@ struct OverlayView: View {
                             .padding(.top, topHeight)
                     }
                     Group {
-                        if codeLayout, app.codeDetails, !sideIsFull {
+                        if codeLayout, codeDetailsShown, !sideIsFull {
                             // The details sit between the workspace and the
                             // chat; the workspace keeps the rest.
                             HStack(spacing: 0) {
@@ -259,8 +340,23 @@ struct OverlayView: View {
                         }
                     }
                         .padding(.top, topHeight)
+                        // Code and files sit on a solid surface: the glass
+                        // lets the desktop through, which no one can read
+                        // code over.
+                        .background {
+                            if side == .workspace {
+                                ZStack {
+                                    Theme.workSurface
+                                    Theme.accent.opacity(0.03)
+                                }
+                            }
+                        }
                         .frame(width: sideIsFull || codeLayout ? nil : sideWidth(side))
-                        .frame(maxWidth: sideIsFull || codeLayout ? .infinity : nil)
+                        // In code the workspace takes what is left, down to
+                        // nothing, and never more: it gives way first.
+                        .frame(minWidth: sideIsFull || codeLayout ? 0 : nil,
+                               maxWidth: sideIsFull || codeLayout ? .infinity : nil)
+                        .clipped()
                         .environment(\.layoutDirection, .leftToRight)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
@@ -280,7 +376,7 @@ struct OverlayView: View {
                                   reset: { app.overlay?.resetColumn(left: true) },
                                   done: { app.saveColumnWidths() })
                         .padding(.top, topHeight)
-                    SidebarView()
+                    SidebarView(toggle: AnyView(sidebarToggle), toggleLeading: true)
                         .padding(.top, topHeight)
                         .frame(width: shownSidebarWidth)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -512,7 +608,15 @@ struct OverlayView: View {
         // share is a little over a third.
         let room = codeRoom
         let wanted = codeChatShare > 0 ? room * CGFloat(codeChatShare) : max(380, room * 0.36)
-        return min(max(wanted, 300), max(300, room - codeLeftLeast))
+        // Narrow panels give the chat less (down to 240) before anything
+        // can run past the edge.
+        let most = max(240, room - codeLeftLeast)
+        return min(max(wanted, min(300, most)), most)
+    }
+    /// The details beside the workspace in code, when asked for and when
+    /// the panel has room for them as well as the chat and the workspace.
+    private var codeDetailsShown: Bool {
+        app.codeDetails && codeRoom >= 240 + 320 + CGFloat(min(max(codeDetailsWidth, 220), 460)) + 16
     }
     /// The width the chat and the workspace share in code.
     private var codeRoom: CGFloat {
@@ -521,7 +625,7 @@ struct OverlayView: View {
     /// The least the workspace (and the details beside it, when open) may
     /// have, so the chat can never grow and push them off the screen.
     private var codeLeftLeast: CGFloat {
-        let details = app.codeDetails ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + 8 : 0
+        let details = codeDetailsShown ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + 8 : 0
         return 320 + details
     }
 
@@ -559,10 +663,13 @@ struct OverlayView: View {
     private var header: some View {
         HStack(spacing: 8) {
             WindowControls()
-            // The button for the conversations is on the side they open
-            // on: the left, or in code the right (at the end of the bar).
-            if !codeLayout {
-                sidebarButton
+            // The button for the conversations sits inside the sidebar
+            // while it is open, and at the end of this bar while it is
+            // closed (see `sidebarToggle`).
+            if codeLayout, app.hasWorkFolder {
+                // In code the left button is the file tree's, as in an
+                // editor; the conversations' is at the right end.
+                FilesToggle(model: app.workspace)
             }
             // Every command and, in code, every file, by name. In a
             // narrow panel it leaves the bar; its keys still work.
@@ -734,10 +841,10 @@ struct OverlayView: View {
             if codeLayout, !isPill, app.hasWorkFolder {
                 // The workspace's layout, as an editor's title bar has it:
                 // the file tree and the bottom panel, shown or put away.
-                WorkspaceLayoutButtons(model: app.workspace)
+                WorkspaceLayoutButtons(model: app.workspace, showsFiles: false)
             }
-            if codeLayout, !isPill {
-                sidebarButton
+            if !isPill, !sidebarToggleInSidebar {
+                sidebarToggle
             }
         }
         .padding(.horizontal, Theme.gutter)
@@ -750,18 +857,34 @@ struct OverlayView: View {
     /// Opens the sidebar of conversations. Hover: the conversations float
     /// open. Click: they are pinned beside the chat, which moves over to
     /// make room. Its symbol points to the side they open on.
-    private var sidebarButton: some View {
+    /// The pinned sidebar is on screen, so the toggle sits in it, beside
+    /// its search. (In chat, Settings takes the sidebar's place.)
+    private var sidebarToggleInSidebar: Bool {
+        app.sidebarPinned && (codeLayout || !app.showSettings)
+    }
+
+    /// The same glass pill wherever it is: in the sidebar beside the search
+    /// while the sidebar is open, at the top of the chat on the sidebar's
+    /// side while it is closed. A shared geometry id springs it between them.
+    private var sidebarToggle: some View {
         ToolbarGroup {
             IconButton(codeLayout ? "sidebar.right" : "sidebar.left",
-                       help: app.sidebarPinned ? "Close the sidebar" : "Conversations. Hover to peek, click to keep open.",
+                       help: app.sidebarPinned
+                           ? "Close the sidebar"
+                           : (codeLayout ? "Conversations. Hover to peek, click to keep open." : "Conversations. Click to keep open."),
                        tint: app.sidebarPinned ? Theme.accent : nil) {
                 sidebarPeek = false
                 app.refreshHistory()
-                app.sidebarPinned.toggle()
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                    app.sidebarPinned.toggle()
+                }
                 app.overlay?.setSidebar(app.sidebarPinned)
             }
             .onHover { inside in
                 pointerOnSidebarButton = inside
+                // The peek opens on the sidebar's side, so it only follows
+                // the pointer when the button is on that side too (code).
+                guard codeLayout else { return }
                 if inside {
                     guard !app.sidebarPinned, !sidebarPeek else { return }
                     app.refreshHistory()
@@ -771,6 +894,8 @@ struct OverlayView: View {
                 }
             }
         }
+        .matchedGeometryEffect(id: "sidebarToggle", in: sidebarToggleSpace)
+        .transition(.opacity)
     }
 
     /// The agent at work: what it is doing, how far along it is, and a Stop
@@ -984,168 +1109,204 @@ struct OverlayView: View {
         !app.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// What is going on in this chat, while something is: shown beside the
+    /// arrow to the newest when scrolled up.
+    private var liveActivity: String? {
+        if app.agentHere { return app.agentStatus ?? "Working…" }
+        if app.replyStreamingHere { return "Writing a reply…" }
+        return nil
+    }
+
+    /// The status line or the plan ring floats just above the chat box.
+    private var statusLineShown: Bool {
+        liveActivity != nil || app.conversation.turns.last?.plan?.isEmpty == false
+    }
+
+    /// Sends what is in the chat box and keeps the cursor in it, ready for
+    /// the next message. (Return ends editing in a macOS text field, and the
+    /// chat redrawing around a new message can take the focus with it.)
+    private func sendAndKeepTyping() {
+        app.sendDraft()
+        inputFocused = true
+        for delay in [0.05, 0.3] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { inputFocused = true }
+        }
+    }
+
     private var inputBar: some View {
-        // What you type gets the full width on its own line; the model
-        // choice and the buttons sit on the line below it.
-        VStack(alignment: .leading, spacing: 6) {
-            // What is being attached to this message, inside the chat box
-            // above the text: a picture shows itself, anything else its
-            // name. Once sent they move to Details.
-            let pending = app.attachments.filter { app.pendingAttachments.contains($0.id) }
-            if !pending.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(pending) { file in
-                            AttachmentThumb(file: file, among: pending) {
-                                app.removeAttachment(file.id)
+        // As in Claude: the box holds only what you write, with Send (or
+        // Stop) at its end. Everything else sits on a quiet row under it:
+        // add, listen and the screen at the left; the model, the effort and
+        // the agent's mode at the right.
+        VStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: 6) {
+                // What is being attached to this message, inside the chat box
+                // above the text: a picture shows itself, anything else its
+                // name. Once sent they move to Details.
+                let pending = app.attachments.filter { app.pendingAttachments.contains($0.id) }
+                if !pending.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(pending) { file in
+                                AttachmentThumb(file: file, among: pending) {
+                                    app.removeAttachment(file.id)
+                                }
                             }
                         }
+                        .padding(.top, 2)
                     }
-                    .padding(.top, 2)
+                }
+                // The file open in the editor goes with the message, as in an
+                // editor's chat; the cross keeps it out.
+                OpenFileChip(model: app.workspace)
+                // Typing "@" lists the repository's files; one chosen is attached.
+                if !mentionFiles.isEmpty {
+                    MentionList(files: mentionFiles, selection: min(mentionSelection, mentionFiles.count - 1)) { file in
+                        chooseMention(file)
+                    }
+                }
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField(app.pendingQuestion != nil ? "Your answer" : (app.attachScreen ? "Ask about your screen" : (app.hasWorkFolder ? "Ask anything, @ to attach a file" : "Ask anything")),
+                              text: $app.draft,
+                              axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13.5 * settings.chatTextScale / AppSettings.chatTextDefault))
+                        .foregroundStyle(Theme.ink.opacity(0.95))
+                        .lineLimit(1...6)
+                        .focused($inputFocused)
+                        .onKeyPress(keys: [.upArrow, .downArrow, .return, .tab, .escape]) { press in
+                            let files = mentionFiles
+                            guard !files.isEmpty else { return .ignored }
+                            switch press.key {
+                            case .upArrow: mentionSelection = (mentionSelection - 1 + files.count) % files.count
+                            case .downArrow: mentionSelection = (mentionSelection + 1) % files.count
+                            case .escape: mentionClosedOn = app.draft
+                            default: chooseMention(files[min(mentionSelection, files.count - 1)])
+                            }
+                            return .handled
+                        }
+                        .onChange(of: Mention.query(in: app.draft)) { _, query in
+                            mentionSelection = 0
+                            if query != nil, app.hasWorkFolder { fileIndex.use(root: app.workspaceRoot) }
+                        }
+                        .onSubmit(sendAndKeepTyping)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 3)
+                    // The one place the agent is stopped from: while it works,
+                    // Stop stands where Send does. With something typed (an answer
+                    // to its question, a word of direction) Send is there as well.
+                    // A reply being written (or thought about) stops the same way.
+                    if app.agentHere || app.replyStreamingHere {
+                        Button(action: { app.agentHere ? app.stopAgent() : app.stopReply() }) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Color.white)
+                                .frame(width: 24, height: 24)
+                                .background(Circle().fill(Theme.rose))
+                        }
+                        .buttonStyle(.plain)
+                        .help(app.agentHere ? "Stop the agent (\(keys.label(.stopAgent)))" : "Stop the reply")
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    }
+                    if !(app.agentHere || app.replyStreamingHere) || canSend {
+                        Button(action: sendAndKeepTyping) {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Theme.ink.opacity(canSend ? 1 : 0.4))
+                                .frame(width: 24, height: 24)
+                                .background(Circle().fill(canSend
+                                                          ? AnyShapeStyle(Theme.accentGradient)
+                                                          : AnyShapeStyle(Theme.ink.opacity(0.10))))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canSend)
+                        .help("Send (Return)")
+                    }
                 }
             }
-            // The file open in the editor goes with the message, as in an
-            // editor's chat; the cross keeps it out.
-            OpenFileChip(model: app.workspace)
-            // Typing "@" lists the repository's files; one chosen is attached.
-            if !mentionFiles.isEmpty {
-                MentionList(files: mentionFiles, selection: min(mentionSelection, mentionFiles.count - 1)) { file in
-                    chooseMention(file)
-                }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            // The chat box is the main control: it sits on glass, and its
+            // edge lights up while you type.
+            .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Theme.shade.opacity(0.45)))
+            .liquidGlass(in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .strokeBorder(Theme.accent.opacity(inputFocused ? 0.55 : 0), lineWidth: 1)
+                .allowsHitTesting(false))
+            .animation(.easeOut(duration: 0.18), value: inputFocused)
+            // The ask hotkey lands here: cursor in the box, ready to type.
+            .onChange(of: app.focusInputRequest) { _, _ in
+                inputFocused = true
             }
-            TextField(app.pendingQuestion != nil ? "Your answer" : (app.attachScreen ? "Ask about your screen" : (app.hasWorkFolder ? "Ask anything, @ to attach a file" : "Ask anything")),
-                      text: $app.draft,
-                      axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13.5 * settings.chatTextScale / AppSettings.chatTextDefault))
-                .foregroundStyle(Theme.ink.opacity(0.95))
-                .lineLimit(1...6)
-                .focused($inputFocused)
-                .onKeyPress(keys: [.upArrow, .downArrow, .return, .tab, .escape]) { press in
-                    let files = mentionFiles
-                    guard !files.isEmpty else { return .ignored }
-                    switch press.key {
-                    case .upArrow: mentionSelection = (mentionSelection - 1 + files.count) % files.count
-                    case .downArrow: mentionSelection = (mentionSelection + 1) % files.count
-                    case .escape: mentionClosedOn = app.draft
-                    default: chooseMention(files[min(mentionSelection, files.count - 1)])
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                for provider in providers {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        guard let url else { return }
+                        Task { @MainActor in app.attach([url]) }
                     }
-                    return .handled
                 }
-                .onChange(of: Mention.query(in: app.draft)) { _, query in
-                    mentionSelection = 0
-                    if query != nil, app.hasWorkFolder { fileIndex.use(root: app.workspaceRoot) }
-                }
-                .onSubmit { app.sendDraft() }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 4)
-                .padding(.top, 3)
+                return true
+            }
+
             HStack(alignment: .center, spacing: 8) {
-            attachMenu
-            // The model, the effort and the agent's mode take the form
-            // that fits the room there is, fullest first, so nothing in
-            // this row is ever pushed over anything else: names are
-            // dropped before controls are.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    modelMenu(compact: false)
-                    EffortPill(isOpen: $showEffort)
-                    AccessToggles()
-                }
-                HStack(spacing: 8) {
-                    modelMenu(compact: false)
-                    EffortPill(isOpen: $showEffort, compact: true)
-                    AccessToggles()
-                }
-                HStack(spacing: 8) {
-                    modelMenu(compact: false)
-                    EffortPill(isOpen: $showEffort, compact: true)
-                    AccessPill(compact: true)
-                }
-                HStack(spacing: 6) {
-                    modelMenu(compact: true)
-                    EffortPill(isOpen: $showEffort, compact: true)
-                    AccessPill(compact: true)
-                }
-            }
-            // Offered the row's room before the gap after it, or it
-            // would be given half and choose a smaller form than it need.
-            .layoutPriority(1)
-            Spacer(minLength: 4)
-            IconButton("text.viewfinder",
-                       help: app.attachScreen
-                           ? "Screen capture will be attached. Click to turn off."
-                           : "Attach a screen capture to this message",
-                       tint: app.attachScreen ? Theme.violet : nil) {
-                app.attachScreen.toggle()
-            }
-            // Listening lives with the rest of the conversation controls.
-            Button(action: { app.toggleListening() }) {
-                Image(systemName: app.isListening ? "stop.fill" : "mic.fill")
-                    .font(.system(size: app.isListening ? 9 : 11, weight: .bold))
-                    .foregroundStyle(app.isListening ? Theme.rose : Theme.ink.opacity(0.85))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(app.isListening
-                                              ? Theme.rose.opacity(0.18)
-                                              : Theme.ink.opacity(0.10)))
-                    .overlay(Circle().strokeBorder(Theme.rose.opacity(app.isListening ? 0.5 : 0), lineWidth: 1))
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .buttonStyle(.plain)
-            .help(app.isListening ? "Stop listening (\(keys.label(.listen)))" : "Listen to the conversation (\(keys.label(.listen)))")
-            // The one place the agent is stopped from: while it works,
-            // Stop stands where Send does. With something typed (an answer
-            // to its question, a word of direction) Send is there as well.
-            if app.agentRunning {
-                Button(action: { app.stopAgent() }) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.white)
+                attachMenu
+                // Listening lives with the rest of the conversation controls.
+                Button(action: { app.toggleListening() }) {
+                    Image(systemName: app.isListening ? "stop.fill" : "mic.fill")
+                        .font(.system(size: app.isListening ? 9 : 11, weight: .bold))
+                        .foregroundStyle(app.isListening ? Theme.rose : Theme.ink.opacity(0.85))
                         .frame(width: 24, height: 24)
-                        .background(Circle().fill(Theme.rose))
+                        .background(Circle().fill(app.isListening
+                                                  ? Theme.rose.opacity(0.18)
+                                                  : Theme.ink.opacity(0.10)))
+                        .overlay(Circle().strokeBorder(Theme.rose.opacity(app.isListening ? 0.5 : 0), lineWidth: 1))
+                        .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(.plain)
-                .help("Stop the agent (\(keys.label(.stopAgent)))")
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
-            }
-            if !app.agentRunning || canSend {
-                Button(action: { app.sendDraft() }) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Theme.ink.opacity(canSend ? 1 : 0.4))
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(canSend
-                                                  ? AnyShapeStyle(Theme.accentGradient)
-                                                  : AnyShapeStyle(Theme.ink.opacity(0.10))))
+                .help(app.isListening ? "Stop listening (\(keys.label(.listen)))" : "Listen to the conversation (\(keys.label(.listen)))")
+                IconButton("text.viewfinder",
+                           help: app.attachScreen
+                               ? "Screen capture will be attached. Click to turn off."
+                               : "Attach a screen capture to this message",
+                           tint: app.attachScreen ? Theme.violet : nil) {
+                    app.attachScreen.toggle()
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .help("Send (Return)")
-            }
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        // The chat box is the main control: it sits on glass, and its
-        // edge lights up while you type.
-        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Theme.shade.opacity(0.45)))
-        .liquidGlass(in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
-            .strokeBorder(Theme.accent.opacity(inputFocused ? 0.55 : 0), lineWidth: 1)
-            .allowsHitTesting(false))
-        .animation(.easeOut(duration: 0.18), value: inputFocused)
-        // The ask hotkey lands here: cursor in the box, ready to type.
-        .onChange(of: app.focusInputRequest) { _, _ in
-            inputFocused = true
-        }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in app.attach([url]) }
+                Spacer(minLength: 8)
+                // The model, the effort and the agent's mode take the form
+                // that fits the room there is, fullest first, so nothing in
+                // this row is ever pushed over anything else: names are
+                // dropped before controls are.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        modelMenu(compact: false)
+                        EffortPill(isOpen: $showEffort)
+                        AccessToggles()
+                    }
+                    HStack(spacing: 8) {
+                        modelMenu(compact: false)
+                        EffortPill(isOpen: $showEffort, compact: true)
+                        AccessToggles()
+                    }
+                    HStack(spacing: 8) {
+                        modelMenu(compact: false)
+                        EffortPill(isOpen: $showEffort, compact: true)
+                        AccessPill(compact: true)
+                    }
+                    HStack(spacing: 6) {
+                        modelMenu(compact: true)
+                        EffortPill(isOpen: $showEffort, compact: true)
+                        AccessPill(compact: true)
+                    }
                 }
+                // Offered the row's room before the gap after it, or it
+                // would be given half and choose a smaller form than it need.
+                .layoutPriority(1)
             }
-            return true
+            .padding(.horizontal, 4)
+            // Resizing the panel moves these with it, never animated across
+            // (their own changes, a new model or mode, still animate).
+            .transaction { $0.animation = nil }
         }
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 6)
@@ -1282,6 +1443,8 @@ struct ChatThread: View {
     /// bars that float over it.
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
+    /// Where the tools at the top right end, in the conversation's measure.
+    var toolsBottom: CGFloat = 0
     /// nil shows everything.
     @State private var filter: TurnKind?
     /// Older answers the user opened again.
@@ -1374,11 +1537,6 @@ struct ChatThread: View {
 
     private var lastReplyID: UUID? { allTurns.last { $0.kind == .reply }?.id }
     private var lastScreenID: UUID? { allTurns.last { $0.kind == .screen }?.id }
-    private var busyTint: Color? {
-        if app.isAnsweringScreen { return Theme.violet }
-        if app.isReplying { return Theme.accent }
-        return nil
-    }
 
     static func tint(_ kind: TurnKind) -> Color {
         kind == .reply ? Theme.accent : Theme.violet
@@ -1407,9 +1565,9 @@ struct ChatThread: View {
             } else {
                 timeline
             }
-            // The filters, and a note while an answer is written, float at
-            // the top of the conversation under the app bar.
-            if hasFilters || busyTint != nil {
+            // The filters float at the top of the conversation under the
+            // app bar.
+            if hasFilters {
                 header
                     .environment(\.glassChips, true)
                     .padding(.top, topInset + 2)
@@ -1492,9 +1650,8 @@ struct ChatThread: View {
                 filterChip(.reply, label: "Reply", count: count(.reply), tint: Theme.accent)
                 filterChip(.screen, label: "Screen", count: count(.screen), tint: Theme.violet)
             }
-            if let busyTint {
-                Chip("Writing", icon: "ellipsis", tint: busyTint)
-            }
+            // What is being written shows above the chat box
+            // (WorkStatusBar), not here.
             Spacer(minLength: 4)
         }
     }
@@ -1527,10 +1684,51 @@ struct ChatThread: View {
         .help(kind == nil ? "Show everything" : "Show only \(label) turns")
     }
 
-    /// The request pinned at the top, and where the top is (below the bar
-    /// and the filters floating over the conversation).
+    /// The message that sticks at the top while its reply scrolls under it,
+    /// and how far it is moved down to stay there. It is the message itself,
+    /// held in place, until the end of its reply pushes it up and away.
     @State private var pinnedTurn: UUID?
-    private var pinLine: CGFloat { topInset + (hasFilters || busyTint != nil ? 30 : 0) + 4 }
+    @State private var pinOffset: CGFloat = 0
+    @State private var bubbleFrames: [UUID: CGRect] = [:]
+    @State private var turnFrames: [UUID: CGRect] = [:]
+    /// Where the end of the conversation is, and the free room kept below
+    /// it so the newest message can reach the top.
+    @State private var endY: CGFloat = 0
+    @State private var freeRoom: CGFloat = 0
+
+    private func updateFreeRoom(viewport: CGFloat) {
+        // From the newest typed message to the end of the conversation.
+        let newest = turnFrames.values.max { $0.minY < $1.minY }
+        let tail = newest.map { endY - $0.minY } ?? viewport
+        let room = max(0, viewport - topRoom - tail)
+        if abs(room - freeRoom) > 1 { freeRoom = room }
+    }
+
+    /// Where it sticks: below the bar, the filters and the icons that show
+    /// at the top right on hover.
+    /// The same gap below whatever is lowest up there (the tools at the
+    /// right, or the filters at the left), for every message alike.
+    private var pinLine: CGFloat {
+        max(topInset + (hasFilters ? 30 : 0), toolsBottom) + 12
+    }
+
+    /// Works out which message sticks, from where the messages are now.
+    private func updatePin() {
+        var found: UUID?
+        var offset: CGFloat = 0
+        let line = pinLine
+        for (id, frame) in turnFrames {
+            guard frame.maxY > line, let bubble = bubbleFrames[id], bubble.minY < line else { continue }
+            // It stays at the line, but never past the end of its own reply.
+            let move = min(line - bubble.minY, frame.maxY - bubble.maxY - 6)
+            if move > 0 {
+                found = id
+                offset = move
+            }
+        }
+        if found != pinnedTurn { pinnedTurn = found }
+        if abs(offset - pinOffset) > 0.25 { pinOffset = offset }
+    }
 
     /// Room kept above the first entry for the bar and the filters. It stays
     /// the same when the "Writing" note comes and goes, so nothing in the
@@ -1599,7 +1797,21 @@ struct ChatThread: View {
                             let streaming = app.streamingTurns.contains(turn.id) && !app.quietTurns.contains(turn.id)
                             VStack(alignment: .leading, spacing: 3) {
                                 if turn.origin == .typed || turn.kind == .screen {
-                                    TurnInputBubble(turn: turn, streaming: streaming)
+                                    // The request as a whole (its files and its words)
+                                    // is held at the top while its reply scrolls under it.
+                                    VStack(alignment: .trailing, spacing: 0) {
+                                        SentAttachments(turn: turn)
+                                        TurnInputBubble(turn: turn, streaming: streaming, pinned: pinnedTurn == turn.id)
+                                    }
+                                    // Moved first, measured after: the measure is where
+                                    // it sits in the conversation, not where it is drawn
+                                    // while held, or holding it would undo itself.
+                                    .offset(y: pinnedTurn == turn.id ? pinOffset : 0)
+                                    .background(GeometryReader { geometry in
+                                        Color.clear.preference(key: BubbleFramesKey.self,
+                                                               value: [turn.id: geometry.frame(in: .named("thread"))])
+                                    })
+                                    .zIndex(1)
                                 }
                                 TurnView(turn: turn,
                                          tint: Self.tint(turn.kind),
@@ -1611,10 +1823,8 @@ struct ChatThread: View {
                                          // folded away to a single line.
                                          collapsed: false,
                                          onToggle: nil)
-                                    // Answers sit on the left and keep free room on
-                                    // their right, so they don't span the full width.
+                                    // Answers use the chat's whole width.
                                     .padding(.top, 2)
-                                    .padding(.trailing, 56)
                             }
                             .id(turn.id)
                             // A mark above a typed message, for the one
@@ -1631,7 +1841,7 @@ struct ChatThread: View {
                             // Where the request sits, to pin it while its
                             // reply is read.
                             .background {
-                                if turn.origin == .typed, !turn.prompt.isEmpty {
+                                if turn.origin == .typed || turn.kind == .screen {
                                     GeometryReader { geometry in
                                         Color.clear.preference(key: TurnFramesKey.self,
                                                                value: [turn.id: geometry.frame(in: .named("thread"))])
@@ -1641,17 +1851,28 @@ struct ChatThread: View {
                         }
                         }
                     }
+                        // Messages sent while the agent works, in the chat
+                        // already, waiting for it to take them.
+                        ForEach(app.queuedHere) { item in
+                            QueuedBubble(item: item)
+                                .padding(.top, 6)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
                         // Room for the chat box floating over the bottom. Its
                         // end is the end of the conversation, so "newest"
                         // always lands just above the chat box.
                         Color.clear
                             .frame(height: 1 + bottomInset)
                             .id(Self.endID)
-                        // About one view's height of free room below the end,
-                        // so the newest message can be scrolled to the top
-                        // even when its reply is short.
+                            .background(GeometryReader { geometry in
+                                Color.clear.preference(key: ThreadEndKey.self,
+                                                       value: geometry.frame(in: .named("thread")).maxY)
+                            })
+                        // Free room below the end: just enough for the newest
+                        // message to be scrolled to the top, never so much
+                        // that the view can be scrolled to nothing.
                         Color.clear
-                            .frame(height: outer.size.height)
+                            .frame(height: freeRoom)
                     }
                     .background(GeometryReader { inner in
                         Color.clear.preference(key: ThreadMetricsKey.self,
@@ -1661,35 +1882,43 @@ struct ChatThread: View {
                     })
                 }
                 .coordinateSpace(name: "thread")
+                // Where the scroll is, from the scroll view itself: on the
+                // Mac, scrolling does not always lay the content out again,
+                // so measuring the content alone can miss it.
+                .modifier(ScrolledToEnd(room: freeRoom) { atEnd in
+                    if atEnd != followNewest { followNewest = atEnd }
+                })
                 // The request whose reply fills the view, held at the top
                 // once its own bubble has scrolled away.
                 .onPreferenceChange(TurnFramesKey.self) { frames in
-                    let line = pinLine
-                    let found = frames
-                        .filter { $0.value.minY < line - 6 && $0.value.maxY > line + 90 }
-                        .max { $0.value.minY < $1.value.minY }?.key
-                    if found != pinnedTurn { pinnedTurn = found }
+                    turnFrames = frames
+                    updatePin()
+                    updateFreeRoom(viewport: outer.size.height)
                 }
-                .overlay(alignment: .top) {
-                    if let id = pinnedTurn,
-                       let turn = app.conversation.turns.first(where: { $0.id == id }) {
-                        PinnedRequest(text: turn.prompt) {
-                            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
-                        }
-                        // Below the icons that sit at the top right on hover.
-                        .padding(.top, pinLine + 38)
-                        .transition(.opacity)
-                    }
+                .onPreferenceChange(ThreadEndKey.self) { end in
+                    endY = end
+                    updateFreeRoom(viewport: outer.size.height)
                 }
-                .animation(.easeOut(duration: 0.15), value: pinnedTurn)
+                .onPreferenceChange(BubbleFramesKey.self) { frames in
+                    bubbleFrames = frames
+                    updatePin()
+                }
                 .onPreferenceChange(ThreadMetricsKey.self) { metrics in
+                    // The panel resized while the newest was in view: it
+                    // stays in view, from whichever side the panel was
+                    // dragged.
+                    let resized = scrollState.viewport > 0 && abs(metrics.viewport - scrollState.viewport) > 0.5
                     scrollState.content = metrics.content
                     scrollState.viewport = metrics.viewport
+                    if resized, followNewest {
+                        proxy.scrollTo(Self.endID, anchor: .bottom)
+                        return
+                    }
                     // Nothing scrolls here: a growing answer, new entries or a
                     // resized panel leave the view where it is. This only
                     // notes whether the end of the conversation is in view,
                     // not counting the free room below it.
-                    let end = metrics.bottom - metrics.viewport
+                    let end = metrics.bottom - freeRoom
                     let atBottom = end - metrics.viewport < 40
                     if atBottom != followNewest { followNewest = atBottom }
                 }
@@ -1714,21 +1943,17 @@ struct ChatThread: View {
                         }
                     }
                 }
-                .overlay(alignment: .bottom) {
-                    if !followNewest {
-                        Button {
-                            followNewest = true
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo(Self.endID, anchor: .bottom)
-                            }
-                        } label: {
-                            Chip("Newest", icon: "arrow.down", tint: Theme.accent)
-                        }
-                        .buttonStyle(.plain)
-                        .environment(\.glassChips, true)
-                        .padding(.bottom, 6 + bottomInset)
-                        .transition(.opacity)
-                        .help("Jump to the newest entry and follow it")
+                // Scrolled up or not, for the arrow back to the newest,
+                // which floats over the chat box's edge (outside the chat,
+                // so nothing hides it); its click comes back here.
+                .onChange(of: followNewest) { _, following in
+                    app.chatScrolledUp = !following
+                    app.overlay?.note("chat \(following ? "at the newest" : "scrolled up")")
+                }
+                .onChange(of: app.jumpToNewest) { _, _ in
+                    followNewest = true
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo(Self.endID, anchor: .bottom)
                     }
                 }
                 .animation(.easeOut(duration: 0.15), value: followNewest)
@@ -1816,14 +2041,23 @@ struct AttachmentThumb: View {
     var among: [Attachment] = []
     /// Shown as a small x on hover, while it is still in the chat box.
     var remove: (() -> Void)?
+    /// A sent message's card: bigger, as in a chat app.
+    var large = false
     @State private var hover = false
 
     private static let pictures: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "bmp", "webp"]
+    /// Pictures already read, so scrolling never reads a file again.
+    private static let cache = NSCache<NSString, NSImage>()
 
     private var picture: NSImage? {
         guard let path = file.path, Self.pictures.contains((path as NSString).pathExtension.lowercased()) else { return nil }
-        return NSImage(contentsOfFile: path)
+        if let kept = Self.cache.object(forKey: path as NSString) { return kept }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        Self.cache.setObject(image, forKey: path as NSString)
+        return image
     }
+
+    private var radius: CGFloat { large ? 12 : 9 }
 
     var body: some View {
         Group {
@@ -1831,8 +2065,8 @@ struct AttachmentThumb: View {
                 Image(nsImage: picture)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(width: large ? 176 : 64, height: large ? 112 : 64)
+                    .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     Image(systemName: file.isFolder == true ? "folder.fill" : "doc.text.fill")
@@ -1846,14 +2080,14 @@ struct AttachmentThumb: View {
                         .truncationMode(.middle)
                         .multilineTextAlignment(.leading)
                 }
-                .padding(7)
-                .frame(width: 96, height: 64, alignment: .topLeading)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.ink.opacity(0.08)))
+                .padding(large ? 10 : 7)
+                .frame(width: large ? 176 : 96, height: large ? 112 : 64, alignment: .topLeading)
+                .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Theme.ink.opacity(0.08)))
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
-        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .strokeBorder(Theme.ink.opacity(hover && large ? 0.32 : 0.16), lineWidth: 0.5))
+        .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         // A click opens it: a preview over the chat, or the editor in code.
         .onTapGesture { Previewer.shared.open(file, among: among) }
         .overlay(alignment: .topTrailing) {
@@ -2085,44 +2319,14 @@ struct TurnView: View {
                 // The work behind the answer, folded to one line: what was
                 // run, opened or clicked. It fills in live while the agent
                 // is working and stays with the answer afterwards.
-                // The agent's checklist for a longer task, ticked off as it goes.
-                // Once the task is over the checklist lives in Details, so
-                // the finished reply reads as notes, work and the answer.
-                if let plan = turn.plan, !plan.isEmpty, streaming {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(plan.enumerated()), id: \.offset) { _, item in
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                Image(systemName: item.state == .done ? "checkmark.circle.fill"
-                                      : (item.state == .doing ? "circle.dotted.circle" : "circle"))
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                    .foregroundStyle(item.state == .done ? Theme.mint
-                                                     : (item.state == .doing ? tint : Theme.ink.opacity(0.35)))
-                                Text(item.text)
-                                    .font(.system(size: 11.5, weight: item.state == .doing ? .semibold : .regular))
-                                    .foregroundStyle(Theme.ink.opacity(item.state == .done ? 0.5 : 0.88))
-                                    .strikethrough(item.state == .done, color: Theme.ink.opacity(0.3))
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
+                // The plan and what the agent is doing now live above the
+                // chat box (WorkStatusBar), so the conversation keeps only
+                // what was said and done.
                 if let steps = turn.steps, !steps.isEmpty {
                     WorkTimeline(steps: steps, working: streaming && turn.answer.isEmpty, tint: tint)
                 }
 
-                if turn.answer.isEmpty {
-                    if streaming {
-                        // The mark turns slowly while the model has not
-                        // answered, quickly while the agent is at work.
-                        HStack(spacing: 7) {
-                            LoadingMark(state: turn.steps == nil ? .thinking : .working, size: 18)
-                            Text(turn.steps == nil ? "Thinking…" : (app.agentStatus ?? "Working…"))
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(Theme.ink.opacity(0.4))
-                        }
-                    }
-                } else {
+                if !turn.answer.isEmpty {
                     // An answer that came back formatted (lists, tables, bold) is
                     // always shown formatted, never as raw Markdown.
                     // New text fades in as it streams instead of popping.
@@ -2141,26 +2345,27 @@ struct TurnView: View {
                 // kept free, the same as under what was said on the right:
                 // when, which model, and the answer's tools show there
                 // while the pointer is on it, so nothing moves.
-                HStack(alignment: .center, spacing: 8) {
-                    facts
-                    Text(modelName)
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(Theme.ink.opacity(0.4))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(footnote)
+                // What can be done with it first, as buttons of a size a
+                // pointer finds; then, quieter, who answered and when.
+                HStack(alignment: .center, spacing: 6) {
                     if !streaming {
                         actions
                         if let onToggle {
                             tool("chevron.up", help: "Fold this answer", action: onToggle)
                         }
+                        Rectangle()
+                            .fill(Theme.ink.opacity(0.12))
+                            .frame(width: 1, height: 12)
+                            .padding(.horizontal, 3)
                     }
+                    facts
                     Spacer(minLength: 0)
                 }
-                .frame(height: 16)
-                // A draft keeps its mark in view; the rest waits for the pointer.
-                .opacity(hover || draft ? 1 : 0)
-                .allowsHitTesting(hover)
+                .frame(height: 28)
+                // Nothing until the reply is done; then a draft keeps its
+                // mark in view and the rest waits for the pointer.
+                .opacity(!streaming && (hover || draft) ? 1 : 0)
+                .allowsHitTesting(!streaming && hover)
                 .animation(.easeOut(duration: 0.14), value: hover)
             }
         }
@@ -2200,18 +2405,30 @@ struct TurnView: View {
     @ViewBuilder
     private var facts: some View {
         // Which engine answered, by its own logo, then what the work was.
-        if let engine {
-            EngineLogo(kind: engine.kind, tool: engine.tool, size: 10)
-                .foregroundStyle(tint)
-                .help(turn.model)
+        HStack(spacing: 5) {
+            if let engine {
+                EngineLogo(kind: engine.kind, tool: engine.tool, size: 12)
+                    .foregroundStyle(tint)
+                    .help(turn.model)
+            }
+            Text(modelName)
+                .font(FooterStyle.meta)
+                .foregroundStyle(Theme.ink.opacity(0.55))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(footnote)
         }
+        Text("·")
+            .font(FooterStyle.meta)
+            .foregroundStyle(Theme.ink.opacity(0.3))
+        TimeLabel(date: turn.anchor ?? turn.date)
         Image(systemName: work.icon)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(engine == nil ? tint : Theme.ink.opacity(0.55))
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(engine == nil ? tint : Theme.ink.opacity(0.45))
             .help(work.help)
         if draft {
             Image(systemName: "ellipsis")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10.5, weight: .bold))
                 .foregroundStyle(Theme.amber)
                 .symbolEffect(.variableColor.iterative, isActive: true)
                 .help("Draft: the question may not be finished. This answer is confirmed once it is.")
@@ -2222,21 +2439,12 @@ struct TurnView: View {
         if let matched = turn.matched {
             matchBadge(matched)
         }
-        TimeLabel(date: turn.anchor ?? turn.date)
     }
 
     /// A small tool on the line under an answer, the size of the ones
     /// under what was said.
     private func tool(_ symbol: String, help: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(tint ?? Theme.ink.opacity(0.55))
-                .frame(width: 14, height: 14)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        FooterButton(symbol: symbol, help: help, tint: tint, action: action)
     }
 
     /// What the recheck found: does this reply answer something that was
@@ -2244,7 +2452,7 @@ struct TurnView: View {
     private func matchBadge(_ matched: Bool) -> some View {
         let color = matched ? Theme.mint : Theme.rose
         return Image(systemName: matched ? "checkmark.seal.fill" : "xmark.seal.fill")
-            .font(.system(size: 9.5, weight: .bold))
+            .font(.system(size: 10.5, weight: .bold))
             .foregroundStyle(color)
             .help(matched
               ? "Rechecked: this reply answers something that was asked in the conversation."
@@ -2275,14 +2483,14 @@ struct TurnView: View {
             help = "Not used: you did not say this reply. Clean up removes replies like this."
         }
         return Image(systemName: icon)
-            .font(.system(size: 9.5, weight: .bold))
+            .font(.system(size: 10.5, weight: .bold))
             .foregroundStyle(color)
             .accessibilityLabel(label)
             .help(help)
     }
 
     private var actions: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             if !turn.answer.isEmpty {
                 tool(copied ? "checkmark" : "doc.on.doc", help: "Copy", tint: copied ? Theme.mint : nil) {
                     app.copy(turn.answer)
@@ -2294,7 +2502,6 @@ struct TurnView: View {
                 }
             }
             tool("arrow.clockwise", help: "Regenerate") { app.regenerate(turn.id) }
-            tool("arrow.uturn.left", help: "Reuse this prompt in the input") { app.reuse(turn.id) }
             tool("trash", help: "Delete this turn") { app.deleteTurn(turn.id) }
         }
     }
@@ -2339,20 +2546,23 @@ struct WorkTimeline: View {
     }
 
     var body: some View {
-        let parts = self.parts
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(parts) { part in
-                switch part {
-                case .note(_, let text):
-                    Text(text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.ink.opacity(0.9))
-                        .lineSpacing(3.9)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                case .work(let index, let run):
-                    // Only the stretch still going shows its latest step live.
-                    WorkTrail(steps: run, working: working && index == parts.last?.id, tint: tint)
+        // As a chat app shows it: the whole task's work is one line with
+        // what is happening and the time it has taken, which opens into one
+        // card holding what was said along the way and every step.
+        if steps.contains(where: { $0.kind != .note }) || working {
+            WorkTrail(steps: steps, working: working, tint: tint)
+        } else {
+            // Only words so far: they read as the reply.
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(parts) { part in
+                    if case .note(_, let text) = part {
+                        Text(text)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.ink.opacity(0.9))
+                            .lineSpacing(3.9)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
@@ -2382,10 +2592,38 @@ struct WorkTrail: View {
         case .note: return "text.bubble"
         case .think: return "sparkles"
         case .ask: return "questionmark.bubble"
+        case .skill: return "book.closed"
         }
     }
 
     private var failures: Int { steps.filter(\.failed).count }
+    /// When this stretch of work started and ended, while the app has
+    /// been watching it (a reply loaded later shows no time).
+    @State private var started: Date?
+    @State private var finished: Date?
+
+    /// What the agent is doing, in a few words, from its latest step.
+    static func doing(_ steps: [WorkStep]) -> String {
+        switch steps.last(where: { $0.kind != .note })?.kind ?? .think {
+        case .run: return "Running a command on your computer"
+        case .read: return "Reading files"
+        case .search: return "Searching"
+        case .edit: return "Saving files to your computer"
+        case .web: return "Searching the web"
+        case .skill: return "Reading a skill"
+        case .ask: return "Waiting for your answer"
+        case .open, .click, .type, .key: return "Working in an app"
+        default: return "Thinking"
+        }
+    }
+
+    /// "42s", "3m 19s", "1h 4m".
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        if total < 60 { return "\(total)s" }
+        if total < 3600 { return "\(total / 60)m \(total % 60)s" }
+        return "\(total / 3600)h \(total % 3600 / 60)m"
+    }
     /// Work stays open when asked to in Settings > Look.
     @AppStorage("workAlwaysOpen") private var alwaysOpen = false
     /// Opened or folded by hand; nil follows the default: open while the
@@ -2396,25 +2634,40 @@ struct WorkTrail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // The one-line summary. Click to see the steps.
-            HStack(spacing: 6) {
+            // As a chat app shows work: what it is doing now (or what it
+            // did), how long it has taken, and a chevron to open the steps.
+            HStack(spacing: 7) {
                 if working {
                     LoadingMark(state: .working, size: 12)
                 }
-                Text(working ? (steps.last?.title ?? "Working") : WorkStep.summary(of: steps))
-                    .font(.system(size: 11.5, design: working && steps.last?.kind == .run ? .monospaced : .default))
-                    .foregroundStyle(Theme.ink.opacity(0.6))
+                Text(working ? Self.doing(steps) : WorkStep.summary(of: steps))
+                    .font(.system(size: WorkType.size))
+                    .foregroundStyle(Theme.ink.opacity(working ? 0.7 : 0.6))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                if let started {
+                    TimelineView(.periodic(from: started, by: 1)) { context in
+                        Text(Self.duration((finished ?? context.date).timeIntervalSince(started)))
+                            .font(.system(size: WorkType.size))
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.ink.opacity(0.45))
+                    }
+                }
                 if failures > 0, !working {
                     Text("\(failures) failed")
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.amber)
                 }
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(Theme.ink.opacity(0.45))
                     .rotationEffect(.degrees(showing ? 90 : 0))
                 Spacer(minLength: 0)
+            }
+            .onAppear { if working, started == nil { started = Date() } }
+            .onChange(of: working) { _, now in
+                if now, started == nil { started = Date() }
+                if !now, started != nil { finished = Date() }
             }
             .padding(.vertical, 3)
             .contentShape(Rectangle())
@@ -2426,7 +2679,17 @@ struct WorkTrail: View {
 
             // The steps on a rail, each with what went in and came out.
             if showing {
+                // The steps as a trail: a line down the left joining a dot
+                // for each, as on the phone, each opening to what went in
+                // and what came out.
                 WorkRail(steps: steps, working: working)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                        .fill(Theme.ink.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                        .strokeBorder(Theme.ink.opacity(0.08), lineWidth: 0.5))
+                    .padding(.top, 4)
                     .transition(.opacity)
             }
         }
@@ -2490,32 +2753,10 @@ struct TimeLabel: View {
 
     var body: some View {
         Text(date, format: .dateTime.hour().minute())
-            .font(.system(size: 9, weight: .medium, design: .rounded))
+            .font(FooterStyle.meta)
             .monospacedDigit()
-            .foregroundStyle(Theme.ink.opacity(0.38))
+            .foregroundStyle(Theme.ink.opacity(0.45))
             .fixedSize()
-    }
-}
-
-/// Chat bubble outline: rounded, with a tighter corner on the side it
-/// belongs to (left for the assistant, right for inputs).
-struct BubbleShape: InsettableShape {
-    enum Side { case left, right }
-    let side: Side
-    var inset: CGFloat = 0
-
-    func path(in rect: CGRect) -> Path {
-        let round = Theme.bubbleRadius
-        let radii = RectangleCornerRadii(topLeading: round,
-                                         bottomLeading: side == .left ? 4 : round,
-                                         bottomTrailing: side == .right ? 4 : round,
-                                         topTrailing: round)
-        return UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
-            .path(in: rect.insetBy(dx: inset, dy: inset))
-    }
-
-    func inset(by amount: CGFloat) -> BubbleShape {
-        BubbleShape(side: side, inset: inset + amount)
     }
 }
 
@@ -2542,7 +2783,6 @@ struct SpeechBubble: View {
         // sit on the left. Which side says who it came from.
         SegmentRow(group: group)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, 56)
     }
 }
 
@@ -2551,51 +2791,85 @@ struct TurnInputBubble: View {
     @EnvironmentObject var app: AppState
     let turn: ChatTurn
     let streaming: Bool
+    /// Held at the top over its reply: the reply scrolling under it is
+    /// hidden behind it.
+    var pinned = false
 
     private var tint: Color { ChatThread.tint(turn.kind) }
     @State private var hover = false
-    /// Asked whether to go back to before this message, and what that
-    /// would undo.
-    @State private var restoring: (files: Int, turns: Int)?
+    /// The message is being edited in place, and what it now says.
+    @State private var editing = false
+    @State private var editText = ""
+    @FocusState private var editFocused: Bool
 
     /// The line above a message that goes back to the checkpoint before
-    /// it. It shows while the pointer is on the message, and only where
-    /// files have been changed since.
+    /// it: a rule across the chat with "Restore checkpoint" in the middle,
+    /// which says on hover what it does and opens the choices on a click
+    /// (fork the chat from here, put the files back, or both). It shows
+    /// while the pointer is on the message, and only where files have been
+    /// changed since.
     @ViewBuilder
     private var checkpointLine: some View {
-        HStack(spacing: 6) {
-            if let restoring {
-                Text("Put \(restoring.files) file\(restoring.files == 1 ? "" : "s") back and remove \(restoring.turns) message\(restoring.turns == 1 ? "" : "s") from here?")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Theme.amber)
-                    .lineLimit(1)
-                checkpointChoice("Restore", tint: Theme.amber) {
-                    self.restoring = nil
-                    app.restoreCheckpoint(before: turn.id)
+        let files = app.filesChanged(since: turn.id)
+        HStack(spacing: 8) {
+            Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 1)
+            Menu {
+                GoBackChoices(files: files) { app.goBack(to: turn.id, $0) }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 9.5, weight: .semibold))
+                    Text("Restore checkpoint")
+                        .font(.system(size: 11, weight: .medium))
                 }
-                checkpointChoice("Cancel", tint: Theme.ink.opacity(0.7)) { self.restoring = nil }
-            } else {
-                Button {
-                    restoring = app.checkpoint(before: turn.id)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.uturn.backward.circle")
-                            .font(.system(size: 9.5, weight: .semibold))
-                        Text("Restore checkpoint")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundStyle(Theme.ink.opacity(0.6))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Go back to just before this message: files changed since are put back, and this message and everything after it leave the chat. Its words return to the chat box.")
+                .foregroundStyle(Theme.ink.opacity(checkpointHover ? 0.92 : 0.7))
+                .padding(.horizontal, 9)
+                .frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Theme.ink.opacity(checkpointHover ? 0.10 : 0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
+                .contentShape(Rectangle())
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .onHover { checkpointHover = $0 }
+            // What it does, under it on hover, as a small card that moves
+            // nothing around it.
+            .overlay(alignment: .top) {
+                if checkpointHover {
+                    Text(files == 1
+                         ? "Go back to before this message: 1 file changed since"
+                         : "Go back to before this message: \(files) files changed since")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink.opacity(0.85))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 9)
+                        .frame(height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.shade.opacity(0.85)))
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.ultraThinMaterial))
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.5))
+                        .offset(y: 28)
+                        .allowsHitTesting(false)
+                        .transition(.opacity.combined(with: .offset(y: -3)))
+                }
+            }
+            .zIndex(5)
+            Rectangle().fill(Theme.ink.opacity(0.10)).frame(height: 1)
         }
-        .frame(height: 16)
-        .padding(.trailing, 4)
-        .opacity(hover || restoring != nil ? 1 : 0)
-        .allowsHitTesting(hover || restoring != nil)
+        .frame(maxWidth: .infinity)
+        .frame(height: 24)
+        .padding(.vertical, 4)
+        .animation(.easeOut(duration: 0.14), value: checkpointHover)
+        .opacity(hover || checkpointHover ? 1 : 0)
+        .allowsHitTesting(hover || checkpointHover)
+        .zIndex(5)
     }
+
+    @State private var checkpointHover = false
 
     private func checkpointChoice(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -2610,11 +2884,105 @@ struct TurnInputBubble: View {
         .buttonStyle(.plain)
     }
 
+    /// The whole message is showing, not the first few lines.
+    @State private var expanded = false
+    /// Copied just now: the copy button shows a tick for a moment.
+    @State private var promptCopied = false
+
+    /// Lines shown before "Show more". The same whether or not it is held
+    /// at the top, so nothing under it moves when it starts to stick.
+    private let foldLines = 4
+
+    private var isLong: Bool {
+        let lines = turn.prompt.split(separator: "\n", omittingEmptySubsequences: false).count
+        return lines > foldLines || turn.prompt.count > foldLines * 90
+    }
+
+    /// The message open for editing, in its own bubble: Cancel, and Send.
+    /// Sent where files have changed since, Send asks how: fork the chat,
+    /// put the files back, or both.
+    private var editor: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            TextField("Message", text: $editText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .lineLimit(1...12)
+                .focused($editFocused)
+                .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+                .onKeyPress(.escape) {
+                    editing = false
+                    return .handled
+                }
+                .onSubmit(sendEdit)
+            HStack(spacing: 6) {
+                checkpointChoice("Cancel", tint: Theme.ink.opacity(0.7)) { editing = false }
+                let files = app.filesChanged(since: turn.id)
+                if files > 0 {
+                    Menu {
+                        GoBackChoices(files: files) { choice in
+                            editing = false
+                            app.editMessage(turn.id, to: editText, choice)
+                        }
+                    } label: {
+                        sendLabel
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } else {
+                    Button(action: sendEdit) { sendLabel }
+                        .buttonStyle(.plain)
+                        .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+
+    private var sendLabel: some View {
+        Text("Send")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 9)
+            .frame(height: 18)
+            .background(Capsule().fill(Theme.accentGradient))
+            .contentShape(Capsule())
+    }
+
+    /// Return in the editor: sent in place when nothing has to be chosen.
+    private func sendEdit() {
+        guard app.filesChanged(since: turn.id) == 0 else { return }
+        editing = false
+        app.editMessage(turn.id, to: editText)
+    }
+
+    private var promptText: some View {
+        Text(turn.prompt)
+            .font(.system(size: 12.5))
+            .lineSpacing(2.5)
+            .foregroundStyle(Theme.ink.opacity(0.93))
+            .lineLimit(expanded ? nil : foldLines)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// This message's files that are still with the chat.
+    private var attachedFiles: [Attachment] {
+        (turn.attached ?? []).compactMap { name in app.attachments.first { $0.name == name } }
+    }
+
+    /// Something to show in the bubble itself (the files go above it).
+    private var hasBubble: Bool {
+        !turn.prompt.isEmpty || turn.kind == .screen
+            || (turn.attached ?? []).count > attachedFiles.count
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
         if !streaming, app.hasCheckpoint(turn) {
             checkpointLine
         }
+
+        if hasBubble {
         VStack(alignment: .leading, spacing: 3) {
             // One line: what you typed, with its mark and time. A screen
             // capture adds its thumbnail above.
@@ -2634,21 +3002,11 @@ struct TurnInputBubble: View {
                     .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.ink.opacity(0.05)))
                 }
             }
-            // What was attached with this message.
+            // What was attached with this message: shown above the bubble
+            // as cards (see `attachmentRow`); here only the names of files
+            // no longer with the chat.
             if let attached = turn.attached, !attached.isEmpty {
-                // The files themselves, as in the chat box: pictures show,
-                // anything else is a card; a click opens it.
-                let files = attached.compactMap { name in app.attachments.first { $0.name == name } }
-                if !files.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(files) { file in
-                                AttachmentThumb(file: file, among: files)
-                            }
-                        }
-                    }
-                }
-                // Names of files no longer with the chat.
+                let files = attachedFiles
                 ForEach(attached.filter { name in !files.contains { $0.name == name } }, id: \.self) { name in
                     HStack(spacing: 4) {
                         Image(systemName: "paperclip")
@@ -2664,13 +3022,26 @@ struct TurnInputBubble: View {
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.08)))
                 }
             }
-            if !turn.prompt.isEmpty {
-                Text(turn.prompt)
-                    .font(.system(size: 12.5))
-                    .lineSpacing(2.5)
-                    .foregroundStyle(Theme.ink.opacity(0.93))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+            if editing {
+                editor
+            } else if !turn.prompt.isEmpty {
+                // Selectable text is drawn by a view of its own, which is
+                // cut off when it is moved to stay at the top; held there,
+                // it is plain text (right-click still copies it).
+                if pinned {
+                    promptText
+                } else {
+                    promptText.textSelection(.enabled)
+                }
+                // A long message folds to a few lines, with a way to see it all.
+                if isLong {
+                    Button(expanded ? "Show less" : "Show more") {
+                        withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tint)
+                }
             } else if turn.kind == .screen, turn.imageFile == nil, !streaming {
                 // A capture with no picture kept and no question: say what it was.
                 Text("Screen capture")
@@ -2682,31 +3053,46 @@ struct TurnInputBubble: View {
         .padding(.vertical, 6)
         .frame(maxWidth: turn.kind == .screen ? 260 : nil, alignment: .leading)
         .background(BubbleShape(side: .right).fill(tint.opacity(hover ? 0.15 : 0.10)))
+        .background {
+            if pinned { BubbleShape(side: .right).fill(.thickMaterial) }
+        }
         .overlay(BubbleShape(side: .right).strokeBorder(tint.opacity(hover ? 0.38 : 0.24), lineWidth: 0.5))
+        }
             // The same free line under it as under what was heard.
-            HStack(spacing: 8) {
+            // Under your message: when, then what can be done with it,
+            // the same buttons as under an answer.
+            HStack(spacing: 2) {
+                if turn.kind == .screen {
+                    Image(systemName: "text.viewfinder")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .help("Screen capture")
+                        .padding(.trailing, 4)
+                }
                 TimeLabel(date: turn.date)
-                Image(systemName: turn.kind == .screen ? "text.viewfinder" : "keyboard")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .help(turn.kind == .screen ? "Screen capture" : "You typed this")
+                    .padding(.trailing, 4)
                 if !turn.prompt.isEmpty {
-                    Button {
-                        app.copy(turn.prompt)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Theme.ink.opacity(0.55))
-                            .contentShape(Rectangle())
+                    FooterButton(symbol: "pencil", help: "Edit this message and send it again") {
+                        editText = turn.prompt
+                        editing = true
+                        editFocused = true
                     }
-                    .buttonStyle(.plain)
-                    .help("Copy")
+                    FooterButton(symbol: promptCopied ? "checkmark" : "doc.on.doc", help: "Copy",
+                                 tint: promptCopied ? Theme.mint : nil) {
+                        app.copy(turn.prompt)
+                        promptCopied = true
+                        Task {
+                            try? await Task.sleep(nanoseconds: 1_200_000_000)
+                            promptCopied = false
+                        }
+                    }
                 }
             }
-            .frame(height: 16)
+            .frame(height: 28)
             .padding(.trailing, 4)
-            .opacity(hover ? 1 : 0)
-            .allowsHitTesting(hover)
+            // Shown once its reply is done, while the pointer is on it.
+            .opacity(!streaming && hover && !editing ? 1 : 0)
+            .allowsHitTesting(!streaming && hover && !editing)
         }
         .contentShape(Rectangle())
         .onHover { hover = $0 }
@@ -2717,9 +3103,9 @@ struct TurnInputBubble: View {
                 Button("Copy") { app.copy(turn.prompt) }
             }
         }
-        // Your own input is on the right, like what was heard.
+        // Your own input is on the right, like what was heard, and may use
+        // the chat's whole width.
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 56)
     }
 }
 
@@ -3283,5 +3669,270 @@ struct SegmentRow: View {
     private var beingRechecked: Bool {
         guard let id = app.rescanningID else { return false }
         return group.segmentIDs.contains(id)
+    }
+}
+
+
+/// The end of the conversation, for the free room kept below it.
+struct ThreadEndKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// Views in a row that wraps onto more lines when it runs out of room, each
+/// line kept to the right, as files sent with a message.
+struct WrapRow: Layout {
+    var spacing: CGFloat = 8
+
+    private func lines(_ subviews: Subviews, width: CGFloat) -> [[(index: Int, size: CGSize)]] {
+        var lines: [[(index: Int, size: CGSize)]] = [[]]
+        var used: CGFloat = 0
+        for (index, view) in subviews.enumerated() {
+            let size = view.sizeThatFits(.unspecified)
+            if !lines[lines.count - 1].isEmpty, used + spacing + size.width > width {
+                lines.append([])
+                used = 0
+            }
+            used += (lines[lines.count - 1].isEmpty ? 0 : spacing) + size.width
+            lines[lines.count - 1].append((index, size))
+        }
+        return lines
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let rows = lines(subviews, width: width)
+        let height = rows.reduce(0) { $0 + ($1.map(\.size.height).max() ?? 0) } + spacing * CGFloat(max(0, rows.count - 1))
+        let widest = rows.map { row in row.reduce(0) { $0 + $1.size.width } + spacing * CGFloat(max(0, row.count - 1)) }.max() ?? 0
+        return CGSize(width: min(widest, width), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in lines(subviews, width: bounds.width) {
+            let rowWidth = row.reduce(0) { $0 + $1.size.width } + spacing * CGFloat(max(0, row.count - 1))
+            var x = bounds.maxX - rowWidth
+            let rowHeight = row.map(\.size.height).max() ?? 0
+            for item in row {
+                subviews[item.index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
+            }
+            y += rowHeight + spacing
+        }
+    }
+}
+
+/// The files sent with a message, as cards above it on the right, as in a
+/// chat app; a click opens one.
+struct SentAttachments: View {
+    @EnvironmentObject var app: AppState
+    let turn: ChatTurn
+
+    var body: some View {
+        let files = (turn.attached ?? []).compactMap { name in app.attachments.first { $0.name == name } }
+        if !files.isEmpty {
+            WrapRow(spacing: 8) {
+                ForEach(files) { file in
+                    AttachmentThumb(file: file, among: files, large: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.bottom, 4)
+        }
+    }
+}
+
+
+/// The line under a message or an answer: its buttons and its quiet facts.
+enum FooterStyle {
+    static let meta = Font.system(size: 10.5, weight: .medium, design: .rounded)
+}
+
+/// A button on that line: an icon a pointer can find, with a soft square
+/// behind it on hover, the same under what you sent and under an answer.
+struct FooterButton: View {
+    let symbol: String
+    let help: String
+    var tint: Color?
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(tint ?? Theme.ink.opacity(hover ? 0.92 : 0.55))
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Theme.ink.opacity(hover ? 0.09 : 0)))
+                .contentShape(Rectangle())
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
+        .help(help)
+    }
+}
+
+
+/// The ways back to before a message, as a menu: fork the chat from it,
+/// put back the files changed since, or both.
+struct GoBackChoices: View {
+    let files: Int
+    let choose: (AppState.GoBack) -> Void
+
+    var body: some View {
+        Button("Fork conversation from here") { choose(.fork) }
+        Button(files > 0 ? "Rewind code to here (\(files) file\(files == 1 ? "" : "s"))" : "Rewind code to here") {
+            choose(.rewindCode)
+        }
+        .disabled(files == 0)
+        Button("Fork conversation and rewind code") { choose(.forkAndRewind) }
+            .disabled(files == 0)
+    }
+}
+
+
+/// The round arrow that goes back to the newest message.
+private struct JumpToLatest: View {
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.ink.opacity(hover ? 1 : 0.85))
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Theme.shade.opacity(0.45)))
+                .liquidGlass(in: Circle())
+                .overlay(Circle().strokeBorder(Theme.ink.opacity(hover ? 0.22 : 0.12), lineWidth: 0.5))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("Go to the newest message")
+    }
+}
+
+/// What the chat is doing right now, next to the arrow: one click goes to
+/// it.
+private struct LiveActivityPill: View {
+    let text: String
+    let thinking: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            // The shared status pill, kept to a readable length.
+            StatusPill(text, thinking: thinking, size: 11)
+                .frame(maxWidth: 260, alignment: .leading)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("See what it is doing now")
+    }
+}
+
+
+/// A message sent while the agent works in this chat: in the chat as
+/// your message, dimmed, waiting for the agent to take it once its task is
+/// done. Hovering it shows "Send now" (which stops the task and sends it
+/// at once) and a way to take it back.
+private struct QueuedBubble: View {
+    @EnvironmentObject var app: AppState
+    let item: AppState.QueuedMessage
+    @State private var hover = false
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text(item.text)
+                .font(.system(size: 12.5))
+                .lineSpacing(2.5)
+                .foregroundStyle(Theme.ink.opacity(item.void ? 0.35 : 0.6))
+                .strikethrough(item.void, color: Theme.ink.opacity(0.4))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(BubbleShape(side: .right).fill(Theme.accent.opacity(0.06)))
+                .overlay(BubbleShape(side: .right)
+                    .strokeBorder(Theme.accent.opacity(0.28), style: StrokeStyle(lineWidth: 0.75, dash: [3, 3])))
+            HStack(spacing: 10) {
+                if item.void {
+                    Text("Cancelled")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.ink.opacity(0.4))
+                    if hover {
+                        LinkAction(title: "Restore") { app.setQueuedVoid(item.id, false) }
+                            .help("Wait for the agent again")
+                    }
+                } else if hover {
+                    LinkAction(title: "Edit") { app.unqueue(item.id) }
+                        .help("Take it back to the chat box to change it")
+                    LinkAction(title: "Cancel", tint: Theme.rose) { app.setQueuedVoid(item.id, true) }
+                        .help("Don't send it")
+                    LinkAction(title: "Send now", tint: Theme.accent) { app.sendQueuedNow(item.id) }
+                        .help("Stop the task and send this now")
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(item.files.isEmpty ? "Waiting for the agent"
+                             : "Waiting for the agent · \(item.files.count) file\(item.files.count == 1 ? "" : "s")")
+                            .font(.system(size: 10.5))
+                    }
+                    .foregroundStyle(Theme.ink.opacity(0.45))
+                }
+            }
+            .frame(height: 18)
+            .padding(.trailing, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.14), value: hover)
+    }
+}
+
+/// A small text action, underlined while the pointer is on it.
+private struct LinkAction: View {
+    let title: String
+    var tint: Color = Theme.ink.opacity(0.7)
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .underline(hover, color: tint)
+                .foregroundStyle(tint)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
+}
+
+
+/// Tells whether a scroll view shows the end of its content (not counting
+/// `room` of free space after it), from the scroll view's own geometry,
+/// where the system offers it (macOS 15 and later).
+private struct ScrolledToEnd: ViewModifier {
+    let room: CGFloat
+    let changed: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                let end = geometry.contentSize.height - room
+                return geometry.contentOffset.y + geometry.containerSize.height >= end - 40
+            } action: { _, atEnd in
+                changed(atEnd)
+            }
+        } else {
+            content
+        }
     }
 }

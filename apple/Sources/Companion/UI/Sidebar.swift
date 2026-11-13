@@ -7,6 +7,18 @@ import SwiftUI
 struct SidebarView: View {
     @EnvironmentObject var app: AppState
     @FocusState private var searchFocused: Bool
+    /// The sidebar's own toggle, beside the search while the sidebar is
+    /// pinned. The panel hands it in, so it is the same button that floats
+    /// in the top bar when the sidebar is closed and springs between them.
+    private let toggle: AnyView?
+    /// The toggle goes before the search (code: the sidebar is on the
+    /// right, the chat on its left) rather than after the new button.
+    private let toggleLeading: Bool
+
+    init(toggle: AnyView? = nil, toggleLeading: Bool = false) {
+        self.toggle = toggle
+        self.toggleLeading = toggleLeading
+    }
 
     private struct Bucket: Identifiable {
         let title: String
@@ -46,6 +58,9 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Search, always at hand, with the main action beside it.
             HStack(spacing: 6) {
+                if toggleLeading, let toggle {
+                    toggle
+                }
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 10.5, weight: .semibold))
@@ -80,6 +95,9 @@ struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Start a new conversation")
+                if !toggleLeading, let toggle {
+                    toggle
+                }
             }
             ScrollView(.vertical, showsIndicators: false) {
                 // A plain list, newest first: one line a chat, nothing else.
@@ -182,6 +200,18 @@ private struct SidebarRow: View {
             if hover, !renaming {
                 rowButton("pencil", help: "Rename") { startRenaming() }
                 rowButton("trash", help: "Delete this conversation") { app.deleteConversation(item.id) }
+            } else if app.chatsWaiting.contains(item.id) {
+                // This chat's task waits on you: a question or an OK.
+                Image(systemName: "exclamationmark.bubble.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.amber)
+                    .frame(width: 20, height: 20)
+                    .help("The task in this chat is waiting for you")
+            } else if app.jobs[item.id] != nil {
+                // A task is running in this chat.
+                LoadingMark(state: .working, size: 12)
+                    .frame(width: 20, height: 20)
+                    .help("A task is running in this chat")
             } else if app.webRunning.contains(item.id) {
                 // This chat's browser has a page open.
                 Image(systemName: "globe")
