@@ -612,8 +612,12 @@ struct OverlayView: View {
     /// The details beside the workspace in code, when asked for and when
     /// the panel has room for them as well as the chat and the workspace.
     private var codeDetailsShown: Bool {
-        app.codeDetails && codeRoom >= 240 + 320 + CGFloat(min(max(codeDetailsWidth, 220), 460)) + 16
+        app.codeDetails && codeRoom >= 240 + codeWorkspaceLeast + CGFloat(min(max(codeDetailsWidth, 220), 460)) + 16
     }
+    /// The least the workspace takes in code: the activity bar, the files
+    /// (always shown there) and room for the code beside them, so opening
+    /// the details never squeezes either away.
+    private var codeWorkspaceLeast: CGFloat { 37 + 150 + 320 }
     /// The width the chat and the workspace share in code.
     private var codeRoom: CGFloat {
         panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0)
@@ -622,7 +626,7 @@ struct OverlayView: View {
     /// have, so the chat can never grow and push them off the screen.
     private var codeLeftLeast: CGFloat {
         let details = codeDetailsShown ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + 8 : 0
-        return 320 + details
+        return codeWorkspaceLeast + details
     }
 
     /// The pinned sidebar's width: its set width when the panel has room,
@@ -662,11 +666,6 @@ struct OverlayView: View {
             // The button for the conversations sits inside the sidebar
             // while it is open, and at the end of this bar while it is
             // closed (see `sidebarToggle`).
-            if codeLayout, app.hasWorkFolder {
-                // In code the left button is the file tree's, as in an
-                // editor; the conversations' is at the right end.
-                FilesToggle(model: app.workspace)
-            }
             // Every command and, in code, every file, by name. In a
             // narrow panel it leaves the bar; its keys still work.
             if codeLayout, app.hasWorkFolder, panelWidth >= 900 {
