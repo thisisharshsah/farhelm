@@ -1353,9 +1353,8 @@ private struct FilesTab: View {
     @ObservedObject private var debug = DebugModel.shared
     /// Watched so changed files are marked in the tree.
     @ObservedObject private var gitModel = GitModel.shared
-    /// The whole tree is open, and the pointer is over it (its actions show).
+    /// The whole tree is open.
     @State private var rootOpen = true
-    @State private var treeHover = false
 
     /// What git says about the files, by path, for marking them in the tree.
     private var gitDecorations: GitDecorations {
@@ -1423,25 +1422,16 @@ private struct FilesTab: View {
                 .buttonStyle(.plain)
                 .layoutPriority(1)
                 .help((model.root as NSString).abbreviatingWithTildeInPath)
-                Spacer(minLength: 4)
-                // Shown on hover, and only as many as fit beside the name.
-                if treeHover {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 0) {
-                            IconButton("doc.badge.plus", help: "New File…") { model.startNew(folder: false) }
-                            IconButton("folder.badge.plus", help: "New Folder…") { model.startNew(folder: true) }
-                            IconButton("arrow.clockwise", help: "Refresh Explorer") { model.refreshAll() }
-                            IconButton("rectangle.compress.vertical", help: "Collapse Folders in Explorer") { model.collapseAll() }
-                        }
-                        HStack(spacing: 0) {
-                            IconButton("doc.badge.plus", help: "New File…") { model.startNew(folder: false) }
-                            IconButton("folder.badge.plus", help: "New Folder…") { model.startNew(folder: true) }
-                        }
-                        Color.clear.frame(width: 0)
-                    }
-                    .transition(.opacity)
-                }
+                Spacer(minLength: 8)
+                // Every action is in one menu, so nothing appears or
+                // disappears on hover and the row never shifts.
                 Menu {
+                    Button { model.startNew(folder: false) } label: { Label("New File…", systemImage: "doc.badge.plus") }
+                    Button { model.startNew(folder: true) } label: { Label("New Folder…", systemImage: "folder.badge.plus") }
+                    Divider()
+                    Button { model.refreshAll() } label: { Label("Refresh Explorer", systemImage: "arrow.clockwise") }
+                    Button { model.collapseAll() } label: { Label("Collapse Folders", systemImage: "rectangle.compress.vertical") }
+                    Divider()
                     Button("Work in a Different Folder…") { app.pickWorkFolder() }
                     Button("Open Several Files…") { app.pickFilesToOpen() }
                     Divider()
@@ -1462,10 +1452,11 @@ private struct FilesTab: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("More")
+                .help("New file, folder and more")
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .frame(height: 28)
+            .padding(.leading, 8)
+            .padding(.trailing, 6)
             if !model.editorNote.isEmpty {
                 workspaceNote(model.editorNote)
             }
@@ -1485,7 +1476,6 @@ private struct FilesTab: View {
                 }
             }
         }
-        .onHover { treeHover = $0 }
         .confirmationDialog(trashing.map { "Move \(($0 as NSString).lastPathComponent) to the Trash?" } ?? "",
                             isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } }),
                             titleVisibility: .visible) {
