@@ -1435,16 +1435,59 @@ private struct FilesTab: View {
                 .layoutPriority(1)
                 .help((model.root as NSString).abbreviatingWithTildeInPath)
                 Spacer(minLength: 8)
-                // Every action is in one menu, so nothing appears or
-                // disappears on hover and the row never shifts.
-                Menu {
-                    Button { model.startNew(folder: false) } label: { Label("New File…", systemImage: "doc.badge.plus") }
-                    Button { model.startNew(folder: true) } label: { Label("New Folder…", systemImage: "folder.badge.plus") }
-                    Divider()
-                    Button { model.refreshAll() } label: { Label("Refresh Explorer", systemImage: "arrow.clockwise") }
-                    Button { model.collapseAll() } label: { Label("Collapse Folders", systemImage: "rectangle.compress.vertical") }
-                    Divider()
-                    Button("Work in a Different Folder…") { app.pickWorkFolder() }
+                // As many actions as fit sit in the row, one by one as it
+                // widens; the rest go back into "…" as it narrows.
+                ViewThatFits(in: .horizontal) {
+                    treeActionsRow(showing: 4)
+                    treeActionsRow(showing: 3)
+                    treeActionsRow(showing: 2)
+                    treeActionsRow(showing: 1)
+                    treeActionsRow(showing: 0)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 34)
+            Rectangle()
+                .fill(Theme.ink.opacity(0.09))
+                .frame(height: 1)
+            treeBody
+        }
+    }
+
+    /// The explorer's actions that can sit in its header row, in the order
+    /// they come out of "…".
+    private var treeActions: [(title: String, icon: String, run: () -> Void)] {
+        [
+            ("New File…", "doc.badge.plus", { model.startNew(folder: false) }),
+            ("New Folder…", "folder.badge.plus", { model.startNew(folder: true) }),
+            ("Refresh Explorer", "arrow.clockwise", { model.refreshAll() }),
+            ("Collapse Folders", "rectangle.compress.vertical", { model.collapseAll() }),
+        ]
+    }
+
+    /// The first `shown` actions as buttons, and the rest with everything
+    /// else in "…".
+    private func treeActionsRow(showing shown: Int) -> some View {
+        let actions = treeActions
+        let n = max(0, min(shown, actions.count))
+        return HStack(spacing: 0) {
+            ForEach(0..<n, id: \.self) { i in
+                Button(action: actions[i].run) {
+                    Image(systemName: actions[i].icon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.ink.opacity(0.68))
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(actions[i].title)
+            }
+            Menu {
+                ForEach(n..<actions.count, id: \.self) { i in
+                    Button(action: actions[i].run) { Label(actions[i].title, systemImage: actions[i].icon) }
+                }
+                if n < actions.count { Divider() }
+                Button("Work in a Different Folder…") { app.pickWorkFolder() }
                     Button("Open Several Files…") { app.pickFilesToOpen() }
                     Divider()
                     Button("Reveal in Finder") {
@@ -1464,13 +1507,15 @@ private struct FilesTab: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("New file, folder and more")
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 34)
-            Rectangle()
-                .fill(Theme.ink.opacity(0.09))
-                .frame(height: 1)
+                .help(n == 0 ? "New file, folder and more" : "More")
+        }
+        .fixedSize()
+    }
+
+    /// Below the explorer's header: its note, the files, and the trash prompt.
+    @ViewBuilder
+    private var treeBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if !model.editorNote.isEmpty {
                 workspaceNote(model.editorNote)
             }
