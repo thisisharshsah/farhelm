@@ -160,7 +160,9 @@ private struct RailRow: View {
         .contentShape(Rectangle())
         .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } }
         .overlay(alignment: .trailing) {
-            StepThumb(path: step.shownFile, symbol: symbol, size: 28)
+            if let file = step.shownFile, ThumbStrip.isFile(file) {
+                StepThumb(path: file, size: 28)
+            }
         }
         .help(open ? "Hide the result" : "Show the result")
     }
@@ -674,9 +676,15 @@ struct StepThumb: View {
         let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
         Group {
             if let picture {
-                Image(nsImage: picture)
-                    .resizable()
-                    .scaledToFill()
+                Color.clear
+                    .frame(width: size, height: size)
+                    .overlay(
+                        Image(nsImage: picture)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: size, height: size)
+                    )
+                    .clipped()
             } else if let path {
                 FileIcon(name: (path as NSString).lastPathComponent, size: size * 0.6)
             } else {
@@ -703,22 +711,35 @@ struct StepThumb: View {
 /// more than three, then the last three as small thumbnails.
 struct ThumbStrip: View {
     let paths: [String]
-    var size: CGFloat = 30
+    var size: CGFloat = 22
+
+    /// A file that is there on disk (not a folder): only these get a thumbnail.
+    static func isFile(_ path: String) -> Bool {
+        var folder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &folder) && !folder.boolValue
+    }
 
     var body: some View {
-        if !paths.isEmpty {
+        let files = paths.filter(Self.isFile)
+        if !files.isEmpty {
             HStack(spacing: 4) {
-                if paths.count > 3 {
-                    Text("+\(paths.count - 3)")
+                if files.count > 3 {
+                    Text("+\(files.count - 3)")
                         .font(.system(size: WorkType.size, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(Theme.ink.opacity(0.5))
-                        .padding(.trailing, 2)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
-                ForEach(paths.suffix(3), id: \.self) { path in
+                ForEach(files.suffix(3), id: \.self) { path in
                     StepThumb(path: path, size: size)
+                        .frame(width: size, height: size)
+                        .clipped()
                 }
             }
+            .frame(height: size)
+            .fixedSize()
+            .clipped()
         }
     }
 }

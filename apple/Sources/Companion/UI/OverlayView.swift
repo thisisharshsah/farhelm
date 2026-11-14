@@ -2744,7 +2744,9 @@ struct WorkTrail: View {
                     .rotationEffect(.degrees(showing ? 90 : 0))
                 Spacer(minLength: 0)
                 // What the steps read or made, as small thumbnails.
-                ThumbStrip(paths: WorkStep.files(in: steps))
+                ThumbStrip(paths: WorkStep.files(in: steps), size: 22)
+                    .frame(height: 22)
+                    .clipped()
                     .opacity(showing ? 0 : 1)
                     .allowsHitTesting(!showing)
             }
@@ -3819,14 +3821,79 @@ struct SentAttachments: View {
     var body: some View {
         let files = (turn.attached ?? []).compactMap { name in app.attachments.first { $0.name == name } }
         if !files.isEmpty {
-            WrapRow(spacing: 8) {
-                ForEach(files) { file in
-                    AttachmentThumb(file: file, among: files, large: true)
+            HStack(spacing: 4) {
+                if files.count > 3 {
+                    Text("+\(files.count - 3)")
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.ink.opacity(0.7))
+                        .padding(.horizontal, 7)
+                        .frame(height: 20)
+                        .background(Capsule().fill(Theme.ink.opacity(0.08)))
+                        .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
+                        .fixedSize()
+                }
+                ForEach(files.suffix(3)) { file in
+                    SentAttachmentThumb(file: file, among: files)
                 }
             }
+            .frame(height: 28)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.bottom, 4)
         }
+    }
+}
+
+/// One file sent with a message: a 28pt rounded picture or file icon with a
+/// thin border; a click opens it in the preview.
+private struct SentAttachmentThumb: View {
+    let file: Attachment
+    let among: [Attachment]
+    private static let size: CGFloat = 28
+    private static let cache = NSCache<NSString, NSImage>()
+
+    private var picture: NSImage? {
+        guard let path = file.path, Previewer.pictures.contains((path as NSString).pathExtension.lowercased()) else { return nil }
+        if let kept = Self.cache.object(forKey: path as NSString) { return kept }
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                       kCGImageSourceCreateThumbnailWithTransform: true,
+                       kCGImageSourceThumbnailMaxPixelSize: 96] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let small = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        let image = NSImage(cgImage: small, size: NSSize(width: small.width, height: small.height))
+        Self.cache.setObject(image, forKey: path as NSString)
+        return image
+    }
+
+    var body: some View {
+        let size = Self.size
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        Group {
+            if let picture {
+                Color.clear
+                    .frame(width: size, height: size)
+                    .overlay(
+                        Image(nsImage: picture)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: size, height: size)
+                    )
+                    .clipped()
+            } else if file.isFolder == true {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+            } else {
+                FileIcon(name: file.name, size: size * 0.6)
+            }
+        }
+        .frame(width: size, height: size)
+        .background(shape.fill(Theme.ink.opacity(0.08)))
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
+        .contentShape(shape)
+        .onTapGesture { Previewer.shared.open(file, among: among) }
+        .help("Open \(file.name)")
     }
 }
 
