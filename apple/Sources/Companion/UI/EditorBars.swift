@@ -5,22 +5,29 @@ import SwiftUI
 // the chat box, the open file going with the message. Each watches the
 // workspace itself, so it follows the file that is open.
 
-/// Back and forward between files, and a search box named for the folder
-/// that opens Go to File and the commands.
+/// Back and forward between files.
+struct WorkspaceBackForward: View {
+    @ObservedObject var model: WorkspaceModel
+
+    var body: some View {
+        ToolbarGroup {
+            IconButton("chevron.left", help: "Back to the file before") { model.goBack() }
+                .disabled(model.backStack.isEmpty)
+                .opacity(model.backStack.isEmpty ? 0.4 : 1)
+            IconButton("chevron.right", help: "Forward") { model.goForward() }
+                .disabled(model.forwardStack.isEmpty)
+                .opacity(model.forwardStack.isEmpty ? 0.4 : 1)
+        }
+    }
+}
+
+/// A search box named for the folder that opens Go to File and the commands.
 struct WorkspaceNavBar: View {
     @ObservedObject var model: WorkspaceModel
     @ObservedObject private var commands = CommandRegistry.shared
 
     var body: some View {
         HStack(spacing: 8) {
-            ToolbarGroup {
-                IconButton("chevron.left", help: "Back to the file before") { model.goBack() }
-                    .disabled(model.backStack.isEmpty)
-                    .opacity(model.backStack.isEmpty ? 0.4 : 1)
-                IconButton("chevron.right", help: "Forward") { model.goForward() }
-                    .disabled(model.forwardStack.isEmpty)
-                    .opacity(model.forwardStack.isEmpty ? 0.4 : 1)
-            }
             Button { commands.openPalette(commands: false) } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
@@ -36,8 +43,8 @@ struct WorkspaceNavBar: View {
                 .foregroundStyle(Theme.ink.opacity(0.7))
                 .padding(.horizontal, 10)
                 .frame(width: 220, height: 28)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.ink.opacity(0.06)))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.ink.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                     .strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.5))
                 .contentShape(Rectangle())
             }

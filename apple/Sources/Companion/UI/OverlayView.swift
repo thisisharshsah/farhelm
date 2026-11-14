@@ -682,21 +682,10 @@ struct OverlayView: View {
             // The button for the conversations sits inside the sidebar
             // while it is open, and at the end of this bar while it is
             // closed (see `sidebarToggle`).
-            // The two sides of the app, side by side: chat and code. The
-            // one in use is colored.
-            ToolbarGroup {
-            IconButton("bubble.left.and.bubble.right",
-                       help: app.codeMode ? "Chat: back to plain conversation" : "Chat",
-                       tint: app.codeMode ? nil : Theme.accent) {
-                app.setCode(false)
-            }
-            // Code: files and editor, search, changes with undo, terminal.
-            // It works in a folder, so the first click asks for one.
-            IconButton("chevron.left.forwardslash.chevron.right",
-                       help: "Code: work on a repository. Files and editor, search, changes with undo, terminal.",
-                       tint: app.codeMode ? Theme.accent : nil) {
-                app.setCode(true)
-            }
+            // In code, back and forward between files, beside the window
+            // controls.
+            if codeLayout, app.hasWorkFolder, panelWidth >= 900 {
+                WorkspaceBackForward(model: app.workspace)
             }
             VStack(alignment: .leading, spacing: 1) {
                 // The name of this conversation. Double-click to rename it.
@@ -709,7 +698,7 @@ struct OverlayView: View {
                         .frame(minWidth: 90, maxWidth: 420)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.09)))
+                        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.ink.opacity(0.09)))
                         .glassBorder(radius: 6, tint: Theme.accent)
                         .onSubmit {
                             app.renameConversation(app.conversation.id, to: newName)
@@ -748,6 +737,22 @@ struct OverlayView: View {
             // short with an ellipsis and never squeezed out altogether.
             .frame(minWidth: 72, alignment: .leading)
             .layoutPriority(1)
+            // The two sides of the app, side by side: chat and code. The
+            // one in use is colored.
+            ToolbarGroup {
+                IconButton("bubble.left.and.bubble.right",
+                           help: app.codeMode ? "Chat: back to plain conversation" : "Chat",
+                           tint: app.codeMode ? nil : Theme.accent) {
+                    app.setCode(false)
+                }
+                // Code: files and editor, search, changes with undo, terminal.
+                // It works in a folder, so the first click asks for one.
+                IconButton("chevron.left.forwardslash.chevron.right",
+                           help: "Code: work on a repository. Files and editor, search, changes with undo, terminal.",
+                           tint: app.codeMode ? Theme.accent : nil) {
+                    app.setCode(true)
+                }
+            }
             // Every command and, in code, every file, by name, just after the
             // conversation's name. In a narrow panel it leaves the bar; its
             // keys still work.
@@ -1095,7 +1100,7 @@ struct OverlayView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 10.5, weight: .semibold))
                 .frame(width: 24, height: 24)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.amber.opacity(0.16)))
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.amber.opacity(0.16)))
             Text(message)
                 .font(.system(size: 11.5))
                 .lineSpacing(1.5)
@@ -1110,7 +1115,7 @@ struct OverlayView: View {
         .padding(.leading, 10)
         .padding(.trailing, 6)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.amber.opacity(0.09)))
+        .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).fill(Theme.amber.opacity(0.09)))
         .glassBorder(radius: 11, tint: Theme.amber)
         .padding(.horizontal, Theme.gutter)
         .transition(.move(edge: .top).combined(with: .opacity))
@@ -1230,9 +1235,9 @@ struct OverlayView: View {
             .padding(.vertical, 7)
             // The chat box is the main control: it sits on glass, and its
             // edge lights up while you type.
-            .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Theme.shade.opacity(0.45)))
-            .liquidGlass(in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).fill(Theme.shade.opacity(0.45)))
+            .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous)
                 .strokeBorder(Theme.accent.opacity(inputFocused ? 0.55 : 0), lineWidth: 1)
                 .allowsHitTesting(false))
             .animation(.easeOut(duration: 0.18), value: inputFocused)
@@ -2698,7 +2703,7 @@ struct WorkTrail: View {
                 }
                 .frame(maxHeight: 130)
                 .padding(7)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.shade.opacity(0.45)))
+                .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.shade.opacity(0.45)))
             }
         }
         .padding(.horizontal, 8)
@@ -2794,9 +2799,9 @@ struct TurnInputBubble: View {
                 .foregroundStyle(Theme.ink.opacity(checkpointHover ? 0.92 : 0.7))
                 .padding(.horizontal, 9)
                 .frame(height: 22)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
                     .fill(Theme.ink.opacity(checkpointHover ? 0.10 : 0.06)))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .overlay(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
                     .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
                 .contentShape(Rectangle())
             }
@@ -2817,9 +2822,9 @@ struct TurnInputBubble: View {
                         .fixedSize()
                         .padding(.horizontal, 9)
                         .frame(height: 22)
-                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.shade.opacity(0.85)))
-                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.ultraThinMaterial))
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.shade.opacity(0.85)))
+                        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(.ultraThinMaterial))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
                             .strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.5))
                         .offset(y: 28)
                         .allowsHitTesting(false)
@@ -2968,7 +2973,7 @@ struct TurnInputBubble: View {
                     .foregroundStyle(Theme.ink.opacity(0.45))
                     .frame(maxWidth: .infinity)
                     .frame(height: 40)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.ink.opacity(0.05)))
+                    .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.ink.opacity(0.05)))
                 }
             }
             // What was attached with this message: shown above the bubble
@@ -2988,7 +2993,7 @@ struct TurnInputBubble: View {
                     .foregroundStyle(Theme.ink.opacity(0.7))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.08)))
+                    .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.ink.opacity(0.08)))
                 }
             }
             if editing {
@@ -3102,8 +3107,8 @@ struct TurnThumbnail: View {
                         .padding(5)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                 .strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
             .contentShape(Rectangle())
             .onTapGesture { NSWorkspace.shared.open(url) }
@@ -3293,9 +3298,9 @@ struct MarkdownNotes: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(9)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                             .fill(Theme.shade.opacity(0.32)))
-                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                             .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
                         .padding(.vertical, 2)
                 }
@@ -3328,8 +3333,8 @@ struct MarkdownNotes: View {
             }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.ink.opacity(0.05)))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.ink.opacity(0.05)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
             .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
         .padding(.vertical, 2)
     }
@@ -3732,7 +3737,7 @@ struct FooterButton: View {
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(tint ?? Theme.ink.opacity(hover ? 0.92 : 0.55))
                 .frame(width: 26, height: 26)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                     .fill(Theme.ink.opacity(hover ? 0.09 : 0)))
                 .contentShape(Rectangle())
                 .contentTransition(.symbolEffect(.replace))
