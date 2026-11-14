@@ -58,10 +58,19 @@ enum Theme {
     // Shape and spacing. Nothing casts a drop shadow, the panel included:
     // depth comes from the glass and its hairline edge.
     static let panelRadius: CGFloat = 20
-    static let cardRadius: CGFloat = 14
+    /// The one corner scale (continuous iOS curve), shared with the mobile apps.
+    static var chipRadius: CGFloat { Design.chipRadius }
+    static var controlRadius: CGFloat { Design.controlRadius }
+    static var tileRadius: CGFloat { Design.tileRadius }
+    static var cardRadius: CGFloat { Design.cardRadius }
     static let bubbleRadius: CGFloat = 9
     /// Space between the panel's edge and its content.
     static let gutter: CGFloat = 14
+    /// The gap between two panels, and between a panel and the window's
+    /// edge (shared with the mobile apps).
+    static var panelGap: CGFloat { Design.panelGap }
+    /// The corner of something set into a panel by one gap.
+    static var innerRadius: CGFloat { Design.innerRadius }
 
     static var accentGradient: LinearGradient {
         LinearGradient(colors: [accent, lilac], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -156,43 +165,6 @@ struct PulsingDot: View {
     }
 }
 
-/// Layered glass edge: a gradient hairline plus a faint inner highlight.
-/// Pass a tint to make the edge glow in that color (used for active cards).
-struct GlassBorder: ViewModifier {
-    var radius: CGFloat
-    var tint: Color?
-
-    func body(content: Content) -> some View {
-        let colors: [Color] = tint.map { [$0.opacity(0.80), $0.opacity(0.16), $0.opacity(0.48)] }
-            // On light glass an edge that fades to almost nothing loses the
-            // card altogether, so it is kept even all the way round.
-            ?? (Theme.isLight
-                ? [Theme.ink.opacity(0.20), Theme.ink.opacity(0.11), Theme.ink.opacity(0.16)]
-                : [Theme.ink.opacity(0.42), Theme.ink.opacity(0.05), Theme.ink.opacity(0.18)])
-        return content
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: colors,
-                                                 startPoint: .topLeading,
-                                                 endPoint: .bottomTrailing),
-                                  lineWidth: 1)
-                    .allowsHitTesting(false)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: max(radius - 1.5, 0), style: .continuous)
-                    .inset(by: 1.5)
-                    .strokeBorder(Theme.ink.opacity(0.045), lineWidth: 0.5)
-                    .allowsHitTesting(false)
-            )
-    }
-}
-
-extension View {
-    func glassBorder(radius: CGFloat, tint: Color? = nil) -> some View {
-        modifier(GlassBorder(radius: radius, tint: tint))
-    }
-}
-
 // MARK: - Content zoom
 
 /// Draws a view larger or smaller while it keeps filling the same space:
@@ -217,56 +189,6 @@ struct ContentZoom: ViewModifier {
 extension View {
     func contentZoom(_ zoom: Double) -> some View {
         modifier(ContentZoom(zoom: CGFloat(zoom)))
-    }
-}
-
-// MARK: - Liquid Glass
-
-/// Apple's Liquid Glass (the iOS 26 / macOS 26 system material) for the
-/// navigation and control layer: toolbars, tab bars, the chip row, the chat
-/// box. Content (the conversation, cards of settings) stays on plain
-/// surfaces, as the system's own apps do. On macOS 14 and 15, where the
-/// material does not exist, the same shapes fall back to the tinted
-/// hairline surface used before.
-@available(macOS 26.0, *)
-private func liquidGlassStyle(tint: Color?, interactive: Bool) -> Glass {
-    var glass = Glass.regular
-    if let tint {
-        glass = glass.tint(tint.opacity(0.32))
-    }
-    if interactive {
-        glass = glass.interactive()
-    }
-    return glass
-}
-
-extension View {
-    /// Puts the view on Liquid Glass of the given shape. `interactive`
-    /// makes the glass respond to presses, for buttons.
-    @ViewBuilder
-    func liquidGlass<S: Shape>(in shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(liquidGlassStyle(tint: tint, interactive: interactive), in: shape)
-        } else {
-            self
-                .background(shape.fill((tint ?? Theme.ink).opacity(tint == nil ? 0.07 : 0.14)))
-                .overlay(shape.stroke((tint ?? Theme.ink).opacity(tint == nil ? 0.16 : 0.30), lineWidth: 0.75))
-        }
-    }
-}
-
-/// Groups neighbouring glass shapes so they blend and morph into one
-/// another, as the system's own bars do.
-struct GlassGroup<Content: View>: View {
-    var spacing: CGFloat = 8
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: spacing) { content }
-        } else {
-            content
-        }
     }
 }
 
@@ -360,8 +282,8 @@ struct KeyCap: View {
                 .foregroundStyle(Theme.ink.opacity(0.72))
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 4.5, style: .continuous).fill(Theme.ink.opacity(0.08)))
-                .overlay(RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.ink.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
                     .strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
             Text(label)
                 .font(.system(size: 9.5, weight: .medium))
@@ -444,6 +366,54 @@ struct IconButton: View {
         .onHover { hover = $0 }
         .animation(.easeOut(duration: 0.12), value: hover)
         .help(help)
+    }
+}
+
+/// The small icon of the area above the chat box (the arrow to the newest
+/// message, the plan ring, the suggestions' chevron and cross): one size
+/// and padding, on the same glass as the cards there, with a corner that
+/// sits concentric inside a card's.
+struct CardIconButton: View {
+    static let size: CGFloat = 24
+    static var radius: CGFloat { Theme.controlRadius }
+
+    let symbol: String
+    var help: String = ""
+    let action: () -> Void
+    @State private var hover = false
+
+    init(_ symbol: String, help: String = "", action: @escaping () -> Void) {
+        self.symbol = symbol
+        self.help = help
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Theme.ink.opacity(hover ? 1 : 0.72))
+                .frame(width: Self.size, height: Self.size)
+                .cardIconSurface(hover: hover)
+                .contentShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
+        .help(help)
+    }
+}
+
+extension View {
+    /// The glass under a CardIconButton, for anything of its size there.
+    func cardIconSurface(hover: Bool = false, lit: Bool = false) -> some View {
+        let shape = RoundedRectangle(cornerRadius: CardIconButton.radius, style: .continuous)
+        return self
+            .background(shape.fill((lit ? Theme.accent : Theme.ink).opacity(lit ? 0.16 : (hover ? 0.12 : 0))))
+            .background(shape.fill(Theme.shade.opacity(0.45)))
+            .liquidGlass(in: shape)
+            .glassBorder(radius: CardIconButton.radius)
     }
 }
 

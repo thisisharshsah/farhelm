@@ -26,10 +26,7 @@ struct WorkStatusBar: View {
 
     /// The line has something on it: the status while working, or the
     /// ring while the plan is closed. Otherwise it takes no room at all.
-    private var shown: Bool { working || (plan != nil && !planOpen) || jumpShown }
-
-    /// Scrolled up: the arrow back to the newest sits on this line.
-    private var jumpShown: Bool { app.chatScrolledUp && !app.conversation.turns.isEmpty }
+    private var shown: Bool { working || (plan != nil && !planOpen) }
 
     /// The checklist is open above the line.
     @State private var planOpen = false
@@ -63,7 +60,7 @@ struct WorkStatusBar: View {
                 StatusPill(status, thinking: thinking, size: 11.5)
                     .animation(.easeOut(duration: 0.2), value: status)
                     .allowsHitTesting(false)
-                .padding(.trailing, jumpShown ? 82 : 48)
+                .padding(.trailing, 48)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .transition(.opacity.combined(with: .offset(y: 4)))
             }
@@ -72,10 +69,6 @@ struct WorkStatusBar: View {
         .frame(height: shown ? 28 : 0)
         .overlay(alignment: .trailing) {
             HStack(spacing: 6) {
-                if jumpShown {
-                    JumpToLatest { app.jumpToNewest += 1 }
-                        .transition(.scale(scale: 0.6).combined(with: .opacity))
-                }
                 // While the plan is open its progress is in the card's corner.
                 if let plan, !planOpen {
                     PlanProgress(plan: plan, open: $planOpen)
@@ -86,7 +79,6 @@ struct WorkStatusBar: View {
         .padding(.bottom, shown ? 4 : 0)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: working)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: plan == nil)
-        .animation(.easeOut(duration: 0.18), value: jumpShown)
     }
 }
 
@@ -109,14 +101,12 @@ private struct PlanProgress: View {
         Button { open.toggle() } label: {
             // The shared ring; the count shows on hover (and while open).
             PlanRing(plan: plan.map(\.design), size: 15, showsCount: hover || open)
-            .padding(.horizontal, hover || open ? 9 : 4.5)
-            .frame(height: 24)
+            .padding(.horizontal, hover || open ? 7 : 0)
+            .frame(minWidth: CardIconButton.size, minHeight: CardIconButton.size, maxHeight: CardIconButton.size)
             .animation(.spring(response: 0.25, dampingFraction: 0.85), value: hover)
-            .background(Capsule().fill((open ? Theme.accent : Theme.ink).opacity(open ? 0.16 : (hover ? 0.12 : 0.07))))
-            // Glass under it, as it floats over the conversation.
-            .background(Capsule().fill(Theme.shade.opacity(0.45)))
-            .liquidGlass(in: Capsule())
-            .contentShape(Capsule())
+            // The same glass, size and corner as the other icons here.
+            .cardIconSurface(hover: hover, lit: open)
+            .contentShape(RoundedRectangle(cornerRadius: CardIconButton.radius, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -177,8 +167,8 @@ private struct PlanCard: View {
         // The same glass as the chat box under it, so the two read as one
         // family. (The conversation ends above them, so nothing shows
         // through.)
-        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Theme.shade.opacity(0.45)))
-        .liquidGlass(in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).fill(Theme.shade.opacity(0.45)))
+        .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous))
     }
 }
 

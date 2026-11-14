@@ -213,6 +213,7 @@ struct OverlayView: View {
                 // the chat box.
                 if !app.showSettings {
                     VStack(spacing: 0) {
+                    jumpArrow
                     actionCard
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.agentRunning)
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.pendingApproval?.id)
@@ -936,13 +937,38 @@ struct OverlayView: View {
                 .padding(.top, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         } else if let next = app.nextSteps {
-            // Suggested next steps pop up here, like the agent's questions:
-            // pick one to do it, or dismiss them.
+            // Suggested next steps: one compact row, not the large card
+            // that questions and permission requests use.
             NextStepsCard(turnID: next.turn, steps: next.steps)
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+
+    /// Something is open above the chat box: a question or permission card,
+    /// or the suggestions row.
+    private var cardShown: Bool {
+        (app.agentRunning && (app.pendingApproval != nil || app.pendingQuestion != nil)) || app.nextSteps != nil
+    }
+
+    /// Scrolled up, the arrow back to the newest floats over the chat,
+    /// centered just above whatever is open over the chat box (a card, the
+    /// suggestions row, or else the status line and the chat box with its
+    /// attachments). It takes no room.
+    private var jumpArrow: some View {
+        Color.clear
+            .frame(height: 0)
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .bottom) {
+                if app.chatScrolledUp, !app.conversation.turns.isEmpty {
+                    JumpToLatest { app.jumpToNewest += 1 }
+                        .padding(.bottom, cardShown ? 6 : 6 + statusHeight)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: app.chatScrolledUp)
+            .zIndex(11)
     }
 
     /// Everything optional in setup is done too.
@@ -1953,43 +1979,130 @@ struct ChatThread: View {
     }
 }
 
-/// What to do next after the agent finishes, offered above the chat box in
-/// the same form as its questions: numbered choices, one click to do one.
+/// What to do next after the agent finishes, as one compact row above the
+/// chat box: a small label, as many suggestions as fit on the line, a "+N"
+/// pill for the rest, and a chevron that opens the card to show them all.
+/// One click on a suggestion sends it; the cross puts them away. (The
+/// agent's own questions and permission requests keep the large card.)
 struct NextStepsCard: View {
     @EnvironmentObject var app: AppState
     let turnID: UUID
     let steps: [String]
+    @State private var expanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(Theme.accentGradient)
-                    .frame(width: 16, height: 16)
-                Text("Next step")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                Spacer(minLength: 6)
-                IconButton("xmark", help: "Dismiss these suggestions") {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                label
+                if expanded {
+                    Spacer(minLength: 4)
+                } else {
+                    // The most pills that fit on the line, the rest behind "+N".
+                    ViewThatFits(in: .horizontal) {
+                        ForEach(Array(stride(from: steps.count, through: 1, by: -1)), id: \.self) { count in
+                            row(showing: count)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                CardIconButton(expanded ? "chevron.down" : "chevron.up",
+                               help: expanded ? "Show fewer suggestions" : "Show every suggestion") {
+                    toggle()
+                }
+                CardIconButton("xmark", help: "Dismiss these suggestions") {
                     app.dismissSuggestions(turnID)
                 }
             }
-            // Each step a bubble; one click does it.
-            ChoiceBubbles(steps) { step in
-                app.dismissSuggestions(turnID)
-                app.send(step)
+            if expanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                        StepPill(title: step, wraps: true) { send(step) }
+                    }
+                }
+                .padding(.leading, 2)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .id(turnID)
-            Text("Or type what you want instead.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.ink.opacity(0.48))
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 11)
+        .padding(6)
+        .padding(.leading, 4)
         .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-            .fill(Theme.shade.opacity(0.28)))
+            .fill(Theme.shade.opacity(0.45)))
+        .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .glassBorder(radius: Theme.cardRadius, tint: Theme.accent)
+        .onChange(of: turnID) { _, _ in expanded = false }
+    }
+
+    private var label: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(Theme.accentGradient)
+            Text("Next step")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+        }
+        .fixedSize()
+    }
+
+    /// The first `count` suggestions, and a "+N" pill for the rest.
+    private func row(showing count: Int) -> some View {
+        HStack(spacing: 5) {
+            ForEach(Array(steps.prefix(count).enumerated()), id: \.offset) { _, step in
+                StepPill(title: step, truncates: count == 1) { send(step) }
+            }
+            if count < steps.count {
+                StepPill(title: "+\(steps.count - count)", tint: Theme.ink,
+                         help: "Show all \(steps.count) suggestions") { toggle() }
+            }
+        }
+    }
+
+    private func toggle() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { expanded.toggle() }
+    }
+
+    private func send(_ step: String) {
+        app.dismissSuggestions(turnID)
+        app.send(step)
+    }
+}
+
+/// One suggestion as a small pill; a click sends it.
+private struct StepPill: View {
+    let title: String
+    var tint: Color = Theme.accent
+    var help: String?
+    /// Cut short with "…" when the line is too narrow for it.
+    var truncates = false
+    /// In the opened card: the whole suggestion, over more lines if need be.
+    var wraps = false
+    let action: () -> Void
+    @State private var hover = false
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: CardIconButton.radius, style: .continuous)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.ink.opacity(hover ? 1 : 0.88))
+                .lineLimit(wraps ? 3 : 1)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: !truncates && !wraps, vertical: wraps)
+                .padding(.horizontal, 9)
+                .padding(.vertical, wraps ? 4 : 0)
+                .frame(minHeight: CardIconButton.size)
+                .background(shape.fill(tint.opacity(hover ? 0.2 : 0.1)))
+                .overlay(shape.strokeBorder(tint.opacity(hover ? 0.45 : 0.25), lineWidth: 0.5))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
+        .help(help ?? title)
     }
 }
 
@@ -3762,26 +3875,13 @@ struct GoBackChoices: View {
 }
 
 
-/// The round arrow that goes back to the newest message, on the status
-/// line beside the plan ring.
+/// The arrow that goes back to the newest message, floating centered over
+/// the chat just above whatever is open over the chat box.
 struct JumpToLatest: View {
     let action: () -> Void
-    @State private var hover = false
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "arrow.down")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(hover ? 1 : 0.85))
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(Theme.shade.opacity(0.45)))
-                .liquidGlass(in: Circle())
-                .overlay(Circle().strokeBorder(Theme.ink.opacity(hover ? 0.22 : 0.12), lineWidth: 0.5))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
-        .help("Go to the newest message")
+        CardIconButton("arrow.down", help: "Go to the newest message", action: action)
     }
 }
 
