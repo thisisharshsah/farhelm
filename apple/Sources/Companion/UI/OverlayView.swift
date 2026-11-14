@@ -40,10 +40,15 @@ struct OverlayView: View {
     /// Heights of the floating top bar and the floating bottom, so the
     /// conversation can leave room for them at its ends.
     @State private var topHeight: CGFloat = 52
-    @State private var bottomHeight: CGFloat = 96
+    @State private var bottomHeight: CGFloat = 82
     /// The status line (and the plan, when open) floating just above the
     /// chat box: the conversation ends above it too.
     @State private var statusHeight: CGFloat = 0
+    /// The card over the chat box (a question, a permission or the
+    /// suggestions row) and the popup hanging over it (models, effort),
+    /// measured, so the arrow back to the newest floats just above them.
+    @State private var cardHeight: CGFloat = 0
+    @State private var popupHeight: CGFloat = 0
     /// The panel's width as it really is, so the columns always fit in it.
     @State private var panelWidth: CGFloat = 560
     /// Renaming the open conversation in the top bar.
@@ -213,8 +218,8 @@ struct OverlayView: View {
                 // the chat box.
                 if !app.showSettings {
                     VStack(spacing: 0) {
-                    jumpArrow
-                    actionCard
+                    VStack(spacing: 0) { actionCard }
+                        .background(measure { if abs($0 - cardHeight) > 0.5 { cardHeight = $0 } })
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.agentRunning)
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.pendingApproval?.id)
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.pendingQuestion?.id)
@@ -227,6 +232,7 @@ struct OverlayView: View {
                         .frame(height: 0)
                         .frame(maxWidth: .infinity)
                         .overlay(alignment: .bottomLeading) {
+                            VStack(alignment: .leading, spacing: 0) {
                             if showModels {
                                 ModelPicker(isOpen: $showModels)
                                     // As wide as it likes to be, but never
@@ -255,6 +261,8 @@ struct OverlayView: View {
                                     .padding(.bottom, 2)
                                     .transition(.opacity.combined(with: .offset(y: 4)))
                             }
+                            }
+                            .background(measure { if abs($0 - popupHeight) > 0.5 { popupHeight = $0 } })
                         }
                         .animation(.easeOut(duration: 0.16), value: modelHover)
                         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showModels)
@@ -278,9 +286,11 @@ struct OverlayView: View {
                     inputBar
                         .padding(.bottom, 2)
                     }
-                    .padding(.top, 14)
                     .background(edgeFade(from: .bottom))
                     .background(measure { if abs($0 - bottomHeight) > 0.5 { bottomHeight = $0 } })
+                    // Scrolled up, the arrow back to the newest floats over
+                    // the chat's end, above whatever is open; it takes no room.
+                    .overlay(alignment: .bottom) { jumpArrow }
                 }
                 }
                 // A panel of its own, under the top bar, like each column.
@@ -946,29 +956,32 @@ struct OverlayView: View {
         }
     }
 
-    /// Something is open above the chat box: a question or permission card,
-    /// or the suggestions row.
-    private var cardShown: Bool {
-        (app.agentRunning && (app.pendingApproval != nil || app.pendingQuestion != nil)) || app.nextSteps != nil
+    /// Scrolled up, the arrow back to the newest: just the small icon
+    /// button, floating centered over the end of the chat. It sits in the
+    /// bottom stack's overlay, so it takes no room above the chat box, and
+    /// it slides up and down with whatever opens over the chat box (a card,
+    /// the suggestions row, a popup, the status line).
+    private var jumpArrow: some View {
+        ZStack(alignment: .bottom) {
+            if app.chatScrolledUp, !app.conversation.turns.isEmpty {
+                CardIconButton("arrow.down", help: "Go to the newest message") { app.jumpToNewest += 1 }
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
+        }
+        .padding(.bottom, arrowLift)
+        .animation(.easeOut(duration: 0.18), value: app.chatScrolledUp)
+        // Follows the card or popup over the chat box as it opens and
+        // closes, sliding rather than jumping.
+        .animation(.easeOut(duration: 0.2), value: arrowLift)
     }
 
-    /// Scrolled up, the arrow back to the newest floats over the chat,
-    /// centered just above whatever is open over the chat box (a card, the
-    /// suggestions row, or else the status line and the chat box with its
-    /// attachments). It takes no room.
-    private var jumpArrow: some View {
-        Color.clear
-            .frame(height: 0)
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: .bottom) {
-                if app.chatScrolledUp, !app.conversation.turns.isEmpty {
-                    JumpToLatest { app.jumpToNewest += 1 }
-                        .padding(.bottom, cardShown ? 6 : 6 + statusHeight)
-                        .transition(.scale(scale: 0.6).combined(with: .opacity))
-                }
-            }
-            .animation(.easeOut(duration: 0.18), value: app.chatScrolledUp)
-            .zIndex(11)
+    /// How far above the bottom stack's foot the arrow floats: over the chat
+    /// box, then the card (when one is open), or the status line, plan or
+    /// popup hanging just above the chat box if that reaches higher.
+    private var arrowLift: CGFloat {
+        let inputHeight = max(0, bottomHeight - cardHeight)
+        let hanging = max(statusHeight, popupHeight)
+        return max(bottomHeight, inputHeight + hanging) + 6
     }
 
     /// Everything optional in setup is done too.
@@ -3947,18 +3960,6 @@ struct GoBackChoices: View {
             .disabled(files == 0)
     }
 }
-
-
-/// The arrow that goes back to the newest message, floating centered over
-/// the chat just above whatever is open over the chat box.
-struct JumpToLatest: View {
-    let action: () -> Void
-
-    var body: some View {
-        CardIconButton("arrow.down", help: "Go to the newest message", action: action)
-    }
-}
-
 
 
 /// A message sent while the agent works in this chat: in the chat as
