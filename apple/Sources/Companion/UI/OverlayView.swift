@@ -1813,7 +1813,6 @@ struct ChatThread: View {
                                     // The request as a whole (its files and its words)
                                     // is held at the top while its reply scrolls under it.
                                     VStack(alignment: .trailing, spacing: 0) {
-                                        SentAttachments(turn: turn)
                                         TurnInputBubble(turn: turn, streaming: streaming, pinned: pinnedTurn == turn.id)
                                     }
                                     // Moved first, measured after: the measure is where
@@ -3062,6 +3061,10 @@ struct TurnInputBubble: View {
         if !streaming, app.hasCheckpoint(turn) {
             checkpointLine
         }
+
+        // What was sent with this message, under its checkpoint line and
+        // over its words.
+        SentAttachments(turn: turn)
 
         if hasBubble {
         VStack(alignment: .leading, spacing: 3) {
