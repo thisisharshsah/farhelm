@@ -41,6 +41,9 @@ struct OverlayView: View {
     /// conversation can leave room for them at its ends.
     @State private var topHeight: CGFloat = 52
     @State private var bottomHeight: CGFloat = 96
+    /// The status line (and the plan, when open) floating just above the
+    /// chat box: the conversation ends above it too.
+    @State private var statusHeight: CGFloat = 0
     /// The panel's width as it really is, so the columns always fit in it.
     @State private var panelWidth: CGFloat = 560
     /// Renaming the open conversation in the top bar.
@@ -140,7 +143,7 @@ struct OverlayView: View {
                     // Room under the bar for the sidebar's toggle row, so the
                     // first message starts below it.
                     ChatThread(topInset: (10 + (toggleInChat ? 38 : 0)) / zoom,
-                               bottomInset: bottomHeight / zoom,
+                               bottomInset: (bottomHeight + statusHeight) / zoom,
                                toolsBottom: (8 + toolsHeight) / zoom)
                         .padding(.horizontal, Theme.gutter / zoom)
                         .contentZoom(settings.contentZoom * settings.chatTextScale)
@@ -158,7 +161,7 @@ struct OverlayView: View {
                                 LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
                                     .frame(height: 14)
                                 Color.clear
-                                    .frame(height: max(0, bottomHeight - 14))
+                                    .frame(height: max(0, bottomHeight + statusHeight - 14))
                             }
                         }
                         // The sidebar's toggle, closed: at the chat's top
@@ -268,6 +271,7 @@ struct OverlayView: View {
                             WorkStatusBar()
                                 .padding(.horizontal, Theme.gutter)
                                 .padding(.bottom, 2)
+                                .background(measure { if abs($0 - statusHeight) > 0.5 { statusHeight = $0 } })
                         }
                         .zIndex(9)
                     inputBar
@@ -1685,17 +1689,6 @@ struct ChatThread: View {
     /// held in place, until the end of its reply pushes it up and away.
     @State private var pinnedTurn: UUID?
     @State private var pinOffset: CGFloat = 0
-    /// The free room kept below the end of the conversation so the newest
-    /// message can reach the top. (Where things sit is in `scrollState`.)
-    @State private var freeRoom: CGFloat = 0
-
-    private func updateFreeRoom(viewport: CGFloat) {
-        // From the newest typed message to the end of the conversation.
-        let newest = scrollState.turnFrames.values.max { $0.minY < $1.minY }
-        let tail = newest.map { scrollState.endY - $0.minY } ?? viewport
-        let room = max(0, viewport - topRoom - tail)
-        if abs(room - freeRoom) > 1 { freeRoom = room }
-    }
 
     /// Where it sticks: below the bar, the filters and the icons that show
     /// at the top right on hover.
@@ -1862,11 +1855,6 @@ struct ChatThread: View {
                                 Color.clear.preference(key: ThreadEndKey.self,
                                                        value: geometry.frame(in: .named("thread")).maxY)
                             })
-                        // Free room below the end: just enough for the newest
-                        // message to be scrolled to the top, never so much
-                        // that the view can be scrolled to nothing.
-                        Color.clear
-                            .frame(height: freeRoom)
                     }
                     .background(GeometryReader { inner in
                         Color.clear.preference(key: ThreadMetricsKey.self,
@@ -1879,7 +1867,7 @@ struct ChatThread: View {
                 // Where the scroll is, from the scroll view itself: on the
                 // Mac, scrolling does not always lay the content out again,
                 // so measuring the content alone can miss it.
-                .modifier(ScrolledToEnd(room: freeRoom) { atEnd in
+                .modifier(ScrolledToEnd(room: 0) { atEnd in
                     if atEnd != followNewest { followNewest = atEnd }
                 })
                 // The request whose reply fills the view, held at the top
@@ -1887,11 +1875,9 @@ struct ChatThread: View {
                 .onPreferenceChange(TurnFramesKey.self) { frames in
                     scrollState.turnFrames = frames
                     updatePin()
-                    updateFreeRoom(viewport: outer.size.height)
                 }
                 .onPreferenceChange(ThreadEndKey.self) { end in
                     scrollState.endY = end
-                    updateFreeRoom(viewport: outer.size.height)
                 }
                 .onPreferenceChange(BubbleFramesKey.self) { frames in
                     scrollState.bubbleFrames = frames
@@ -1902,17 +1888,19 @@ struct ChatThread: View {
                     // stays in view, from whichever side the panel was
                     // dragged.
                     let resized = scrollState.viewport > 0 && abs(metrics.viewport - scrollState.viewport) > 0.5
+                    // A growing answer or a new entry, while you are at the
+                    // bottom, is followed to just above the chat box. Scrolled
+                    // up, the view stays exactly where you put it.
+                    let grew = scrollState.content > 0 && metrics.content > scrollState.content + 0.5
                     scrollState.content = metrics.content
                     scrollState.viewport = metrics.viewport
-                    if resized, followNewest {
+                    if resized || grew, followNewest {
                         proxy.scrollTo(Self.endID, anchor: .bottom)
                         return
                     }
-                    // Nothing scrolls here: a growing answer, new entries or a
-                    // resized panel leave the view where it is. This only
-                    // notes whether the end of the conversation is in view,
-                    // not counting the free room below it.
-                    let end = metrics.bottom - freeRoom
+                    // Otherwise this only notes whether the end of the
+                    // conversation is in view.
+                    let end = metrics.bottom
                     let atBottom = end - metrics.viewport < 40
                     if atBottom != followNewest { followNewest = atBottom }
                 }
@@ -1926,14 +1914,15 @@ struct ChatThread: View {
                     DispatchQueue.main.async { proxy.scrollTo(Self.endID, anchor: .bottom) }
                 }
                 .onChange(of: sendMark) { old, new in
-                    // A message was just sent: scroll once so it sits at the
-                    // top, with its reply filling in below it. Nothing else
-                    // scrolls until the next message is sent.
+                    // A message was just sent: bring the end of the
+                    // conversation to just above the chat box, and follow
+                    // its reply from there.
                     guard old.first == new.first, old.last != new.last,
-                          let id = new.last.flatMap(UUID.init(uuidString:)) else { return }
+                          new.last.flatMap(UUID.init(uuidString:)) != nil else { return }
+                    followNewest = true
                     DispatchQueue.main.async {
                         withAnimation(.easeOut(duration: 0.25)) {
-                            proxy.scrollTo(Self.sendAnchorID(id), anchor: .top)
+                            proxy.scrollTo(Self.endID, anchor: .bottom)
                         }
                     }
                 }
