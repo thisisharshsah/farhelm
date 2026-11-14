@@ -2743,6 +2743,10 @@ struct WorkTrail: View {
                     .foregroundStyle(Theme.ink.opacity(0.45))
                     .rotationEffect(.degrees(showing ? 90 : 0))
                 Spacer(minLength: 0)
+                // What the steps read or made, as small thumbnails.
+                ThumbStrip(paths: WorkStep.files(in: steps))
+                    .opacity(showing ? 0 : 1)
+                    .allowsHitTesting(!showing)
             }
             .onAppear { if working, started == nil { started = Date() } }
             .onChange(of: working) { _, now in
