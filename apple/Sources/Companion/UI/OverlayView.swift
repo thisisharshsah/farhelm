@@ -1685,17 +1685,14 @@ struct ChatThread: View {
     /// held in place, until the end of its reply pushes it up and away.
     @State private var pinnedTurn: UUID?
     @State private var pinOffset: CGFloat = 0
-    @State private var bubbleFrames: [UUID: CGRect] = [:]
-    @State private var turnFrames: [UUID: CGRect] = [:]
-    /// Where the end of the conversation is, and the free room kept below
-    /// it so the newest message can reach the top.
-    @State private var endY: CGFloat = 0
+    /// The free room kept below the end of the conversation so the newest
+    /// message can reach the top. (Where things sit is in `scrollState`.)
     @State private var freeRoom: CGFloat = 0
 
     private func updateFreeRoom(viewport: CGFloat) {
         // From the newest typed message to the end of the conversation.
-        let newest = turnFrames.values.max { $0.minY < $1.minY }
-        let tail = newest.map { endY - $0.minY } ?? viewport
+        let newest = scrollState.turnFrames.values.max { $0.minY < $1.minY }
+        let tail = newest.map { scrollState.endY - $0.minY } ?? viewport
         let room = max(0, viewport - topRoom - tail)
         if abs(room - freeRoom) > 1 { freeRoom = room }
     }
@@ -1713,8 +1710,9 @@ struct ChatThread: View {
         var found: UUID?
         var offset: CGFloat = 0
         let line = pinLine
-        for (id, frame) in turnFrames {
-            guard frame.maxY > line, let bubble = bubbleFrames[id], bubble.minY < line else { continue }
+        let bubbles = scrollState.bubbleFrames
+        for (id, frame) in scrollState.turnFrames {
+            guard frame.maxY > line, let bubble = bubbles[id], bubble.minY < line else { continue }
             // It stays at the line, but never past the end of its own reply.
             let move = min(line - bubble.minY, frame.maxY - bubble.maxY - 6)
             if move > 0 {
@@ -1887,16 +1885,16 @@ struct ChatThread: View {
                 // The request whose reply fills the view, held at the top
                 // once its own bubble has scrolled away.
                 .onPreferenceChange(TurnFramesKey.self) { frames in
-                    turnFrames = frames
+                    scrollState.turnFrames = frames
                     updatePin()
                     updateFreeRoom(viewport: outer.size.height)
                 }
                 .onPreferenceChange(ThreadEndKey.self) { end in
-                    endY = end
+                    scrollState.endY = end
                     updateFreeRoom(viewport: outer.size.height)
                 }
                 .onPreferenceChange(BubbleFramesKey.self) { frames in
-                    bubbleFrames = frames
+                    scrollState.bubbleFrames = frames
                     updatePin()
                 }
                 .onPreferenceChange(ThreadMetricsKey.self) { metrics in
@@ -2205,6 +2203,13 @@ struct ThreadMetricsKey: PreferenceKey {
 final class ThreadScrollState {
     var content: CGFloat = 0
     var viewport: CGFloat = 0
+    /// Where each request and its bubble sit, and where the conversation
+    /// ends. They change on every scroll frame, so they are kept here, out
+    /// of the view's state: storing them there rebuilt the whole chat on
+    /// every frame and made scrolling stutter.
+    var turnFrames: [UUID: CGRect] = [:]
+    var bubbleFrames: [UUID: CGRect] = [:]
+    var endY: CGFloat = 0
 }
 
 /// One exchange: the prompt (heard, typed or captured), the screenshot when
