@@ -66,7 +66,7 @@ enum ScreenReader {
     /// the top left of the main display. nil when there is no such window
     /// (then the whole monitor is captured).
     @MainActor
-    private static func focusWindow(ownedBy owner: pid_t? = nil) -> (id: CGWindowID, bounds: CGRect)? {
+    private static func focusWindow(ownedBy owner: pid_t? = nil) -> (id: CGWindowID, bounds: CGRect, owner: pid_t)? {
         guard let mainHeight = NSScreen.screens.first?.frame.height else { return nil }
         let cocoa = NSEvent.mouseLocation
         let pointer = CGPoint(x: cocoa.x, y: mainHeight - cocoa.y)
@@ -84,7 +84,7 @@ enum ScreenReader {
                   // under the pointer.
                   owner.map({ (window[kCGWindowOwnerPID as String] as? Int32) == $0 }) ?? bounds.contains(pointer),
                   let number = window[kCGWindowNumber as String] as? UInt32 else { continue }
-            return (CGWindowID(number), bounds)
+            return (CGWindowID(number), bounds, (window[kCGWindowOwnerPID as String] as? Int32) ?? 0)
         }
         return nil
     }
@@ -100,8 +100,16 @@ enum ScreenReader {
     ///
     /// With `frontmost`, the window of the app in front is read instead of
     /// the one under the pointer.
+    ///
+    /// What comes back has been through `Redaction`: never a password
+    /// manager, and no password fields or card numbers.
     static func capture(frontmost: Bool = false) async throws -> (image: CGImage, text: String) {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        // Left out of any picture of the screen around a window: password
+        // managers, and the banners that preview messages.
+        let privateApps = await MainActor.run { Redaction.privateApps() }
+        let hidden = privateApps.union(Redaction.leftOutOfScreen.map { $0.lowercased() })
+        let leftOut = content.applications.filter { hidden.contains($0.bundleIdentifier.lowercased()) }
         let preferred = await preferredDisplayID()
         // A chosen monitor that has been unplugged falls back to the first one.
         guard let display = content.displays.first(where: { Int($0.displayID) == preferred })
@@ -119,6 +127,8 @@ enum ScreenReader {
             owner = await MainActor.run { NSWorkspace.shared.frontmostApplication?.processIdentifier }
         }
         if let focus = await focusWindow(ownedBy: owner) {
+            // A password manager is never pictured.
+            if let refusal = await withheld(focus.owner) { throw refusal }
             // The part of the window that is on the chosen monitor.
             let local = focus.bounds.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY).intersection(whole)
             if local.width >= 320, local.height >= 220 {
@@ -130,35 +140,51 @@ enum ScreenReader {
                     config.height = max(1, Int(window.frame.height * scale))
                     if let image = try? await SCScreenshotManager.captureImage(contentFilter: filter,
                                                                                configuration: config) {
-                        return (image, try await recognizeText(in: image))
+                        return try await Redaction.release(image, area: focus.bounds, owner: focus.owner)
                     }
                 }
                 // The window could not be captured on its own: fall back to
                 // the patch of screen it sits on.
                 config.sourceRect = local
-                let filter = SCContentFilter(display: display, excludingWindows: [])
+                let filter = SCContentFilter(display: display, excludingApplications: leftOut, exceptingWindows: [])
                 let scale = CGFloat(filter.pointPixelScale)
                 config.width = max(1, Int(local.width * scale))
                 config.height = max(1, Int(local.height * scale))
                 let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                return (image, try await recognizeText(in: image))
+                let area = local.offsetBy(dx: display.frame.minX, dy: display.frame.minY)
+                return try await Redaction.release(image, area: area, owner: focus.owner)
             }
         }
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let filter = SCContentFilter(display: display, excludingApplications: leftOut, exceptingWindows: [])
         let scale = CGFloat(filter.pointPixelScale)
         config.width = max(1, Int(whole.width * scale))
         config.height = max(1, Int(whole.height * scale))
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-        let text = try await recognizeText(in: image)
-        return (image, text)
+        let front = await MainActor.run { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+        return try await Redaction.release(image, area: display.frame, owner: front)
+    }
+
+    /// The refusal for a window of a password manager, or nil.
+    @MainActor
+    private static func withheld(_ pid: pid_t) -> Redaction.Withheld? {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              Redaction.privateApps().contains((app.bundleIdentifier ?? "").lowercased()) else { return nil }
+        return Redaction.Withheld(app: app.localizedName ?? "That app")
     }
 
     /// Reads the screen in one step: the app in front, its window title,
     /// the page address when it is a browser, and the window's text.
     static func read() async -> ScreenContext {
         let info = await MainActor.run { frontInfo() }
-        let text = (try? await capture(frontmost: true).text) ?? ""
+        let text: String
+        do {
+            text = try await capture(frontmost: true).text
+        } catch let withheld as Redaction.Withheld {
+            text = withheld.localizedDescription
+        } catch {
+            text = ""
+        }
         return ScreenContext(app: info.app, window: info.window, url: info.url, text: text)
     }
 

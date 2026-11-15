@@ -136,6 +136,7 @@ final class AgentSession {
 
     private static func failed(_ text: String) -> Bool {
         text.contains("FAILED") || text.contains("failed, exit") || text.contains("NOT confirmed") || text.hasPrefix("Not run")
+            || text.contains("SKIPPED")
     }
 
     /// One call's result, in the engine's form.

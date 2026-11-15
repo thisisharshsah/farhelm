@@ -2282,6 +2282,10 @@ final class AppState: ObservableObject {
             // A backstop: a task that goes round and round without taking
             // any step is ended.
             var idleRounds = 0
+            // Rounds in a row whose first keyboard or press step was skipped
+            // because focus had moved: a few in a row means the cursor will
+            // not hold still, and the user is asked instead of the model.
+            var refusedRounds = 0
             while true {
                 if Task.isCancelled { return }
                 idleRounds += 1
@@ -2303,6 +2307,9 @@ final class AppState: ObservableObject {
                         ?? ScreenContext(app: front, window: "", url: "", text: ""))
                     : ScreenContext(app: front, window: "", url: "", text: "")
                 if Task.isCancelled { return }
+                // Where keys would go as this round is planned: the basis of
+                // Orbit's lease for its keyboard and press steps.
+                let plannedFocus = DeviceControl.shared.focusIdentity()
                 let steps: [ActionStep]
                 /// The agent wrote a note to the user this round.
                 var roundSpoke = false
@@ -2407,6 +2414,8 @@ final class AppState: ObservableObject {
                         }
                     }
                 }
+                // Who let each step run, for the record of what the agent did.
+                var approvedBy: [UUID: String] = [:]
                 if !asking.isEmpty {
                     let commands = asking.filter { $0.kind == .run }.map(\.value)
                     let remember = commands.flatMap { AgentPermissions.toRemember($0, remembered: remembered, autoApproveReads: autoReads) }
@@ -2418,6 +2427,7 @@ final class AppState: ObservableObject {
                     if Task.isCancelled { return }
                     switch decision {
                     case .deny:
+                        ActionRecord.shared.declined(asking, task: job.id, chat: job.chatID)
                         let declined = asking.map(\.label).joined(separator: "; ")
                         self.finishAgent(job, "Not run, as you declined: \(declined). Tell me what to do instead.", failed: true)
                         return
@@ -2430,8 +2440,9 @@ final class AppState: ObservableObject {
                         if asking.contains(where: { $0.kind.usesKeyboard }) {
                             keyboardAllowed = true
                         }
+                        for step in asking { approvedBy[step.id] = "you, and to always allow it" }
                     case .allow:
-                        break
+                        for step in asking { approvedBy[step.id] = "you" }
                     }
                 }
 
@@ -2440,6 +2451,9 @@ final class AppState: ObservableObject {
                 // Where each step's results start in the record, so each
                 // result goes back to the model with its own step.
                 var marks: [(step: ActionStep, start: Int)] = []
+                // Where keys would go, as far as the plan could know: what had
+                // focus when it was made, until a step of it moves focus.
+                var focusBasis = plannedFocus
                 for step in steps {
                     if Task.isCancelled { return }
                     marks.append((step, job.context.count))
@@ -2451,6 +2465,57 @@ final class AppState: ObservableObject {
                     }
                     job.currentWhy = step.why
                     defer { job.currentWhy = nil }
+                    // The permanent record of what the agent did (Orbit's
+                    // history): a start line now, an end line however the
+                    // step settles.
+                    let recorded = ActionRecord.records(step.kind)
+                    let contextBefore = job.context.count
+                    var stepError: String?
+                    var stepInterrupted = false
+                    var refusal: String?
+                    if recorded {
+                        ActionRecord.shared.begin(step, task: job.id, chat: job.chatID,
+                                                  approval: approvedBy[step.id] ?? "not asked (\(access.title))",
+                                                  app: NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
+                                                  passwordField: step.kind == .type && (DeviceControl.shared.focusIdentity()?.secure ?? false))
+                    }
+                    defer {
+                        if recorded {
+                            let latest = job.context.count > contextBefore ? (job.context.last ?? "") : ""
+                            if let refusal {
+                                ActionRecord.shared.end(step, .refused, why: refusal)
+                            } else if stepInterrupted || Task.isCancelled {
+                                ActionRecord.shared.end(step, .interrupted)
+                            } else if let stepError {
+                                ActionRecord.shared.end(step, .failed, why: stepError)
+                            } else if latest.contains("FAILED") || latest.contains("NOT confirmed") || latest.contains("failed, exit")
+                                        || latest.contains("stopped after") || (job.log.last?.hasSuffix("(failed)") ?? false) {
+                                ActionRecord.shared.end(step, .failed)
+                            } else {
+                                ActionRecord.shared.end(step, .done)
+                            }
+                        }
+                    }
+                    // Orbit's lease: a keyboard or press step goes where it was
+                    // planned to go, or not at all, and the model plans again
+                    // from the screen as it is now. A refusal costs a round; a
+                    // keystroke in the wrong field can cost much more.
+                    if step.kind == .type || step.kind == .key || step.kind == .click,
+                       let reason = DeviceControl.shared.leaseRefusal(for: step.kind, planned: focusBasis) {
+                        refusal = reason
+                        // What was to be typed is not repeated: it may be a password.
+                        let what = step.kind == .type ? "Type (\(step.value.count) characters)" : step.label
+                        job.log.append("\(what) (skipped: \(reason))")
+                        job.context.append("\(what)\nResult: SKIPPED, \(reason). Nothing was typed or pressed. Look at the screen again and plan from where things are now.")
+                        self.stepFailures += 1
+                        refusedRounds += 1
+                        if refusedRounds >= 3 {
+                            self.finishAgent(job, "Stopped: three times running, the cursor was not where the plan expected (\(reason)). Put the cursor where the work should happen and ask again.", failed: true)
+                            return
+                        }
+                        self.publishProgress(job)
+                        break
+                    }
                     switch step.kind {
                     case .done:
                         // The task is over here. Suggestions are worked out
@@ -2660,6 +2725,11 @@ final class AppState: ObservableObject {
                         } catch {
                             if Task.isCancelled { return }
                             job.isActing = false
+                            if case .cancelled? = error as? DeviceControlError {
+                                stepInterrupted = true
+                            } else {
+                                stepError = error.localizedDescription
+                            }
                             self.finishAgent(job, error.localizedDescription, failed: true)
                             return
                         }
@@ -2683,6 +2753,14 @@ final class AppState: ObservableObject {
                         }
                         job.context.append(step.label + note)
                     }
+                    // Typing leaves focus where it was, and reading, writing
+                    // files or waiting do not touch it. Anything else may move
+                    // it on purpose, so the next step has no basis to hold to.
+                    switch step.kind {
+                    case .type: focusBasis = DeviceControl.shared.focusIdentity()
+                    case .read, .search, .fetch, .web, .plan, .write, .edit, .delegate, .wait: break
+                    default: focusBasis = nil
+                    }
                     self.publishProgress(job)
                     // A checkmark for a step that went through, a shake for one that did not.
                     let latest = job.context.last ?? ""
@@ -2694,6 +2772,7 @@ final class AppState: ObservableObject {
                     }
                     stepsRun += 1
                     idleRounds = 0
+                    refusedRounds = 0
                     if stepsRun >= stepLimit {
                         // A long task is not cut off: it checks in, and
                         // carries on for as many steps again on a yes.

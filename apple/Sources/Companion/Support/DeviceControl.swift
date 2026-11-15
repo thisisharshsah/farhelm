@@ -121,6 +121,8 @@ enum DeviceControlError: LocalizedError {
     case notAllowed
     case ownWindow
     case focusChanged
+    case focusMoved
+    case secureField
     case cancelled
     case unknownKey(String)
 
@@ -132,6 +134,10 @@ enum DeviceControlError: LocalizedError {
             return "The keys would have gone into Companion itself, so nothing was typed. Click into the app and field you mean (or name the app in your message) and try again."
         case .focusChanged:
             return "Stopped typing: the app in front changed."
+        case .focusMoved:
+            return "Stopped typing: another window came to the front."
+        case .secureField:
+            return "Stopped: the cursor is in a password field. Passwords are entered by you, never typed by the agent."
         case .cancelled:
             return "Stopped typing."
         case .unknownKey(let key):
@@ -140,11 +146,42 @@ enum DeviceControlError: LocalizedError {
     }
 }
 
+/// Where keys would go right now: the app in front, its focused window and
+/// the focused element. The basis of Orbit's lease, for the keyboard.
+struct FocusIdentity {
+    let pid: pid_t
+    let window: AXUIElement?
+    let element: AXUIElement?
+    /// The focused element is a password field.
+    let secure: Bool
+
+    /// Keys typed now land where they would have landed then: the same
+    /// field, not just the same app.
+    func sameField(as other: FocusIdentity) -> Bool {
+        pid == other.pid && Self.same(element, other.element)
+    }
+
+    /// A press now happens in the window it was planned for.
+    func sameWindow(as other: FocusIdentity) -> Bool {
+        pid == other.pid && Self.same(window, other.window)
+    }
+
+    private static func same(_ a: AXUIElement?, _ b: AXUIElement?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (a?, b?): return CFEqual(a, b)
+        default: return false
+        }
+    }
+}
+
 /// Types text and presses keys in whatever app is in front, by posting
 /// keyboard events. Needs the Accessibility permission.
 ///
-/// Safety: it only runs steps for a task the user gave, it stops the moment
-/// the app in front changes mid-typing, and Escape cancels it.
+/// Safety: it only runs steps for a task the user gave; it never types into
+/// a password field; it stops the moment the app in front changes, another
+/// window comes to the front mid-typing, or the cursor lands in a password
+/// field; and Escape cancels it.
 @MainActor
 final class DeviceControl {
     static let shared = DeviceControl()
@@ -163,6 +200,47 @@ final class DeviceControl {
 
     func cancel() {
         cancelled = true
+    }
+
+    /// Where keys would go now, or nil when that cannot be told: no
+    /// Accessibility permission, or Companion itself is in front.
+    func focusIdentity() -> FocusIdentity? {
+        guard allowed, let running = NSWorkspace.shared.frontmostApplication,
+              running.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return nil }
+        let app = AXUIElementCreateApplication(running.processIdentifier)
+        AXUIElementSetMessagingTimeout(app, 1.0)
+        let focused = element(app, kAXFocusedUIElementAttribute)
+        return FocusIdentity(pid: running.processIdentifier,
+                             window: element(app, kAXFocusedWindowAttribute),
+                             element: focused,
+                             secure: focused.map(Redaction.isSecure) ?? false)
+    }
+
+    /// Orbit's lease: whether a keyboard or press step may go ahead, given
+    /// where focus was when the step was planned. Returns why not, or nil.
+    ///
+    /// Text is never typed into a password field. Keys go only where the
+    /// plan expected them: the same field, not just the same app. A press
+    /// happens only in the window the plan was made in. `planned` is nil
+    /// once an earlier step of the same plan has moved focus on purpose;
+    /// then only the password rule applies.
+    func leaseRefusal(for kind: ActionStep.Kind, planned: FocusIdentity?) -> String? {
+        guard let now = focusIdentity() else { return nil }
+        if kind == .type, now.secure {
+            return "the cursor is in a password field, and passwords are entered by the user, never typed by the agent"
+        }
+        guard let planned else { return nil }
+        if now.pid != planned.pid {
+            return "a different app is in front than when this step was planned"
+        }
+        switch kind {
+        case .type, .key:
+            return now.sameField(as: planned) ? nil : "the cursor moved to another field after this step was planned"
+        case .click:
+            return now.sameWindow(as: planned) ? nil : "a different window is in front than when this step was planned"
+        default:
+            return nil
+        }
     }
 
     func run(_ steps: [ActionStep]) async throws {
@@ -199,16 +277,25 @@ final class DeviceControl {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
 
-        func check() throws {
+        /// Where this step's typing started.
+        var focusAtStart: FocusIdentity?
+        func check(typing: Bool = false) throws {
             if cancelled { throw DeviceControlError.cancelled }
             if NSWorkspace.shared.frontmostApplication?.processIdentifier != target.processIdentifier {
                 throw DeviceControlError.focusChanged
             }
+            guard typing, let focusAtStart, let now = focusIdentity() else { return }
+            if now.secure { throw DeviceControlError.secureField }
+            if focusAtStart.window != nil, !now.sameWindow(as: focusAtStart) {
+                throw DeviceControlError.focusMoved
+            }
         }
         for step in steps {
             try check()
+            focusAtStart = step.kind == .type ? focusIdentity() : nil
             switch step.kind {
             case .type:
+                try check(typing: true)
                 // A line break is sent as Shift+Return, which adds a line in
                 // chat boxes instead of sending the message.
                 let lines = step.value.components(separatedBy: .newlines)
@@ -220,7 +307,7 @@ final class DeviceControl {
                     let units = Array(line.utf16)
                     var start = 0
                     while start < units.count {
-                        try check()
+                        try check(typing: true)
                         let end = min(start + 16, units.count)
                         type(Array(units[start..<end]))
                         start = end

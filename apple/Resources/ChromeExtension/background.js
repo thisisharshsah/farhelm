@@ -169,7 +169,7 @@ function clickElement(id) {
   if (!el) throw new Error("Element " + id + " is not on the page any more; read the page again.");
   el.scrollIntoView({ block: "center" });
   el.click();
-  return (el.getAttribute("aria-label") || el.innerText || el.value || el.tagName).trim().slice(0, 80);
+  return (el.getAttribute("aria-label") || el.innerText || (el.type === "password" ? "" : el.value) || el.tagName).trim().slice(0, 80);
 }
 
 function typeInto(id, text, submit) {

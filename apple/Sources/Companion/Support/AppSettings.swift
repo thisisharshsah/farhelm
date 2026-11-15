@@ -199,6 +199,10 @@ final class AppSettings: ObservableObject {
     }
     /// Commands that only read run without asking.
     @Published var agentAutoApproveReads: Bool { didSet { d.set(agentAutoApproveReads, forKey: "agentAutoApproveReads") } }
+    /// Apps never shown to a model, by bundle identifier, on top of the
+    /// password managers Companion always keeps private
+    /// (`Redaction.defaultPrivateApps`).
+    @Published var privateApps: [String] { didSet { d.set(privateApps, forKey: "privateApps") } }
     /// How much the agent does without asking in a chat that has not been
     /// given its own choice (an `AgentAccess`).
     @Published var agentAccess: String { didSet { d.set(agentAccess, forKey: "agentAccess") } }
@@ -262,6 +266,7 @@ final class AppSettings: ObservableObject {
         appearance = d.string(forKey: "appearance") ?? "dark"
         askHotKey = d.string(forKey: "askHotKey") ?? "K"
         agentAutoApproveReads = d.object(forKey: "agentAutoApproveReads") as? Bool ?? true
+        privateApps = d.stringArray(forKey: "privateApps") ?? []
         agentAccess = d.string(forKey: "agentAccess") ?? AgentAccess.manual.rawValue
         // Steps before checking in, for API models (0: never). An older
         // setting of 40 was the old default for every engine.

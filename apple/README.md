@@ -224,6 +224,8 @@ Mic (AVAudioEngine)        System audio (ScreenCaptureKit)
 
 - `Sources/Companion/UI/Theme.swift` holds `Theme.iconSymbol`, the placeholder icon in the circle. Swap that one constant when the final icon is decided.
 - Companion's own windows are excluded from its screen captures, so screen answers never read Companion itself.
+- Private details stay on the Mac (`Sources/Companion/Screen/Redaction.swift`): password managers are never captured, and password fields and card numbers are blacked out before any screen picture or its text reaches a model. The `privateApps` setting adds more apps by bundle identifier.
+- The agent acts only where it planned to (`DeviceControl.leaseRefusal`): it never types into a password field, and a keyboard or press step is skipped and planned again when the cursor has moved to another field, or another window has come to the front, since the plan was made. Every step it takes is added to a permanent record, one JSON line per event, in `~/Library/Application Support/Companion/Actions/` (`ActionRecord.swift`), with long typed text, keys and tokens left out.
 - Staying light while it works: on the Mac every SwiftUI update is a layout pass over the whole window, so anything that moves for as long as it is shown (the live step's dot, the listening dot, the level meter) runs in Core Animation (`Sources/Companion/UI/LiveLayers.swift`), never as a `repeatForever` animation. Values that change many times a second stay off `AppState` (the audio levels live in `AudioLevels`), a streaming answer reaches the screen at most every 60 ms and its parsed lines are kept, theme colors are worked out once per change of look or appearance, and the phone's feed rebuilds its snapshot only when something changed.
 
 ## Notes and limits
