@@ -1643,7 +1643,7 @@ private struct FilesTab: View {
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 24)
-                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
                         .fill(Theme.ink.opacity(file == current ? 0.1 : 0)))
                     .contentShape(Rectangle())
                     .onTapGesture { model.switchTo(file, conversation: app.conversation.id) }
@@ -1846,7 +1846,7 @@ private struct NameField: View {
         .padding(.leading, CGFloat(depth) * 12 + 4)
         .padding(.trailing, 4)
         .frame(height: 22)
-        .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
             .strokeBorder(Theme.accent.opacity(0.6), lineWidth: 1))
         .onAppear {
             text = initial
@@ -1956,7 +1956,7 @@ private struct FileRow: View {
         .padding(.leading, CGFloat(depth) * 12 + 4)
         .padding(.trailing, 4)
         .frame(height: 22)
-        .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.ink.opacity(hover ? 0.08 : 0)))
+        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.ink.opacity(hover ? 0.08 : 0)))
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
@@ -2876,7 +2876,7 @@ private struct HitRow: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(hover ? 0.08 : 0)))
+        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.ink.opacity(hover ? 0.08 : 0)))
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
@@ -3022,7 +3022,7 @@ private struct ChangeRow: View {
         }
         .padding(.horizontal, 6)
         .frame(height: 24)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(hover ? 0.09 : 0.04)))
+        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.ink.opacity(hover ? 0.09 : 0.04)))
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
@@ -3449,9 +3449,9 @@ private struct ActivityBar: View {
                             // The one showing sits in a small well, a shade
                             // deeper than the strip, edged in the primary.
                             if on {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                                     .fill(Theme.shade.opacity(Theme.isLight ? 0.7 : 0.35))
-                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                                         .strokeBorder(Theme.accent.opacity(0.3), lineWidth: 0.75))
                                     .frame(width: 32, height: 30)
                                     .matchedGeometryEffect(id: "showing", in: showing)
@@ -3529,9 +3529,9 @@ private struct BarFootButton: View {
                 .frame(width: 34, height: 32)
                 .background {
                     if on || hover {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                             .fill(on ? Theme.shade.opacity(Theme.isLight ? 0.7 : 0.35) : color.opacity(0.12))
-                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                                 .strokeBorder(Theme.accent.opacity(on ? 0.3 : 0), lineWidth: 0.75))
                             .frame(width: 32, height: 30)
                             .transition(.opacity)
@@ -3665,7 +3665,7 @@ private struct ReferenceRow: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(hover ? 0.08 : 0)))
+        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(Theme.ink.opacity(hover ? 0.08 : 0)))
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }

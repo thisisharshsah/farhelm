@@ -79,7 +79,7 @@ struct SidebarView: View {
                 .padding(.leading, 9)
                 .padding(.trailing, 4)
                 .frame(height: 30)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.ink.opacity(0.07)))
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.ink.opacity(0.07)))
                 .glassBorder(radius: 9, tint: searchFocused ? Theme.accent : nil)
                 // The same height as the search field, and round, so it
                 // keeps its place however narrow the sidebar is.
@@ -120,26 +120,30 @@ struct SidebarView: View {
                 }
                 .padding(.bottom, 8)
             }
-            // Settings and Quit, pinned to the bottom of the sidebar.
+            // Settings and Quit, pinned to the bottom of the sidebar. In
+            // code, with a folder open, they sit at the foot of the
+            // workspace's activity bar instead.
             Spacer(minLength: 0)
-            Divider()
-            HStack(spacing: 6) {
-                IconButton("gearshape.fill",
-                           help: "Settings",
-                           tint: app.showSettings ? Theme.accent : nil) {
-                    if app.showSettings {
-                        app.showSettings = false
-                    } else {
-                        app.openSettings()
+            if !app.appButtonsInCodeBar {
+                Divider()
+                HStack(spacing: 6) {
+                    IconButton("gearshape.fill",
+                               help: "Settings",
+                               tint: app.showSettings ? Theme.accent : nil) {
+                        if app.showSettings {
+                            app.showSettings = false
+                        } else {
+                            app.openSettings()
+                        }
+                    }
+                    Spacer()
+                    IconButton("power", help: "Quit Companion (⌘Q)", tint: Theme.rose) {
+                        app.requestQuit()
                     }
                 }
-                Spacer()
-                IconButton("power", help: "Quit Companion (⌘Q)", tint: Theme.rose) {
-                    app.requestQuit()
-                }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 10)
             }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 10)
         }
         .padding(.horizontal, 10)
         .padding(.top, 10)
@@ -224,7 +228,7 @@ private struct SidebarRow: View {
         .padding(.leading, 9)
         .padding(.trailing, 5)
         .frame(height: 30)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
             .fill(Theme.ink.opacity(isCurrent ? 0.11 : (hover ? 0.06 : 0))))
         // The details that used to sit under the title, a pointer away.
         .help("\(item.title)\n\(item.turnCount) \(item.turnCount == 1 ? "turn" : "turns") · \(item.updatedAt.formatted(.relative(presentation: .named))) · \(ContextUse.short(item.tokens)) tokens")

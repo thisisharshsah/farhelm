@@ -17,3 +17,15 @@ DerivedData/
 # Local secrets and scratch
 .env
 *.log
+
+# Downloaded datasets
+Data/
+
+# Chromium (CEF), fetched by scripts/fetch-cef.sh
+Vendor/
+
+# The mobile apps: their Xcode project is kept; only per-user state is not.
+!Mobile/CompanionMobile.xcodeproj
+Mobile/CompanionMobile.xcodeproj/xcuserdata/
+Mobile/CompanionMobile.xcodeproj/project.xcworkspace/xcuserdata/
+Mobile/CompanionKit/.build/

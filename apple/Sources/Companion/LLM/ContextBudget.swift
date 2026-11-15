@@ -50,6 +50,8 @@ struct ContextBudget {
             return ContextBudget(window: hostedWindow(settings.openAIModel, fallback: 128_000), hosted: true)
         case .farhelm, .ollama:
             return ContextBudget(window: max(settings.localContextTokens, 4_000), hosted: false)
+        case .subscription:
+            return ContextBudget(window: 200_000, hosted: true)
         }
     }
 
@@ -113,6 +115,19 @@ struct ContextBudget {
     /// Text read off the screen.
     var screenCharacters: Int {
         min(60_000, Int(Double(flexible(.screen)) * 0.40))
+    }
+
+    /// What an agent task's conversation may grow to before its oldest
+    /// results are shortened: most of the window, since the agent works
+    /// from everything it has seen. Local models read slowly, so less.
+    var agentInputTokens: Int {
+        min(Int(Double(window) * 0.7), hosted ? 150_000 : 48_000)
+    }
+
+    /// The longest single turn of the agent, thinking included: room to
+    /// plan and to write a whole file or several edits at once.
+    var agentOutputTokens: Int {
+        hosted ? 32_000 : min(8_000, max(2_000, window / 8))
     }
 
     /// The longest answer the model may write, in tokens.

@@ -202,8 +202,9 @@ struct ModelPill: View {
             .padding(.trailing, 9)
             .padding(.vertical, 3)
             .frame(maxWidth: 210)
-            .background(Capsule().fill((isOpen ? Theme.accent : Theme.ink).opacity(isOpen ? 0.14 : (hover ? 0.12 : 0.08))))
-            .overlay(Capsule().strokeBorder((isOpen ? Theme.accent : Theme.ink).opacity(isOpen ? 0.40 : 0.16), lineWidth: 0.75))
+            // A bubble, like the choices the AI offers: in the primary, lit
+            // while its list is open.
+            .bubbleSurface(tint: Theme.accent, lit: isOpen)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -234,6 +235,8 @@ struct ModelPill: View {
 /// steps on.
 struct AccessToggles: View {
     @EnvironmentObject var app: AppState
+    /// The chosen side's own small bubble slides from one side to the other.
+    @Namespace private var chosen
 
     private func side<Content: View>(on: Bool, tint: Color, @ViewBuilder content: () -> Content) -> some View {
         content()
@@ -241,7 +244,14 @@ struct AccessToggles: View {
             .foregroundStyle(on ? tint : Theme.ink.opacity(0.55))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(Capsule().fill(on ? tint.opacity(0.18) : Color.clear))
+            .background {
+                if on {
+                    Capsule()
+                        .fill(tint.opacity(0.18))
+                        .overlay(Capsule().strokeBorder(tint.opacity(0.3), lineWidth: 0.5))
+                        .matchedGeometryEffect(id: "chosen", in: chosen)
+                }
+            }
             .contentShape(Capsule())
     }
 
@@ -283,10 +293,11 @@ struct AccessToggles: View {
             .help(auto ? "Auto: steps run without asking. The mark says how far: click it to change." : "Let steps run without asking.")
         }
         .padding(2)
-        .background(Capsule().fill(Theme.ink.opacity(0.06)))
-        .overlay(Capsule().strokeBorder((auto ? tint : Theme.ink).opacity(auto ? 0.4 : 0.12), lineWidth: 0.75))
+        // A bubble too: neutral on Manual, in the color of how far Auto
+        // goes once it is on. It glows under the pointer without moving.
+        .bubbleSurface(tint: auto ? tint : nil, lifts: false)
         .fixedSize()
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: access)
+        .animation(.spring(response: 0.34, dampingFraction: 0.78), value: access)
     }
 }
 
@@ -346,8 +357,7 @@ struct AccessPill: View {
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(Capsule().fill(color.opacity(chosen == .manual ? (hover ? 0.12 : 0.08) : 0.16)))
-            .overlay(Capsule().strokeBorder(color.opacity(chosen == .manual ? 0.16 : 0.45), lineWidth: 0.75))
+            .bubbleSurface(tint: chosen == .manual ? nil : color, lit: chosen != .manual, lifts: false)
             .contentShape(Capsule())
         }
         .menuStyle(.button)
@@ -497,16 +507,15 @@ struct EffortPill: View {
             // the hotter it burns, once a level is set.
             let heat = EffortBar.heat(of: chosen, in: levels)
             let lit = !chosen.isEmpty
-            let color = lit ? Theme.accent : Theme.ink
-            let fill = lit ? 0.10 + 0.16 * heat : 0.08
-            let edge = lit ? 0.22 + 0.38 * heat : 0.16
             Button {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) { isOpen.toggle() }
             } label: {
                 HStack(spacing: 5) {
                     // The same ball of fire as on the bar, small: it burns
                     // brighter the harder the model is asked to think.
-                    Fireball(heat: heat, size: 11, alive: lit)
+                    // Burning, still at rest; it flickers while the pointer
+                    // is on it or its bar is open.
+                    Fireball(heat: heat, size: 11, alive: lit, flickers: hover || isOpen)
                     if !compact {
                         Text(AppSettings.effortLabel(chosen))
                             .font(.system(size: 10.5, weight: .semibold, design: .rounded))
@@ -516,8 +525,7 @@ struct EffortPill: View {
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(color.opacity(fill + (hover || isOpen ? 0.05 : 0))))
-                .overlay(Capsule().strokeBorder(color.opacity(isOpen ? max(edge, 0.45) : edge), lineWidth: 0.75))
+                .bubbleSurface(tint: lit ? Theme.accent : nil, lit: isOpen)
                 .shadow(color: Theme.accent.opacity(lit ? 0.10 + 0.22 * heat : 0), radius: 2 + 4 * heat)
                 .contentShape(Capsule())
                 .animation(.easeOut(duration: 0.2), value: chosen)
@@ -527,48 +535,6 @@ struct EffortPill: View {
             .onHover { hover = $0 }
             .help("Effort for this model: how hard it thinks before answering. Click to set it.")
         }
-    }
-}
-
-/// A ball of fire in the look's own colors. `heat` runs from 0, an ember,
-/// to 1, burning at its brightest: it grows a brighter heart and a wider
-/// glow, and flickers faster.
-struct Fireball: View {
-    var heat: Double
-    var size: CGFloat = 14
-    /// Whether it burns at all. Left to the model, it is a quiet ember.
-    var alive = true
-    @State private var flicker = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let warmth = min(max(heat, 0), 1)
-        let color = Theme.accent
-        ZStack {
-            // The glow around it.
-            Circle()
-                .fill(RadialGradient(colors: [color.opacity(alive ? 0.30 + 0.35 * warmth : 0.12), color.opacity(0)],
-                                     center: .center, startRadius: 0, endRadius: size * (0.75 + 0.45 * warmth)))
-                .frame(width: size * (1.5 + 0.9 * warmth), height: size * (1.5 + 0.9 * warmth))
-                .scaleEffect(flicker ? 1.08 : 0.92)
-            // The ball: a bright heart, the look's color, a soft edge.
-            Circle()
-                .fill(RadialGradient(stops: [
-                    .init(color: Color.white.opacity(alive ? 0.55 + 0.45 * warmth : 0.25), location: 0),
-                    .init(color: Theme.lilac.opacity(alive ? 0.95 : 0.5), location: 0.28 + 0.12 * warmth),
-                    .init(color: color.opacity(alive ? 0.95 : 0.45), location: 0.68),
-                    .init(color: color.opacity(0), location: 1)
-                ], center: UnitPoint(x: 0.5, y: 0.52), startRadius: 0, endRadius: size / 2))
-                .frame(width: size, height: size)
-                .scaleEffect(flicker ? 1.04 : 0.97)
-        }
-        .frame(width: size, height: size)
-        .animation(alive && !reduceMotion
-                   ? .easeInOut(duration: 0.9 - 0.5 * warmth).repeatForever(autoreverses: true)
-                   : .default,
-                   value: flicker)
-        .onAppear { flicker = true }
-        .allowsHitTesting(false)
     }
 }
 
@@ -726,91 +692,27 @@ struct ModelPicker: View {
     @ObservedObject private var agents = CLIAgents.shared
 
     /// A model's name as shown.
-    private func title(_ group: EngineGroup, _ model: String) -> String {
-        guard group.kind == .subscription else { return ModelName.pretty(model) }
-        // The tool's own name for the model when it gives one; otherwise
-        // its identifier, said the way the other engines' models are.
-        return agents.title(of: model, for: group.tool ?? "")
-    }
+    private func title(_ group: EngineGroup, _ model: String) -> String { EngineCatalog.title(group, model) }
 
     /// One row of the list with the models under it: an engine, or, for
     /// subscriptions, each tool as an engine of its own.
-    private struct EngineGroup: Identifiable {
-        let kind: LLMProviderKind
-        /// The subscription tool (an adapter's id), for that kind.
-        var tool: String?
-        let models: [String]
-        var id: String { kind.rawValue + "|" + (tool ?? "") }
-    }
+    private typealias EngineGroup = EngineCatalog.Engine
 
     /// Whether this is the engine (and, for a subscription, the tool)
     /// that answers now.
-    private func inUse(_ group: EngineGroup) -> Bool {
-        settings.provider == group.kind && (group.tool == nil || group.tool == settings.cliAgent)
-    }
+    private func inUse(_ group: EngineGroup) -> Bool { EngineCatalog.inUse(group) }
 
     /// An engine is listed when it is the one in use or has what it needs
     /// (a key for the hosted ones; the local ones need none here).
-    private func ready(_ kind: LLMProviderKind) -> Bool {
-        if kind == settings.provider { return true }
-        switch kind {
-        case .farhelm: return !(Keychain.read("farhelm") ?? "").isEmpty
-        case .anthropic: return !(Keychain.read("anthropic") ?? "").isEmpty
-        case .openai: return !(Keychain.read("openai") ?? "").isEmpty
-        case .ollama: return true
-        case .subscription: return !agents.installed.isEmpty
-        }
-    }
+    private func ready(_ kind: LLMProviderKind) -> Bool { EngineCatalog.ready(kind) }
 
-    private var groups: [EngineGroup] {
-        LLMProviderKind.allCases.filter(ready).flatMap { kind -> [EngineGroup] in
-            switch kind {
-            case .farhelm:
-                return [EngineGroup(kind: kind, models: [""] + app.farhelmModels)]
-            case .anthropic:
-                var list = app.anthropicModels
-                if !list.contains(settings.anthropicModel) { list.insert(settings.anthropicModel, at: 0) }
-                return [EngineGroup(kind: kind, models: list)]
-            case .openai:
-                return [EngineGroup(kind: kind, models: [settings.openAIModel])]
-            case .ollama:
-                return [EngineGroup(kind: kind, models: [settings.ollamaModel])]
-            case .subscription:
-                // Each installed tool is listed as an engine of its own,
-                // with the models it offers under it.
-                return agents.installed.map { adapter in
-                    var list = agents.models(for: adapter.id)
-                    if adapter.id == settings.cliAgent, !list.contains(settings.cliModel) {
-                        list.append(settings.cliModel)
-                    }
-                    return EngineGroup(kind: kind, tool: adapter.id, models: list)
-                }
-            }
-        }
-    }
+    private var groups: [EngineGroup] { EngineCatalog.engines }
 
     /// The model this engine would use.
-    private func current(_ group: EngineGroup) -> String {
-        switch group.kind {
-        case .farhelm: return settings.farhelmModel
-        case .anthropic: return settings.anthropicModel
-        case .openai: return settings.openAIModel
-        case .ollama: return settings.ollamaModel
-        case .subscription: return group.tool == settings.cliAgent ? settings.cliModel : ""
-        }
-    }
+    private func current(_ group: EngineGroup) -> String { EngineCatalog.current(group) }
 
     private func choose(_ group: EngineGroup, _ model: String) {
-        settings.provider = group.kind
-        switch group.kind {
-        case .farhelm: settings.farhelmModel = model
-        case .anthropic: settings.anthropicModel = model
-        case .openai: settings.openAIModel = model
-        case .ollama: settings.ollamaModel = model
-        case .subscription:
-            settings.cliAgent = group.tool ?? settings.cliAgent
-            settings.cliModel = model
-        }
+        EngineCatalog.choose(group, model)
         close()
     }
 
@@ -818,19 +720,7 @@ struct ModelPicker: View {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { isOpen = false }
     }
 
-    private func note(_ group: EngineGroup, _ model: String) -> String? {
-        let kind = group.kind
-        if kind == .farhelm, model.isEmpty { return "Farhelm picks" }
-        // The tool says which model its default is, when it does.
-        if kind == .subscription, model.isEmpty {
-            return agents.version(of: "", for: group.tool ?? "") ?? "The tool picks"
-        }
-        guard kind == .anthropic else { return nil }
-        if model.contains("haiku") { return "Fastest" }
-        if model.contains("sonnet") { return "Balanced" }
-        if model.contains("opus") { return "Most capable" }
-        return nil
-    }
+    private func note(_ group: EngineGroup, _ model: String) -> String? { EngineCatalog.note(group, model) }
 
     /// As tall as what is open, up to a limit; beyond that it scrolls.
     private var listHeight: CGFloat {
@@ -852,7 +742,8 @@ struct ModelPicker: View {
         if group.kind == .subscription { agents.refreshModels() }
     }
 
-    /// An engine's row: tap to open or close its models.
+    /// An engine's row: tap to use that engine with the model it last used
+    /// (or its default); the chevron opens its models to pick another.
     private func engineRow(_ group: EngineGroup) -> some View {
         let open = expanded.contains(group.id)
         let inUse = self.inUse(group)
@@ -880,17 +771,26 @@ struct ModelPicker: View {
                     .truncationMode(.middle)
                     .frame(maxWidth: 150, alignment: .trailing)
             }
-            Image(systemName: "chevron.right")
-                .font(.system(size: 8.5, weight: .bold))
-                .foregroundStyle(Theme.ink.opacity(0.5))
-                .rotationEffect(.degrees(open ? 90 : 0))
+            Button { toggle(group) } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(Theme.ink.opacity(0.55))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .frame(width: 22, height: 20)
+                    .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
+                        .fill(Theme.ink.opacity(open ? 0.1 : 0.05)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(open ? "Hide the models" : "Choose a model")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
             .fill(Theme.ink.opacity(open ? 0.06 : 0)))
         .contentShape(Rectangle())
-        .onTapGesture { toggle(group) }
+        .onTapGesture { choose(group, model) }
+        .help("Use \(group.tool.map { agents.name(of: $0) } ?? group.kind.shortName) with \(model.isEmpty ? "its default model" : title(group, model))")
     }
 
     var body: some View {
@@ -952,8 +852,8 @@ struct ModelPicker: View {
         .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(Theme.shade.opacity(0.82)))
         .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .onAppear {
-            // It opens compact: just the engines, each showing its model.
-            // Tap one to see its models.
+            // Every engine opens collapsed, the one in use marked with its
+            // model; a click shows its models.
             expanded = []
             if ready(.farhelm) { app.loadFarhelmModels() }
             if ready(.anthropic) { app.loadAnthropicModels() }
@@ -991,10 +891,76 @@ private struct ModelRow: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
             .fill(selected ? Theme.accent.opacity(0.14) : Theme.ink.opacity(hover ? 0.07 : 0)))
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
+    }
+}
+
+/// The models of the engine in use, as the model button's right-click
+/// menu: the quickest way to change model without changing engine.
+struct CurrentEngineModels: View {
+    @EnvironmentObject var app: AppState
+    @EnvironmentObject var settings: AppSettings
+    @ObservedObject private var agents = CLIAgents.shared
+    /// Opens the full picker, for another engine.
+    let showAll: () -> Void
+
+    private var models: [String] {
+        var list: [String]
+        switch settings.provider {
+        case .subscription: list = agents.models(for: settings.cliAgent)
+        case .anthropic: list = app.anthropicModels
+        case .farhelm: list = [""] + app.farhelmModels
+        case .openai: list = [settings.openAIModel]
+        case .ollama: list = [settings.ollamaModel]
+        }
+        if !list.contains(current) { list.insert(current, at: 0) }
+        return list
+    }
+
+    private var current: String {
+        switch settings.provider {
+        case .subscription: return settings.cliModel
+        case .anthropic: return settings.anthropicModel
+        case .farhelm: return settings.farhelmModel
+        case .openai: return settings.openAIModel
+        case .ollama: return settings.ollamaModel
+        }
+    }
+
+    private func name(_ model: String) -> String {
+        if model.isEmpty { return settings.provider == .subscription ? "Default (the tool picks)" : "Default" }
+        return settings.provider == .subscription
+            ? agents.title(of: model, for: settings.cliAgent)
+            : ModelName.pretty(model)
+    }
+
+    private func pick(_ model: String) {
+        switch settings.provider {
+        case .subscription:
+            settings.cliModel = model
+            UserDefaults.standard.set(model, forKey: "lastModel." + settings.cliAgent)
+        case .anthropic: settings.anthropicModel = model
+        case .farhelm: settings.farhelmModel = model
+        case .openai: settings.openAIModel = model
+        case .ollama: settings.ollamaModel = model
+        }
+    }
+
+    var body: some View {
+        ForEach(models, id: \.self) { model in
+            Button { pick(model) } label: {
+                if model == current {
+                    Label(name(model), systemImage: "checkmark")
+                } else {
+                    Text(name(model))
+                }
+            }
+        }
+        Divider()
+        Button("All engines and models…", action: showAll)
     }
 }

@@ -26,14 +26,17 @@ struct SidePanel: View {
     let mode: SidePanelMode
 
     var body: some View {
-        Group {
-            switch mode {
-            case .details: SessionDetails()
-            case .browser: BrowserPane()
-            case .workspace: WorkspacePane()
-            }
+        // Details and the browser are one panel each; the workspace is
+        // several (files, editor, terminal) and draws its own.
+        switch mode {
+        case .details: filled(SessionDetails()).panelCard()
+        case .browser: filled(BrowserPane()).panelCard()
+        case .workspace: filled(WorkspacePane())
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func filled<Content: View>(_ content: Content) -> some View {
+        content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -43,6 +46,8 @@ struct SidePanel: View {
 /// it drew on.
 struct SessionDetails: View {
     @EnvironmentObject var app: AppState
+    /// Watched so the skills this chat used show as they are used.
+    @ObservedObject private var skillLibrary = SkillLibrary.shared
     /// Which lines under "Used in this session" are open.
     @State private var opened = Set<String>()
     /// The sections that are folded to their heading, by name. Kept
@@ -241,13 +246,16 @@ struct SessionDetails: View {
                 group("uploads", icon: "paperclip", title: "Uploads",
                       summary: attachments[0].name, more: attachments.count - 1) {
                     // Attached files stay with the chat and keep informing
-                    // its answers. Click one to find it; the cross takes it
-                    // out.
+                    // its answers. Click one to open it (a folder shows in
+                    // Finder); the cross takes it out.
                     ForEach(attachments) { file in
                         HStack(spacing: 2) {
-                            line(file.isFolder == true ? "folder" : "doc", file.name) {
-                                if let path = file.path {
+                            line(file.isFolder == true ? "folder" : (Previewer.isPicture(file) ? "photo" : "doc"), file.name) {
+                                if file.isFolder == true, let path = file.path {
                                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                                } else {
+                                    // The chat's files as Uploads: the list, and this one open.
+                                    Previewer.shared.openList(attachments, selecting: file)
                                 }
                             }
                             IconButton("xmark", help: "Remove from this chat") {
@@ -292,7 +300,7 @@ struct SessionDetails: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                     .fill(Theme.ink.opacity(open ? 0.07 : 0.045)))
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -316,6 +324,17 @@ struct SessionDetails: View {
             if (app.conversation.usedSources ?? []).contains("Live lookup") {
                 line("antenna.radiowaves.left.and.right", "Live lookup", "Weather, web")
                     .help("Weather or a quick web search was looked up for an answer in this chat.")
+            }
+            // The skills the agent read and followed in this chat.
+            let skills = skillLibrary.skills(in: app.conversation.id)
+            if !skills.isEmpty {
+                group("skills", icon: "book.closed", title: "Skills",
+                      summary: skills[0], more: skills.count - 1) {
+                    ForEach(skills, id: \.self) { name in
+                        line("book.closed", name)
+                            .help("The agent read and followed the \(name) skill in this chat. Settings > Skills lists every chat that used it.")
+                    }
+                }
             }
             if !memories.isEmpty {
                 group("memory", icon: "brain", title: "Earlier chats",
@@ -411,7 +430,13 @@ struct SessionDetails: View {
             group(key + "-uploads", icon: "paperclip", title: "Uploads",
                   summary: task.uploads[0], more: task.uploads.count - 1) {
                 ForEach(task.uploads, id: \.self) { name in
-                    line("doc", name)
+                    if let file = app.attachments.first(where: { $0.name == name }) {
+                        line(Previewer.isPicture(file) ? "photo" : "doc", name) {
+                            Previewer.shared.open(file, among: app.attachments.filter { task.uploads.contains($0.name) })
+                        }
+                    } else {
+                        line("doc", name)
+                    }
                 }
             }
         }
@@ -492,7 +517,7 @@ struct SessionDetails: View {
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 13, height: 13)
-                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous))
         } else {
             let name = Self.short(address)
             Text(String(name.prefix(1)).uppercased())
@@ -618,9 +643,9 @@ private struct OutputPreview: View {
             .padding(.horizontal, 9)
             .frame(height: 28)
         }
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.ink.opacity(hover ? 0.09 : 0.05)))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.75))
+        .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).fill(Theme.ink.opacity(hover ? 0.09 : 0.05)))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.75))
         .contentShape(Rectangle())
         .onTapGesture {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -671,7 +696,7 @@ private struct SiteIcon: View {
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 14, height: 14)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous))
                     .opacity(bright ? 1 : 0.8)
             } else {
                 Image(systemName: blank ? "magnifyingglass" : "globe")
@@ -689,50 +714,75 @@ private struct SiteIcon: View {
 /// sign-ins or history are shared with Safari or Chrome.
 struct BrowserPane: View {
     @EnvironmentObject var app: AppState
+    /// Chromium or WebKit (Settings > Browser).
+    @AppStorage(BrowserEngine.key) private var chromium = true
 
     var body: some View {
         // Each chat has a browser session of its own, so the pane is
         // rebuilt for the session of the chat that is showing.
         let web = app.web
-        BrowserBody(web: web)
+        if chromium && BrowserEngine.chromium {
+            ChromiumBody(tabs: web.chromium)
+                .id(ObjectIdentifier(web))
+        } else {
+            BrowserBody(web: web) { tab in
+                PasswordBar(page: tab.webView)
+                StoreBar(tab: tab)
+                BrowserTabView(tab: tab, web: web)
+                    .id(tab.id)
+            }
             .id(ObjectIdentifier(web))
             .onAppear { web.ensureTab() }
+        }
     }
 }
 
-private struct BrowserBody: View {
+/// The sizes of the tab strip in the browser's bar. (Kept out of
+/// BrowserBody: a generic type cannot hold static stored properties.)
+enum BrowserBarSize {
+    /// The hairline between tabs.
+    static let tabGap: CGFloat = 1
+    /// The narrowest the tab that is showing gets, and the others. When
+    /// tabs are many the others drop their title and keep their icon, with
+    /// the closing cross still in a place of its own beside it, so a click
+    /// meant to pick a tab can never land on the cross. Past these the
+    /// strip scrolls.
+    static let fieldLeast: CGFloat = 170
+    /// The least the showing tab gets while it is not being typed in.
+    static let fieldShown: CGFloat = 120
+    static let chipLeast: CGFloat = 64
+    /// From this width a tab that is not showing has room for its title.
+    /// Narrower than this it is just its icon.
+    static let chipTitled: CGFloat = 104
+    /// The widest a tab that is not showing gets.
+    static let chipMost: CGFloat = 220
+}
+
+/// The browser beside the chat: Companion's bar over a tab's content,
+/// the same for either engine. `content` is what shows under the bar for
+/// the tab that is showing (its page, or the new tab page).
+struct BrowserBody<Model: BrowsingModel, Content: View>: View {
     @EnvironmentObject var app: AppState
-    @ObservedObject var web: BrowserModel
+    @ObservedObject var web: Model
+    @ViewBuilder let content: (Model.Tab) -> Content
 
     var body: some View {
-        // The bar sits above the page, not over it.
+        // The bar sits above the page, not over it. The page is set into
+        // the panel by a gap, with its own rounded corners, as a browser's
+        // page sits in its window.
         VStack(spacing: 0) {
             bar
             if let tab = web.current {
-                BrowserTabView(tab: tab, web: web)
-                    .id(tab.id)
+                VStack(spacing: 0) { content(tab) }
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.innerRadius, style: .continuous))
+                    .padding(.horizontal, Theme.panelGap)
+                    .padding(.bottom, Theme.panelGap)
             }
         }
     }
 
     /// Room the tabs have, measured, so they can share it.
     @State private var stripWidth: CGFloat = 300
-    /// The hairline between tabs.
-    private static let tabGap: CGFloat = 1
-    /// The narrowest the tab that is showing gets, and the others. When
-    /// tabs are many the others drop their title and keep their icon, with
-    /// the closing cross still in a place of its own beside it, so a click
-    /// meant to pick a tab can never land on the cross. Past these the
-    /// strip scrolls.
-    private static let fieldLeast: CGFloat = 170
-    /// The least the showing tab gets while it is not being typed in.
-    private static let fieldShown: CGFloat = 120
-    private static let chipLeast: CGFloat = 64
-    /// From this width a tab that is not showing has room for its title.
-    /// Narrower than this it is just its icon.
-    private static let chipTitled: CGFloat = 104
-    /// The widest a tab that is not showing gets.
-    private static let chipMost: CGFloat = 220
 
     /// The tabs share the strip, as in a browser: each new tab makes them
     /// narrower, and the one that is showing takes a larger share since it
@@ -744,21 +794,21 @@ private struct BrowserBody: View {
         // A lone tab that has not gone anywhere stays compact.
         // In a narrow panel it gives way, so its end is never cut off by
         // the buttons beside it.
-        if count == 1, blank { return (min(Self.fieldLeast, max(80, stripWidth)), Self.chipLeast) }
+        if count == 1, blank { return (min(BrowserBarSize.fieldLeast, max(80, stripWidth)), BrowserBarSize.chipLeast) }
         // Every tab gets the same share, showing or not, so picking another
         // tab never makes the strip jump about.
-        let share = (stripWidth - (count - 1) * Self.tabGap) / count
+        let share = (stripWidth - (count - 1) * BrowserBarSize.tabGap) / count
         // Only when tabs are crowded does the showing one keep a little
         // more, and room to type in while its address is being edited.
         // A tab on its own is exactly the strip, however narrow.
-        if count == 1 { return (max(80, share), Self.chipLeast) }
-        let least = editing ? Self.fieldLeast : Self.fieldShown
-        return (max(least, share), max(Self.chipLeast, share))
+        if count == 1 { return (max(80, share), BrowserBarSize.chipLeast) }
+        let least = editing ? BrowserBarSize.fieldLeast : BrowserBarSize.fieldShown
+        return (max(least, share), max(BrowserBarSize.chipLeast, share))
     }
 
     /// Closing the last tab leaves a fresh one in its place; closing that
     /// one, with nothing in it, closes the browser.
-    private func close(_ tab: BrowserTab) {
+    private func close(_ tab: Model.Tab) {
         if web.tabs.count == 1, tab.isBlank { app.showSide(nil) } else { web.close(tab.id) }
     }
 
@@ -780,7 +830,7 @@ private struct BrowserBody: View {
 
     /// One tab in the strip, with the hairline that sets it apart.
     @ViewBuilder
-    private func tabItem(index: Int, tab: BrowserTab) -> some View {
+    private func tabItem(index: Int, tab: Model.Tab) -> some View {
         if index > 0 {
             Rectangle()
                 .fill(Theme.ink.opacity(hairline(before: index) ? 0.14 : 0))
@@ -794,7 +844,7 @@ private struct BrowserBody: View {
                 .id(tab.id)
         } else {
             TabChip(tab: tab, history: web.history,
-                    titled: chipWidth >= Self.chipTitled,
+                    titled: chipWidth >= BrowserBarSize.chipTitled,
                     select: { web.selected = tab.id },
                     close: { close(tab) })
                 .frame(width: chipWidth)
@@ -832,7 +882,7 @@ private struct BrowserBody: View {
             .frame(height: BarButton.size + 4)
             // Before anything is open the strip is only as long as the
             // search field; the rest of the bar is left empty.
-            .frame(maxWidth: hugging ? Self.fieldLeast : .infinity)
+            .frame(maxWidth: hugging ? BrowserBarSize.fieldLeast : .infinity)
             .background {
                 GeometryReader { geometry in
                     Color.clear
@@ -844,8 +894,14 @@ private struct BrowserBody: View {
             .clipShape(Capsule())
             .liquidGlass(in: Capsule())
             if hugging { Spacer(minLength: 0) }
+            if let model = web as? BrowserModel, BrowserExtensions.supported {
+                ExtensionStrip(web: model)
+            }
+            if let chromium = web as? ChromiumTabs {
+                BarGroup { ChromiumExtensionsMenu(tabs: chromium, size: BarButton.size) }
+            }
             BarGroup {
-                BarButton("plus", help: "New tab") { web.newTab() }
+                BarButton("plus", help: "New tab") { web.openNewTab() }
                 BarButton(app.sideFull ? "rectangle.split.2x1" : "arrow.up.left.and.arrow.down.right",
                           help: app.sideFull ? "Show the chat beside this again" : "Use the whole panel (the chat steps aside)",
                           tint: app.sideFull ? Theme.accent : nil) {
@@ -906,14 +962,14 @@ private struct BarGroup<Content: View>: View {
 }
 
 /// Back and forward for the tab that is showing.
-private struct NavButtons: View {
-    @ObservedObject var tab: BrowserTab
+private struct NavButtons<Tab: BrowsingTab>: View {
+    @ObservedObject var tab: Tab
 
     var body: some View {
-        BarButton("chevron.left", help: "Back") { tab.webView.goBack() }
+        BarButton("chevron.left", help: "Back") { tab.goBack() }
             .disabled(!tab.canGoBack)
             .opacity(tab.canGoBack ? 1 : 0.35)
-        BarButton("chevron.right", help: "Forward") { tab.webView.goForward() }
+        BarButton("chevron.right", help: "Forward") { tab.goForward() }
             .disabled(!tab.canGoForward)
             .opacity(tab.canGoForward ? 1 : 0.35)
     }
@@ -921,8 +977,8 @@ private struct NavButtons: View {
 
 /// The tab that is showing: its address, to read or to type over, with
 /// reload at its end.
-private struct AddressField: View {
-    @ObservedObject var tab: BrowserTab
+private struct AddressField<Tab: BrowsingTab>: View {
+    @ObservedObject var tab: Tab
     /// Watched for the site's icon arriving.
     @ObservedObject var history: BrowserHistory
     /// Closes this tab.
@@ -989,12 +1045,12 @@ private struct AddressField: View {
             }
             if tab.loading {
                 // While a page loads, the way to stop it is always there.
-                fieldButton("xmark", help: "Stop") { tab.webView.stopLoading() }
+                fieldButton("xmark", help: "Stop") { tab.stopLoading() }
             } else {
                 // Reload stays out of the way until the pointer is on the
                 // tab. It keeps its place either way, so the site stays
                 // centered.
-                fieldButton("arrow.clockwise", help: "Reload") { tab.webView.reload() }
+                fieldButton("arrow.clockwise", help: "Reload") { tab.reload() }
                     .opacity(hover && !tab.isBlank ? 1 : 0)
                     .allowsHitTesting(hover && !tab.isBlank)
             }
@@ -1070,8 +1126,8 @@ private struct AddressField: View {
 /// A tab that is not showing: its icon and, when there is room, the page's
 /// title, centered in its share of the strip. Click to switch to it; with
 /// the pointer on it the icon becomes the cross that closes it.
-private struct TabChip: View {
-    @ObservedObject var tab: BrowserTab
+private struct TabChip<Tab: BrowsingTab>: View {
+    @ObservedObject var tab: Tab
     /// Watched for the site's icon arriving.
     @ObservedObject var history: BrowserHistory
     /// Wide enough for the title as well as the icon.
@@ -1166,7 +1222,7 @@ private struct BrowserTabView: View {
 
 /// What a new tab shows: pages to go back to, as cards on the panel's own
 /// background.
-private struct NewTabPage: View {
+struct NewTabPage: View {
     @ObservedObject var history: BrowserHistory
     let chatPages: [String]
     let open: (URL) -> Void
@@ -1295,7 +1351,7 @@ private struct SuggestionCard: View {
                 }
             }
             .frame(width: 38, height: 38)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous)
                 .fill((tint ?? Theme.ink).opacity(tint == nil ? 0.12 : 0.30)))
             .frame(maxWidth: .infinity)
             .frame(height: 64)
@@ -1380,6 +1436,284 @@ private struct WebView: NSViewRepresentable {
     private func cover(_ view: WKWebView) {
         if #available(macOS 26.0, *), abs(view.obscuredContentInsets.top - topInset) > 0.5 {
             view.obscuredContentInsets = NSEdgeInsets(top: topInset, left: 0, bottom: 0, right: 0)
+        }
+    }
+}
+
+
+/// iCloud Passwords over a page with a password form: saved logins to fill,
+/// a strong password for a sign-up, and "Save" after signing in or up.
+struct PasswordBar: View {
+    /// The page it works on: a WebKit tab's web view, or a Chromium tab.
+    let page: any PasswordPage
+    @ObservedObject private var passwords = ICloudPasswords.shared
+    @State private var code = ""
+
+    private var form: (host: String, kind: ICloudPasswords.FormKind)? {
+        passwords.forms[page.passwordID]
+    }
+
+    var body: some View {
+        Group {
+            if let offer = passwords.offer, offer.webView == page.passwordID {
+                row(icon: "key.fill", tint: Theme.mint) {
+                    Text(offer.update ? "Update the password for \(offer.username) in iCloud Passwords?"
+                                      : "Save \(offer.username.isEmpty ? "this login" : offer.username) to iCloud Passwords?")
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    button(offer.update ? "Update" : "Save", prominent: true) { passwords.saveOffer() }
+                    button("Not now") { passwords.dismissOffer() }
+                }
+            } else if let form {
+                row(icon: "key.fill", tint: Theme.accent) { content(form) }
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: form?.host)
+    }
+
+    @ViewBuilder
+    private func content(_ form: (host: String, kind: ICloudPasswords.FormKind)) -> some View {
+        switch passwords.state {
+        case .ready:
+            let found = passwords.logins[form.host] ?? []
+            if found.isEmpty {
+                Text(form.kind == .new ? "iCloud Passwords will offer to save this sign-up." : "No saved login for \(form.host).")
+                    .lineLimit(1)
+            } else {
+                Text("iCloud Passwords")
+                Menu {
+                    ForEach(found) { login in
+                        Button(login.username.isEmpty ? "(no username)" : login.username) {
+                            passwords.fill(login, host: form.host, page: page)
+                        }
+                    }
+                } label: {
+                    Text(found.count == 1 ? "Fill \(found[0].username)" : "Fill a login (\(found.count))")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+            Spacer(minLength: 6)
+            if form.kind == .new {
+                button("Strong password") { passwords.suggestPassword(page: page) }
+            }
+        case .awaitingCode:
+            Text("Code from macOS")
+            TextField("123456", text: $code)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(width: 70)
+                .onSubmit { passwords.submit(code: code); code = "" }
+            button("Pair", prominent: true) { passwords.submit(code: code); code = "" }
+            Spacer(minLength: 6)
+        case .notInstalled:
+            Text("Use your iCloud Passwords here?")
+            Spacer(minLength: 6)
+            button("Set up", prominent: true) { passwords.install() }
+        case .installing, .starting:
+            LoadingMark(state: .working, size: 13)
+            Text(passwords.detail).lineLimit(1)
+            Spacer(minLength: 6)
+        case .needsPairing:
+            Text(passwords.detail.isEmpty ? "Pair with iCloud Passwords to fill logins." : passwords.detail)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            button("Pair", prominent: true) { passwords.startPairing() }
+        case .failed(let why):
+            Text(why).lineLimit(2)
+            Spacer(minLength: 6)
+            if passwords.missingBrowser {
+                button("Install Chrome", prominent: true) { passwords.installBrowser() }
+            } else {
+                button("Try again") { passwords.installed ? passwords.startPairing() : passwords.install() }
+            }
+        }
+    }
+
+    private func row<Content: View>(icon: String, tint: Color, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+            content()
+        }
+        .font(.system(size: 11.5))
+        .foregroundStyle(Theme.ink.opacity(0.85))
+        .padding(.horizontal, 12)
+        .frame(minHeight: 32)
+        .background(tint.opacity(0.1))
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private func button(_ title: String, prominent: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(prominent ? Theme.accent : Theme.ink.opacity(0.7))
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(Capsule().fill((prominent ? Theme.accent : Theme.ink).opacity(prominent ? 0.16 : 0.07)))
+    }
+}
+
+
+// MARK: - Extensions
+
+/// The extensions' buttons in the browser bar, as in Chrome: the pinned
+/// ones side by side, and the rest behind the puzzle piece.
+private struct ExtensionStrip: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var web: BrowserModel
+    @ObservedObject private var extensions = BrowserExtensions.shared
+
+    var body: some View {
+        let actions = extensions.toolbar(tab: web.current, in: web)
+        let pinned = actions.filter(\.pinned)
+        BarGroup {
+            ForEach(pinned) { action in
+                ExtensionButton(action: action) {
+                    extensions.perform(action.id, tab: web.current, in: web)
+                }
+            }
+            Menu {
+                if actions.isEmpty {
+                    Text("No extensions yet")
+                }
+                ForEach(actions) { action in
+                    Button(action.label) { extensions.perform(action.id, tab: web.current, in: web) }
+                        .disabled(!action.enabled)
+                }
+                if actions.contains(where: \.hasOptions) {
+                    Divider()
+                    ForEach(actions.filter(\.hasOptions)) { action in
+                        Button("Options for \(action.label)") { extensions.openOptions(action.id, in: web) }
+                    }
+                }
+                Divider()
+                Button("Chrome Web Store") {
+                    if let url = URL(string: "https://chromewebstore.google.com") { web.open(url) }
+                }
+                Button("Manage Extensions…") { app.openSettings(tab: "Browser") }
+            } label: {
+                Image(systemName: "puzzlepiece.extension")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.ink.opacity(0.68))
+                    .frame(width: BarButton.size, height: BarButton.size)
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .background(ExtensionAnchor(id: "menu"))
+            .help("Extensions")
+        }
+    }
+}
+
+/// One extension's button: its icon, with its badge.
+private struct ExtensionButton: View {
+    let action: BrowserExtensions.ToolbarAction
+    let run: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: run) {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let icon = action.icon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 16, height: 16)
+                    } else {
+                        Image(systemName: "puzzlepiece.extension.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.ink.opacity(0.6))
+                    }
+                }
+                .frame(width: BarButton.size, height: BarButton.size)
+                .background(Circle().fill(Theme.ink.opacity(hover ? 0.18 : 0)))
+                if !action.badge.isEmpty {
+                    Text(action.badge.prefix(4))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3)
+                        .frame(minWidth: 12, minHeight: 11)
+                        .background(Capsule().fill(Theme.rose))
+                        .offset(x: 1, y: 1)
+                }
+            }
+            .contentShape(Circle())
+            .opacity(action.enabled ? 1 : 0.4)
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .background(ExtensionAnchor(id: action.id))
+        .help(action.label)
+    }
+}
+
+/// Lets an extension's popup hang from its button.
+private struct ExtensionAnchor: NSViewRepresentable {
+    let id: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        Task { @MainActor in BrowserExtensions.shared.setAnchor(view, for: id) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        BrowserExtensions.shared.setAnchor(view, for: id)
+    }
+}
+
+/// On a Chrome Web Store page: add the extension to Companion's browser,
+/// since the store's own button only works in Chrome.
+private struct StoreBar: View {
+    @ObservedObject var tab: BrowserTab
+    @ObservedObject private var extensions = BrowserExtensions.shared
+
+    private var storeID: String? {
+        guard BrowserExtensions.supported, let url = tab.url, url.host == "chromewebstore.google.com",
+              url.path.contains("/detail/") else { return nil }
+        return BrowserExtensions.storeID(in: url.lastPathComponent)
+    }
+
+    /// The store's own button adds to Companion on this page; the bar
+    /// only shows progress then.
+    private var hooked: Bool { extensions.storeHooked.contains(ObjectIdentifier(tab.webView)) }
+
+    var body: some View {
+        if let id = storeID, extensions.busy != nil || !hooked {
+            HStack(spacing: 8) {
+                Image(systemName: "puzzlepiece.extension.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                if let busy = extensions.busy {
+                    LoadingMark(state: .working, size: 13)
+                    Text(busy).lineLimit(1)
+                } else if extensions.isInstalled(id) {
+                    Text("This extension is in Companion's browser.").lineLimit(1)
+                } else {
+                    Text("Add this extension to Companion's browser?").lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                if extensions.busy == nil {
+                    Button(extensions.isInstalled(id) ? "Update" : "Add to Companion") { extensions.addFromStore(id) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background(Capsule().fill(Theme.accent.opacity(0.16)))
+                }
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.ink.opacity(0.85))
+            .padding(.horizontal, 12)
+            .frame(minHeight: 32)
+            .background(Theme.accent.opacity(0.1))
         }
     }
 }

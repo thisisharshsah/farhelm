@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import os
 import FluidAudio
 
@@ -12,11 +13,11 @@ enum SpeakerLabel: Equatable {
 /// 1. Live: the streaming Sortformer diarizer listens to the continuous mic
 ///    stream and keeps each voice in a slot (up to four). The user's recorded
 ///    voice primes it at the start of a session, so the "Me" slot is known.
-/// 2. Live second opinion: each finished utterance gets a voiceprint (a
-///    WeSpeaker embedding) that is compared with the user's own voiceprint
-///    and with the voices heard so far. It overrules the diarizer when the
-///    voice clearly says otherwise, and folds a voice that the diarizer split
-///    across two slots back into one person.
+/// 2. Live verdict on "is this the user?": each finished utterance gets a
+///    voiceprint (a WeSpeaker embedding), and a small per-user adapter
+///    (`VoiceHead`) fitted to the setup recording and to every correction
+///    decides whether it is the user. The diarizer only numbers the others,
+///    and the voiceprint folds a voice it split across slots back into one.
 /// 3. Recheck: the offline pyannote pipeline (segmentation, embeddings, VBx
 ///    clustering) re-labels the whole recorded session at once, which is the
 ///    most accurate of the three because it hears everything before deciding.
@@ -46,6 +47,39 @@ actor SpeakerID {
     /// The offline pipeline is running; voiceprints must not use the models.
     private var offlineBusy = false
     private var meVoice: [Float]?
+    /// How close a voice must be to the user's voiceprint to count as the
+    /// user. It starts from how consistent the setup recording is with
+    /// itself, then moves with every correction and recheck, and is kept
+    /// between sessions.
+    private var meThreshold: Float = {
+        let saved = UserDefaults.standard.float(forKey: "voiceThreshold")
+        return saved > 0 ? saved : 0.45
+    }()
+    /// The adapter that decides "is this the user?": a small classifier over
+    /// voiceprints, fitted to the setup recording and to every labeled
+    /// example since. See `VoiceHead`.
+    private var head: VoiceHead?
+    /// Voiceprints of the parts of the setup recording: the first examples.
+    private var enrollVectors: [[Float]] = []
+    /// Labeled voiceprints from corrections and rechecks, kept on disk.
+    private var examples: [VoiceExample] = []
+    private var examplesLoaded = false
+    private var exampleStore: VoiceExampleStore {
+        VoiceExampleStore(url: ContextStore.shared.baseDir.appendingPathComponent("voice-examples.plist"))
+    }
+    /// Voiceprints of a public set of voices, one per person: what "other
+    /// people" sound like before the user has corrected anything. Imported
+    /// once from a folder of recordings and kept on disk.
+    private var reference: [[Float]] = []
+    private var referenceLoaded = false
+    private static let maxReference = 600
+    private var referenceURL: URL {
+        ContextStore.shared.baseDir.appendingPathComponent("voice-reference.plist")
+    }
+    /// Similarities to the user's voiceprint for lines known to be the user
+    /// and known not to be, from corrections and rechecks.
+    private var knownMe: [Float] = []
+    private var knownOther: [Float] = []
     /// Running voiceprint of each other person, keyed by P number.
     private var otherVoices: [Int: [Float]] = [:]
 
@@ -103,6 +137,15 @@ actor SpeakerID {
         try data.write(to: profileURL, options: .atomic)
         enrollment = kept
         meVoice = nil
+        knownMe = []
+        knownOther = []
+        head = nil
+        enrollVectors = []
+        examples = []
+        examplesLoaded = true
+        exampleStore.clear()
+        meThreshold = 0.45
+        UserDefaults.standard.removeObject(forKey: "voiceThreshold")
         profileLoaded = true
         log.info("voice enrolled from \(kept.count) voiced samples")
         try await prepare()
@@ -227,12 +270,34 @@ actor SpeakerID {
             guard !spans.isEmpty else { return }
             let vectors = try await manager.embedSpans(audioSource: ArrayAudioSampleSource(samples: enrollment),
                                                        spans: spans)
+            let unit = vectors.map(Self.normalized)
             var sum: [Float] = []
-            for vector in vectors {
-                sum = Self.add(sum, Self.normalized(vector))
+            for vector in unit {
+                sum = Self.add(sum, vector)
             }
             meVoice = Self.normalized(sum)
-            log.info("voiceprint ready from \(vectors.count) spans")
+            // First estimate of the line between "me" and "not me": how well
+            // each part of the setup recording matches the rest of it, less
+            // a margin. Skipped once real examples have set it.
+            if UserDefaults.standard.float(forKey: "voiceThreshold") <= 0, unit.count >= 3 {
+                var lowest: Float = 1
+                for (index, vector) in unit.enumerated() {
+                    var rest: [Float] = []
+                    for (other, value) in unit.enumerated() where other != index {
+                        rest = Self.add(rest, value)
+                    }
+                    lowest = min(lowest, Self.similarity(vector, Self.normalized(rest)))
+                }
+                meThreshold = min(max(lowest - 0.12, 0.30), 0.60)
+            }
+            enrollVectors = unit
+            loadReferenceIfNeeded()
+            if !examplesLoaded {
+                examplesLoaded = true
+                examples = exampleStore.load()
+            }
+            refit()
+            log.info("voiceprint ready from \(vectors.count) spans, \(self.examples.count) learned examples, threshold \(Double(self.meThreshold), format: .fixed(precision: 2))")
         } catch {
             log.error("voiceprints unavailable: \(error.localizedDescription)")
         }
@@ -250,6 +315,111 @@ actor SpeakerID {
         guard let vector = try? await offline.embedSpans(audioSource: ArrayAudioSampleSource(samples: clip),
                                                          spans: [0..<seconds]).first else { return nil }
         return Self.normalized(vector)
+    }
+
+    /// Refits the adapter to the setup recording plus everything learned.
+    private func refit() {
+        guard let meVoice else { head = nil; return }
+        let own = enrollVectors.map { VoiceExample(vector: $0, isMe: true) }
+        head = VoiceHead.fitted(center: meVoice, threshold: meThreshold, examples: own + examples,
+                                reference: reference)
+    }
+
+    // MARK: - Reference voices
+
+    private func loadReferenceIfNeeded() {
+        guard !referenceLoaded else { return }
+        referenceLoaded = true
+        reference = VoiceExampleStore.loadVectors(referenceURL)
+    }
+
+    func referenceVoiceCount() -> Int {
+        loadReferenceIfNeeded()
+        return reference.count
+    }
+
+    /// Takes one voiceprint per person from a folder of recordings (any
+    /// layout: LibriSpeech, or one folder per person) and keeps them as
+    /// examples of "not the user". Returns how many people were added.
+    func importReferenceVoices(from folder: URL,
+                               progress: @Sendable (Int, Int) -> Void) async throws -> Int {
+        loadReferenceIfNeeded()
+        let manager = try await offlineManager()
+
+        // Group the audio files by speaker. LibriSpeech names files
+        // speaker-chapter-utterance; otherwise the containing folder is the
+        // speaker.
+        var files: [String: [URL]] = [:]
+        let kinds: Set<String> = ["flac", "wav", "mp3", "m4a", "aiff", "caf"]
+        if let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil) {
+            while let url = walker.nextObject() as? URL {
+                guard kinds.contains(url.pathExtension.lowercased()) else { continue }
+                let parts = url.deletingPathExtension().lastPathComponent.split(separator: "-")
+                let libri = parts.count == 3 && parts.allSatisfy { $0.allSatisfy(\.isNumber) }
+                let speaker = libri ? String(parts[0]) : url.deletingLastPathComponent().lastPathComponent
+                files[speaker, default: []].append(url)
+            }
+        }
+        let speakers = files.keys.sorted()
+        guard !speakers.isEmpty else {
+            throw NSError(domain: "Companion", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "No audio files found in that folder."])
+        }
+
+        var added: [[Float]] = []
+        for (index, speaker) in speakers.enumerated() {
+            if Task.isCancelled { break }
+            progress(index, speakers.count)
+            // About ten seconds of this person, from their first recordings.
+            var clip: [Float] = []
+            for url in (files[speaker] ?? []).sorted(by: { $0.path < $1.path }) {
+                guard clip.count < 10 * 16000 else { break }
+                clip += Self.samples16k(url) ?? []
+            }
+            clip = Array(Self.voicedOnly(clip).prefix(15 * 16000))
+            guard clip.count >= 3 * 16000, !offlineBusy else { continue }
+            let seconds = Double(clip.count) / 16000
+            if let vector = try? await manager.embedSpans(audioSource: ArrayAudioSampleSource(samples: clip),
+                                                          spans: [0..<seconds]).first {
+                added.append(Self.normalized(vector))
+            }
+        }
+        progress(speakers.count, speakers.count)
+        reference = Array((reference + added).suffix(Self.maxReference))
+        VoiceExampleStore.saveVectors(reference, to: referenceURL)
+        refit()
+        log.info("reference voices: added \(added.count), now \(self.reference.count)")
+        return added.count
+    }
+
+    /// A sound file as 16 kHz mono samples.
+    private static func samples16k(_ url: URL) -> [Float]? {
+        guard let file = try? AVAudioFile(forReading: url), file.length > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                            frameCapacity: AVAudioFrameCount(file.length)) else { return nil }
+        do { try file.read(into: buffer) } catch { return nil }
+        let format = file.processingFormat
+        if format.sampleRate == 16000, format.channelCount == 1, let data = buffer.floatChannelData {
+            return Array(UnsafeBufferPointer(start: data[0], count: Int(buffer.frameLength)))
+        }
+        guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000,
+                                         channels: 1, interleaved: false),
+              let converter = AVAudioConverter(from: format, to: target) else { return nil }
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 16000 / format.sampleRate) + 4096
+        guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return nil }
+        var fed = false
+        var failure: NSError?
+        converter.convert(to: output, error: &failure) { _, status in
+            if fed {
+                status.pointee = .endOfStream
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard failure == nil, let data = output.floatChannelData else { return nil }
+        return Array(UnsafeBufferPointer(start: data[0], count: Int(output.frameLength)))
     }
 
     private static func normalized(_ vector: [Float]) -> [Float] {
@@ -386,72 +556,103 @@ actor SpeakerID {
     /// the diarizer has not used before really is: the user, a person already
     /// heard (the same voice split across slots), or somebody new.
     private func decide(slot: Int?, voice: [Float]?) -> SpeakerLabel? {
-        var label: SpeakerLabel?
-        var newSlot: Int?
-        if let slot {
-            if slot == meIndex {
-                label = .me
-            } else if let number = otherNumbers[slot] {
-                label = .other(number)
-            } else {
-                newSlot = slot
-            }
-        }
         func nextNumber() -> Int {
             (otherNumbers.values.max() ?? 0) + 1
         }
+        // Without a voiceprint (a very short line, or the models are not
+        // loaded yet) the diarizer's slot is all there is.
         guard let voice, let meVoice else {
-            if let newSlot {
-                let number = nextNumber()
-                otherNumbers[newSlot] = number
-                label = .other(number)
-            }
-            return label
+            guard let slot else { return nil }
+            if slot == meIndex { return .me }
+            if let number = otherNumbers[slot] { return .other(number) }
+            let number = nextNumber()
+            otherNumbers[slot] = number
+            return .other(number)
         }
 
+        // With one, the question "is this the user?" is answered by the
+        // voice itself, measured against the user's own recording. That is
+        // steadier than the diarizer, which has to keep track of who is who
+        // as it goes and can swap or split voices.
         let toMe = Self.similarity(voice, meVoice)
         let toOthers = otherVoices.mapValues { Self.similarity(voice, Self.normalized($0)) }
         let closest = toOthers.max(by: { $0.value < $1.value })
-
-        if let newSlot {
-            if toMe >= 0.5, toMe >= (closest?.value ?? 0) {
-                // A fresh slot that sounds like the user: the diarizer split
-                // the user's voice.
-                label = .me
-            } else if let closest, closest.value >= 0.5 {
-                // A fresh slot that sounds like someone already heard.
-                otherNumbers[newSlot] = closest.key
-                label = .other(closest.key)
-            } else {
-                let number = nextNumber()
-                otherNumbers[newSlot] = number
-                label = .other(number)
-            }
-        } else if label == .me {
-            if toMe < 0.2, let closest, closest.value >= 0.45 {
-                label = .other(closest.key)
-            }
-        } else if case .other(let number)? = label {
-            let own = toOthers[number] ?? 0
-            if toMe >= 0.45, toMe > own + 0.1 {
-                label = .me
-            } else if let closest, closest.key != number, closest.value >= 0.5, closest.value > own + 0.1 {
-                label = .other(closest.key)
-            }
+        let label: SpeakerLabel
+        // The adapter gives the verdict. Until it has seen a few voices that
+        // are not the user, a voice that sits closer to someone already
+        // heard is not taken for the user either.
+        let chance = head?.probability(voice) ?? (toMe >= meThreshold ? 1 : 0)
+        let taught = reference.count + examples.filter { !$0.isMe }.count >= 3
+        if chance >= 0.5, taught || toMe + 0.03 >= (closest?.value ?? 0) {
+            label = .me
         } else {
-            // The diarizer had no answer; the voice may.
-            if toMe >= 0.5, toMe >= (closest?.value ?? 0) {
-                label = .me
-            } else if let closest, closest.value >= 0.5 {
-                label = .other(closest.key)
+            // Someone else. Which one: the diarizer's slot if it has a
+            // settled number, unless the voice clearly belongs to another
+            // person already heard; a fresh slot joins a voice it matches,
+            // or becomes a new person.
+            var number: Int?
+            if let slot, slot != meIndex, let known = otherNumbers[slot] {
+                number = known
+                if let closest, closest.key != known, closest.value >= 0.5,
+                   closest.value > (toOthers[known] ?? 0) + 0.1 {
+                    number = closest.key
+                }
+            } else if let closest, closest.value >= 0.45 || otherVoices.count >= 4 {
+                number = closest.key
+                if let slot, slot != meIndex { otherNumbers[slot] = closest.key }
+            }
+            let chosen = number ?? max(nextNumber(), (otherVoices.keys.max() ?? 0) + 1)
+            if number == nil, let slot, slot != meIndex {
+                otherNumbers[slot] = chosen
+            }
+            otherVoices[chosen] = Self.add(otherVoices[chosen] ?? [], voice)
+            label = .other(chosen)
+        }
+        log.info("slot \(slot ?? -1), me chance \(Double(chance), format: .fixed(precision: 2)), voice to me \(Double(toMe), format: .fixed(precision: 2)) vs \(Double(self.meThreshold), format: .fixed(precision: 2)), closest other \(Double(closest?.value ?? 0), format: .fixed(precision: 2)) -> \(String(describing: label))")
+        return label
+    }
+
+    /// A labeled example from the user (a corrected line) or from the
+    /// offline recheck: this stretch of audio was the user, or was not.
+    /// It moves the line between the two so the same mistake is less likely
+    /// again, and adds the voice to the right person's voiceprint.
+    func learn(startSample: Int, endSample: Int, isMe: Bool, other: Int?) async {
+        guard let meVoice, let voice = await voiceprint(startSample: startSample, endSample: endSample) else { return }
+        let toMe = Self.similarity(voice, meVoice)
+        if isMe {
+            knownMe.append(toMe)
+        } else {
+            knownOther.append(toMe)
+            if let other {
+                otherVoices[other] = Self.add(otherVoices[other] ?? [], voice)
             }
         }
+        knownMe = Array(knownMe.suffix(40))
+        knownOther = Array(knownOther.suffix(40))
 
-        if case .other(let number)? = label {
-            otherVoices[number] = Self.add(otherVoices[number] ?? [], voice)
+        var threshold = meThreshold
+        if let lowestMe = knownMe.min(), let highestOther = knownOther.max(), lowestMe > highestOther {
+            // The two groups separate cleanly: draw the line between them.
+            threshold = (lowestMe + highestOther) / 2
+        } else if isMe, toMe < threshold {
+            // The user was taken for someone else: let this voice through.
+            threshold = toMe - 0.02
+        } else if !isMe, toMe >= threshold {
+            // Someone else was taken for the user: shut this voice out.
+            threshold = toMe + 0.02
         }
-        log.info("slot \(slot ?? -1), voice to me \(Double(toMe), format: .fixed(precision: 2)), closest other \(Double(closest?.value ?? 0), format: .fixed(precision: 2)) -> \(String(describing: label))")
-        return label
+        meThreshold = min(max(threshold, 0.20), 0.80)
+        UserDefaults.standard.set(meThreshold, forKey: "voiceThreshold")
+
+        // The example itself goes to the adapter, unless the same stretch of
+        // audio is already there (a recheck run twice teaches nothing new).
+        let seen = examples.contains { $0.isMe == isMe && Self.similarity($0.vector, voice) > 0.995 }
+        if !seen {
+            examples = VoiceExampleStore.trimmed(examples + [VoiceExample(vector: voice, isMe: isMe)])
+            exampleStore.save(examples)
+        }
+        refit()
+        log.info("learned \(isMe ? "me" : "other") at \(Double(toMe), format: .fixed(precision: 2)); threshold now \(Double(self.meThreshold), format: .fixed(precision: 2))")
     }
 
     private func loadProfileIfNeeded() {

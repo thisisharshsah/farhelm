@@ -63,6 +63,12 @@ public enum Design {
     /// shows at once. The Mac app sets it to its own Look at launch.
     nonisolated(unsafe) public static var palette: () -> Palette = { .dark }
 
+    /// The one corner scale every surface uses, all drawn with the
+    /// continuous (iOS squircle) curve: tiny chips and badges, buttons and
+    /// rows, tiles and popovers, then cards.
+    public static let chipRadius: CGFloat = 6
+    public static let controlRadius: CGFloat = 8
+    public static let tileRadius: CGFloat = 12
     public static let cardRadius: CGFloat = 14
     public static let bubbleRadius: CGFloat = 9
     public static let gutter: CGFloat = 14
@@ -82,4 +88,7 @@ enum Theme {
     static var rose: Color { Design.palette().rose }
     static var accentGradient: LinearGradient { Design.palette().accentGradient }
     static var bubbleRadius: CGFloat { Design.bubbleRadius }
+    static var chipRadius: CGFloat { Design.chipRadius }
+    static var controlRadius: CGFloat { Design.controlRadius }
+    static var tileRadius: CGFloat { Design.tileRadius }
 }

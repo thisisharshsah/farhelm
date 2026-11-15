@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Network
 #if canImport(AppKit)
@@ -44,6 +45,13 @@ final class RemoteServer: ObservableObject {
     private var lastOrder: [String] = []
     private var lastMeta = ""
     private var lastPing = Date()
+    /// Something the phone shows may have changed since the last tick. The
+    /// conversation is turned into JSON only then (and every few seconds
+    /// regardless), not three times a second while nothing happens: for a
+    /// long chat that was real work for the Mac while it sat idle.
+    private var dirty = true
+    private var lastFullCheck = Date()
+    private var changeWatch: Set<AnyCancellable> = []
 
     /// The port it tries first; if taken, the system picks a free one.
     private let preferredPort: UInt16 = 7345
@@ -82,6 +90,7 @@ final class RemoteServer: ObservableObject {
             listener.newConnectionHandler = { [weak self] connection in
                 Task { @MainActor in self?.accept(connection) }
             }
+            advertise(listener)
             listener.start(queue: .global(qos: .userInitiated))
             startPump()
         } catch {
@@ -102,6 +111,7 @@ final class RemoteServer: ObservableObject {
             listener.newConnectionHandler = { [weak self] connection in
                 Task { @MainActor in self?.accept(connection) }
             }
+            advertise(listener)
             listener.start(queue: .global(qos: .userInitiated))
             startPump()
         } catch {
@@ -120,6 +130,80 @@ final class RemoteServer: ObservableObject {
         listener = nil
         running = false
         port = 0
+    }
+
+    // MARK: Found by the Companion app
+
+    /// The Bonjour type the iPhone, iPad and Watch apps look for.
+    static let serviceType = "_companion._tcp"
+
+    /// This Mac's lasting id, so an app that paired with it knows it again
+    /// whatever its address or name.
+    static var macID: String {
+        let key = "remoteMacID"
+        if let id = UserDefaults.standard.string(forKey: key) { return id }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }
+
+    /// The Mac's name as people know it ("Harsh's MacBook Pro").
+    /// (Looked up once: it can take a moment.)
+    static let macName: String = Host.current().localizedName ?? "Mac"
+
+    /// Announces the server on the local network under the Mac's name, with
+    /// its id. The pairing code is never announced.
+    private func advertise(_ listener: NWListener) {
+        let txt = NWTXTRecord(["id": Self.macID, "v": "1"])
+        listener.service = NWListener.Service(name: Self.macName, type: Self.serviceType, domain: nil,
+                                              txtRecord: txt)
+    }
+
+    /// Every address an app may reach this Mac at, best first: its local
+    /// name, its address on the Wi-Fi, and its Tailscale address, which
+    /// works from anywhere when the phone is on the same tailnet.
+    var hosts: [String] {
+        var hosts: [String] = []
+        if let name = Self.localName() { hosts.append(name) }
+        if let ip = Self.lanAddress() { hosts.append(ip) }
+        if let tail = Self.tailscaleAddress() { hosts.append(tail) }
+        return hosts
+    }
+
+    /// The link the Companion app pairs with (as a QR code): this Mac's id
+    /// and name, where it can be reached, and the pairing code.
+    var appLink: String? {
+        guard running, port != 0, !hosts.isEmpty else { return nil }
+        var parts = URLComponents()
+        parts.scheme = "companion"
+        parts.host = "pair"
+        parts.queryItems = [
+            URLQueryItem(name: "v", value: "1"),
+            URLQueryItem(name: "id", value: Self.macID),
+            URLQueryItem(name: "name", value: Self.macName),
+            URLQueryItem(name: "port", value: String(port)),
+            URLQueryItem(name: "hosts", value: hosts.joined(separator: ",")),
+            URLQueryItem(name: "token", value: token),
+        ]
+        return parts.url?.absoluteString
+    }
+
+    /// The Mac's Tailscale address (100.64.0.0/10), when Tailscale is on.
+    static func tailscaleAddress() -> String? {
+        var first: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&first) == 0 else { return nil }
+        defer { freeifaddrs(first) }
+        var pointer = first
+        while let current = pointer {
+            defer { pointer = current.pointee.ifa_next }
+            guard let address = current.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+            // 100.64.0.0/10: the shared address space Tailscale uses.
+            guard ip & 0xFFC0_0000 == 0x6440_0000 else { continue }
+            let a = (ip >> 24) & 0xFF, b = (ip >> 16) & 0xFF, c = (ip >> 8) & 0xFF, d = ip & 0xFF
+            return "\(a).\(b).\(c).\(d)"
+        }
+        return nil
     }
 
     private func listenerChanged(_ state: NWListener.State) {
@@ -264,6 +348,8 @@ final class RemoteServer: ObservableObject {
         var path: String
         var query: [String: String]
         var body: String
+        /// The body as it came (a file the phone sends).
+        var data: Data
     }
 
     /// Pulls a whole request out of the buffer once it has arrived, or nil
@@ -307,7 +393,7 @@ final class RemoteServer: ObservableObject {
             }
         }
         return Request(method: method, path: path, query: query,
-                       body: String(data: bodyData, encoding: .utf8) ?? "")
+                       body: String(data: bodyData, encoding: .utf8) ?? "", data: Data(bodyData))
     }
 
     // MARK: Routing
@@ -344,12 +430,113 @@ final class RemoteServer: ObservableObject {
         case ("GET", "/state"):
             send(json: snapshotJSON(), on: connection)
         case ("POST", "/say"):
+            // With the files the phone attached for it (`files=id,id`).
             let text = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { AppState.shared.send(text) }
+            let files = (request.query["files"] ?? "").split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+            if !text.isEmpty { AppState.shared.send(text, files: files) }
+            send(json: "{\"ok\":true}", on: connection)
+        case ("POST", "/attach"):
+            // A photo or file from the phone: kept on this Mac and attached
+            // to the open chat, for the message that is sent with it.
+            let name = Self.safeFileName(request.query["name"] ?? "Attachment")
+            guard !request.data.isEmpty, request.data.count <= 40_000_000 else {
+                send(status: "413 Payload Too Large", body: "Too large.", on: connection)
+                return
+            }
+            let folder = ContextStore.shared.baseDir.appendingPathComponent("From phone", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(name)")
+            do {
+                try request.data.write(to: url)
+            } catch {
+                send(status: "500 Internal Server Error", body: "Could not keep it.", on: connection)
+                return
+            }
+            Task { @MainActor in
+                if let id = await AppState.shared.attachFromPhone(url) {
+                    self.send(json: Self.json(["id": id.uuidString, "name": name]), on: connection)
+                } else {
+                    self.send(status: "422 Unprocessable Entity", body: "Could not read it.", on: connection)
+                }
+            }
+        case ("POST", "/screen"):
+            // A look at this Mac's screen, answered in the chat (with the
+            // question, when one is sent).
+            let question = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            AppState.shared.answerScreenNow(question: question.isEmpty ? nil : question)
+            send(json: "{\"ok\":true}", on: connection)
+        case ("POST", "/edit"):
+            // A message sent again, changed: {"id", "text", "choice"} where
+            // choice is "", "fork", "rewindCode" or "forkAndRewind".
+            if let object = try? JSONSerialization.jsonObject(with: request.data) as? [String: Any],
+               let raw = object["id"] as? String, let id = UUID(uuidString: raw),
+               let text = object["text"] as? String {
+                let choice: AppState.GoBack? = switch (object["choice"] as? String) ?? "" {
+                case "fork": .fork
+                case "rewindCode": .rewindCode
+                case "forkAndRewind": .forkAndRewind
+                default: nil
+                }
+                AppState.shared.editMessage(id, to: text, choice)
+            }
             send(json: "{\"ok\":true}", on: connection)
         case ("POST", "/stop"):
-            AppState.shared.stopAgent()
+            let app = AppState.shared
+            if app.agentHere { app.stopAgent() } else { app.stopReply() }
             send(json: "{\"ok\":true}", on: connection)
+        case ("GET", "/models"):
+            // The engines and their models, as the Mac's model picker lists them.
+            let engines = EngineCatalog.engines.map { engine -> [String: Any] in
+                ["id": engine.id,
+                 "name": EngineCatalog.name(engine),
+                 "place": EngineCatalog.place(engine),
+                 "inUse": EngineCatalog.inUse(engine),
+                 "current": EngineCatalog.current(engine),
+                 "models": engine.models.map { model -> [String: Any] in
+                     ["id": model,
+                      "title": model.isEmpty ? "Default" : EngineCatalog.title(engine, model),
+                      "note": EngineCatalog.note(engine, model) ?? ""]
+                 }]
+            }
+            send(json: Self.json(["engines": engines]), on: connection)
+        case ("POST", "/model"):
+            // {"engine": id, "model": model}: the engine and model that answer.
+            if let object = try? JSONSerialization.jsonObject(with: request.data) as? [String: Any],
+               let id = object["engine"] as? String, let model = object["model"] as? String,
+               let engine = EngineCatalog.engines.first(where: { $0.id == id }),
+               engine.models.contains(model) {
+                EngineCatalog.choose(engine, model)
+            }
+            send(json: "{\"ok\":true}", on: connection)
+        case ("POST", "/access"):
+            // Manual, Auto (edits) or Auto (full access), for this chat.
+            let raw = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let access = AgentAccess(rawValue: raw) { AppState.shared.setAgentAccess(access) }
+            send(json: "{\"ok\":true}", on: connection)
+        case ("POST", "/effort"):
+            // A level the engine takes, or "" to leave it to the model.
+            let level = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            let settings = AppSettings.shared
+            if level.isEmpty || settings.effortLevels.contains(level) { settings.chosenEffort = level }
+            send(json: "{\"ok\":true}", on: connection)
+        case ("POST", "/queued"):
+            // A waiting message: "now <id>", "cancel <id>" or "restore <id>".
+            let parts = request.body.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ")
+            let app = AppState.shared
+            if parts.count == 2, let id = UUID(uuidString: String(parts[1])) {
+                switch parts[0] {
+                case "now": app.sendQueuedNow(id)
+                case "cancel": app.setQueuedVoid(id, true)
+                case "restore": app.setQueuedVoid(id, false)
+                default: break
+                }
+            }
+            send(json: "{\"ok\":true}", on: connection)
+        case ("GET", "/info"):
+            // What an app needs to keep reaching this Mac: its addresses
+            // change, its id does not.
+            send(json: Self.json(["id": Self.macID, "name": Self.macName, "port": Int(port),
+                                  "hosts": hosts, "api": 1]), on: connection)
         case ("GET", "/image"):
             // Only the picture of a turn in the open chat, looked up by the
             // turn, so no path from the phone ever reaches the disk.
@@ -401,6 +588,14 @@ final class RemoteServer: ObservableObject {
         lastTurns = [:]
         lastOrder = []
         lastMeta = ""
+        dirty = true
+        changeWatch = []
+        AppState.shared.objectWillChange
+            .sink { [weak self] _ in self?.dirty = true }
+            .store(in: &changeWatch)
+        AppSettings.shared.objectWillChange
+            .sink { [weak self] _ in self?.dirty = true }
+            .store(in: &changeWatch)
         pump = Task { @MainActor in
             while !Task.isCancelled {
                 broadcastIfChanged()
@@ -417,6 +612,12 @@ final class RemoteServer: ObservableObject {
             lastPing = Date()
             for connection in feeds.values { write(": ping\n\n", to: connection) }
         }
+        // Nothing may have changed: then there is nothing to work out, but
+        // once every few seconds it is looked at anyway, for anything that
+        // changes without saying so.
+        guard dirty || Date().timeIntervalSince(lastFullCheck) > 3 else { return }
+        dirty = false
+        lastFullCheck = Date()
         let (meta, turns) = snapshotParts()
         let order = turns.map { $0.id }
         let changed = turns.filter { lastTurns[$0.id] != $0.json }
@@ -464,6 +665,8 @@ final class RemoteServer: ObservableObject {
     /// The chat's state, and each recent turn as its own JSON.
     private func snapshotParts() -> (meta: String, turns: [(id: String, json: String)]) {
         let app = AppState.shared
+        // When this chat last changed a file, looked up once for every turn.
+        let lastChange = ChangeStore.shared.lastChange(of: app.conversation.id)
         let turns: [(id: String, json: String)] = app.conversation.turns.suffix(60).map { turn in
             let id = turn.id.uuidString
             return (id, Self.json([
@@ -474,14 +677,35 @@ final class RemoteServer: ObservableObject {
                 "error": turn.error ?? "",
                 "image": turn.imageFile != nil,
                 "streaming": app.streamingTurns.contains(turn.id),
-                "working": turn.steps?.isEmpty == false
+                "working": turn.steps?.isEmpty == false,
+                "date": turn.date.timeIntervalSince1970,
+                // What the agent did, briefly, for the app's work list.
+                "steps": (turn.steps ?? []).filter { $0.kind != .think }.suffix(40).map {
+                    ["kind": $0.kind.rawValue, "title": String($0.title.prefix(300)), "failed": $0.failed,
+                     "why": $0.why ?? "", "output": String(($0.output ?? "").suffix(600))]
+                },
+                "plan": (turn.plan ?? []).map { ["text": $0.text, "state": $0.state.rawValue] },
+                "suggestions": turn.suggestions ?? [],
+                // Files changed since this message, so editing it offers
+                // to fork the chat or put them back.
+                "canRewind": !turn.prompt.isEmpty && lastChange.map { $0 >= turn.date } == true
             ]))
         }
         var root: [String: Any] = [
             "chat": app.conversation.id.uuidString,
             "title": app.conversation.title,
             "status": app.statusLine,
-            "agentRunning": app.agentRunning
+            "agentRunning": app.agentHere,
+            "agentStatus": app.agentStatus ?? "",
+            "replying": app.replyStreamingHere,
+            "mac": Self.macName,
+            // The chat box's controls, as on the Mac.
+            "model": app.engineLabel,
+            "effort": AppSettings.shared.chosenEffort,
+            "efforts": AppSettings.shared.effortLevels,
+            "access": app.agentAccess.rawValue,
+            // Messages sent while the agent works, waiting for it.
+            "queued": app.queuedHere.map { ["id": $0.id.uuidString, "text": $0.text, "void": $0.void] }
         ]
         if let question = app.pendingQuestion {
             root["question"] = question.question
@@ -503,11 +727,22 @@ final class RemoteServer: ObservableObject {
             ["id": summary.id.uuidString,
              "title": summary.title,
              "date": summary.updatedAt.timeIntervalSince1970,
-             "turns": summary.turnCount]
+             "turns": summary.turnCount,
+             // A task running in it, and whether it waits on you.
+             "running": app.jobs[summary.id] != nil,
+             "waiting": app.chatsWaiting.contains(summary.id)]
         }
         let data = (try? JSONSerialization.data(withJSONObject: ["current": app.conversation.id.uuidString,
                                                                  "chats": list])) ?? Data("{}".utf8)
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// A file name from the phone, safe to put on disk.
+    static func safeFileName(_ raw: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " ._-"))
+        let cleaned = String(raw.unicodeScalars.filter { allowed.contains($0) }).trimmingCharacters(in: .whitespaces)
+        let name = cleaned.replacingOccurrences(of: "..", with: ".")
+        return name.isEmpty ? "Attachment" : String(name.prefix(80))
     }
 
     /// The app's own icon as a PNG, for the Home Screen.

@@ -1,13 +1,33 @@
 import SwiftUI
 
-/// The agent at work, shown above the input for as long as a task runs.
+/// The agent asking for the user, shown above the input. While it simply
+/// works there is no card: the chat shows that under the task itself.
 ///
-/// It always carries a Stop button. A thin bar shows how far along the task
-/// is. When the agent wants to do something that needs a yes, each step
-/// slides in as its own card with Allow, Always allow and Deny underneath.
-/// A step that goes through flashes a checkmark; one that fails shakes the
-/// whole card.
+/// When the agent wants to do something that needs a yes, or has a
+/// question, the card comes up: each step slides in as its own card with
+/// Allow, Always allow and Deny underneath. A step that goes through flashes a
+/// checkmark; one that fails shakes the card. Stopping is done from the
+/// chat box, where the send button turns into Stop.
 struct AgentCard: View {
+    /// Allow, Always allow and Deny for what the agent asks to do.
+    private func choices(_ proposal: AgentProposal, short: Bool) -> some View {
+        HStack(spacing: short ? 6 : 8) {
+            Button { app.decide(.allow) } label: { Chip("Allow", icon: "checkmark", tint: Theme.accent) }
+                .buttonStyle(.plain)
+                .help("Run this once (or say \"allow\")")
+            if !proposal.remember.isEmpty || proposal.steps.contains(where: { $0.kind.usesKeyboard }) {
+                Button { app.decide(.always) } label: { Chip(short ? "Always" : "Always allow", icon: "checkmark.circle") }
+                    .buttonStyle(.plain)
+                    .help(proposal.remember.isEmpty
+                          ? "Run this, and stop asking about clicks and typing for the rest of this task"
+                          : "Run this, and never ask again about: \(proposal.remember.joined(separator: ", "))")
+            }
+            Button { app.decide(.deny) } label: { Chip("Deny", icon: "xmark", tint: Theme.rose) }
+                .buttonStyle(.plain)
+                .help("Do not run this; the task stops (or say \"deny\")")
+        }
+    }
+
     @EnvironmentObject var app: AppState
     @State private var showCheck = false
     @State private var checkWork: Task<Void, Never>?
@@ -34,14 +54,10 @@ struct AgentCard: View {
 
     private var waiting: Bool { app.pendingApproval != nil || app.pendingQuestion != nil }
     private var tint: Color { waiting ? Theme.amber : Theme.accent }
-    private var done: Int { app.agentLog.count }
-
-    /// How far along the task is. The end is not known in advance, so the
-    /// bar fills toward it without reaching it until the task is over.
-    private var progress: Double {
-        let ahead = Double(app.pendingApproval?.steps.count ?? 0) + 1.5
-        return Double(done) / (Double(done) + ahead)
-    }
+    /// Steps taken: what it said and its thinking are not steps.
+    private var done: Int { app.agentLog.filter { !$0.hasPrefix("Said: ") && $0 != "Thinking" }.count }
+    /// How tall the steps are, so the list is as tall as they are, up to a cap.
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -62,22 +78,7 @@ struct AgentCard: View {
                         .monospacedDigit()
                         .foregroundStyle(Theme.ink.opacity(0.45))
                 }
-                Button { app.stopAgent() } label: { Chip("Stop", icon: "stop.fill", tint: Theme.rose) }
-                    .buttonStyle(.plain)
-                    .help("Stop the agent (\(Shortcuts.shared.label(.stopAgent)))")
             }
-
-            // Progress through the task.
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.ink.opacity(0.10))
-                    Capsule()
-                        .fill(LinearGradient(colors: [tint, tint.opacity(0.6)], startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(6, geometry.size.width * progress))
-                }
-            }
-            .frame(height: 3)
-            .animation(.spring(response: 0.5, dampingFraction: 0.85), value: progress)
 
             if let question = app.pendingQuestion {
                 // The agent stopped to ask. Pick an answer, or type one in
@@ -87,31 +88,13 @@ struct AgentCard: View {
                     .foregroundStyle(Theme.ink.opacity(0.95))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
-                        Button {
-                            app.answerAgent(option)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text("\(index + 1)")
-                                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                                    .foregroundStyle(Theme.accent)
-                                    .frame(width: 18, height: 18)
-                                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.accent.opacity(0.16)))
-                                Text(option)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Theme.ink.opacity(0.92))
-                                    .multilineTextAlignment(.leading)
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.ink.opacity(0.06)))
-                            .glassBorder(radius: 9)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
+                // Its choices, as bubbles that arrive one after another;
+                // one click answers.
+                if !question.options.isEmpty {
+                    ChoiceBubbles(question.options, numbered: true) { option in
+                        app.answerAgent(option)
                     }
+                    .id(question.id)
                 }
                 Text(question.options.isEmpty ? "Type your answer below." : "Or type your own answer below.")
                     .font(.system(size: 10.5))
@@ -119,41 +102,33 @@ struct AgentCard: View {
             } else if let proposal = app.pendingApproval {
                 // The steps take the room they need up to a cap, then
                 // scroll, so Allow and Deny below never leave the panel.
-                ViewThatFits(in: .vertical) {
+                ScrollView(.vertical, showsIndicators: listHeight > 260) {
                     stepList(proposal.steps, directory: proposal.directory, animating: proposal.id)
-                    ScrollView(.vertical) {
-                        stepList(proposal.steps, directory: proposal.directory, animating: proposal.id)
-                    }
+                        .background(GeometryReader { geometry in
+                            Color.clear
+                                .onAppear { listHeight = geometry.size.height }
+                                .onChange(of: geometry.size.height) { _, height in listHeight = height }
+                        })
                 }
-                .frame(maxHeight: 260)
-                HStack(spacing: 8) {
-                    Button { app.decide(.allow) } label: { Chip("Allow", icon: "checkmark", tint: Theme.accent) }
-                        .buttonStyle(.plain)
-                        .help("Run this once (or say \"allow\")")
-                    if !proposal.remember.isEmpty || proposal.steps.contains(where: { $0.kind.usesKeyboard }) {
-                        Button { app.decide(.always) } label: { Chip("Always allow", icon: "checkmark.circle") }
-                            .buttonStyle(.plain)
-                            .help(proposal.remember.isEmpty
-                                  ? "Run this, and stop asking about clicks and typing for the rest of this task"
-                                  : "Run this, and never ask again about: \(proposal.remember.joined(separator: ", "))")
-                    }
-                    Button { app.decide(.deny) } label: { Chip("Deny", icon: "xmark", tint: Theme.rose) }
-                        .buttonStyle(.plain)
-                        .help("Do not run this; the task stops (or say \"deny\")")
+                .frame(height: min(max(listHeight, 30), 260))
+                // In a narrow chat the middle one says less, so the three
+                // always fit on their line.
+                ViewThatFits(in: .horizontal) {
+                    choices(proposal, short: false)
+                    choices(proposal, short: true)
                 }
                 .transition(.opacity)
-            } else if let last = app.agentLog.last {
-                Text(MarkdownNotes.plain(last))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.ink.opacity(0.55))
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
             }
         }
         .padding(.horizontal, 13)
-        .padding(.vertical, 11)
+        // Working, it is a single line; it has room only when it asks.
+        .padding(.vertical, waiting ? 11 : 7)
+        // Solid enough that the conversation scrolling behind it never
+        // shows through its words.
         .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-            .fill(Theme.shade.opacity(0.28)))
+            .fill(Theme.shade.opacity(0.55)))
+        .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+            .fill(.thickMaterial))
         .glassBorder(radius: Theme.cardRadius, tint: tint)
         // A failed step shakes the card.
         .modifier(ShakeEffect(animatableData: CGFloat(app.stepFailures)))
@@ -180,14 +155,11 @@ struct AgentCard: View {
                 .foregroundStyle(Theme.mint)
                 .transition(.scale(scale: 0.3).combined(with: .opacity))
         } else if waiting {
-            Image(systemName: "hand.raised.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.amber)
+            // The user's move: the mark holds nearly still, in amber.
+            LoadingMark(state: .waiting, size: 16)
                 .transition(.opacity)
         } else {
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.6)
+            LoadingMark(state: .working, size: 16)
                 .transition(.opacity)
         }
     }
@@ -211,6 +183,8 @@ private struct StepCard: View {
         case .edit: return "pencil"
         case .fetch, .web: return "globe"
         case .delegate: return "person.2"
+        case .browser: return "safari"
+        case .terminal: return "terminal"
         case .wait, .done, .ask, .plan: return "circle"
         }
     }
@@ -229,6 +203,8 @@ private struct StepCard: View {
         case .fetch: return "Read a web page"
         case .web: return "Search the web"
         case .delegate: return "Hand a question to a helper (it only reads and searches)"
+        case .browser: return step.browserCommand?.args["in"] as? String == "chrome" ? "In your Chrome" : "In the browser beside the chat"
+        case .terminal: return "Open a terminal beside the chat"
         case .wait, .done, .ask, .plan: return ""
         }
     }
@@ -246,7 +222,7 @@ private struct StepCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 7)
             .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(color.opacity(0.10)))
+            .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous).fill(color.opacity(0.10)))
     }
 
     /// Whether the full change of a file step is shown; the card that
@@ -339,8 +315,8 @@ private struct StepCard: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.shade.opacity(0.30)))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).fill(Theme.shade.opacity(0.30)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous)
             .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
     }
 }

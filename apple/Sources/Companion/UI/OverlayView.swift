@@ -1062,7 +1062,7 @@ struct OverlayView: View {
         HStack(spacing: 5) {
             StatusDot(active: app.isListening)
             if app.isListening {
-                LevelBars(level: max(app.micLevel, app.systemLevel), color: Theme.mint)
+                LevelBars(color: Theme.mint)
             }
         }
         .foregroundStyle(app.isListening ? Theme.mint : Theme.ink.opacity(0.6))
@@ -3622,8 +3622,7 @@ struct MarkdownNotes: View {
 
     /// Bold, italics and code inside a line.
     private func inline(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        var result = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        var result = Self.parsed(text)
         // Code in a sentence (a command, a path) as a small tinted chip.
         let code = result.runs
             .filter { $0.inlinePresentationIntent?.contains(.code) == true }
@@ -3633,6 +3632,30 @@ struct MarkdownNotes: View {
             result[range].swiftUI.foregroundColor = Theme.amber
         }
         return result
+    }
+
+    /// Lines already parsed, by their text. While an answer streams in,
+    /// every update draws all of it again; parsing every line each time
+    /// kept the Mac busy, though only the line still arriving is new.
+    private static let parsedLines: NSCache<NSString, ParsedLine> = {
+        let cache = NSCache<NSString, ParsedLine>()
+        cache.countLimit = 4000
+        return cache
+    }()
+
+    private final class ParsedLine {
+        let text: AttributedString
+        init(_ text: AttributedString) { self.text = text }
+    }
+
+    /// The line's Markdown, before the colors (they follow the look, so they
+    /// are put on fresh each time).
+    private static func parsed(_ line: String) -> AttributedString {
+        if let kept = parsedLines.object(forKey: line as NSString) { return kept.text }
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        let fresh = (try? AttributedString(markdown: line, options: options)) ?? AttributedString(line)
+        parsedLines.setObject(ParsedLine(fresh), forKey: line as NSString)
+        return fresh
     }
 }
 

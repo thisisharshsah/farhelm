@@ -1,8 +1,21 @@
+import CEFKit
 import SwiftUI
 import AppKit
 import Combine
 
+/// Starts the app on Companion's own NSApplication (CEFApplication), which
+/// Chromium needs. SwiftUI makes a plain NSApplication and does not read
+/// Info.plist's NSPrincipalClass, so it is made here first and SwiftUI
+/// uses the one already there.
 @main
+enum Launch {
+    @MainActor static func main() {
+        _ = CEFApplication.shared
+        SharedDesign.install()
+        CompanionApp.main()
+    }
+}
+
 struct CompanionApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject private var menuBar = MenuBarPresence.shared
@@ -71,11 +84,16 @@ final class MenuBarPresence: ObservableObject {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         applyDockPresence(AppSettings.shared.showInDock)
+        // Whatever Companion opens goes above its floating panel.
+        WindowStacking.start()
         let overlay = OverlayController(app: AppState.shared, settings: AppSettings.shared)
         AppState.shared.overlay = overlay
         overlay.showPanel()
         Shortcuts.shared.registerAll()
         CommandRegistry.shared.registerBuiltIns()
+        RemoteServer.shared.startIfEnabled()
+        // Listens for Companion's Chrome extension, when it is set up.
+        if BrowserBridge.shared.installed { BrowserBridge.shared.start() }
         watchForQuit()
         dockWatch = AppSettings.shared.$showInDock
             .dropFirst()
@@ -83,9 +101,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] show in
                 Task { @MainActor in self?.applyDockPresence(show) }
             }
+        // The menus at the top of the screen follow "Show in menu bar". They
+        // are put in after launch, so the first look waits a moment.
+        menuWatch = AppSettings.shared.$showInMenuBar
+            .removeDuplicates()
+            .sink { [weak self] show in
+                Task { @MainActor in self?.applyMenus(show) }
+            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.applyMenus(AppSettings.shared.showInMenuBar)
+        }
+        // SwiftUI can put its menus back when the app comes forward.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.applyMenus(AppSettings.shared.showInMenuBar) }
+        }
     }
 
     private var dockWatch: AnyCancellable?
+    private var menuWatch: AnyCancellable?
+    /// The app's own menus, kept to put back when they are wanted again.
+    private var savedMenu: NSMenu?
+
+    /// With "Show in menu bar" off, Companion has no menus at the top of
+    /// the screen either (Companion, Edit, View, Window, Help): the menu bar
+    /// shows nothing of its own. Its shortcuts do not depend on the menus
+    /// (see `watchForQuit`), so nothing is lost.
+    private func applyMenus(_ show: Bool) {
+        if let current = NSApp.mainMenu, !current.items.isEmpty { savedMenu = current }
+        if show {
+            if let savedMenu, NSApp.mainMenu !== savedMenu { NSApp.mainMenu = savedMenu }
+        } else if NSApp.mainMenu?.items.isEmpty != true {
+            NSApp.mainMenu = NSMenu()
+        }
+    }
 
     /// In the Dock like an ordinary app, or out of it. Clicking the Dock
     /// icon brings the panel back (see `applicationShouldHandleReopen`).
@@ -108,24 +157,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // a new conversation and the rest.
             if CommandRegistry.shared.handle(event) { return nil }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            // Cmd+Plus, Cmd+Minus and Cmd+0 make the content larger,
-            // smaller, and the usual size again, as in a browser. (Plus is
-            // on the = key, so Shift may or may not be held.)
-            if flags == .command || flags == [.command, .shift] {
-                switch event.keyCode {
-                case 24, 69:
-                    AppSettings.shared.zoom(1)
-                    return nil
-                case 27, 78:
-                    AppSettings.shared.zoom(-1)
-                    return nil
-                case 29 where flags == .command:
-                    AppSettings.shared.zoom(0)
-                    return nil
-                default:
-                    break
-                }
-            }
             // Companion has no main menu, so the usual Edit menu shortcuts
             // (Cut, Copy, Paste, Select All, Undo, Redo) are never routed
             // to the text field on their own. Send them to the focused

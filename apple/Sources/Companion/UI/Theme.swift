@@ -11,13 +11,52 @@ enum Theme {
     // resolves for the theme in effect, so views never branch on it.
 
     /// Whether the light theme is in effect ("appearance" in Settings:
-    /// dark, light, or follow the system).
-    static var isLight: Bool {
+    /// dark, light, or follow the system). Worked out once and kept, like
+    /// the primary colors below, until the appearance, the look or the
+    /// system's light or dark changes (`refresh()`): views read these many
+    /// times a frame, and working them out on every read (a settings read
+    /// each time, and a color conversion for a look of one's own) was a
+    /// real share of what kept the Mac busy.
+    static var isLight: Bool { resolved.isLight }
+
+    /// Forgets the worked-out appearance and colors; the next read works
+    /// them out again. AppSettings calls it whenever the appearance, the
+    /// look or the system's light or dark changes.
+    static func refresh() {
+        cached = nil
+        SharedDesign.refresh()
+    }
+
+    /// The appearance and the colors that depend on the look, as last
+    /// worked out.
+    private struct Resolved {
+        let isLight: Bool
+        let accent: Color
+        let lilac: Color
+    }
+
+    private static var cached: Resolved?
+
+    private static var resolved: Resolved {
+        if let cached { return cached }
+        let light: Bool
         switch UserDefaults.standard.string(forKey: "appearance") ?? "dark" {
-        case "light": return true
-        case "system": return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") != "Dark"
-        default: return false
+        case "light": light = true
+        case "system": light = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") != "Dark"
+        default: light = false
         }
+        let look = LookStore.current
+        let usual = look.preset == Look.usual.preset
+        let fresh = Resolved(
+            isLight: light,
+            accent: usual
+                ? (light ? Color(red: 0.44, green: 0.31, blue: 0.87) : Color(red: 0.73, green: 0.63, blue: 1.0))
+                : Hex.fitted(look.primary, light: light),
+            lilac: usual
+                ? (light ? Color(red: 0.70, green: 0.36, blue: 0.88) : Color(red: 0.93, green: 0.70, blue: 1.0))
+                : Hex.fitted(look.secondary, light: light))
+        cached = fresh
+        return fresh
     }
 
     /// Text and line color: white on the dark glass, near-black on the light.
@@ -31,15 +70,9 @@ enum Theme {
     /// Primary: purple. Replies, the main button, anything "yours".
     /// The usual look keeps its hand-tuned purple; any other choice is the
     /// user's color, fitted to the glass so it stays readable.
-    static var accent: Color {
-        if look.preset != Look.usual.preset { return Hex.fitted(look.primary, light: isLight) }
-        return isLight ? Color(red: 0.44, green: 0.31, blue: 0.87) : Color(red: 0.73, green: 0.63, blue: 1.0)
-    }
+    static var accent: Color { resolved.accent }
     /// The primary's partner in gradients: a pink lilac.
-    static var lilac: Color {
-        if look.preset != Look.usual.preset { return Hex.fitted(look.secondary, light: isLight) }
-        return isLight ? Color(red: 0.70, green: 0.36, blue: 0.88) : Color(red: 0.93, green: 0.70, blue: 1.0)
-    }
+    static var lilac: Color { resolved.lilac }
     /// Secondary: periwinkle blue. Screen answers and the mode chip, so
     /// they stay distinct from replies.
     static var violet: Color {
@@ -140,28 +173,14 @@ struct ShakeEffect: GeometryEffect {
     }
 }
 
-/// A dot that breathes, for "live right now".
+/// A dot with a halo that keeps rippling out of it, for "live right now".
+/// The motion runs in Core Animation (see `Pulse`), so it costs nothing per
+/// frame.
 struct PulsingDot: View {
     var color: Color
-    @State private var pulse = false
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(color.opacity(0.35))
-                .frame(width: 14, height: 14)
-                .scaleEffect(pulse ? 1 : 0.45)
-                .opacity(pulse ? 0 : 0.9)
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-        }
-        .frame(width: 14, height: 14)
-        .onAppear {
-            withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) {
-                pulse = true
-            }
-        }
+        Pulse(kind: .ripple(halo: 14), color: color, size: 6, period: 1.2)
     }
 }
 
@@ -430,50 +449,22 @@ struct ToolbarGroup<Content: View>: View {
     }
 }
 
+/// Green and breathing while something runs, grey and still otherwise.
+/// The breath runs in Core Animation (see `Pulse`).
 struct StatusDot: View {
     var active: Bool
-    @State private var pulse = false
 
     var body: some View {
-        Circle()
-            .fill(active ? Theme.mint : Theme.ink.opacity(0.3))
-            .frame(width: 6, height: 6)
-            .opacity(active && pulse ? 0.45 : 1)
-            .animation(active ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: pulse)
-            .onAppear { pulse = true }
+        Pulse(kind: .breathe(low: 0.45), color: active ? Theme.mint : Theme.ink.opacity(0.3),
+              size: 6, period: 0.9, running: active)
     }
 }
 
-/// Tiny audio level meter, reacts to live mic/system RMS.
-struct LevelBars: View {
-    var level: Float
-    var color: Color = Theme.accent
-    private let shape: [Float] = [0.4, 0.8, 1.0, 0.7, 0.5]
-
-    var body: some View {
-        HStack(spacing: 1.5) {
-            ForEach(0..<5, id: \.self) { i in
-                Capsule()
-                    .fill(color.opacity(0.9))
-                    .frame(width: 2, height: CGFloat(3 + 8 * min(1, level * 1.6 * shape[i])))
-            }
-        }
-        .frame(height: 11)
-        .animation(.easeOut(duration: 0.12), value: level)
-    }
-}
-
+/// A ring that keeps spreading and fading, in Core Animation.
 struct PulseRing: View {
     var color: Color = Theme.accent
-    @State private var animate = false
 
     var body: some View {
-        Circle()
-            .stroke(color.opacity(0.6), lineWidth: 2)
-            .frame(width: 52, height: 52)
-            .scaleEffect(animate ? 1.35 : 1.0)
-            .opacity(animate ? 0 : 0.8)
-            .animation(.easeOut(duration: 1.5).repeatForever(autoreverses: false), value: animate)
-            .onAppear { animate = true }
+        Pulse(kind: .ring(line: 2, grow: 1.35), color: color.opacity(0.6), size: 52, period: 1.5)
     }
 }

@@ -21,11 +21,48 @@ struct ActionStep: Identifiable, Equatable {
         case done
         /// The agent needs the user: a question, or why it cannot go on.
         case ask
+        /// Read a file (or some of its lines), or list a folder.
+        case read
+        /// Find text in files.
+        case search
+        /// Create or replace a file; `body` is its content.
+        case write
+        /// Change one exact piece of a file: `body` becomes `replacement`.
+        case edit
+        /// Load a web page as text.
+        case fetch
+        /// Search the web.
+        case web
+        /// The agent's own checklist for a longer task.
+        case plan
+        /// A question handed to a helper that reads and searches in a
+        /// context of its own and gives back only its findings.
+        case delegate
+        /// A step in the user's Chrome, through Companion's extension:
+        /// `body` holds the command and its arguments as JSON.
+        case browser
+        /// A terminal beside the chat, running a command the user works
+        /// in with the agent (an ssh session to a server or a cluster).
+        case terminal
+
+        /// Works an app through the keyboard or the pointer.
+        var usesKeyboard: Bool {
+            self == .type || self == .key || self == .open || self == .click
+        }
     }
 
     let id = UUID()
     let kind: Kind
     let value: String
+    /// A file's new content (write), or the text to be replaced (edit).
+    var body = ""
+    /// What the replaced text becomes (edit).
+    var replacement = ""
+    /// What the step is for, from the WHY: line before it.
+    var why: String? = nil
+    /// The tool call this step came from, when the engine called tools
+    /// natively; its result goes back under this id.
+    var callID: String? = nil
 
     var label: String {
         switch kind {
@@ -37,6 +74,16 @@ struct ActionStep: Identifiable, Equatable {
         case .wait: return "Wait \(value) s"
         case .done: return "Done: \(value)"
         case .ask: return value
+        case .read: return "Read: \(value)"
+        case .search: return "Search: \(value)"
+        case .write: return "Write: \(value)"
+        case .edit: return "Edit: \(value)"
+        case .fetch: return "Fetch: \(value)"
+        case .web: return "Web search: \(value)"
+        case .plan: return "Plan: \(value)"
+        case .delegate: return "Delegate: \(value)"
+        case .browser: return "Browser: \(value)"
+        case .terminal: return "Terminal: \(value)"
         }
     }
 }
@@ -53,6 +100,21 @@ struct AgentProposal: Identifiable {
 
 enum AgentDecision {
     case allow, always, deny
+}
+
+/// A question the agent stops to ask in the middle of a task, with a few
+/// answers to pick from. The user can also type an answer of their own.
+struct AgentQuestion: Identifiable, Equatable {
+    let id = UUID()
+    let question: String
+    let options: [String]
+
+    /// "Which branch? | main | develop" is a question with two answers.
+    init(_ text: String) {
+        let parts = text.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        question = parts.first ?? text
+        options = Array(parts.dropFirst().prefix(4))
+    }
 }
 
 enum DeviceControlError: LocalizedError {
@@ -170,7 +232,7 @@ final class DeviceControl {
                     throw DeviceControlError.unknownKey(step.value)
                 }
                 press(code, flags: flags)
-            case .click, .run, .open, .wait, .done, .ask:
+            default:
                 break // carried out by the agent loop, not at the keyboard
             }
             try await Task.sleep(nanoseconds: 120_000_000)
@@ -368,44 +430,199 @@ final class DeviceControl {
             return (false, "nothing called \"\(wanted)\" can be clicked in \(front.name)")
         }
         let kind = match.role.replacingOccurrences(of: "AX", with: "").lowercased()
+        // Where it is on screen, noted before the press in case the press
+        // takes it away (a menu item, a dialog's button).
+        lastClickPoint = frame(of: match.element).map(Self.cocoaCenter)
         guard AXUIElementPerformAction(match.element, kAXPressAction as CFString) == .success else {
             return (false, "found the \(kind) \"\(match.label)\" but it did not respond to a press")
         }
         return (true, "\(kind) \"\(match.label)\" in \(front.name)")
     }
 
+    // MARK: Where things are on screen (for the orbit that shows the agent at work)
+
+    /// The middle of the last control that was pressed, in Cocoa screen
+    /// coordinates.
+    private(set) var lastClickPoint: CGPoint?
+
+    /// An element's frame as accessibility reports it: from the top left of
+    /// the main display.
+    private func frame(of element: AXUIElement) -> CGRect? {
+        guard let position = attribute(element, kAXPositionAttribute), let size = attribute(element, kAXSizeAttribute),
+              CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+        var origin = CGPoint.zero
+        var extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(size as! AXValue, .cgSize, &extent) else { return nil }
+        return CGRect(origin: origin, size: extent)
+    }
+
+    /// A point given from the top left of the main display, as Cocoa wants
+    /// it: from the bottom left.
+    private static func cocoa(_ point: CGPoint) -> CGPoint {
+        let height = NSScreen.screens.first?.frame.height ?? 0
+        return CGPoint(x: point.x, y: height - point.y)
+    }
+
+    private static func cocoaCenter(_ rect: CGRect) -> CGPoint {
+        cocoa(CGPoint(x: rect.midX, y: rect.midY))
+    }
+
+    /// The middle of the window in front, in Cocoa screen coordinates.
+    func focusPoint() -> CGPoint? {
+        guard allowed, let front = frontApp(),
+              let window = element(front.app, kAXFocusedWindowAttribute) ?? element(front.app, kAXMainWindowAttribute),
+              let rect = frame(of: window) else { return nil }
+        return Self.cocoaCenter(rect)
+    }
+
+    /// Where the text caret is in the app in front, in Cocoa screen
+    /// coordinates. Apps that do not report their caret give the middle of
+    /// the field being typed in; nil when even that is unknown.
+    func caretPoint() -> CGPoint? {
+        guard allowed, let front = frontApp(),
+              let focused = element(front.app, kAXFocusedUIElementAttribute) else { return nil }
+        if let range = attribute(focused, kAXSelectedTextRangeAttribute) {
+            var value: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(focused, kAXBoundsForRangeParameterizedAttribute as CFString,
+                                                         range, &value) == .success,
+               let value, CFGetTypeID(value) == AXValueGetTypeID() {
+                var rect = CGRect.zero
+                if AXValueGetValue(value as! AXValue, .cgRect, &rect), rect.height > 0, rect.origin != .zero {
+                    return Self.cocoa(CGPoint(x: rect.maxX, y: rect.midY))
+                }
+            }
+        }
+        return frame(of: focused).map(Self.cocoaCenter)
+    }
+
     /// Brings an app to the front by name: a running one, or one installed
     /// in the usual places. Returns whether it was found.
+    /// The names people use for apps, and the apps' own names: "Chrome"
+    /// is "Google Chrome", "VS Code" is "Visual Studio Code".
+    static let appAliases: [String: String] = [
+        "chrome": "google chrome", "google chrome": "google chrome", "vscode": "visual studio code",
+        "vs code": "visual studio code", "code": "visual studio code", "word": "microsoft word",
+        "excel": "microsoft excel", "powerpoint": "microsoft powerpoint", "outlook": "microsoft outlook",
+        "teams": "microsoft teams", "zoom": "zoom.us", "settings": "system settings",
+        "system preferences": "system settings", "iterm": "iterm", "iterm2": "iterm",
+        "edge": "microsoft edge", "brave": "brave browser", "firefox": "firefox", "arc": "arc"
+    ]
+
+    /// An app's name as the user or the model wrote it, made plain.
+    static func plainAppName(_ name: String) -> String {
+        let plain = name.lowercased().replacingOccurrences(of: ".app", with: "").trimmingCharacters(in: .whitespaces)
+        return appAliases[plain] ?? plain
+    }
+
+    /// Whether an app's own name is the one asked for: the same, or the
+    /// asked-for name as a whole word of it ("Chrome" in "Google Chrome").
+    static func appName(_ actual: String?, matches wanted: String) -> Bool {
+        guard let actual = actual?.lowercased(), !wanted.isEmpty else { return false }
+        let plain = plainAppName(wanted)
+        if actual == plain { return true }
+        let words = actual.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        return words.contains(plain) || (plain.count > 3 && actual.hasPrefix(plain))
+    }
+
     func open(app name: String) async -> Bool {
-        let wanted = name.lowercased().replacingOccurrences(of: ".app", with: "").trimmingCharacters(in: .whitespaces)
-        if let running = NSWorkspace.shared.runningApplications.first(where: {
-            $0.activationPolicy == .regular && $0.localizedName?.lowercased() == wanted
-        }) {
-            return running.activate()
+        let wanted = Self.plainAppName(name)
+        let running = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        // The exact name first, then a name it is part of.
+        if let app = running.first(where: { $0.localizedName?.lowercased() == wanted })
+            ?? running.first(where: { Self.appName($0.localizedName, matches: name) }) {
+            if app.isHidden { app.unhide() }
+            return app.activate(options: [.activateAllWindows])
         }
         let folders = ["/Applications", "/System/Applications", "/System/Applications/Utilities",
-                       NSHomeDirectory() + "/Applications"]
+                       NSHomeDirectory() + "/Applications", "/Applications/Utilities"]
+        var partial: URL?
         for folder in folders {
             guard let entries = try? FileManager.default.contentsOfDirectory(atPath: folder) else { continue }
             if let match = entries.first(where: { $0.lowercased() == wanted + ".app" }) {
-                let url = URL(fileURLWithPath: folder).appendingPathComponent(match)
-                return (try? await NSWorkspace.shared.openApplication(at: url, configuration: .init())) != nil
+                return await launch(URL(fileURLWithPath: folder).appendingPathComponent(match))
+            }
+            if partial == nil, let match = entries
+                .filter({ $0.hasSuffix(".app") && Self.appName(($0 as NSString).deletingPathExtension, matches: name) })
+                .min(by: { $0.count < $1.count }) {
+                partial = URL(fileURLWithPath: folder).appendingPathComponent(match)
             }
         }
+        if let partial { return await launch(partial) }
         return false
+    }
+
+    private func launch(_ url: URL) async -> Bool {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        return (try? await NSWorkspace.shared.openApplication(at: url, configuration: configuration)) != nil
     }
 
     /// Reads a plan written by the model: lines of "TYPE: ..." and "KEY: ...".
     /// Returns nil with the model's reason when it says the request cannot
     /// be done from the keyboard.
-    static func parsePlan(_ output: String) -> (steps: [ActionStep], refusal: String?) {
-        var steps: [ActionStep] = []
+    /// What the agent says to the user in a round (`SAY:` lines), in order.
+    /// Lines inside a WRITE or EDIT block, and the answer after DONE, are
+    /// not notes.
+    static func notes(in output: String) -> [String] {
+        var notes: [String] = []
+        var inBlock = false
         for raw in output.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
+            if line == "<<<" { inBlock = true; continue }
+            if line == ">>>" { inBlock = false; continue }
+            guard !inBlock else { continue }
+            let upper = line.uppercased()
+            if upper.hasPrefix("DONE:") || upper.hasPrefix("ASK:") { break }
+            if upper.hasPrefix("SAY:") {
+                let text = line.dropFirst(4).trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty { notes.append(text) }
+            }
+        }
+        return notes
+    }
+
+    static func parsePlan(_ output: String) -> (steps: [ActionStep], refusal: String?) {
+        var steps: [ActionStep] = []
+        let lines = output.components(separatedBy: .newlines)
+        var number = 0
+
+        /// The lines between "<<<" and ">>>" that follow a WRITE or EDIT,
+        /// moving past them. nil when there is no such block.
+        func block() -> [String]? {
+            var cursor = number + 1
+            while cursor < lines.count, lines[cursor].trimmingCharacters(in: .whitespaces).isEmpty { cursor += 1 }
+            guard cursor < lines.count, lines[cursor].trimmingCharacters(in: .whitespaces) == "<<<" else { return nil }
+            var content: [String] = []
+            cursor += 1
+            while cursor < lines.count, lines[cursor].trimmingCharacters(in: .whitespaces) != ">>>" {
+                content.append(lines[cursor])
+                cursor += 1
+            }
+            number = cursor
+            return content
+        }
+
+        /// A WHY: line, kept for the step that comes after it.
+        var why: String?
+        while number < lines.count {
+            defer { number += 1 }
+            let line = lines[number].trimmingCharacters(in: .whitespaces)
             guard let colon = line.firstIndex(of: ":") else { continue }
             let label = line[..<colon].trimmingCharacters(in: CharacterSet(charactersIn: "-*0123456789. ")).uppercased()
             let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             guard !value.isEmpty else { continue }
+            if label == "WHY" {
+                why = value
+                continue
+            }
+            let before = steps.count
+            defer {
+                if steps.count > before, let reason = why {
+                    steps[steps.count - 1].why = reason
+                    why = nil
+                }
+            }
             switch label {
             case "TYPE": steps.append(ActionStep(kind: .type, value: value))
             case "KEY", "PRESS": steps.append(ActionStep(kind: .key, value: value.lowercased()))
@@ -413,7 +630,40 @@ final class DeviceControl {
             case "RUN", "SHELL", "BASH", "CMD": steps.append(ActionStep(kind: .run, value: value))
             case "OPEN": steps.append(ActionStep(kind: .open, value: value))
             case "WAIT": steps.append(ActionStep(kind: .wait, value: value))
-            case "DONE": steps.append(ActionStep(kind: .done, value: value))
+            case "READ": steps.append(ActionStep(kind: .read, value: value))
+            case "SEARCH", "GREP": steps.append(ActionStep(kind: .search, value: value))
+            case "FETCH": steps.append(ActionStep(kind: .fetch, value: value))
+            case "WEB": steps.append(ActionStep(kind: .web, value: value))
+            case "PLAN", "TODO": steps.append(ActionStep(kind: .plan, value: value))
+            case "DELEGATE", "RESEARCH", "EXPLORE": steps.append(ActionStep(kind: .delegate, value: value))
+            case "TERMINAL", "SSH": steps.append(ActionStep(kind: .terminal, value: value))
+            case "BROWSER", "CHROME":
+                // BROWSER: in Companion's own browser; CHROME: in the user's Chrome.
+                if let step = ActionStep.browser(line: value) {
+                    if label == "CHROME", let made = step.browserCommand,
+                       let inChrome = ActionStep.browser(made.command, made.args.merging(["in": "chrome"]) { $1 }) {
+                        steps.append(inChrome)
+                    } else {
+                        steps.append(step)
+                    }
+                }
+            case "WRITE":
+                // The file's content follows, between <<< and >>>.
+                guard let content = block() else { continue }
+                steps.append(ActionStep(kind: .write, value: value, body: content.joined(separator: "\n")))
+            case "EDIT":
+                // The old text, a line of ===, then the new text.
+                guard let content = block(),
+                      let divider = content.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "===" }) else { continue }
+                steps.append(ActionStep(kind: .edit, value: value,
+                                        body: content[..<divider].joined(separator: "\n"),
+                                        replacement: content[(divider + 1)...].joined(separator: "\n")))
+            case "DONE":
+                // The answer can run over several lines (a list, a table):
+                // everything after DONE: belongs to it.
+                let rest = lines[(number + 1)...].joined(separator: "\n")
+                let whole = (value + "\n" + rest).trimmingCharacters(in: .whitespacesAndNewlines)
+                steps.append(ActionStep(kind: .done, value: whole))
             case "ASK": steps.append(ActionStep(kind: .ask, value: value))
             case "CANNOT": return ([], value)
             default: continue
@@ -422,5 +672,79 @@ final class DeviceControl {
             if let last = steps.last, last.kind == .done || last.kind == .ask { break }
         }
         return (Array(steps.prefix(12)), nil)
+    }
+}
+
+
+extension ActionStep {
+    /// The commands that only look, and change nothing.
+    static let browserLooks: Set<String> = ["read", "tabs", "scroll", "focus", "downloads", "history", "extensions"]
+
+    /// A Chrome step from a command and its arguments.
+    static func browser(_ command: String, _ args: [String: Any]) -> ActionStep? {
+        let known = ["open", "read", "tabs", "click", "type", "scroll", "back", "key", "focus", "upload", "downloads", "history",
+                     "extensions", "add_extension"]
+        guard known.contains(command) else { return nil }
+        let words: String
+        switch command {
+        case "open": words = "open \(args["url"] as? String ?? "")"
+        case "click": words = "click [\(args["target"] ?? "?")]"
+        case "type":
+            words = "type into [\(args["target"] ?? "?")]: \(args["text"] as? String ?? "")" + ((args["submit"] as? Bool) == true ? " (and submit)" : "")
+        case "scroll": words = "scroll \(args["direction"] as? String ?? "down")"
+        case "key": words = "press \(args["key"] as? String ?? "Enter")"
+        case "focus": words = "switch to tab \(args["tab"] ?? "?")"
+        case "upload":
+            let files = (args["paths"] as? [Any])?.compactMap { $0 as? String } ?? []
+            words = "upload \(files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")) into [\(args["target"] ?? "?")]"
+        case "downloads": words = "list the downloads"
+        case "extensions": words = "list the browser's extensions"
+        case "add_extension": words = "add the extension \(args["url"] as? String ?? "")"
+        case "history": words = "look in the browser's history for \(args["query"] as? String ?? "")"
+        case "read": words = "read the page"
+        case "tabs": words = "list the tabs"
+        default: words = command
+        }
+        let payload: [String: Any] = ["command": command, "args": args]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        return ActionStep(kind: .browser, value: words, body: String(decoding: data, as: UTF8.self))
+    }
+
+    /// "open https://…", "click 12", "type 4 | text", "submit 4 | text",
+    /// "scroll down", "key Enter", "read", "tabs", "back", "focus 123".
+    static func browser(line: String) -> ActionStep? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let command = String(trimmed.prefix { !$0.isWhitespace }).lowercased()
+        let rest = trimmed.dropFirst(command.count).trimmingCharacters(in: .whitespaces)
+        func number(_ text: String) -> Int? { Int(text.trimmingCharacters(in: CharacterSet(charactersIn: " []#"))) }
+        switch command {
+        case "open": return browser("open", ["url": rest, "newTab": false])
+        case "click": return number(rest).flatMap { browser("click", ["target": $0]) }
+        case "type", "submit":
+            let parts = rest.split(separator: "|", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2, let target = number(parts[0]) else { return nil }
+            return browser("type", ["target": target, "text": parts[1], "submit": command == "submit"])
+        case "scroll": return browser("scroll", ["direction": rest.lowercased().hasPrefix("up") ? "up" : "down"])
+        case "key": return browser("key", ["key": rest.isEmpty ? "Enter" : rest])
+        case "focus": return number(rest).flatMap { browser("focus", ["tab": $0]) }
+        case "read", "tabs", "back", "downloads", "extensions": return browser(command, [:])
+        case "extension": return browser("add_extension", ["url": rest])
+        case "history": return browser("history", ["query": rest])
+        case "upload":
+            // "upload 7 | ~/a.csv, ~/b.csv"
+            let parts = rest.split(separator: "|", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2, let target = number(parts[0]) else { return nil }
+            let files = parts[1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            return browser("upload", ["target": target, "paths": files])
+        default: return nil
+        }
+    }
+
+    /// The command and arguments of a Chrome step.
+    var browserCommand: (command: String, args: [String: Any])? {
+        guard kind == .browser,
+              let object = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any],
+              let command = object["command"] as? String else { return nil }
+        return (command, object["args"] as? [String: Any] ?? [:])
     }
 }

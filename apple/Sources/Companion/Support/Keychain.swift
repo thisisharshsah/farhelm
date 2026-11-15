@@ -4,7 +4,27 @@ import Security
 enum Keychain {
     private static let service = "com.harshsah.companion"
 
+    // Asking the keychain is a round trip to another process, and the
+    // interface asks on every redraw (is a model set up?). What was read is
+    // kept, so only the first ask of each key pays for it.
+    private static let lock = NSLock()
+    private static var known: [String: String?] = [:]
+
     static func read(_ account: String) -> String? {
+        lock.lock()
+        if let hit = known[account] {
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+        let value = fetch(account)
+        lock.lock()
+        known[account] = .some(value)
+        lock.unlock()
+        return value
+    }
+
+    private static func fetch(_ account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -19,6 +39,9 @@ enum Keychain {
     }
 
     static func write(_ value: String, account: String) {
+        lock.lock()
+        known[account] = .some(value.isEmpty ? nil : value)
+        lock.unlock()
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

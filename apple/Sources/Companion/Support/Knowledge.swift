@@ -75,6 +75,9 @@ final class MemoryStore: ObservableObject {
 final class KnowledgeIndex {
     static let shared = KnowledgeIndex()
 
+    /// Called with the memories brought into a request.
+    var onMemoriesUsed: (([MemoryItem]) -> Void)?
+
     private struct Chunk {
         let title: String
         let document: Int
@@ -142,8 +145,14 @@ final class KnowledgeIndex {
         if useMemory {
             let formatter = DateFormatter()
             formatter.dateStyle = .medium
-            for item in relevantMemories(for: query, excluding: conversation) {
+            let recalled = relevantMemories(for: query, excluding: conversation)
+            for item in recalled {
                 documents.append(("Earlier conversation, \(formatter.string(from: item.date)): \(item.title)", item.text))
+            }
+            // Which memories were actually brought into this request, so the
+            // chat can show the ones it used and not everything on file.
+            if !recalled.isEmpty {
+                onMemoriesUsed?(recalled)
             }
         }
         guard !documents.isEmpty else { return ("", []) }

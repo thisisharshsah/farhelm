@@ -13,6 +13,111 @@ enum TurnOrigin: String, Codable {
 }
 
 /// One exchange in a thread: what was asked (or heard, or captured) and the answer.
+/// One thing the agent did on the way to its answer: a command it ran, an
+/// app it opened, a click. Kept with the turn so the work can be looked at
+/// afterwards, folded away behind a one-line summary.
+struct WorkStep: Codable, Equatable {
+    enum Kind: String, Codable {
+        case run, open, click, type, key, other
+        case read, search, edit, web
+        /// Something the agent said to the user along the way.
+        case note
+        /// A round where the agent worked out what to do next.
+        case think
+        /// A question the agent asked, with its choices and the answer.
+        case ask
+        /// A skill the agent read and followed.
+        case skill
+    }
+
+    var kind: Kind
+    /// The command, or what was opened, clicked, typed or pressed.
+    var title: String
+    /// The end of a command's output.
+    var output: String?
+    var failed = false
+    // All optional, so replies saved before them still load.
+    /// What the step was for, in the agent's words.
+    var why: String?
+    /// The file a read, write or edit was about.
+    var path: String?
+    /// Lines a write or edit added and took out, and the file's length after.
+    var added: Int?
+    var removed: Int?
+    var lines: Int?
+    /// A question's choices, and the answer given.
+    var options: [String]?
+    var answer: String?
+
+    private static func phrase(_ kind: Kind, _ count: Int) -> String {
+        let plural = count == 1 ? "" : "s"
+        switch kind {
+        case .run: return "ran \(count) command\(plural)"
+        case .open: return "opened \(count) app\(plural)"
+        case .click: return "clicked \(count) time\(plural)"
+        case .type: return "typed \(count) time\(plural)"
+        case .key: return "pressed \(count) key\(plural)"
+        case .other: return "took \(count) more step\(plural)"
+        case .read: return "read \(count) file\(plural)"
+        case .search: return "searched \(count) time\(plural)"
+        case .edit: return "changed \(count) file\(plural)"
+        case .web: return "used the web \(count) time\(plural)"
+        case .note, .think: return ""
+        case .ask: return "asked \(count) question\(plural)"
+        case .skill: return "used \(count) skill\(plural)"
+        }
+    }
+
+    /// Steps counted the way a person would say it: "Ran 5 commands, read
+    /// 3 files and changed 2 files". Up to four kinds are named, in the
+    /// order they were first done; anything past that is counted.
+    static func summary(of steps: [WorkStep]) -> String {
+        var order: [Kind] = []
+        var counts: [Kind: Int] = [:]
+        // What was said is not work, so it is not counted.
+        for step in steps where step.kind != .note && step.kind != .think {
+            if counts[step.kind] == nil { order.append(step.kind) }
+            counts[step.kind, default: 0] += 1
+        }
+        var parts = order.prefix(4).map { phrase($0, counts[$0] ?? 0) }
+        let rest = order.dropFirst(4).reduce(0) { $0 + (counts[$1] ?? 0) }
+        if rest > 0 {
+            parts.append("\(rest) more step\(rest == 1 ? "" : "s")")
+        }
+        let text: String
+        switch parts.count {
+        case 0: text = ""
+        case 1: text = parts[0]
+        default: text = parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1]
+        }
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+}
+
+/// One line of the checklist the agent keeps for a longer task.
+struct PlanItem: Codable, Equatable {
+    enum State: String, Codable {
+        case todo, doing, done
+    }
+
+    var text: String
+    var state: State
+
+    /// "[x] Read the config | [>] Fix the port | Run the tests".
+    static func parse(_ value: String) -> [PlanItem] {
+        value.split(separator: "|").compactMap { part -> PlanItem? in
+            var text = part.trimmingCharacters(in: .whitespaces)
+            var state = State.todo
+            for (mark, meaning) in [("[x]", State.done), ("[X]", State.done), ("[>]", State.doing), ("[ ]", State.todo)]
+            where text.hasPrefix(mark) {
+                state = meaning
+                text = String(text.dropFirst(mark.count)).trimmingCharacters(in: .whitespaces)
+            }
+            return text.isEmpty ? nil : PlanItem(text: text, state: state)
+        }
+    }
+}
+
 struct ChatTurn: Identifiable, Codable, Equatable {
     var id = UUID()
     var kind: TurnKind
@@ -40,6 +145,12 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     /// Result of the last recheck: whether this reply answers something that
     /// was actually asked in the conversation. nil when not checked yet.
     var matched: Bool?
+    /// What the agent did to get to this answer, when it did any work.
+    var steps: [WorkStep]?
+    /// The agent's checklist for the task, when it kept one.
+    var plan: [PlanItem]?
+    /// Names of the files that were attached with this message.
+    var attached: [String]?
 }
 
 /// Whether a suggested reply was actually said.
@@ -70,6 +181,12 @@ struct Conversation: Identifiable, Codable, Equatable {
     var transcript: [SavedLine] = []
     /// Files attached as context. Optional so older saved conversations still decode.
     var attachments: [Attachment]?
+    /// The folder this chat's code side works in. Optional so older saved
+    /// conversations still decode.
+    var workFolder: String?
+    /// How much the agent does in this chat without asking (an
+    /// `AgentAccess`). Unset follows the setting for new chats.
+    var access: String?
     /// Running notes on the part of the conversation that has scrolled out of
     /// the recent window, so long conversations keep their beginning.
     var summary: String?
@@ -77,6 +194,39 @@ struct Conversation: Identifiable, Codable, Equatable {
     var summarizedLines: Int?
     /// The conversation written up as structured notes (Markdown) for later use.
     var record: String?
+    /// Facts from earlier conversations that were brought into this one.
+    var usedMemories: [String]?
+    /// What the answers in this conversation drew on besides the
+    /// conversation itself: "My details", attached files by name, "Memory".
+    var usedSources: [String]?
+    /// What was being written in the chat box and not sent yet, with the
+    /// files picked to go with it and whether the screen goes too. Each
+    /// chat keeps its own, across switching and relaunching.
+    var draft: String?
+    var draftAttachments: [UUID]?
+    var draftScreen: Bool?
+
+    /// How much this conversation holds. `spoken` is the size of the
+    /// transcript when the live one is fuller than the saved one.
+    func contextUse(spoken: Int? = nil) -> ContextUse {
+        var use = ContextUse()
+        use.transcript = ContextUse.tokens(spoken ?? transcript.reduce(0) { $0 + $1.text.utf8.count })
+        use.answers = ContextUse.tokens(turns.reduce(0) {
+            $0 + $1.prompt.utf8.count + $1.answer.utf8.count + ($1.context?.utf8.count ?? 0)
+        })
+        use.attachments = ContextUse.tokens((attachments ?? []).reduce(0) { $0 + $1.text.utf8.count })
+        use.notes = ContextUse.tokens((summary?.utf8.count ?? 0) + (record?.utf8.count ?? 0))
+        return use
+    }
+
+    /// When something was last said, typed or answered here. Opening a
+    /// conversation to read it does not count, so lists ordered by this
+    /// keep the order in which the conversations actually happened.
+    var lastActivity: Date {
+        let lastTurn = turns.map(\.date).max()
+        let lastLine = transcript.compactMap(\.date).max()
+        return [lastTurn, lastLine].compactMap { $0 }.max() ?? updatedAt
+    }
 }
 
 struct ConversationSummary: Identifiable, Equatable {
@@ -84,6 +234,32 @@ struct ConversationSummary: Identifiable, Equatable {
     let title: String
     let updatedAt: Date
     let turnCount: Int
+    /// Roughly how many tokens the whole conversation holds.
+    var tokens = 0
+}
+
+/// How much a conversation holds, in tokens (estimated from its length),
+/// split by where it comes from. This is the size of everything the engine
+/// could be given about the conversation; when it is more than one request
+/// can carry, the older part is summarised and the relevant passages are
+/// picked out, so a full conversation still works.
+struct ContextUse: Equatable {
+    var transcript = 0
+    var answers = 0
+    var attachments = 0
+    var notes = 0
+
+    var total: Int { transcript + answers + attachments + notes }
+
+    /// Characters per token, the same estimate the request budgets use.
+    static func tokens(_ bytes: Int) -> Int { Int(Double(bytes) / 3.5) }
+
+    /// 3200 as "3.2k", 148000 as "148k".
+    static func short(_ tokens: Int) -> String {
+        if tokens < 1_000 { return "\(tokens)" }
+        if tokens < 10_000 { return String(format: "%.1fk", Double(tokens) / 1_000) }
+        return "\(tokens / 1_000)k"
+    }
 }
 
 /// Conversations live as JSON files in Application Support/Companion/conversations,
@@ -123,8 +299,9 @@ final class ConversationStore {
                       let conversation = try? decoder.decode(Conversation.self, from: data) else { return nil }
                 return ConversationSummary(id: conversation.id,
                                            title: conversation.title,
-                                           updatedAt: conversation.updatedAt,
-                                           turnCount: conversation.turns.count)
+                                           updatedAt: conversation.lastActivity,
+                                           turnCount: conversation.turns.count,
+                                       tokens: conversation.contextUse().total)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -147,8 +324,9 @@ final class ConversationStore {
                 guard words.allSatisfy({ haystack.contains($0) }) else { return nil }
                 return ConversationSummary(id: conversation.id,
                                            title: conversation.title,
-                                           updatedAt: conversation.updatedAt,
-                                           turnCount: conversation.turns.count)
+                                           updatedAt: conversation.lastActivity,
+                                           turnCount: conversation.turns.count,
+                                       tokens: conversation.contextUse().total)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }

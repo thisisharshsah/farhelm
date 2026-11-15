@@ -5,15 +5,28 @@
 import SwiftUI
 
 enum SharedDesign {
+    /// The palette as last worked out from the look. Shared views ask for
+    /// it for every color they draw, many times a frame, so it is built
+    /// once and kept until `refresh()` (the look, the appearance or the
+    /// system's light or dark changed; `Theme.refresh()` calls it).
+    private static var cached: Palette?
+
+    static func refresh() {
+        cached = nil
+    }
+
     /// The shared views draw in the look in effect here (the user's colors,
-    /// light or dark), read each time they draw.
+    /// light or dark).
     static func install() {
         Design.palette = {
-            Palette(isLight: Theme.isLight, ink: Theme.ink, shade: Theme.shade,
-                    accent: Theme.accent, lilac: Theme.lilac, violet: Theme.violet,
-                    mint: Theme.mint, amber: Theme.amber, rose: Theme.rose,
-                    contentDim: Theme.look.content.dim,
-                    emptyDim: Theme.look.empty.dim)
+            if let cached { return cached }
+            let fresh = Palette(isLight: Theme.isLight, ink: Theme.ink, shade: Theme.shade,
+                                accent: Theme.accent, lilac: Theme.lilac, violet: Theme.violet,
+                                mint: Theme.mint, amber: Theme.amber, rose: Theme.rose,
+                                contentDim: Theme.look.content.dim,
+                                emptyDim: Theme.look.empty.dim)
+            cached = fresh
+            return fresh
         }
     }
 }

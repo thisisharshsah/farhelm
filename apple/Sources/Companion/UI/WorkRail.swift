@@ -35,7 +35,6 @@ private struct RailRow: View {
     let first: Bool
     let last: Bool
     @EnvironmentObject var app: AppState
-    @State private var pulse = false
     /// The full result is shown under the line.
     @State private var open = false
 
@@ -58,15 +57,19 @@ private struct RailRow: View {
                     .padding(.leading, Self.railX)
             }
             .overlay(alignment: .topLeading) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: Self.dotSize, height: Self.dotSize)
-                    .opacity(live ? (pulse ? 1 : 0.35) : 1)
-                    .padding(.top, Self.dotTop - Self.dotSize / 2 + 1)
-                    .onAppear {
-                        guard live else { return }
-                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
+                Group {
+                    // The step at work breathes in Core Animation: as a
+                    // SwiftUI animation it redrew the whole window every
+                    // frame for as long as the step ran.
+                    if live {
+                        Pulse(kind: .breathe(low: 0.35), color: dotColor, size: Self.dotSize, period: 0.8)
+                    } else {
+                        Circle()
+                            .fill(dotColor)
+                            .frame(width: Self.dotSize, height: Self.dotSize)
                     }
+                }
+                .padding(.top, Self.dotTop - Self.dotSize / 2 + 1)
             }
     }
 
@@ -159,9 +162,13 @@ private struct RailRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } }
+        // A fixed 18 pt tile, centred on the line: smaller than the 25 pt
+        // between lines, so tiles on lines next to each other keep apart. Its
+        // right edge is the rail's, 12 pt in from the card like the dots on
+        // the left, so the tiles stand in one column.
         .overlay(alignment: .trailing) {
             if let file = step.shownFile, ThumbStrip.isFile(file) {
-                StepThumb(path: file, size: 28)
+                StepThumb(path: file, size: 18, radius: 4, logo: 12)
             }
         }
         .help(open ? "Hide the result" : "Show the result")
@@ -651,6 +658,10 @@ struct StepThumb: View {
     var path: String?
     var symbol = "doc.text"
     var size: CGFloat = 28
+    /// How round the tile's corners are.
+    var radius: CGFloat = 6
+    /// The file-type logo's size; when not given, 60% of the tile.
+    var logo: CGFloat? = nil
     /// Pictures already read, made small, so scrolling never reads a file again.
     private static let cache = NSCache<NSString, NSImage>()
 
@@ -673,7 +684,7 @@ struct StepThumb: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         Group {
             if let picture {
                 Color.clear
@@ -686,7 +697,7 @@ struct StepThumb: View {
                     )
                     .clipped()
             } else if let path {
-                FileIcon(name: (path as NSString).lastPathComponent, size: size * 0.6)
+                FileIcon(name: (path as NSString).lastPathComponent, size: logo ?? size * 0.6)
             } else {
                 Image(systemName: symbol)
                     .font(.system(size: size * 0.4, weight: .semibold))

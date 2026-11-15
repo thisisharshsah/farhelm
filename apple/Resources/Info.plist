@@ -6,6 +6,8 @@
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>Companion</string>
+	<key>NSPrincipalClass</key>
+	<string>CEFApplication</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.harshsah.companion</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -22,6 +24,8 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHighResolutionCapable</key>
@@ -30,7 +34,17 @@
 	<string>Companion transcribes your side of the conversation from the microphone.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Companion asks your browser for the address of the page you are on, so it knows what you are looking at.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Companion uses your location to answer questions that depend on where you are, such as the weather.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Companion uses your location to answer questions that depend on where you are, such as the weather.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Companion transcribes the other side of calls from system audio.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Companion lets its iPhone, iPad and Apple Watch app connect to this Mac on your network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_companion._tcp</string>
+	</array>
 </dict>
 </plist>

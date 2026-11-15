@@ -186,7 +186,7 @@ private struct TerminalRow: View {
         }
         .padding(.horizontal, 6)
         .frame(height: 24)
-        .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
             .fill(showing ? Theme.accent.opacity(0.16) : (hover ? Theme.ink.opacity(0.06) : SwiftUI.Color.clear)))
         .contentShape(Rectangle())
         .onTapGesture(perform: choose)
@@ -226,7 +226,7 @@ private struct TerminalHost: View {
                     .buttonStyle(.plain)
                 }
                 .padding(14)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.shade.opacity(0.8)))
+                .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).fill(Theme.shade.opacity(0.8)))
             }
         }
         .onAppear {
