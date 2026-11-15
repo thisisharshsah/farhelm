@@ -127,6 +127,10 @@ public struct CompanionClient: Sendable {
     }
 
     public func chats() async throws -> ChatList { try await get("/chats") }
+    public func projects() async throws -> [ProjectSummary] {
+        let list: ProjectList = try await get("/projects")
+        return list.projects
+    }
     public func state() async throws -> FeedUpdate { try await get("/state") }
     /// Sends a message to the chat open on the Mac (an answer, while the
     /// agent asks).

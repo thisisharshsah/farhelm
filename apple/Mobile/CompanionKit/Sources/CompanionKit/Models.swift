@@ -41,6 +41,23 @@ public struct ChatSummary: Codable, Hashable, Identifiable, Sendable {
     public var waiting: Bool?
 }
 
+/// One project in the Mac's sidebar, with its newest chat (none when the
+/// project has no chats yet).
+public struct ProjectSummary: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var chatID: String?
+    public var chatTitle: String?
+    public var chats: Int?
+    /// The newest chat's last activity, or when the project was added.
+    public var updatedAt: Date
+}
+
+/// The Mac's projects (`/projects`).
+public struct ProjectList: Codable, Sendable {
+    public var projects: [ProjectSummary]
+}
+
 /// One thing the agent did.
 public struct WorkStep: Codable, Hashable, Sendable {
     public var kind: String

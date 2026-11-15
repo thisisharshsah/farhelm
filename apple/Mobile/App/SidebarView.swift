@@ -14,6 +14,7 @@ struct SidebarView: View {
     @State private var query = ""
     @State private var pairing = false
     @State private var problem: String?
+    @AppStorage("sidebarShowsProjects") private var showProjects = false
 
     private var palette: Palette { Design.palette() }
 
@@ -55,6 +56,15 @@ struct SidebarView: View {
                 .accessibilityLabel("New chat")
             }
 
+            Picker("Show", selection: $showProjects) {
+                Text("Chats").tag(false)
+                Text("Projects").tag(true)
+            }
+            .pickerStyle(.segmented)
+
+            if showProjects {
+                ProjectsView(picked: picked)
+            } else {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(shown) { chat in row(chat) }
@@ -67,6 +77,7 @@ struct SidebarView: View {
                 }
             }
             .refreshable { await session.refreshChats() }
+            }
 
             if let problem {
                 Text(problem)

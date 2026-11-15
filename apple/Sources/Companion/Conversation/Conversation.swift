@@ -205,6 +205,11 @@ struct Conversation: Identifiable, Codable, Equatable {
     var draft: String?
     var draftAttachments: [UUID]?
     var draftScreen: Bool?
+    /// The project this chat is in, or nil for a plain chat. Code (the
+    /// agent's file and shell tools) is only on in a project chat, and
+    /// works in the project's folder. Optional, so chats saved before
+    /// projects existed load as plain chats.
+    var projectID: UUID?
 
     /// How much this conversation holds. `spoken` is the size of the
     /// transcript when the live one is fuller than the saved one.
@@ -229,6 +234,44 @@ struct Conversation: Identifiable, Codable, Equatable {
     }
 }
 
+extension Conversation {
+    /// Read field by field so every field added after the first version is
+    /// optional (decodeIfPresent): a chat saved before projects existed has
+    /// no projectID and loads as a plain chat.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        id = try values.decode(UUID.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+        turns = try values.decode([ChatTurn].self, forKey: .turns)
+        transcript = try values.decode([SavedLine].self, forKey: .transcript)
+        attachments = try values.decodeIfPresent([Attachment].self, forKey: .attachments)
+        workFolder = try values.decodeIfPresent(String.self, forKey: .workFolder)
+        access = try values.decodeIfPresent(String.self, forKey: .access)
+        summary = try values.decodeIfPresent(String.self, forKey: .summary)
+        summarizedLines = try values.decodeIfPresent(Int.self, forKey: .summarizedLines)
+        record = try values.decodeIfPresent(String.self, forKey: .record)
+        usedMemories = try values.decodeIfPresent([String].self, forKey: .usedMemories)
+        usedSources = try values.decodeIfPresent([String].self, forKey: .usedSources)
+        draft = try values.decodeIfPresent(String.self, forKey: .draft)
+        draftAttachments = try values.decodeIfPresent([UUID].self, forKey: .draftAttachments)
+        draftScreen = try values.decodeIfPresent(Bool.self, forKey: .draftScreen)
+        projectID = try values.decodeIfPresent(UUID.self, forKey: .projectID)
+    }
+}
+
+/// A folder that chats are grouped under in the sidebar. A chat in a
+/// project works in code, in `folderPath`; taking a project off the list
+/// never touches the folder or anything in it.
+struct Project: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var name: String
+    var folderPath: String
+    var createdAt = Date()
+}
+
 struct ConversationSummary: Identifiable, Equatable {
     let id: UUID
     let title: String
@@ -236,6 +279,8 @@ struct ConversationSummary: Identifiable, Equatable {
     let turnCount: Int
     /// Roughly how many tokens the whole conversation holds.
     var tokens = 0
+    /// The project the conversation is in, if any.
+    var projectID: UUID? = nil
 }
 
 /// How much a conversation holds, in tokens (estimated from its length),
@@ -293,7 +338,7 @@ final class ConversationStore {
     func list() -> [ConversationSummary] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         return files
-            .filter { $0.pathExtension == "json" }
+            .filter { $0.pathExtension == "json" && $0.lastPathComponent != Self.projectsFile }
             .compactMap { url -> ConversationSummary? in
                 guard let data = try? Data(contentsOf: url),
                       let conversation = try? decoder.decode(Conversation.self, from: data) else { return nil }
@@ -301,7 +346,8 @@ final class ConversationStore {
                                            title: conversation.title,
                                            updatedAt: conversation.lastActivity,
                                            turnCount: conversation.turns.count,
-                                       tokens: conversation.contextUse().total)
+                                           tokens: conversation.contextUse().total,
+                                           projectID: conversation.projectID)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -326,7 +372,8 @@ final class ConversationStore {
                                            title: conversation.title,
                                            updatedAt: conversation.lastActivity,
                                            turnCount: conversation.turns.count,
-                                       tokens: conversation.contextUse().total)
+                                           tokens: conversation.contextUse().total,
+                                           projectID: conversation.projectID)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -339,6 +386,24 @@ final class ConversationStore {
     func save(_ conversation: Conversation) {
         guard let data = try? encoder.encode(conversation) else { return }
         try? data.write(to: fileURL(conversation.id), options: .atomic)
+    }
+
+    /// The projects, in one file beside the conversations.
+    static let projectsFile = "projects.json"
+
+    private var projectsURL: URL {
+        directory.appendingPathComponent(Self.projectsFile)
+    }
+
+    func loadProjects() -> [Project] {
+        guard let data = try? Data(contentsOf: projectsURL) else { return [] }
+        return (try? decoder.decode([Project].self, from: data)) ?? []
+    }
+
+    /// Writes the list only. Taking a project off it never touches its folder.
+    func saveProjects(_ projects: [Project]) {
+        guard let data = try? encoder.encode(projects) else { return }
+        try? data.write(to: projectsURL, options: .atomic)
     }
 
     func delete(_ id: UUID) {

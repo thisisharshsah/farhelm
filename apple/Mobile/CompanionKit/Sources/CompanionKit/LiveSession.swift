@@ -63,6 +63,7 @@ public final class LiveSession {
         meta = .empty
         turns = []
         chats = []
+        projects = []
         client = nil
         lastChat = ""
         start()
@@ -123,7 +124,11 @@ public final class LiveSession {
     public func refreshChats() async {
         guard let client else { return }
         if let list = try? await client.chats() { chats = list.chats }
+        if let list = try? await client.projects() { projects = list }
     }
+
+    /// The Mac's projects, each with its newest chat.
+    public private(set) var projects: [ProjectSummary] = []
 
     public func send(_ text: String, files: [String] = []) async throws {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)

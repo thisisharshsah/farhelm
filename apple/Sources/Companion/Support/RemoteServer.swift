@@ -551,6 +551,8 @@ final class RemoteServer: ObservableObject {
             }
         case ("GET", "/chats"):
             send(json: chatsJSON(), on: connection)
+        case ("GET", "/projects"):
+            send(json: projectsJSON(), on: connection)
         case ("POST", "/open"):
             let raw = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
             if let id = UUID(uuidString: raw) { AppState.shared.openConversation(id) }
@@ -734,6 +736,26 @@ final class RemoteServer: ObservableObject {
         }
         let data = (try? JSONSerialization.data(withJSONObject: ["current": app.conversation.id.uuidString,
                                                                  "chats": list])) ?? Data("{}".utf8)
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// The projects, in the sidebar's order, each with its newest chat, for
+    /// the phone's Projects list. A project with no chats is listed too,
+    /// with no chat and its own creation date.
+    private func projectsJSON() -> String {
+        let app = AppState.shared
+        // Every saved chat, not the sidebar's search results.
+        let chats = app.store.list()
+        let list: [[String: Any]] = app.projects.map { project in
+            let latest = chats.first { $0.projectID == project.id }
+            return ["id": project.id.uuidString,
+                    "name": project.name,
+                    "chatID": latest.map { $0.id.uuidString as Any } ?? NSNull(),
+                    "chatTitle": latest.map { $0.title as Any } ?? NSNull(),
+                    "chats": chats.filter { $0.projectID == project.id }.count,
+                    "updatedAt": (latest?.updatedAt ?? project.createdAt).timeIntervalSince1970]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: ["projects": list])) ?? Data("{}".utf8)
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 

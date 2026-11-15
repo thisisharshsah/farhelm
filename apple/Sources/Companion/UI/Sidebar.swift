@@ -102,6 +102,27 @@ struct SidebarView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 // A plain list, newest first: one line a chat, nothing else.
                 LazyVStack(alignment: .leading, spacing: 1) {
+                    if app.historyQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                        HStack(spacing: 6) {
+                            Text("Projects")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Theme.ink.opacity(0.5))
+                            Spacer(minLength: 2)
+                            IconButton("plus", help: "Add a project folder") { app.addProject() }
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 2)
+                        ForEach(app.projects) { project in
+                            ProjectRow(project: project)
+                        }
+                        if app.projects.isEmpty {
+                            Text("No projects yet. Add a folder with +.")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.ink.opacity(0.42))
+                                .padding(.horizontal, 4)
+                        }
+                        Divider().padding(.vertical, 6)
+                    }
                     ForEach(sections) { section in
                         ForEach(section.items) { item in
                             SidebarRow(item: item, isCurrent: item.id == app.conversation.id)
@@ -156,6 +177,87 @@ struct SidebarView: View {
             app.historyQuery = ""
             app.refreshHistory()
         }
+    }
+}
+
+/// One project: its name, its newest chat (or "No conversations yet") and
+/// how long ago it was used. Rename and remove show while the pointer is on
+/// the row; removing takes it off the list only, never touching the folder.
+private struct ProjectRow: View {
+    @EnvironmentObject var app: AppState
+    let project: Project
+    @State private var hover = false
+    @State private var renaming = false
+    @State private var newName = ""
+    @FocusState private var nameFocused: Bool
+
+    private var latest: ConversationSummary? { app.chats(in: project).first }
+
+    private func startRenaming() {
+        newName = project.name
+        renaming = true
+        nameFocused = true
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "folder")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.ink.opacity(0.55))
+            VStack(alignment: .leading, spacing: 1) {
+                if renaming {
+                    TextField("Name", text: $newName)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.ink.opacity(0.97))
+                        .focused($nameFocused)
+                        .onSubmit {
+                            app.renameProject(project.id, to: newName)
+                            renaming = false
+                        }
+                        .onExitCommand { renaming = false }
+                        .onChange(of: nameFocused) { _, focused in
+                            if !focused { renaming = false }
+                        }
+                } else {
+                    Text(project.name)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.ink.opacity(0.9))
+                        .lineLimit(1)
+                }
+                Text(latest?.title ?? "No conversations yet")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.ink.opacity(0.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 2)
+            if hover, !renaming {
+                IconButton("pencil", help: "Rename this project") { startRenaming() }
+                IconButton("minus.circle", help: "Remove from the list (the folder is kept)") { app.removeProject(project.id) }
+            } else if let latest {
+                Text(latest.updatedAt.formatted(.relative(presentation: .numeric, unitsStyle: .narrow)))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.ink.opacity(0.42))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 5)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
+            .fill(Theme.ink.opacity(hover ? 0.06 : 0)))
+        .help(project.folderPath)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !renaming, let latest { app.openConversation(latest.id) }
+        }
+        .onHover { hover = $0 }
+        .contextMenu {
+            Button("Rename") { startRenaming() }
+            Button("Remove from Projects", role: .destructive) { app.removeProject(project.id) }
+        }
+        .animation(.easeOut(duration: 0.12), value: hover)
     }
 }
 

@@ -76,6 +76,10 @@ final class AppState: ObservableObject {
     // Conversation workspace
     @Published var conversation = Conversation()
     @Published var history: [ConversationSummary] = []
+    /// Folders the chats are grouped under, saved beside the chats. A chat
+    /// in a project works in code, in the project's folder; a plain chat
+    /// stays a chat.
+    @Published var projects: [Project] = []
     @Published var showHistory = false
     /// Attachments added since the last message was sent. They show in the
     /// chat box while you write; once sent they live in Details, and stay
@@ -455,6 +459,7 @@ final class AppState: ObservableObject {
                 !self.streamingTurns.contains($0.id) && self.usage(of: $0) != .unused && $0.matched != false
             }
         }
+        projects = store.loadProjects()
         refreshHistory()
         loadFarhelmModels()
         if AppSettings.shared.provider == .anthropic {
@@ -4250,16 +4255,18 @@ final class AppState: ObservableObject {
     /// working folder from Settings.
     var agentStartDirectory: String { Self.startDirectory(of: conversation) }
 
-    /// Where a chat's agent starts: its folder, else a folder attached to
-    /// it, else the folder set for the agent.
+    /// Where a chat's agent starts: its project's folder, else its folder,
+    /// else a folder attached to it, else the folder set for the agent.
     static func startDirectory(of chat: Conversation) -> String {
-        chat.workFolder
+        shared.project(of: chat)?.folderPath
+            ?? chat.workFolder
             ?? (chat.attachments ?? []).last { $0.isFolder == true }?.path
             ?? AppSettings.shared.agentDirectory
     }
 
     static func hasWorkFolder(_ chat: Conversation) -> Bool {
-        chat.workFolder != nil || (chat.attachments ?? []).contains { $0.isFolder == true }
+        shared.project(of: chat) != nil || chat.workFolder != nil
+            || (chat.attachments ?? []).contains { $0.isFolder == true }
     }
 
     /// A chat by id: the open one, or one left while it works.
@@ -4278,10 +4285,10 @@ final class AppState: ObservableObject {
             ?? AgentAccess(rawValue: AppSettings.shared.agentAccess) ?? .manual
     }
 
-    /// Whether this chat has a folder for the code side to work in: one
-    /// chosen for it, or one attached to the chat.
+    /// Whether this chat has a folder for the code side to work in: its
+    /// project's folder, one chosen for it, or one attached to the chat.
     var hasWorkFolder: Bool {
-        conversation.workFolder != nil || attachments.contains { $0.isFolder == true }
+        currentProject != nil || conversation.workFolder != nil || attachments.contains { $0.isFolder == true }
     }
 
     /// In code, with a folder open in the workspace, Settings and Quit sit
@@ -4306,13 +4313,33 @@ final class AppState: ObservableObject {
     /// Switches between the two sides of the app. Chat and code share the
     /// same list of conversations, search and "new"; code adds the
     /// workspace, and what is sent there is work on the chat's repository.
+    /// Code (the agent's file and shell tools) is only on in a project
+    /// chat, where it works in the project's folder; in a plain chat this
+    /// does not turn it on, and the chat stays a chat.
     func setCode(_ on: Bool) {
+        if on, currentProject == nil { return }
         codeMode = on
         if on {
             showSide(.workspace)
         } else if sidePanel == .workspace {
             showSide(nil)
         }
+    }
+
+    /// The Code button: code in a project chat; in a plain chat, a word on
+    /// how to get it.
+    func chooseCode() {
+        guard currentProject != nil else {
+            lastError = "Code is on in project chats only. Add a folder under Projects in the sidebar and start a chat in it with its +, or right-click a chat and move it to a project."
+            return
+        }
+        setCode(true)
+    }
+
+    /// Code follows the open chat: on in a project chat, off in a plain one.
+    private func followChatForCode() {
+        let inProject = currentProject != nil
+        if codeMode != inProject { setCode(inProject) }
     }
 
     /// A note for the agent on the repository a code chat works in.
@@ -4362,6 +4389,99 @@ final class AppState: ObservableObject {
     func refreshHistory() {
         let query = historyQuery.trimmingCharacters(in: .whitespaces)
         history = query.isEmpty ? store.list() : store.search(query)
+    }
+
+    // MARK: - Projects
+
+    /// The project the open chat is in, or nil for a plain chat.
+    var currentProject: Project? { project(of: conversation) }
+
+    /// The project a chat is in, when that project is still on the list.
+    func project(of chat: Conversation) -> Project? {
+        guard let id = chat.projectID else { return nil }
+        return projects.first { $0.id == id }
+    }
+
+    /// The saved chats in a project, newest first.
+    func chats(in project: Project) -> [ConversationSummary] {
+        history.filter { $0.projectID == project.id }
+    }
+
+    /// The saved chats in no project on the list, newest first.
+    var chatsOutsideProjects: [ConversationSummary] {
+        let listed = Set(projects.map(\.id))
+        return history.filter { item in
+            guard let id = item.projectID else { return true }
+            return !listed.contains(id)
+        }
+    }
+
+    /// Asks for a folder (folders only) and adds it as a project named
+    /// after the folder. A folder already on the list is not added again.
+    func addProject() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.message = "Choose a project folder. Chats in the project work in it, with code (file and shell tools) on."
+        panel.prompt = "Add Project"
+        // Above the overlay, which floats at status-bar level.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                let path = url.standardizedFileURL.path
+                guard !self.projects.contains(where: { $0.folderPath == path }) else { return }
+                self.projects.append(Project(name: url.lastPathComponent, folderPath: path))
+                self.store.saveProjects(self.projects)
+            }
+        }
+    }
+
+    func renameProject(_ id: UUID, to name: String) {
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard !name.isEmpty, let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        projects[index].name = name
+        store.saveProjects(projects)
+    }
+
+    /// Takes a project off the list. Only the list changes: its chats stay,
+    /// as plain chats, and the folder and every file in it are left as
+    /// they are.
+    func removeProject(_ id: UUID) {
+        projects.removeAll { $0.id == id }
+        store.saveProjects(projects)
+        for item in store.list() where item.projectID == id {
+            setProject(nil, of: item.id)
+        }
+        if conversation.projectID == id { setProject(nil, of: conversation.id) }
+        followChatForCode()
+        refreshHistory()
+    }
+
+    /// Moves a chat into a project, or (with nil) out of the one it is in.
+    func moveConversation(_ id: UUID, toProject project: UUID?) {
+        setProject(project, of: id)
+        if id == conversation.id { followChatForCode() }
+        refreshHistory()
+    }
+
+    /// Sets a chat's project wherever the chat is: open, left working in
+    /// the background, or saved.
+    private func setProject(_ project: UUID?, of id: UUID) {
+        if id == conversation.id {
+            conversation.projectID = project
+            persist()
+            return
+        }
+        backgroundChats[id]?.projectID = project
+        if var saved = store.load(id) {
+            saved.projectID = project
+            store.save(saved)
+        }
     }
 
     /// The line under the app name: what Companion is doing, or why it did
@@ -4530,18 +4650,22 @@ final class AppState: ObservableObject {
         messageAttachments = []
     }
 
-    func newConversation() {
+    /// A new chat: plain, or (with `project`) in a project, where code is
+    /// on and works in the project's folder.
+    func newConversation(in project: UUID? = nil) {
         persist()
         keepRunningWork()
         cancelRuns()
         forgetAgentWorkUnlessElsewhere()
         conversation = Conversation()
+        conversation.projectID = project
         restoreDraft()
         segments = []
         replySpokenWords = 0
         screenSpokenWords = 0
         lastError = nil
         showHistory = false
+        followChatForCode()
     }
 
     /// Reopens a saved conversation so it can be continued.
