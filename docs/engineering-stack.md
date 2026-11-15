@@ -61,6 +61,7 @@ farhelm/
   desktop/src-tauri/         native desktop host
   mobile/                   Expo client and native adapters
     watch/                  Swift watch implementation
+  apple/                    Companion (Swift): Mac, iPhone, iPad and Watch apps
   deploy/                   deployment configuration/scripts
   docs/                     architecture, research and decisions
 ```

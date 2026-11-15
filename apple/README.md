@@ -2,7 +2,7 @@
 
 A native macOS conversation copilot. It listens to both sides of a conversation (your mic and system audio), transcribes locally with Parakeet, and drafts what you should say next using details you provide. It can also read your screen and answer the question shown there. Everything lives in a glass overlay pinned below the camera. By default it has no menu bar icon and no Dock icon; Settings can show either.
 
-Plan: Companion works on its own, with the person's own model keys; Farhelm is an optional engine it can connect to, and Orbit is retired once its safety ideas are here. See Farhelm's `docs/adr/0013-farhelm-companion-orbit.md`.
+Plan: Companion works on its own, with the person's own model keys; Farhelm is an optional engine it can connect to, and Orbit is retired once its safety ideas are here. See [ADR 0013](../docs/adr/0013-farhelm-companion-orbit.md).
 
 ## Features
 
@@ -162,7 +162,7 @@ Besides API keys and local models, Companion can answer through a subscription y
 ## Build and run
 
 ```bash
-cd ~/Project/companion
+cd ~/Project/farhelm/apple
 bash build.sh
 ```
 

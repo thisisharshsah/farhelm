@@ -17,7 +17,8 @@ pieces.
   hub (ADR 0011), tasks and runs (ADR 0012), an encrypted relay with paired
   devices, the web app, a Tauri desktop app, an Expo phone app and a SwiftUI
   watch app.
-- **Companion** (`~/Project/companion`): a native macOS app (overlay, chat and
+- **Companion** (`apple/` in this repository since 2026-11-15, before that
+  `~/Project/companion`): a native macOS app (overlay, chat and
   code modes, a Chromium browser, computer use) with iPhone, iPad and Watch
   apps. It has its own model engines (Anthropic, OpenAI, Ollama, subscription
   command-line tools, and Farhelm), its own usage records, its own phone link
@@ -174,27 +175,30 @@ Two rules conflict today:
 
 ### One repository, by operating system
 
-- Companion moves into this repository with its history, as a separate
-  mechanical step (moves apart from behavior changes, as AGENTS.md asks).
-  Orbit stays in the archive.
-- Folders follow the operating system (user direction, 2026-11-14). Code only
-  one OS can run goes in that OS's folder; code two or more use goes in
-  `shared/`. Proposed layout, names for the owner to confirm:
+- Companion came into this repository whole, as `apple/`, with every one of
+  its commits rewritten to that path so log and blame work on its files
+  (owner decision, 2026-11-15). Nothing inside it moved, so its build is
+  unchanged. Orbit stays in the archive.
+- Folders follow the operating system (user direction, 2026-11-14), reached in
+  checked steps rather than one big move. Farhelm's Rust workspace stays at
+  the root: it runs on every OS, and moving a working workspace buys nothing.
+  `apple/` splits by OS next, each split built on a Mac before the next one.
+  Proposed, names for the owner to confirm:
 
   ```
-  shared/core/    Farhelm, the engine (Rust)                                  (macOS, Linux)
-  shared/apple/   Swift packages the Apple apps share: design, Farhelm client (macOS, iOS, watchOS)
-  macos/          Companion for Mac, and Farhelm's launchd setup
-  ios/            Companion for iPhone and iPad
-  watchos/        Companion for Watch
-  linux/          Farhelm's server setup (systemd)
-  web/            only if a non-Apple version is kept (open decision 1)
+  Cargo.toml, crates/   Farhelm, the engine (Rust)                     (macOS, Linux)
+  apple/shared/         Swift packages the Apple apps share            (macOS, iOS, watchOS)
+  apple/macos/          Companion for Mac, and Farhelm's launchd setup
+  apple/ios/            Companion for iPhone and iPad
+  apple/watchos/        Companion for Watch
+  deploy/               Farhelm's server setup (systemd, launchd)
+  web/                  only if a non-Apple version is kept (open decision 1)
   ```
 
   The iPhone and Watch apps keep one Xcode project, because Apple ships the
-  Watch app inside the iPhone app; only their source folders are split. The
-  move updates the Cargo workspace, scripts, CI and docs in the same step, as
-  AGENTS.md requires for directory moves.
+  Watch app inside the iPhone app; only their source folders are split. Each
+  move updates paths, scripts, CI and docs in the same step, as AGENTS.md
+  requires for directory moves.
 - The root `AGENTS.md` holds the shared rules; each app root keeps its own file
   only for what differs.
 
@@ -220,6 +224,7 @@ Each step leaves everything working.
    screenshot reaches a model, a permanent action record, and the focus check
    before each action. Orbit then stays in the archive.
 3. **Merge the repositories** (mechanical only, Companion's history kept).
+   Done 2026-11-15 as `apple/`; the split by OS follows in checked steps.
 4. **One provider layer in Companion**, with keys in the Keychain.
 5. **The contract:** Farhelm's OpenAPI document and capabilities call,
    Companion's generated client, shared fixtures in CI.

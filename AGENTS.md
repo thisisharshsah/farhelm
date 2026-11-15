@@ -43,6 +43,7 @@ This is the canonical, living instruction file for work in this repository. Last
 - Gateway, agent, runner, cloud, relay, crypto and MCP crates retain their respective model policy, execution, composition, control-plane, transport and security roles. Model requests must use the gateway's policy/accounting path.
 - `packages/client-core`: platform-neutral transport, contracts, validation, crypto and shared transformations. Keep React UI, DOM/native storage and application state in platform clients.
 - `web/`, `mobile/`, `desktop/`: existing application roots. Group new substantial client features by responsibility; extract existing code as it is changed. Do not scaffold empty modules for every future feature.
+- `apple/`: Companion, the app for Mac, iPhone, iPad and Watch (Swift), merged with its history on 2026-11-15. It must keep working without Farhelm (ADR 0013). Build it from that folder with `bash build.sh`; its README describes it. It splits into per-OS folders later, one step at a time, each built on a Mac before the next.
 - Directory moves are allowed. Update imports, workspace manifests, scripts, CI, service workers, Tauri assets, native configuration and docs together. Keep mechanical moves separate from behavior changes where practical. Never leave two active implementations or compatibility shims without a removal condition.
 
 ## Coding patterns

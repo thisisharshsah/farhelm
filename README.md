@@ -38,6 +38,7 @@ this file is the reference for what exists today.
 | `mobile/` | The React Native phone app (iOS + Android) |
 | `mobile/watch/` | The Apple Watch app: native SwiftUI, with its own NaCl implementation |
 | `desktop/` | The desktop app (Tauri): the same runner, in a window, on any OS |
+| `apple/` | Companion, the app for Mac, iPhone, iPad and Watch (Swift). It works on its own and uses Farhelm when it finds one: [apple/README.md](apple/README.md), [ADR 0013](docs/adr/0013-farhelm-companion-orbit.md) |
 | `deploy/` | Cloudflare tunnel, systemd and launchd for `farhelm.aurovie.com` |
 
 ### Three clients, one wire format
