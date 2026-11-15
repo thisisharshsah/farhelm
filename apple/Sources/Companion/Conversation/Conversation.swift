@@ -263,13 +263,40 @@ extension Conversation {
 }
 
 /// A folder that chats are grouped under in the sidebar. A chat in a
-/// project works in code, in `folderPath`; taking a project off the list
+/// project works in code, in `folder`; taking a project off the list
 /// never touches the folder or anything in it.
 struct Project: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String
-    var folderPath: String
+    /// The project's folder, or nil when none is set (older entries).
+    var folder: String?
     var createdAt = Date()
+
+    init(id: UUID = UUID(), name: String, folder: String? = nil, createdAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.folder = folder
+        self.createdAt = createdAt
+    }
+
+    // Stored as "folderPath", the key projects.json already uses.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, createdAt
+        case folder = "folderPath"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try values.decode(String.self, forKey: .name)
+        folder = try values.decodeIfPresent(String.self, forKey: .folder)
+        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
+    /// The folder with the home folder shortened to ~, or nil.
+    var abbreviatedFolder: String? {
+        folder.map { ($0 as NSString).abbreviatingWithTildeInPath }
+    }
 }
 
 struct ConversationSummary: Identifiable, Equatable {

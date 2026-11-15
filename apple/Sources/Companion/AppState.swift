@@ -4258,14 +4258,14 @@ final class AppState: ObservableObject {
     /// Where a chat's agent starts: its project's folder, else its folder,
     /// else a folder attached to it, else the folder set for the agent.
     static func startDirectory(of chat: Conversation) -> String {
-        shared.project(of: chat)?.folderPath
+        shared.project(of: chat)?.folder
             ?? chat.workFolder
             ?? (chat.attachments ?? []).last { $0.isFolder == true }?.path
             ?? AppSettings.shared.agentDirectory
     }
 
     static func hasWorkFolder(_ chat: Conversation) -> Bool {
-        shared.project(of: chat) != nil || chat.workFolder != nil
+        shared.project(of: chat)?.folder != nil || chat.workFolder != nil
             || (chat.attachments ?? []).contains { $0.isFolder == true }
     }
 
@@ -4419,25 +4419,44 @@ final class AppState: ObservableObject {
     /// Asks for a folder (folders only) and adds it as a project named
     /// after the folder. A folder already on the list is not added again.
     func addProject() {
+        chooseProjectFolder(prompt: "Add Project", start: nil) { [weak self] url in
+            guard let self else { return }
+            let path = url.standardizedFileURL.path
+            guard !self.projects.contains(where: { $0.folder == path }) else { return }
+            self.projects.append(Project(name: url.lastPathComponent, folder: path))
+            self.store.saveProjects(self.projects)
+        }
+    }
+
+    /// Asks for a new folder for a project and saves it. The name stays;
+    /// the old folder and its files are left as they are.
+    func changeProjectFolder(_ id: UUID) {
+        guard let current = projects.first(where: { $0.id == id }) else { return }
+        chooseProjectFolder(prompt: "Choose Folder", start: current.folder) { [weak self] url in
+            guard let self, let index = self.projects.firstIndex(where: { $0.id == id }) else { return }
+            self.projects[index].folder = url.standardizedFileURL.path
+            self.store.saveProjects(self.projects)
+            self.followChatForCode()
+        }
+    }
+
+    /// The folder picker (folders only) shared by Add Project and Change Folder.
+    private func chooseProjectFolder(prompt: String, start: String?,
+                                     chosen: @escaping @MainActor (URL) -> Void) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.message = "Choose a project folder. Chats in the project work in it, with code (file and shell tools) on."
-        panel.prompt = "Add Project"
+        panel.prompt = prompt
+        if let start { panel.directoryURL = URL(fileURLWithPath: start, isDirectory: true) }
         // Above the overlay, which floats at status-bar level.
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         NSApp.activate(ignoringOtherApps: true)
-        panel.begin { [weak self] response in
+        panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in
-                guard let self else { return }
-                let path = url.standardizedFileURL.path
-                guard !self.projects.contains(where: { $0.folderPath == path }) else { return }
-                self.projects.append(Project(name: url.lastPathComponent, folderPath: path))
-                self.store.saveProjects(self.projects)
-            }
+            Task { @MainActor in chosen(url) }
         }
     }
 

@@ -13,14 +13,29 @@ public struct PairedMac: Codable, Hashable, Identifiable, Sendable {
     public var token: String
     /// The address that worked last, tried first next time.
     public var lastHost: String?
+    /// The relay the Mac is reached through away from its network, when it
+    /// has one turned on ("wss://…").
+    public var relay: String?
+    /// The pairing's key for the relay: what seals everything that goes
+    /// through it. Kept in the Keychain, never in the plain store.
+    public var key: String?
 
-    public init(id: String, name: String, port: Int, hosts: [String], token: String, lastHost: String? = nil) {
+    public init(id: String, name: String, port: Int, hosts: [String], token: String, lastHost: String? = nil,
+                relay: String? = nil, key: String? = nil) {
         self.id = id
         self.name = name
         self.port = port
         self.hosts = hosts
         self.token = token
         self.lastHost = lastHost
+        self.relay = relay
+        self.key = key
+    }
+
+    /// Whether it can be reached through a relay when not directly.
+    public var reachableAway: Bool {
+        guard let relay, let key else { return false }
+        return !relay.isEmpty && !key.isEmpty
     }
 
     /// Addresses in the order to try them: the one that worked last first.
@@ -46,6 +61,8 @@ public struct ChatSummary: Codable, Hashable, Identifiable, Sendable {
 public struct ProjectSummary: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var name: String
+    /// The project's folder on the Mac, nil when none is set (or an older Mac).
+    public var folder: String?
     public var chatID: String?
     public var chatTitle: String?
     public var chats: Int?
@@ -211,6 +228,9 @@ public struct MacInfo: Codable, Sendable {
     public var name: String
     public var port: Int
     public var hosts: [String]
+    /// Its relay now: "" when it has none turned on; missing from a Mac
+    /// that predates the relay.
+    public var relay: String?
 }
 
 /// An engine Companion on the Mac can answer with, and its models, as the

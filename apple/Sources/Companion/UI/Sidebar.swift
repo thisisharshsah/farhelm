@@ -225,6 +225,11 @@ private struct ProjectRow: View {
                         .foregroundStyle(Theme.ink.opacity(0.9))
                         .lineLimit(1)
                 }
+                Text(project.abbreviatedFolder ?? "No folder")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.ink.opacity(0.42))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Text(latest?.title ?? "No conversations yet")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.ink.opacity(0.5))
@@ -234,6 +239,7 @@ private struct ProjectRow: View {
             Spacer(minLength: 2)
             if hover, !renaming {
                 IconButton("pencil", help: "Rename this project") { startRenaming() }
+                IconButton("folder.badge.gearshape", help: "Change Folder…") { app.changeProjectFolder(project.id) }
                 IconButton("minus.circle", help: "Remove from the list (the folder is kept)") { app.removeProject(project.id) }
             } else if let latest {
                 Text(latest.updatedAt.formatted(.relative(presentation: .numeric, unitsStyle: .narrow)))
@@ -247,7 +253,7 @@ private struct ProjectRow: View {
         .padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
             .fill(Theme.ink.opacity(hover ? 0.06 : 0)))
-        .help(project.folderPath)
+        .help(project.folder ?? "No folder")
         .contentShape(Rectangle())
         .onTapGesture {
             if !renaming, let latest { app.openConversation(latest.id) }
@@ -255,6 +261,7 @@ private struct ProjectRow: View {
         .onHover { hover = $0 }
         .contextMenu {
             Button("Rename") { startRenaming() }
+            Button("Change Folder…") { app.changeProjectFolder(project.id) }
             Button("Remove from Projects", role: .destructive) { app.removeProject(project.id) }
         }
         .animation(.easeOut(duration: 0.12), value: hover)

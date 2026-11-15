@@ -19,8 +19,10 @@ import SystemConfiguration
 /// Security: the phone must present a secret pairing code, kept in the
 /// Keychain so a phone added to the Home Screen keeps working after the
 /// Mac restarts, and replaced (cutting every phone off) with "New code".
-/// It answers only on the local network. Approving what the agent
-/// wants to do (Allow / Deny) stays on the Mac; the phone can send
+/// The server answers only on the local network; away from it, the app
+/// reaches the Mac through `RemoteRelay`, sealed end to end, and its
+/// requests are answered here by the same `handle`. Approving what the
+/// agent wants to do (Allow / Deny) stays on the Mac; the phone can send
 /// messages, answer the agent's questions, and stop it, nothing more.
 @MainActor
 final class RemoteServer: ObservableObject {
@@ -78,6 +80,8 @@ final class RemoteServer: ObservableObject {
         guard listener == nil else { return }
         lastError = nil
         token = Self.storedToken()
+        // The way in from away, whatever becomes of the local listener.
+        RemoteRelay.shared.start()
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
         let chosen = NWEndpoint.Port(rawValue: preferredPort)
@@ -121,6 +125,7 @@ final class RemoteServer: ObservableObject {
     }
 
     func stop() {
+        RemoteRelay.shared.stop()
         pump?.cancel()
         pump = nil
         for connection in feeds.values { connection.cancel() }
@@ -171,13 +176,16 @@ final class RemoteServer: ObservableObject {
     }
 
     /// The link the Companion app pairs with (as a QR code): this Mac's id
-    /// and name, where it can be reached, and the pairing code.
+    /// and name, where it can be reached, and the pairing code; and, while
+    /// it can be reached from anywhere, its relay and the key that seals
+    /// what goes through it. The key is in this code and nowhere else.
     var appLink: String? {
-        guard running, port != 0, !hosts.isEmpty else { return nil }
+        let away = RemoteRelay.shared.pairing
+        guard running, port != 0, !hosts.isEmpty || away != nil else { return nil }
         var parts = URLComponents()
         parts.scheme = "companion"
         parts.host = "pair"
-        parts.queryItems = [
+        var items = [
             URLQueryItem(name: "v", value: "1"),
             URLQueryItem(name: "id", value: Self.macID),
             URLQueryItem(name: "name", value: Self.macName),
@@ -185,6 +193,11 @@ final class RemoteServer: ObservableObject {
             URLQueryItem(name: "hosts", value: hosts.joined(separator: ",")),
             URLQueryItem(name: "token", value: token),
         ]
+        if let away {
+            items.append(URLQueryItem(name: "relay", value: away.relay))
+            items.append(URLQueryItem(name: "key", value: away.key))
+        }
+        parts.queryItems = items
         return parts.url?.absoluteString
     }
 
@@ -291,6 +304,8 @@ final class RemoteServer: ObservableObject {
         Keychain.write(token, account: Self.tokenAccount)
         for connection in feeds.values { connection.cancel() }
         feeds = [:]
+        // The relay's key goes with it: a device cut off here is cut off there.
+        RemoteRelay.shared.newKey()
         objectWillChange.send()
     }
 
@@ -424,24 +439,75 @@ final class RemoteServer: ObservableObject {
             return
         }
 
-        switch (request.method, request.path) {
-        case ("GET", "/events"):
+        if request.method == "GET", request.path == "/events" {
             openFeed(connection, id: id)
+            return
+        }
+        Task { @MainActor in
+            let reply = await self.handle(request)
+            self.respond(status: Self.statusLine(reply.status), type: reply.type, body: reply.body, on: connection)
+        }
+    }
+
+    /// A request that came through the relay. It was sealed with the
+    /// pairing's key, which proves it comes from a paired device, so it
+    /// carries no pairing code; the feed comes by subscription there, not
+    /// from `/events`.
+    func answerRelayed(method: String, path: String, query: [String: String],
+                       body: Data) async -> (status: Int, type: String, body: Data) {
+        let request = Request(method: method, path: path, query: query,
+                              body: String(data: body, encoding: .utf8) ?? "", data: body)
+        let reply = await handle(request)
+        return (reply.status, reply.type, reply.body)
+    }
+
+    /// What a request is answered with, however it came.
+    private struct Reply {
+        var status: Int
+        var type: String
+        var body: Data
+
+        static func json(_ text: String) -> Reply {
+            Reply(status: 200, type: "application/json", body: Data(text.utf8))
+        }
+
+        static func text(_ status: Int, _ text: String) -> Reply {
+            Reply(status: status, type: "text/plain; charset=utf-8", body: Data(text.utf8))
+        }
+
+        static var ok: Reply { json("{\"ok\":true}") }
+    }
+
+    private static func statusLine(_ status: Int) -> String {
+        switch status {
+        case 200: return "200 OK"
+        case 401: return "401 Unauthorized"
+        case 404: return "404 Not Found"
+        case 413: return "413 Payload Too Large"
+        case 422: return "422 Unprocessable Entity"
+        case 500: return "500 Internal Server Error"
+        default: return "\(status) \(HTTPURLResponse.localizedString(forStatusCode: status).capitalized)"
+        }
+    }
+
+    /// Everything the app can ask, whether over the local network or
+    /// through the relay: one set of rules for both.
+    private func handle(_ request: Request) async -> Reply {
+        switch (request.method, request.path) {
         case ("GET", "/state"):
-            send(json: snapshotJSON(), on: connection)
+            return .json(snapshotJSON())
         case ("POST", "/say"):
             // With the files the phone attached for it (`files=id,id`).
             let text = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
             let files = (request.query["files"] ?? "").split(separator: ",").compactMap { UUID(uuidString: String($0)) }
             if !text.isEmpty { AppState.shared.send(text, files: files) }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("POST", "/attach"):
             // A photo or file from the phone: kept on this Mac and attached
             // to the open chat, for the message that is sent with it.
             let name = Self.safeFileName(request.query["name"] ?? "Attachment")
             guard !request.data.isEmpty, request.data.count <= 40_000_000 else {
-                send(status: "413 Payload Too Large", body: "Too large.", on: connection)
-                return
+                return .text(413, "Too large.")
             }
             let folder = ContextStore.shared.baseDir.appendingPathComponent("From phone", isDirectory: true)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -449,22 +515,18 @@ final class RemoteServer: ObservableObject {
             do {
                 try request.data.write(to: url)
             } catch {
-                send(status: "500 Internal Server Error", body: "Could not keep it.", on: connection)
-                return
+                return .text(500, "Could not keep it.")
             }
-            Task { @MainActor in
-                if let id = await AppState.shared.attachFromPhone(url) {
-                    self.send(json: Self.json(["id": id.uuidString, "name": name]), on: connection)
-                } else {
-                    self.send(status: "422 Unprocessable Entity", body: "Could not read it.", on: connection)
-                }
+            guard let id = await AppState.shared.attachFromPhone(url) else {
+                return .text(422, "Could not read it.")
             }
+            return .json(Self.json(["id": id.uuidString, "name": name]))
         case ("POST", "/screen"):
             // A look at this Mac's screen, answered in the chat (with the
             // question, when one is sent).
             let question = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
             AppState.shared.answerScreenNow(question: question.isEmpty ? nil : question)
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("POST", "/edit"):
             // A message sent again, changed: {"id", "text", "choice"} where
             // choice is "", "fork", "rewindCode" or "forkAndRewind".
@@ -479,11 +541,11 @@ final class RemoteServer: ObservableObject {
                 }
                 AppState.shared.editMessage(id, to: text, choice)
             }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("POST", "/stop"):
             let app = AppState.shared
             if app.agentHere { app.stopAgent() } else { app.stopReply() }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("GET", "/models"):
             // The engines and their models, as the Mac's model picker lists them.
             let engines = EngineCatalog.engines.map { engine -> [String: Any] in
@@ -498,7 +560,7 @@ final class RemoteServer: ObservableObject {
                       "note": EngineCatalog.note(engine, model) ?? ""]
                  }]
             }
-            send(json: Self.json(["engines": engines]), on: connection)
+            return .json(Self.json(["engines": engines]))
         case ("POST", "/model"):
             // {"engine": id, "model": model}: the engine and model that answer.
             if let object = try? JSONSerialization.jsonObject(with: request.data) as? [String: Any],
@@ -507,18 +569,18 @@ final class RemoteServer: ObservableObject {
                engine.models.contains(model) {
                 EngineCatalog.choose(engine, model)
             }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("POST", "/access"):
             // Manual, Auto (edits) or Auto (full access), for this chat.
             let raw = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
             if let access = AgentAccess(rawValue: raw) { AppState.shared.setAgentAccess(access) }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("POST", "/effort"):
             // A level the engine takes, or "" to leave it to the model.
             let level = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
             let settings = AppSettings.shared
             if level.isEmpty || settings.effortLevels.contains(level) { settings.chosenEffort = level }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("POST", "/queued"):
             // A waiting message: "now <id>", "cancel <id>" or "restore <id>".
             let parts = request.body.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ")
@@ -531,12 +593,12 @@ final class RemoteServer: ObservableObject {
                 default: break
                 }
             }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("GET", "/info"):
             // What an app needs to keep reaching this Mac: its addresses
-            // change, its id does not.
-            send(json: Self.json(["id": Self.macID, "name": Self.macName, "port": Int(port),
-                                  "hosts": hosts, "api": 1]), on: connection)
+            // and its relay change, its id does not.
+            return .json(Self.json(["id": Self.macID, "name": Self.macName, "port": Int(port),
+                                    "hosts": hosts, "relay": RemoteRelay.shared.advertised, "api": 1]))
         case ("GET", "/image"):
             // Only the picture of a turn in the open chat, looked up by the
             // turn, so no path from the phone ever reaches the disk.
@@ -545,23 +607,22 @@ final class RemoteServer: ObservableObject {
                let file = app.conversation.turns.first(where: { $0.id == id })?.imageFile,
                let data = try? Data(contentsOf: app.store.imageURL(conversation: app.conversation.id, file: file)) {
                 let type = file.lowercased().hasSuffix(".png") ? "image/png" : "image/jpeg"
-                respond(status: "200 OK", type: type, body: data, on: connection)
-            } else {
-                send(status: "404 Not Found", body: "", on: connection)
+                return Reply(status: 200, type: type, body: data)
             }
+            return .text(404, "")
         case ("GET", "/chats"):
-            send(json: chatsJSON(), on: connection)
+            return .json(chatsJSON())
         case ("GET", "/projects"):
-            send(json: projectsJSON(), on: connection)
+            return .json(projectsJSON())
         case ("POST", "/open"):
             let raw = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
             if let id = UUID(uuidString: raw) { AppState.shared.openConversation(id) }
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         case ("POST", "/new"):
             AppState.shared.newConversation()
-            send(json: "{\"ok\":true}", on: connection)
+            return .ok
         default:
-            send(status: "404 Not Found", body: "No such thing here.", on: connection)
+            return .text(404, "No such thing here.")
         }
     }
 
@@ -607,7 +668,8 @@ final class RemoteServer: ObservableObject {
     }
 
     private func broadcastIfChanged() {
-        guard !feeds.isEmpty else { return }
+        let relay = RemoteRelay.shared
+        guard !feeds.isEmpty || relay.listening else { return }
         // A comment line now and then keeps idle connections open, and a
         // phone that has gone away is found out when the send fails.
         if Date().timeIntervalSince(lastPing) > 15 {
@@ -629,6 +691,7 @@ final class RemoteServer: ObservableObject {
         lastTurns = Dictionary(turns.map { ($0.id, $0.json) }, uniquingKeysWith: { $1 })
         let event = message(meta: meta, order: order, changed: changed.map { $0.json }, full: false)
         for connection in feeds.values { pushToFeed(connection, event: event) }
+        relay.publish(event)
     }
 
     private func pushToFeed(_ connection: NWConnection, event json: String) {
@@ -652,6 +715,10 @@ final class RemoteServer: ObservableObject {
     }
 
     // MARK: Snapshot of the conversation
+
+    /// The whole conversation, as a feed event: what a device that just
+    /// subscribed through the relay is sent first.
+    func snapshotEvent() -> String { snapshotJSON() }
 
     /// The whole conversation as one JSON object, for `/state`.
     private func snapshotJSON() -> String {
@@ -750,6 +817,7 @@ final class RemoteServer: ObservableObject {
             let latest = chats.first { $0.projectID == project.id }
             return ["id": project.id.uuidString,
                     "name": project.name,
+                    "folder": project.folder.map { $0 as Any } ?? NSNull(),
                     "chatID": latest.map { $0.id.uuidString as Any } ?? NSNull(),
                     "chatTitle": latest.map { $0.title as Any } ?? NSNull(),
                     "chats": chats.filter { $0.projectID == project.id }.count,

@@ -61,6 +61,11 @@ struct ProjectsView: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(palette.ink.opacity(0.92))
                         .lineLimit(1)
+                    Text(project.folder.map(Self.shortened) ?? "No folder")
+                        .font(.system(size: 12))
+                        .foregroundStyle(palette.ink.opacity(0.45))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     Text(project.chatTitle ?? "No conversations")
                         .font(.system(size: 13, weight: open ? .semibold : .regular))
                         .foregroundStyle(palette.ink.opacity(project.chatID == nil ? 0.4 : 0.75))
@@ -81,5 +86,12 @@ struct ProjectsView: View {
         }
         .buttonStyle(.plain)
         .disabled(project.chatID == nil)
+    }
+
+    /// A Mac path with its home folder (/Users/name) shown as ~.
+    static func shortened(_ path: String) -> String {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count >= 3, parts[0].isEmpty, parts[1] == "Users", !parts[2].isEmpty else { return path }
+        return (["~"] + parts.dropFirst(3)).joined(separator: "/")
     }
 }
