@@ -42,13 +42,14 @@ struct ChatView: View {
     var body: some View {
         ScrollViewReader { reader in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
+                MessageStack {
                     if session.turns.isEmpty && meta.queued.isEmpty { empty }
                     ForEach(session.turns) { turn in
                         TurnView(turn: turn, last: turn.id == session.turns.last?.id, send: { say($0) },
                                  edit: { text, choice in
                                      run { try await session.edit(turn.id, to: text, choice: choice) }
                                  })
+                            .equatable()
                             .id(turn.id)
                     }
                     // Sent while the agent works: in the chat, waiting for it.
@@ -58,8 +59,8 @@ struct ChatView: View {
                         }
                     }
                     Color.clear.frame(height: 1).id("end")
-                        .onAppear { atBottom = true }
-                        .onDisappear { atBottom = false }
+                        .onAppear { if !BottomTracking.measuresBottom { atBottom = true } }
+                        .onDisappear { if !BottomTracking.measuresBottom { atBottom = false } }
                 }
                 .padding(.horizontal, Design.gutter)
                 .padding(.top, 8)
@@ -67,6 +68,7 @@ struct ChatView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
+            .modifier(BottomTracking(atBottom: $atBottom))
             .onChange(of: session.turns.last?.reply.count) { _, _ in follow(reader) }
             .onChange(of: session.turns.count) { _, _ in follow(reader) }
             .onChange(of: meta.queued.count) { _, _ in follow(reader) }
@@ -542,6 +544,62 @@ struct ChatView: View {
 /// Your message on the right in its bubble, with its time and Copy under
 /// it; then the work it took, the reply across the width, and the reply's
 /// footer: Copy, then the model and the time.
+/// The chat's messages, top to bottom.
+///
+/// On iOS 18 and later this is a plain stack. A lazy stack guesses the
+/// height of rows it has not drawn, and on iOS 26 those guesses, with the
+/// chat held to its bottom and the keyboard up, make the whole chat bounce
+/// up and down while anything in it moves (Apple feedback FB20979569). A
+/// plain stack knows every height. Rows are drawn again only when their
+/// turn changes (`TurnView` is `Equatable`), so a long chat stays cheap.
+/// iOS 17 keeps the lazy stack.
+private struct MessageStack<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if #available(iOS 18, *) {
+            VStack(alignment: .leading, spacing: 20) { content }
+        } else {
+            LazyVStack(alignment: .leading, spacing: 20) { content }
+        }
+    }
+}
+
+/// Keeps `atBottom` true while the end of the chat is in view, read from
+/// the scroll view's own geometry. A plain stack shows all its rows at
+/// once, so the end marker's appearing no longer says where the user is.
+private struct BottomTracking: ViewModifier {
+    @Binding var atBottom: Bool
+
+    /// Whether the geometry decides; before iOS 18 the end marker does.
+    static var measuresBottom: Bool {
+        if #available(iOS 18, *) { return true } else { return false }
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                // Within a few lines of the end counts as at the end.
+                geometry.contentOffset.y + geometry.containerSize.height - geometry.contentInsets.bottom
+                    >= geometry.contentSize.height - 60
+            } action: { _, isAtBottom in
+                atBottom = isAtBottom
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension TurnView: Equatable {
+    /// A row is drawn again only when what it shows changes: its turn, or
+    /// whether it is the last one. The closures only pass actions on.
+    static func == (lhs: TurnView, rhs: TurnView) -> Bool {
+        lhs.turn == rhs.turn && lhs.last == rhs.last
+    }
+}
+
 struct TurnView: View {
     @Environment(LiveSession.self) private var session
     let turn: Turn
