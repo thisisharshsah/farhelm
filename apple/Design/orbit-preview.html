@@ -1,0 +1,679 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Companion Orbit Mark</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@400;500&display=swap">
+<style>
+/* Layout: one dark stage. The live mark is the hero, then its three states in a row, then the agent demo. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0a14;
+  --panel: #14121f;
+  --line: rgba(255,255,255,0.09);
+  --fg: #f3f1fa;
+  --muted: #9d98b3;
+  --a: #baa1ff;
+  --b: #edb3ff;
+  --display: "Sora", "Avenir Next", system-ui, sans-serif;
+  --body: "Inter", system-ui, -apple-system, sans-serif;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.55;
+  padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 34px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(24px, 4vw, 34px); letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 17px; margin: 0; }
+p { margin: 0; color: var(--muted); max-width: 62ch; }
+.hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 24px; align-items: center; }
+.hero canvas { width: 100%; aspect-ratio: 1; max-width: 440px; justify-self: center; }
+.hero .copy { display: grid; gap: 14px; }
+.swatches { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.swatches span { font-size: 12px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; margin-right: 4px; }
+.sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.sw[aria-pressed="true"] { border-color: var(--fg); }
+.sw:focus-visible, .btn:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+section { display: grid; gap: 14px; }
+.states { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.state { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 18px 14px 16px; display: grid; justify-items: center; gap: 8px; text-align: center; }
+.state canvas { width: 132px; height: 132px; }
+.state b { font-family: var(--display); font-weight: 600; font-size: 14px; }
+.state small { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; }
+.icon { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.icon canvas { width: 168px; height: 168px; }
+.icon canvas.m { width: 64px; height: 64px; }
+.icon canvas.s { width: 32px; height: 32px; }
+.demo { position: relative; background: #1d1e26; border: 1px solid var(--line); border-radius: 16px; padding: 46px 22px 22px; overflow: hidden; min-height: 250px; }
+.demo .lights { position: absolute; top: 15px; left: 16px; display: flex; gap: 8px; }
+.demo .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.bar { height: 30px; border-radius: 8px; background: #2c2e39; max-width: 460px; display: flex; align-items: center; padding: 0 12px; font-size: 13.5px; color: #e9e8f2; white-space: nowrap; overflow: hidden; }
+#caret { width: 1.5px; height: 16px; background: #e9e8f2; margin-left: 1px; opacity: 0; }
+.ln { height: 14px; border-radius: 6px; background: #282a34; margin-top: 14px; }
+.save { position: absolute; right: 13%; bottom: 44px; background: #4a6ef0; color: #fff; font-weight: 500; border-radius: 9px; padding: 9px 26px; font-size: 14px; }
+#burst { position: absolute; width: 190px; height: 190px; pointer-events: none; }
+.tag { position: absolute; font-size: 12px; padding: 3px 12px; border-radius: 999px; background: rgba(15,13,26,0.92); border: 1px solid color-mix(in srgb, var(--a) 55%, transparent); color: var(--fg); opacity: 0; transition: opacity .25s; pointer-events: none; }
+.btn { font: 500 13.5px var(--body); color: var(--fg); background: rgba(255,255,255,0.08); border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; cursor: pointer; }
+.btn:hover { background: rgba(255,255,255,0.14); }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 720px) {
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .states { grid-template-columns: minmax(0, 1fr); }
+  .row { grid-template-columns: minmax(0, 1fr); }
+  .save { right: 8%; }
+}
+</style>
+
+<div class="wrap">
+  <div class="hero">
+    <canvas id="hero" aria-label="The orbit mark, moving"></canvas>
+    <div class="copy">
+      <h1>The orbit mark, moving</h1>
+      <p>This is drawn live, the same way the app will draw it: as shapes, not a picture, so it stays sharp at any size. A ball of thirteen orbit lines around a soft core of light that powers them: it glows in the look's own color, beats gently, and feeds every moving circle through a thin beam with pulses of light travelling out along it. The ball turns, and nine small circles run along it, each in a direction picked at random and picked again every few seconds.</p>
+      <div class="swatches" role="group" aria-label="Shade">
+        <span>Shade</span>
+        <button class="sw" id="sw-violet" data-a="#baa1ff" data-b="#edb3ff" aria-pressed="true" aria-label="Violet" style="background:linear-gradient(135deg,#baa1ff,#edb3ff)"></button>
+        <button class="sw" id="sw-blue" data-a="#7fb2ff" data-b="#9ae0ff" aria-pressed="false" aria-label="Blue" style="background:linear-gradient(135deg,#7fb2ff,#9ae0ff)"></button>
+        <button class="sw" id="sw-teal" data-a="#5fd6cb" data-b="#8fe9a8" aria-pressed="false" aria-label="Teal" style="background:linear-gradient(135deg,#5fd6cb,#8fe9a8)"></button>
+        <button class="sw" id="sw-amber" data-a="#ffc36b" data-b="#ff9e7a" aria-pressed="false" aria-label="Amber" style="background:linear-gradient(135deg,#ffc36b,#ff9e7a)"></button>
+        <button class="sw" id="sw-rose" data-a="#ff8fb1" data-b="#ffb199" aria-pressed="false" aria-label="Rose" style="background:linear-gradient(135deg,#ff8fb1,#ffb199)"></button>
+      </div>
+      <p>It takes the two colors of whichever look is set in Settings. Try one.</p>
+    </div>
+  </div>
+
+  <section>
+    <h2>The floating circle</h2>
+    <div class="states">
+      <div class="state"><canvas id="s-idle"></canvas><b>Idle</b><small>Turning slowly, three circles drifting.</small></div>
+      <div class="state"><canvas id="s-listen"></canvas><b>Listening</b><small>The ball turns and four circles run.</small></div>
+      <div class="state"><canvas id="s-work"></canvas><b>Working</b><small>Seven circles, faster, with trails.</small></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>While it works on your Mac</h2>
+    <div class="demo" id="demo">
+      <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <div class="bar" id="field"><span id="typed"></span><i id="caret"></i></div>
+      <div class="ln" style="max-width:380px"></div>
+      <div class="ln" style="max-width:430px"></div>
+      <div class="ln" style="max-width:300px"></div>
+      <div class="save" id="save">Save</div>
+      <canvas id="burst"></canvas>
+      <div class="tag" id="tag">Click</div>
+    </div>
+    <div class="acts">
+      <button class="btn" id="play-click">Play: click</button>
+      <button class="btn" id="play-type">Play: type</button>
+      <button class="btn" id="play-open">Play: open</button>
+    </div>
+    <p>The orbit lands where the agent acts, spins for about a second, and fades. When it types, the orbit rides along with the text and leaves when the last letter is in. It never takes clicks, and a switch in Settings turns it off.</p>
+  </section>
+
+  <section>
+    <div class="row">
+      <div style="display:grid;gap:10px">
+        <h2>The app icon</h2>
+        <p>The mark, still, on deep glass: the one place it has a background. Everywhere inside the app it is drawn bare. Shown at Dock size and at the two small sizes macOS uses in lists.</p>
+      </div>
+      <div class="icon"><canvas id="icon"></canvas><canvas id="icon-m" class="m"></canvas><canvas id="icon-s" class="s"></canvas></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var colors = { a: "#baa1ff", b: "#edb3ff" };
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function rgb(hex) {
+    var v = parseInt(hex.slice(1), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  }
+  function rgba(hex, alpha) {
+    var c = rgb(hex);
+    return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + alpha + ")";
+  }
+  function fit(canvas) {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  // A point on a tilted ring, and how near the viewer it is (-1 far, 1 near).
+  function onRing(cx, cy, a, b, tilt, t) {
+    var x = a * Math.cos(t), y = b * Math.sin(t);
+    return { x: cx + x * Math.cos(tilt) - y * Math.sin(tilt), y: cy + x * Math.sin(tilt) + y * Math.cos(tilt), near: Math.sin(t) };
+  }
+
+  function ringHalf(ctx, cx, cy, ring, front, alpha) {
+    var g = ctx.createLinearGradient(cx - ring.a, cy, cx + ring.a, cy);
+    g.addColorStop(0, rgba(ring.c1, (front ? 0.95 : 0.28) * alpha));
+    g.addColorStop(0.5, rgba(ring.c2, (front ? 1 : 0.16) * alpha));
+    g.addColorStop(1, rgba(ring.c1, (front ? 0.95 : 0.28) * alpha));
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(ring.tilt);
+    ctx.translate(-cx, -cy);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, ring.a, ring.b, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
+    ctx.strokeStyle = g;
+    ctx.lineWidth = front ? ring.w : ring.w * 0.7;
+    ctx.lineCap = "round";
+    if (front) { ctx.shadowColor = rgba(ring.c1, 0.55 * alpha); ctx.shadowBlur = ring.w * 3; }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function satellite(ctx, cx, cy, ring, t, size, trail, front, alpha) {
+    var steps = trail ? 16 : 1;
+    for (var i = steps - 1; i >= 0; i--) {
+      var p = onRing(cx, cy, ring.a, ring.b, ring.tilt, t - i * 0.055);
+      if ((p.near > 0) !== front) continue;
+      var depth = 0.72 + 0.28 * p.near;
+      var fade = i === 0 ? 1 : (1 - i / steps) * 0.5;
+      var r = size * depth * (i === 0 ? 1 : 1 - i / steps * 0.6);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      if (i === 0) {
+        ctx.shadowColor = rgba(ring.c2, 0.95 * alpha);
+        ctx.shadowBlur = size * 4.5;
+        ctx.fillStyle = "rgba(255,255,255," + (front ? 1 : 0.6) * alpha + ")";
+      } else {
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = rgba(ring.c2, fade * (front ? 0.9 : 0.4) * alpha);
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function core(ctx, cx, cy, r, pulse, alpha) {
+    var halo = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * (3.1 + pulse));
+    halo.addColorStop(0, rgba(colors.a, 0.5 * alpha));
+    halo.addColorStop(0.45, rgba(colors.b, 0.14 * alpha));
+    halo.addColorStop(1, rgba(colors.a, 0));
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * (3.1 + pulse), 0, Math.PI * 2);
+    ctx.fill();
+
+    var body = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+    body.addColorStop(0, rgba(colors.a, alpha));
+    body.addColorStop(1, rgba(colors.b, alpha));
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // The lit side, and a darker limb, so it reads as a sphere.
+    var light = ctx.createRadialGradient(cx - r * 0.38, cy - r * 0.42, 0, cx - r * 0.38, cy - r * 0.42, r * 1.15);
+    light.addColorStop(0, "rgba(255,255,255," + 0.85 * alpha + ")");
+    light.addColorStop(0.35, "rgba(255,255,255," + 0.22 * alpha + ")");
+    light.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = light;
+    ctx.fill();
+    var limb = ctx.createRadialGradient(cx, cy, r * 0.55, cx, cy, r);
+    limb.addColorStop(0, "rgba(20,10,50,0)");
+    limb.addColorStop(1, "rgba(20,10,50," + 0.34 * alpha + ")");
+    ctx.fillStyle = limb;
+    ctx.fill();
+  }
+
+  function mix(h1, h2, k) {
+    var c1 = rgb(h1), c2 = rgb(h2);
+    return [Math.round(c1[0] + (c2[0] - c1[0]) * k), Math.round(c1[1] + (c2[1] - c1[1]) * k), Math.round(c1[2] + (c2[2] - c1[2]) * k)];
+  }
+
+  function roll(count, now) {
+    return {
+      line: Math.floor(Math.random() * count),
+      dir: Math.random() < 0.5 ? -1 : 1,
+      rate: 0.6 + Math.random() * 0.9,
+      start: Math.random() * Math.PI * 2,
+      born: now,
+      life: 2.5 + Math.random() * 4.5
+    };
+  }
+
+  // The whole mark: a ball made of orbit lines. Each line is a full circle
+  // around the centre at its own angle; the ball turns, so the lines sweep
+  // past each other, and small circles run along them.
+  // `o`: speed, sats (moving circles), trail, pulse, alpha, lines.
+  function mark(ctx, cx, cy, R, time, o) {
+    var alpha = o.alpha == null ? 1 : o.alpha;
+    var count = o.lines || (R < 60 ? 7 : 11);
+    var spin = reduce ? 0.6 : time * (0.18 + o.speed * 0.16) + 0.6;
+    var lean = 0.42 + (reduce ? 0 : Math.sin(time * 0.3) * 0.08);
+    var cs = Math.cos(spin), sn = Math.sin(spin), cl = Math.cos(lean), sl = Math.sin(lean);
+
+    // A point at angle t on line i, turned with the ball: x, y on screen, z toward the viewer.
+    function point(i, t) {
+      var inc = Math.PI * (i + 0.5) / count;            // each line leans differently
+      var node = i * 2.399963;                           // and faces a different way
+      var x = Math.cos(t), y = Math.sin(t) * Math.cos(inc), z = Math.sin(t) * Math.sin(inc);
+      var x1 = x * Math.cos(node) + z * Math.sin(node), z1 = -x * Math.sin(node) + z * Math.cos(node);
+      var x2 = x1 * cs + z1 * sn, z2 = -x1 * sn + z1 * cs;
+      var y3 = y * cl - z2 * sl, z3 = y * sl + z2 * cl;
+      return { x: cx + x2 * R, y: cy + y3 * R, z: z3 };
+    }
+
+    // The moving circles. Each one picks a line, a direction and a speed at
+    // random, and picks again every few seconds, so no two runs look alike.
+    var dots = o.dots || (o.dots = []);
+    while (dots.length < o.sats) dots.push(roll(count, time - Math.random() * 3));
+    for (var n = 0; n < dots.length; n++) {
+      if (!reduce && time - dots[n].born > dots[n].life) dots[n] = roll(count, time);
+    }
+
+    // Soft light inside the ball.
+    var glowR = R * (1.18 + (o.pulse ? 0.08 * (0.5 + 0.5 * Math.sin(time * 2.2)) : 0));
+    var light = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+    light.addColorStop(0, rgba(colors.a, 0.22 * alpha));
+    light.addColorStop(0.55, rgba(colors.b, 0.08 * alpha));
+    light.addColorStop(1, rgba(colors.a, 0));
+    ctx.fillStyle = light;
+    ctx.beginPath();
+    ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";   // where lines cross, they brighten
+    ctx.lineCap = "butt";   // round ends would overlap and bead the line
+    var steps = R < 60 ? 72 : 144;
+    var base = Math.max(0.7, R * 0.014);
+    for (var pass = 0; pass < 2; pass++) {       // far side first, then near
+      for (var i = 0; i < count; i++) {
+        var c = mix(colors.a, i % 3 === 2 ? "#9eedd1" : colors.b, (i % 4) / 3);
+        var prev = point(i, 0);
+        for (var s = 1; s <= steps; s++) {
+          var cur = point(i, s / steps * Math.PI * 2);
+          var z = (prev.z + cur.z) / 2;
+          if ((z >= 0) === (pass === 1)) {
+            var depth = (z + 1) / 2;
+            ctx.strokeStyle = "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (0.07 + 0.78 * Math.pow(depth, 2.2)) * alpha + ")";
+            ctx.lineWidth = base * (0.55 + 1.15 * depth);
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(cur.x, cur.y);
+            ctx.stroke();
+          }
+          prev = cur;
+        }
+      }
+      // The moving circles, each on its own line, with a fading trail.
+      var size = Math.max(1.3, R * 0.05);
+      for (var k = 0; k < dots.length; k++) {
+        var dot = dots[k];
+        var age = reduce ? 1 : time - dot.born;
+        // Fades in on its line, runs, fades out, then starts again elsewhere.
+        var seen = reduce ? 1 : Math.max(0, Math.min(1, age / 0.45, (dot.life - age) / 0.45));
+        var line = dot.line, dir = dot.dir;
+        var head = dot.start + dir * dot.rate * o.speed * age;
+        // The source feeds each circle: a thin beam from the centre to it,
+        // with small pulses of light travelling out along the beam.
+        var at = point(line, head);
+        if ((at.z >= 0) === (pass === 1) && seen > 0) {
+          var near = (0.4 + 0.6 * (at.z + 1) / 2) * seen * alpha;
+          var beam = ctx.createLinearGradient(cx, cy, at.x, at.y);
+          beam.addColorStop(0, rgba(colors.b, 0.42 * near));
+          beam.addColorStop(1, rgba(colors.a, 0.1 * near));
+          ctx.strokeStyle = beam;
+          ctx.lineWidth = Math.max(0.5, R * 0.011);
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(at.x, at.y);
+          ctx.stroke();
+          for (var m = 0; m < 2; m++) {
+            var f = reduce ? 0.35 + m * 0.4 : (time * (0.8 + o.speed * 0.22) + k * 0.37 + m * 0.5) % 1;
+            ctx.beginPath();
+            ctx.arc(cx + (at.x - cx) * f, cy + (at.y - cy) * f, Math.max(0.7, size * 0.3), 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255,255,255," + 0.8 * Math.sin(f * Math.PI) * near + ")";
+            ctx.fill();
+          }
+        }
+        var tail = o.trail ? 14 : 1;
+        for (var j = tail - 1; j >= 0; j--) {
+          var p = point(line, head - j * 0.05 * dir);
+          if ((p.z >= 0) !== (pass === 1)) continue;
+          var d = (p.z + 1) / 2 * seen;
+          var r = size * (0.5 + 0.7 * d) * (j === 0 ? 1 : 1 - j / tail * 0.65);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          if (j === 0) {
+            ctx.shadowColor = rgba(colors.b, 0.9 * alpha);
+            ctx.shadowBlur = size * 4;
+            ctx.fillStyle = "rgba(255,255,255," + (0.35 + 0.65 * d) * alpha + ")";
+          } else {
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = rgba(colors.b, (1 - j / tail) * 0.45 * (0.3 + 0.7 * d) * alpha);
+          }
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
+      // The power at the centre sits inside the ball: over the far lines,
+      // under the near ones.
+      if (pass === 0) power();
+    }
+    ctx.restore();
+
+    // What drives the circles: a white-hot point with a colored corona,
+    // slow turning rays, and a wave of light that swells out to the lines.
+    function power() {
+      var beat = reduce ? 0.5 : 0.5 + 0.5 * Math.sin(time * (1.6 + o.speed * 0.5));
+      var r = R * (0.17 + 0.02 * beat);
+
+      // The wave: leaves the core, fades as it reaches the lines.
+      if (!reduce) {
+        for (var w = 0; w < 2; w++) {
+          var k = ((time * (0.35 + o.speed * 0.12)) + w * 0.5) % 1;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r + (R - r) * k, 0, Math.PI * 2);
+          ctx.strokeStyle = rgba(colors.b, 0.2 * (1 - k) * (1 - k) * alpha);
+          ctx.lineWidth = Math.max(0.6, R * 0.012);
+          ctx.stroke();
+        }
+      }
+
+      // Rays: thin spokes of light, turning against the ball.
+      var rays = 0;   // the beams to the circles took the place of loose rays
+      for (var q = 0; q < rays; q++) {
+        var ang = q / rays * Math.PI * 2 - (reduce ? 0 : time * 0.25) + Math.sin(q * 12.9) * 0.3;
+        var len = R * (0.34 + 0.22 * (0.5 + 0.5 * Math.sin(time * 1.3 + q * 2.1)) + 0.08 * beat);
+        var ex = cx + Math.cos(ang) * len, ey = cy + Math.sin(ang) * len;
+        var ray = ctx.createLinearGradient(cx, cy, ex, ey);
+        ray.addColorStop(0, rgba(colors.b, 0.26 * alpha));
+        ray.addColorStop(0.4, rgba(colors.a, 0.1 * alpha));
+        ray.addColorStop(1, rgba(colors.a, 0));
+        ctx.strokeStyle = ray;
+        ctx.lineWidth = Math.max(0.6, R * 0.016);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+      }
+
+      // Corona, then the hot point itself.
+      var corona = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2.6);
+      corona.addColorStop(0, rgba(colors.b, (0.3 + 0.1 * beat) * alpha));
+      corona.addColorStop(0.4, rgba(colors.a, 0.14 * alpha));
+      corona.addColorStop(1, rgba(colors.a, 0));
+      ctx.fillStyle = corona;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      var hot = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      // Glowing, not glaring: the look's own color, a little lighter at its heart.
+      hot.addColorStop(0, "rgba(255,255,255," + (0.42 + 0.12 * beat) * alpha + ")");
+      hot.addColorStop(0.3, rgba(colors.b, 0.62 * alpha));
+      hot.addColorStop(0.7, rgba(colors.a, 0.34 * alpha));
+      hot.addColorStop(1, rgba(colors.a, 0));
+      ctx.fillStyle = hot;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // A flare across it, the way a bright light reads through glass.
+      var flare = ctx.createLinearGradient(cx - R * 0.75, cy, cx + R * 0.75, cy);
+      flare.addColorStop(0, "rgba(255,255,255,0)");
+      flare.addColorStop(0.5, rgba(colors.b, (0.16 + 0.08 * beat) * alpha));
+      flare.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = flare;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, R * 0.5, Math.max(0.5, R * 0.009), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function disc(ctx, cx, cy, r, time, listening) {
+    var glass = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+    glass.addColorStop(0, "rgba(70,62,104,0.95)");
+    glass.addColorStop(1, "rgba(24,21,40,0.95)");
+    ctx.fillStyle = glass;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    if (listening) {
+      var breathe = 0.5 + 0.5 * Math.sin(time * 2.4);
+      ctx.strokeStyle = rgba(colors.a, 0.55 + 0.4 * breathe);
+      ctx.shadowColor = rgba(colors.a, 0.8);
+      ctx.shadowBlur = 6 + 10 * breathe;
+    } else {
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // The icon's tile: deep glass, lit from above, with the look's colors
+  // glowing behind the ball and a fine bezel around it.
+  function tile(ctx, w) {
+    var r = w * 0.225;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(0, 0, w, w, r);
+    ctx.clip();
+    // Deep base, a touch of the look's color at the top.
+    var g = ctx.createLinearGradient(0, 0, w * 0.35, w);
+    g.addColorStop(0, "#2a2148");
+    g.addColorStop(0.45, "#141024");
+    g.addColorStop(1, "#06050c");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, w);
+    // The glow the ball sits in.
+    var g0 = ctx.createRadialGradient(w * 0.5, w * 0.5, 0, w * 0.5, w * 0.5, w * 0.52);
+    g0.addColorStop(0, rgba(colors.a, 0.42));
+    g0.addColorStop(0.55, rgba(colors.b, 0.1));
+    g0.addColorStop(1, rgba(colors.a, 0));
+    ctx.fillStyle = g0;
+    ctx.fillRect(0, 0, w, w);
+    // Colored light in two corners.
+    var g1 = ctx.createRadialGradient(w * 0.18, w * 0.1, 0, w * 0.18, w * 0.1, w * 0.62);
+    g1.addColorStop(0, rgba(colors.a, 0.36));
+    g1.addColorStop(1, rgba(colors.a, 0));
+    ctx.fillStyle = g1;
+    ctx.fillRect(0, 0, w, w);
+    var g2 = ctx.createRadialGradient(w * 0.9, w * 0.95, 0, w * 0.9, w * 0.95, w * 0.55);
+    g2.addColorStop(0, rgba(colors.b, 0.24));
+    g2.addColorStop(1, rgba(colors.b, 0));
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, w, w);
+    // A sheen across the top, as on polished glass.
+    var sheen = ctx.createLinearGradient(0, 0, 0, w * 0.5);
+    sheen.addColorStop(0, "rgba(255,255,255,0.16)");
+    sheen.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = sheen;
+    ctx.beginPath();
+    ctx.ellipse(w * 0.5, -w * 0.08, w * 0.78, w * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Darker toward the bottom edge, for depth.
+    var floor = ctx.createLinearGradient(0, w * 0.7, 0, w);
+    floor.addColorStop(0, "rgba(0,0,0,0)");
+    floor.addColorStop(1, "rgba(0,0,0,0.38)");
+    ctx.fillStyle = floor;
+    ctx.fillRect(0, 0, w, w);
+    ctx.restore();
+
+    // The bezel around the ball: a fine ring, bright at the top left.
+    var bezel = ctx.createLinearGradient(w * 0.2, w * 0.2, w * 0.8, w * 0.8);
+    bezel.addColorStop(0, "rgba(255,255,255,0.5)");
+    bezel.addColorStop(0.5, rgba(colors.a, 0.22));
+    bezel.addColorStop(1, "rgba(255,255,255,0.06)");
+    ctx.beginPath();
+    ctx.arc(w / 2, w / 2, w * 0.385, 0, Math.PI * 2);
+    ctx.strokeStyle = bezel;
+    ctx.lineWidth = Math.max(0.75, w * 0.008);
+    ctx.stroke();
+
+    // The tile's own edge: light on top, fading down.
+    var edge = ctx.createLinearGradient(0, 0, 0, w);
+    edge.addColorStop(0, "rgba(255,255,255,0.42)");
+    edge.addColorStop(0.4, "rgba(255,255,255,0.1)");
+    edge.addColorStop(1, "rgba(255,255,255,0.04)");
+    ctx.beginPath();
+    ctx.roundRect(0.5, 0.5, w - 1, w - 1, r);
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  var hero = document.getElementById("hero");
+  var idle = document.getElementById("s-idle");
+  var listen = document.getElementById("s-listen");
+  var work = document.getElementById("s-work");
+  var icon = document.getElementById("icon");
+  var burst = document.getElementById("burst");
+  var tag = document.getElementById("tag");
+  var demo = document.getElementById("demo");
+  var save = document.getElementById("save");
+  var burstStart = -10, burstKind = "Click";
+  var typed = document.getElementById("typed");
+  var caret = document.getElementById("caret");
+  var sample = "Meeting notes for Thursday";
+
+  function place(kind) {
+    var box = demo.getBoundingClientRect();
+    var x, y;
+    if (kind === "Click") {
+      var b = save.getBoundingClientRect();
+      x = b.left + b.width / 2 - box.left;
+      y = b.top + b.height / 2 - box.top;
+    } else if (kind === "Type") {
+      // On the caret, wherever the text has got to.
+      var c = caret.getBoundingClientRect();
+      x = c.left - box.left + 4;
+      y = c.top + c.height / 2 - box.top;
+    } else {
+      x = box.width / 2;
+      y = box.height / 2 + 8;
+    }
+    burst.style.left = (x - 95) + "px";
+    burst.style.top = (y - 95) + "px";
+    tag.textContent = kind;
+    tag.style.left = (x - 30) + "px";
+    // Under the orbit, or over it when there is no room below.
+    var gap = kind === "Type" ? 22 : 46;
+    tag.style.top = (y + gap + 28 > box.height ? y - gap - 22 : y + gap) + "px";
+  }
+  function play(kind, now) {
+    burstKind = kind;
+    typed.textContent = "";
+    place(kind);
+    burstStart = now;
+    looks.burst.dots = [];   // new directions every time it plays
+  }
+
+  // Kept between frames, so each mark remembers where its circles are.
+  var looks = {
+    hero: { speed: 1.1, sats: 9, trail: true, pulse: true, lines: 13 },
+    idle: { speed: 0.12, sats: 3, trail: false, pulse: false },
+    listen: { speed: 1.0, sats: 4, trail: true, pulse: true },
+    work: { speed: 2.6, sats: 7, trail: true, pulse: true },
+    icon: { speed: 0, sats: 5, trail: false, pulse: false, lines: 9 },
+    iconSmall: { speed: 0, sats: 3, trail: false, pulse: false, lines: 6 },
+    burst: { speed: 4.2, sats: 6, trail: true, pulse: false, alpha: 1, lines: 8 }
+  };
+
+  var last = 0;
+  function frame(ms) {
+    var t = ms / 1000;
+    var h = fit(hero);
+    mark(h.ctx, h.w / 2, h.h / 2, h.w * 0.27, t, looks.hero);
+
+    var i = fit(idle);
+    mark(i.ctx, i.w / 2, i.h / 2, 44, t, looks.idle);
+
+    var l = fit(listen);
+    mark(l.ctx, l.w / 2, l.h / 2, 44, t, looks.listen);
+
+    var w = fit(work);
+    mark(w.ctx, w.w / 2, w.h / 2, 44, t, looks.work);
+
+    [icon, document.getElementById("icon-m"), document.getElementById("icon-s")].forEach(function (el, n) {
+      var k = fit(el);
+      // The app icon is the one place the mark sits on a background.
+      tile(k.ctx, k.w);
+      mark(k.ctx, k.w / 2, k.h / 2, k.w * 0.31, 0, n === 0 ? looks.icon : looks.iconSmall);
+    });
+
+    // The agent's orbit: grows in, spins, fades.
+    var b = fit(burst);
+    var age = t - burstStart;
+    // Typing lasts as long as the text takes; the orbit rides the caret
+    // the whole way and fades once the last letter is in.
+    var typing = burstKind === "Type";
+    var hold = typing ? 0.3 + sample.length * 0.07 : 1.25;
+    if (typing && age >= 0) {
+      var letters = Math.max(0, Math.min(sample.length, Math.floor((age - 0.25) / 0.07)));
+      if (typed.textContent.length !== letters) typed.textContent = sample.slice(0, letters);
+      caret.style.opacity = age < hold + 1.2 ? 1 : 0;
+      if (age < hold + 0.45) place("Type");
+    } else {
+      caret.style.opacity = 0;
+    }
+    if (age >= 0 && age < hold + 0.45) {
+      var inK = Math.min(1, age / 0.22);
+      var outK = age > hold ? Math.max(0, 1 - (age - hold) / 0.45) : 1;
+      var ease = 1 - Math.pow(1 - inK, 3);
+      var scale = 0.55 + 0.45 * ease + (1 - outK) * 0.12;
+      var alpha = ease * outK;
+      b.ctx.beginPath();
+      b.ctx.arc(95, 95, 22 + age * 24, 0, Math.PI * 2);
+      b.ctx.strokeStyle = rgba(colors.a, Math.max(0, 0.5 - age * 0.42));
+      if (typing) b.ctx.strokeStyle = "rgba(0,0,0,0)";   // no ripple while it travels
+      b.ctx.lineWidth = 1.5;
+      b.ctx.stroke();
+      looks.burst.alpha = alpha;
+      // Small while typing, so it sits on the caret without covering the words.
+      looks.burst.sats = typing ? 3 : 6;
+      looks.burst.lines = typing ? 5 : 8;
+      if (looks.burst.dots && looks.burst.dots.length > looks.burst.sats) looks.burst.dots.length = looks.burst.sats;
+      mark(b.ctx, 95, 95, (typing ? 15 : 36) * scale, t, looks.burst);
+      tag.style.opacity = age > 0.15 && age < hold + 0.05 ? 1 : 0;
+    } else {
+      tag.style.opacity = 0;
+      if (!reduce && t - last > 3.4 && age > hold + 1.3) {
+        var order = ["Click", "Type", "Open"];
+        play(order[(order.indexOf(burstKind) + 1) % 3], t);
+        last = t;
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  ["click", "type", "open"].forEach(function (name) {
+    document.getElementById("play-" + name).addEventListener("click", function () {
+      var now = performance.now() / 1000;
+      play(name.charAt(0).toUpperCase() + name.slice(1), now);
+      last = now;
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".sw"), function (el) {
+    el.addEventListener("click", function () {
+      colors.a = el.dataset.a;
+      colors.b = el.dataset.b;
+      document.documentElement.style.setProperty("--a", colors.a);
+      document.documentElement.style.setProperty("--b", colors.b);
+      Array.prototype.forEach.call(document.querySelectorAll(".sw"), function (o) {
+        o.setAttribute("aria-pressed", o === el ? "true" : "false");
+      });
+    });
+  });
+  place("Click");
+  requestAnimationFrame(frame);
+})();
+</script>

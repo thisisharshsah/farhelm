@@ -1,0 +1,504 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1F8423637C706FBE72512EE6 /* CompanionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3D688DF38AF697F722834F4A /* CompanionKit */; };
+		268081018A6EDECC33C20871 /* CompanionWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = A95EF48E0F6FADA497142201 /* CompanionWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3340DE12FFD660376280199F /* CompanionDesign in Frameworks */ = {isa = PBXBuildFile; productRef = D95918621613689A03AB583C /* CompanionDesign */; };
+		849FD33CB017D89C20984DC9 /* CompanionDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 359539A71041AB3AF022AB4D /* CompanionDesign */; };
+		F60CE19727AE0708AE21E9AC /* CompanionKit in Frameworks */ = {isa = PBXBuildFile; productRef = F59A6E7875BF1C7D46F3F857 /* CompanionKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BD546D2796DC49541D0253D3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E540F48A4FBB6ADD8653E44D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 580E057129343E52590385F7;
+			remoteInfo = CompanionWatch;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6B3B1B759C2DD39A4072D22B /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				268081018A6EDECC33C20871 /* CompanionWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		2EBF105A4715E259DC50DA78 /* Companion-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Companion-Info.plist"; sourceTree = "<group>"; };
+		A95EF48E0F6FADA497142201 /* CompanionWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CompanionWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FEE9503D1AC582F0753D4D1B /* Companion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Companion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		1AB11A39FD5EA42D019DC43E /* Watch */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Watch;
+			sourceTree = "<group>";
+		};
+		4CA1C46D30872A8CFF758D4B /* App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		97D6F999AE4BEB0DCD46AE44 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F60CE19727AE0708AE21E9AC /* CompanionKit in Frameworks */,
+				849FD33CB017D89C20984DC9 /* CompanionDesign in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A88004DE64C3253920737688 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1F8423637C706FBE72512EE6 /* CompanionKit in Frameworks */,
+				3340DE12FFD660376280199F /* CompanionDesign in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		09B54153EDA5291162779AD4 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				2EBF105A4715E259DC50DA78 /* Companion-Info.plist */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		86DA9F532BDD32872D8AA29A = {
+			isa = PBXGroup;
+			children = (
+				4CA1C46D30872A8CFF758D4B /* App */,
+				1AB11A39FD5EA42D019DC43E /* Watch */,
+				09B54153EDA5291162779AD4 /* Config */,
+				A30078A72F1E55D2FC0A1350 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A30078A72F1E55D2FC0A1350 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FEE9503D1AC582F0753D4D1B /* Companion.app */,
+				A95EF48E0F6FADA497142201 /* CompanionWatch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		580E057129343E52590385F7 /* CompanionWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 919EAF34E0B01AE8AD418830 /* Build configuration list for PBXNativeTarget "CompanionWatch" */;
+			buildPhases = (
+				1304281412F94CB2762F9134 /* Sources */,
+				A88004DE64C3253920737688 /* Frameworks */,
+				9373C244A77F565911D47746 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1AB11A39FD5EA42D019DC43E /* Watch */,
+			);
+			name = CompanionWatch;
+			packageProductDependencies = (
+				3D688DF38AF697F722834F4A /* CompanionKit */,
+				D95918621613689A03AB583C /* CompanionDesign */,
+			);
+			productName = CompanionWatch;
+			productReference = A95EF48E0F6FADA497142201 /* CompanionWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		956FEE0AAB0312F014F62402 /* Companion */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F312EF8AAF7CED9AA1E7F3D0 /* Build configuration list for PBXNativeTarget "Companion" */;
+			buildPhases = (
+				7AAFCAC9E188365F3473C4D4 /* Sources */,
+				97D6F999AE4BEB0DCD46AE44 /* Frameworks */,
+				D67E5007D82E2A7509EAC275 /* Resources */,
+				6B3B1B759C2DD39A4072D22B /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				89EABB5041D41F3C2406A210 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				4CA1C46D30872A8CFF758D4B /* App */,
+			);
+			name = Companion;
+			packageProductDependencies = (
+				F59A6E7875BF1C7D46F3F857 /* CompanionKit */,
+				359539A71041AB3AF022AB4D /* CompanionDesign */,
+			);
+			productName = Companion;
+			productReference = FEE9503D1AC582F0753D4D1B /* Companion.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E540F48A4FBB6ADD8653E44D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					580E057129343E52590385F7 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					956FEE0AAB0312F014F62402 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = B562A63380364673A0C15255 /* Build configuration list for PBXProject "CompanionMobile" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 86DA9F532BDD32872D8AA29A;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				FD2880CC1851FF866D628AA0 /* XCLocalSwiftPackageReference "CompanionKit" */,
+				E836B991199F9C89A979ACF3 /* XCLocalSwiftPackageReference "../Shared/CompanionDesign" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A30078A72F1E55D2FC0A1350 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				956FEE0AAB0312F014F62402 /* Companion */,
+				580E057129343E52590385F7 /* CompanionWatch */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		9373C244A77F565911D47746 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D67E5007D82E2A7509EAC275 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1304281412F94CB2762F9134 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7AAFCAC9E188365F3473C4D4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		89EABB5041D41F3C2406A210 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 580E057129343E52590385F7 /* CompanionWatch */;
+			targetProxy = BD546D2796DC49541D0253D3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		28D34DC0085DD62D07B665CA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		77C1FF5D0918879950EBDD1E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WW8UZ9L454;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Companion-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = orbit;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Companion uses the camera to scan the pairing code your Mac shows.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Companion connects to Companion on your Mac over your network.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Companion listens while you dictate a message.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Companion sends the photos you pick to the chat on your Mac.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Companion turns what you say into text for your message.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.companion.$(DEVELOPMENT_TEAM).mobile";
+				PRODUCT_NAME = Companion;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A25404E860D286C6C33DAE9A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WW8UZ9L454;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Companion-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = orbit;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Companion uses the camera to scan the pairing code your Mac shows.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Companion connects to Companion on your Mac over your network.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Companion listens while you dictate a message.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Companion sends the photos you pick to the chat on your Mac.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Companion turns what you say into text for your message.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.companion.$(DEVELOPMENT_TEAM).mobile";
+				PRODUCT_NAME = Companion;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E61D4F3DF078BE41C020AC60 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WW8UZ9L454;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Companion;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "app.companion.$(DEVELOPMENT_TEAM).mobile";
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.companion.$(DEVELOPMENT_TEAM).mobile.watchkitapp";
+				PRODUCT_NAME = CompanionWatch;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		F59767B7DCCB6016F2DDDDEB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WW8UZ9L454;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Companion;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "app.companion.$(DEVELOPMENT_TEAM).mobile";
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.companion.$(DEVELOPMENT_TEAM).mobile.watchkitapp";
+				PRODUCT_NAME = CompanionWatch;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		F898970CE5044E6B36CE1529 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		919EAF34E0B01AE8AD418830 /* Build configuration list for PBXNativeTarget "CompanionWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F59767B7DCCB6016F2DDDDEB /* Debug */,
+				E61D4F3DF078BE41C020AC60 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B562A63380364673A0C15255 /* Build configuration list for PBXProject "CompanionMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				28D34DC0085DD62D07B665CA /* Debug */,
+				F898970CE5044E6B36CE1529 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F312EF8AAF7CED9AA1E7F3D0 /* Build configuration list for PBXNativeTarget "Companion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A25404E860D286C6C33DAE9A /* Debug */,
+				77C1FF5D0918879950EBDD1E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		E836B991199F9C89A979ACF3 /* XCLocalSwiftPackageReference "../Shared/CompanionDesign" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Shared/CompanionDesign;
+		};
+		FD2880CC1851FF866D628AA0 /* XCLocalSwiftPackageReference "CompanionKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = CompanionKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		359539A71041AB3AF022AB4D /* CompanionDesign */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E836B991199F9C89A979ACF3 /* XCLocalSwiftPackageReference "../Shared/CompanionDesign" */;
+			productName = CompanionDesign;
+		};
+		3D688DF38AF697F722834F4A /* CompanionKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FD2880CC1851FF866D628AA0 /* XCLocalSwiftPackageReference "CompanionKit" */;
+			productName = CompanionKit;
+		};
+		D95918621613689A03AB583C /* CompanionDesign */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E836B991199F9C89A979ACF3 /* XCLocalSwiftPackageReference "../Shared/CompanionDesign" */;
+			productName = CompanionDesign;
+		};
+		F59A6E7875BF1C7D46F3F857 /* CompanionKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FD2880CC1851FF866D628AA0 /* XCLocalSwiftPackageReference "CompanionKit" */;
+			productName = CompanionKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = E540F48A4FBB6ADD8653E44D /* Project object */;
+}

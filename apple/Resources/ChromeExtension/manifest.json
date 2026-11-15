@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Companion",
+  "version": "1.0.0",
+  "description": "Lets the Companion app on this Mac read and work in your Chrome tabs when you ask it to.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1ZMFkr+JLBbho3OOg1ZSbW7EoXODVXDlbrXzdke9SUh6TnGls0fRJ5JvsvX5pESnHYRW3Z13fnHjRG/5FEnF5ubvc+Xx0ma4OSMYJIFz5/ZKDVLEeI3j2faQzutjs5L84XsckfRQmIcui8lb/lqUxAI8gK4G5YsAnZNg6dXbBzEbaeY/zIp/ylscVd97a4Z/n5V0R7D16EG2Q5XWbccl2021kwwciZErTj1ms/1dRyvYg5Qk6wh0Kwk8nMTVF/OMWiYWTHBg+ki86SkaCGzf5h0ALmiSBd7bxEnCFU9TiTGQALpSaStNPySXRJrYBILCXAtJzCCK/KX0+gpdWizbXwIDAQAB",
+  "permissions": ["tabs", "scripting", "nativeMessaging", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Companion" }
+}
