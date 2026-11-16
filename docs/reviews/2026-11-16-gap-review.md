@@ -25,7 +25,7 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 - Nothing was built or run. Source files were found by listing and text search, and only some were read: the documents and ADRs named in the task, `apple/README.md` up to line 124, and parts of `crates/farhelm-cloud/src`, `crates/farhelm-runner/src/front_door.rs` and `mobile/src/App.tsx`. `web/` was surveyed by its file list and the UI review, not read file by file.
 - "There is no X" rests on text searches of `crates/` and `apple/Sources` for the terms named in each gap. A feature under another name would be missed.
-- `apple/Sources/Companion/Screen/Redaction.swift` and `apple/Sources/Companion/Support/ActionRecord.swift` exist and were not read, so how far Orbit's three safety ideas (ADR 0013, step 2) have got is not assessed here.
+- Orbit's three safety ideas (ADR 0013, step 2) were checked in a second pass by reading the code, not by running it. All three are in Companion and called from the agent's step loop: password fields and card numbers are blacked out before a capture is released, and password managers are never pictured (`apple/Sources/Companion/Screen/Redaction.swift`, called from `apple/Sources/Companion/Screen/ScreenReader.swift`); every step is appended to a permanent record (`apple/Sources/Companion/Support/ActionRecord.swift`); and a type, key or click step is refused when the field or window changed since it was planned (`apple/Sources/Companion/Support/DeviceControl.swift`, lines 219 to 240, called at `apple/Sources/Companion/AppState.swift`, lines 2539 to 2540). ADR 0013 still lists them as missing; it was not changed, because this task may only touch `docs/reviews/`. None of the three was exercised in a running app, and no test for them was looked for.
 
 ## 1. Ease of use
 
@@ -47,8 +47,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### U3. Farhelm sends a reply whole, not as it is written
 
-- **Today:** When a client asks the front door to stream, it gets one delta holding the entire answer, then the finish. The gateway's local transport is non-streaming Chat Completions. Companion streams from its own engines, but a reply from a Farhelm model arrives in one piece. The runner's event stream carries session events, not model text.
-- **Evidence:** `crates/farhelm-runner/src/front_door.rs` (lines 582 to 607), `docs/engineering-stack.md`
+- **Today:** When a client asks the front door to stream, it gets one delta holding the entire answer, then the finish. The gateway's local transport is non-streaming Chat Completions. Companion streams from its own engines, but a reply from a Farhelm model arrives in one piece. The runner's event stream carries session events, not model text. Farhelm's web chat does not stream either: by its own description, a message is claimed with a request id, the reply is composed on the runner afterwards, and the pane polls the conversation until the turn settles, showing in the meantime what the reply is reading. A search of `web/src` for "delta" finds nothing.
+- **Evidence:** `crates/farhelm-runner/src/front_door.rs` (lines 582 to 607), `web/src/components/ProjectChat.tsx` (lines 4 to 9), `docs/engineering-stack.md`
 - **Reference products:** Word-by-word replies in ChatGPT and the others: (not verified on the pages read; it is the common behaviour of chat products).
 - **Size:** M
 - **Next task:** Add streamed events to the gateway's model port (bounded accumulation, complete tool calls before validation, final usage), pass the deltas through the front door, and add a fixture per deployed runtime.
