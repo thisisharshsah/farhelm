@@ -14,7 +14,6 @@
 		F60CE19727AE0708AE21E9AC /* CompanionKit in Frameworks */ = {isa = PBXBuildFile; productRef = F59A6E7875BF1C7D46F3F857 /* CompanionKit */; };
 		C1A0D47E5B2F4E6A9D3C7F21 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = C1A0D47E5B2F4E6A9D3C7F11 /* MWDATCore */; };
 		C1A0D47E5B2F4E6A9D3C7F22 /* MWDATDisplay in Frameworks */ = {isa = PBXBuildFile; productRef = C1A0D47E5B2F4E6A9D3C7F12 /* MWDATDisplay */; };
-		C1A0D47E5B2F4E6A9D3C7F23 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = C1A0D47E5B2F4E6A9D3C7F13 /* MWDATMockDevice */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,7 +68,6 @@
 				849FD33CB017D89C20984DC9 /* CompanionDesign in Frameworks */,
 				C1A0D47E5B2F4E6A9D3C7F21 /* MWDATCore in Frameworks */,
 				C1A0D47E5B2F4E6A9D3C7F22 /* MWDATDisplay in Frameworks */,
-				C1A0D47E5B2F4E6A9D3C7F23 /* MWDATMockDevice in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -162,7 +160,6 @@
 				359539A71041AB3AF022AB4D /* CompanionDesign */,
 				C1A0D47E5B2F4E6A9D3C7F11 /* MWDATCore */,
 				C1A0D47E5B2F4E6A9D3C7F12 /* MWDATDisplay */,
-				C1A0D47E5B2F4E6A9D3C7F13 /* MWDATMockDevice */,
 			);
 			productName = Companion;
 			productReference = FEE9503D1AC582F0753D4D1B /* Companion.app */;
@@ -510,11 +507,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C1A0D47E5B2F4E6A9D3C7F10 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATDisplay;
-		};
-		C1A0D47E5B2F4E6A9D3C7F13 /* MWDATMockDevice */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C1A0D47E5B2F4E6A9D3C7F10 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
-			productName = MWDATMockDevice;
 		};
 		359539A71041AB3AF022AB4D /* CompanionDesign */ = {
 			isa = XCSwiftPackageProductDependency;
