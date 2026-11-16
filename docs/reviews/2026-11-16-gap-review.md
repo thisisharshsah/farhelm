@@ -23,8 +23,10 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### What was not checked
 
-- Nothing was built or run. Source files were found by listing and text search, and only some were read: the documents and ADRs named in the task, `apple/README.md` up to line 124, and parts of `crates/farhelm-cloud/src`, `crates/farhelm-runner/src/front_door.rs` and `mobile/src/App.tsx`. `web/` was surveyed by its file list and the UI review, not read file by file.
-- "There is no X" rests on text searches of `crates/` and `apple/Sources` for the terms named in each gap. A feature under another name would be missed.
+- Nothing was built or run. Source files were found by listing and text search, and only some were read. First pass: the documents and ADRs named in the task, `apple/README.md` up to line 124, and parts of `crates/farhelm-cloud/src`, `crates/farhelm-runner/src/front_door.rs` and `mobile/src/App.tsx`.
+- A second pass on 2026-11-16 read these. In `web/src`: `App.tsx` (lines 1 to 281) and, under `components/`, `Account.tsx`, `WorkspaceSearch.tsx`, `Auth.tsx` (to line 294), `WorkBoard.tsx` (to line 479) and `ProjectChat.tsx` (to line 70). In `mobile/`: `README.md`, `src/App.tsx` (to line 301), `src/screens/Task.tsx` (to line 350) and `src/screens/Account.tsx` (to line 357). In `packages/client-core/src`: `api.ts`, `cloud.ts` (all but lines 362 to 574), `transport.ts` (lines 60 to 200 and 405 to 470) and `contracts.ts` (lines 225 to 275). In `apple/Sources/Companion`: `Screen/Redaction.swift` (to line 245), `Support/ActionRecord.swift`, `UI/SetupGuide.swift`, and the lines of `AppState.swift` and `Support/DeviceControl.swift` cited in this document.
+- Still not opened: the other files under `web/src/components`, the rest of `web/src`, `mobile/src/screens/Session.tsx`, `Pairing.tsx` and `Watch.tsx`, `mobile/src/components/pieces.tsx` and `mobile/watch`. A helper asked to sweep those folders ran out of rounds three times and reported nothing, so they were covered by word searches only.
+- "There is no X" rests on text searches of `crates/` and `apple/Sources` for the terms named in each gap. For the web and phone apps it rests on the list of operations a screen can ask a server for: the `Transport` interface (`packages/client-core/src/transport.ts`, lines 67 to 185) and the account client (`packages/client-core/src/cloud.ts`, from line 579). A search for `fetch(` finds one use in `web/src` (the service worker) and none in `mobile/src`, so screens reach a server only through those two. A feature under another name, or one that needs no server, would be missed.
 - Orbit's three safety ideas (ADR 0013, step 2) were checked in a second pass by reading the code, not by running it. All three are in Companion and called from the agent's step loop: password fields and card numbers are blacked out before a capture is released, and password managers are never pictured (`apple/Sources/Companion/Screen/Redaction.swift`, called from `apple/Sources/Companion/Screen/ScreenReader.swift`); every step is appended to a permanent record (`apple/Sources/Companion/Support/ActionRecord.swift`); and a type, key or click step is refused when the field or window changed since it was planned (`apple/Sources/Companion/Support/DeviceControl.swift`, lines 219 to 240, called at `apple/Sources/Companion/AppState.swift`, lines 2539 to 2540). ADR 0013 still lists them as missing; it was not changed, because this task may only touch `docs/reviews/`. None of the three was exercised in a running app, and no test for them was looked for.
 
 ## 1. Ease of use
@@ -55,16 +57,16 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### U4. Two boards that do not share data, and the board is on the Mac only
 
-- **Today:** Companion keeps each project's board as a JSON file on one Mac. Farhelm keeps tasks in SQLite with its own web board. Neither reads the other, the relay has no task protocol, and the board is not on iPhone, iPad or Watch.
-- **Evidence:** `apple/Sources/Companion/Advanced/BoardStore.swift`, `crates/farhelm-sqlite/migrations/0021_work_items.sql`, `web/src/components/WorkBoard.tsx`, `docs/adr/0014-advanced-mode.md`, `docs/adr/0012-tasks-and-runs.md`
+- **Today:** Companion keeps each project's board as a JSON file on one Mac. Farhelm keeps tasks in SQLite with its own web board. Neither reads the other. Farhelm's board does travel off the machine: a signed-in device sends project operations, the board-task routes among them, as `project_call` messages over the relay, and the runner answers them with its own HTTP handlers. ADR 0012 still says "the relay has no task protocol yet"; the code has overtaken that sentence (an earlier version of this review repeated it; the ADR itself was not changed). Only the web app shows that board. The Expo phone app has runs, command approvals and change-set review but no board: its routes are fleet, session, task (a run's change set), pairing, workspace and watch, and a search of `mobile/src` for "WorkItem" finds nothing. Companion's board is not on iPhone, iPad or Watch (ADR 0014).
+- **Evidence:** `apple/Sources/Companion/Advanced/BoardStore.swift`, `crates/farhelm-sqlite/migrations/0021_work_items.sql`, `web/src/components/WorkBoard.tsx`, `packages/client-core/src/transport.ts` (lines 431 to 462), `crates/farhelm-runner/src/api.rs` (lines 147 to 156), `crates/farhelm-runner/src/project_calls.rs`, `mobile/src/App.tsx` (lines 61 to 67), `docs/adr/0014-advanced-mode.md`, `docs/adr/0012-tasks-and-runs.md`
 - **Reference products:** monday.com has iOS and Android apps. Cursor's agents are on the web, a native iOS and iPad app and an Android PWA.
 - **Size:** L
 - **Next task:** After the contract in S6, let Companion use Farhelm's work items as the board's store when a Farhelm is connected, then show the board read-only in the iPhone app from `apple/Shared/CompanionBoard`.
 
 ### U5. A task lacks the fields a work tracker is built on
 
-- **Today:** A Farhelm task has a title, description, status, repository and the conversation it came from. No priority, owner, due date or comments; a search for "assignee" in `crates/` finds nothing.
-- **Evidence:** `crates/farhelm-sqlite/migrations/0021_work_items.sql`, `docs/adr/0012-tasks-and-runs.md`
+- **Today:** A Farhelm task has a title, description, status, repository and the conversation it came from. No priority, owner, due date or comments; a search for "assignee" in `crates/` finds nothing. The type every client shares has the same fields and no others, the web app's task form edits only title, status, description and repository, and a search of `packages/client-core/src` for "priority" finds nothing.
+- **Evidence:** `crates/farhelm-sqlite/migrations/0021_work_items.sql`, `packages/client-core/src/contracts.ts` (lines 244 to 256), `web/src/components/WorkBoard.tsx` (lines 388 to 405), `docs/adr/0012-tasks-and-runs.md`
 - **Reference products:** monday.com has Timeline, Gantt and Calendar views and many column types. Its people, status, priority and due date columns and item updates: (not verified on the pages read).
 - **Size:** M
 - **Next task:** An additive migration for priority and due date now; owner and comments once people exist as principals (E1).
@@ -72,15 +74,15 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 ### U6. Search does not read message text, and nothing is indexed by meaning
 
 - **Today:** Workspace search covers projects, tasks, runs and conversation titles. Conversation text is not searched, and as of 2026-11-04 the installed runner did not serve the route at all. No embedding index exists in `crates/`. Companion retrieves passages from a person's own details, files and memories on the Mac, not from a team's work.
-- **Evidence:** `docs/ui-ux-review-2026-11-02.md`, `crates/farhelm-sqlite/src/search.rs`, `apple/README.md`
+- **Evidence:** `docs/ui-ux-review-2026-11-02.md`, `crates/farhelm-sqlite/src/search.rs`, `web/src/components/WorkspaceSearch.tsx` (lines 4 to 7), `apple/README.md`
 - **Reference products:** Devin has code search (Ask Devin) and generated repository wikis. Macro says everything in a workspace is searchable. Cursor's codebase indexing: (not verified).
 - **Size:** M
 - **Next task:** A full-text index (SQLite FTS5) over conversation messages and task descriptions behind `GET /v1/search`; measure it before considering embeddings.
 
 ### U7. Documents and links are stored but nothing reaches them
 
-- **Today:** Tables and store methods for documents and typed links between items exist, with integrity triggers and tests. No caller outside storage and tests writes a document, and no runner route serves links. Companion's @mentions attach repository files only.
-- **Evidence:** `crates/farhelm-sqlite/migrations/0011_workspace.sql`, `crates/farhelm-app/src/store.rs`, `apple/Sources/Companion/UI/Mentions.swift`, `docs/engineering-stack.md`
+- **Today:** Tables and store methods for documents and typed links between items exist, with integrity triggers and tests. No caller outside storage and tests writes a document, and no runner route serves links. Companion's @mentions attach repository files only. On the client side a `Document` type is defined, and in `packages/client-core/src` only a wire test uses it; the list of operations a web or phone screen can ask a runner for has none for documents or links. The link mark on a web board card means only that the task was made from a discussion.
+- **Evidence:** `crates/farhelm-sqlite/migrations/0011_workspace.sql`, `crates/farhelm-app/src/store.rs`, `packages/client-core/src/contracts.ts` (line 557), `packages/client-core/src/transport.ts` (lines 67 to 185), `web/src/components/WorkBoard.tsx` (line 175), `apple/Sources/Companion/UI/Mentions.swift`, `docs/engineering-stack.md`
 - **Reference products:** Macro links items with @mentions and stores the references as a two-way graph. The word "backlinks": (not verified).
 - **Size:** L
 - **Next task:** A document create and read route under a project, a "mentions" link written when a conversation or task names another item, and "linked from" shown on a task.
@@ -211,8 +213,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### E3. No single sign-on or directory provisioning
 
-- **Today:** Sign-in is an email and password against one account server. Searches for "saml", "SAML" and "oidc" in `crates/` find nothing. The OAuth code in the MCP crate serves connectors, not sign-in (by its place and name; not read).
-- **Evidence:** `docs/account-sign-in.md`, `crates/farhelm-cloud/src/model.rs`
+- **Today:** Sign-in is an email and password against one account server. Searches for "saml", "SAML" and "oidc" in `crates/` find nothing. The OAuth code in the MCP crate serves connectors, not sign-in (by its place and name; not read). The web and phone sign-in forms have a name, an email and a password field and no other way in, and the account client's sign-in call sends an email, a password and a device label.
+- **Evidence:** `docs/account-sign-in.md`, `crates/farhelm-cloud/src/model.rs`, `web/src/components/Auth.tsx` (lines 171 to 238), `mobile/src/screens/Account.tsx` (lines 114 to 146), `packages/client-core/src/cloud.ts` (lines 603 to 619)
 - **Reference products:** ChatGPT: SAML SSO, with SCIM on Enterprise. Cursor: SAML and OIDC on Teams, SCIM on Enterprise. Devin: SAML and OIDC on Teams, SCIM on Enterprise. monday.com: SAML 2.0 and SCIM (which plan: not verified). Macro and Claude Code: (not verified).
 - **Size:** L
 - **Next task:** OIDC sign-in against one identity provider, issuing the control plane's existing sessions; SAML and SCIM after a customer asks.
@@ -227,8 +229,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### E5. No second sign-in step
 
-- **Today:** Searches for "totp" in `crates/` and "factor" in the control plane find nothing relevant.
-- **Evidence:** `docs/account-sign-in.md`, `crates/farhelm-cloud/src/store.rs`
+- **Today:** Searches for "totp" in `crates/` and "factor" in the control plane find nothing relevant. The account client's calls for signing in are sign up, sign in, sign out and change password; none enrols or checks a code, and the web sign-in form has no field for one.
+- **Evidence:** `docs/account-sign-in.md`, `crates/farhelm-cloud/src/store.rs`, `packages/client-core/src/cloud.ts` (lines 579 to 644), `web/src/components/Auth.tsx` (lines 171 to 238)
 - **Reference products:** monday.com offers two-factor sign-in by SMS or authenticator app. ChatGPT: (not verified). Devin states it for Cognition's own staff only.
 - **Size:** M
 - **Next task:** Authenticator-app codes at sign-in with recovery codes, required for Owner and Admin first.
@@ -243,8 +245,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### E7. No admin view of use and spend across people
 
-- **Today:** Farhelm records calls per project in one ledger and Companion keeps its own usage file per Mac, with budgets per project. Nothing shows or limits use per person or team, and local compute is priced at zero.
-- **Evidence:** `apple/Sources/Companion/Support/Usage.swift`, `crates/farhelm-domain/src/price.rs`, `docs/adr/0009-specialists-and-modes.md`
+- **Today:** Farhelm records calls per project in one ledger and Companion keeps its own usage file per Mac, with budgets per project. Nothing shows or limits use per person or team, and local compute is priced at zero. In the web app the cost dashboard is asked for one session at a time, and the account screen counts machines, devices and people against the plan's limits and nothing else; a search of `web/src/components/Overview.tsx` for "member" finds nothing. The phone app leaves the cost dashboard out on purpose.
+- **Evidence:** `apple/Sources/Companion/Support/Usage.swift`, `crates/farhelm-domain/src/price.rs`, `packages/client-core/src/api.ts` (lines 296 to 300), `web/src/components/Account.tsx` (lines 103 to 119), `packages/client-core/src/cloud.ts` (lines 59 to 63), `mobile/README.md` (line 30), `docs/adr/0009-specialists-and-modes.md`
 - **Reference products:** Cursor has usage analytics, with group spend limits on Enterprise. Devin has cost controls by team and by user. ChatGPT Business has usage visibility and spend controls.
 - **Size:** M
 - **Next task:** Per-member and per-project totals from the ledger in the account area, and a compute-time meter for local models.
