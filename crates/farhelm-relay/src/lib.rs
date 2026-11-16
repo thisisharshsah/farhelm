@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -165,7 +165,9 @@ pub(crate) fn admit_to(
     token: Option<&str>,
     channel: &str,
 ) -> Result<Pass, (StatusCode, Json<serde_json::Value>)> {
-    auth::admit(state.auth.as_ref(), token, channel, now_ms()).map_err(|denied| {
+    // No seat here: wake-ups are for token channels. Seat channels belong to
+    // native apps, which are not woken through this relay.
+    auth::admit(state.auth.as_ref(), token, None, channel, now_ms()).map_err(|denied| {
         (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": denied.message() })),
@@ -201,18 +203,25 @@ async fn channel_stats(
 
 /// `GET /v1/channel/{channel}`: the WebSocket every party connects to.
 ///
-/// The token is checked **before** the upgrade, so a refusal is an HTTP status a
-/// client can read. Refusing after the upgrade would close the socket with no
-/// explanation, and every client would render it as "reconnecting…" forever.
+/// The token (or, on a `c1-` channel, the seat) is checked **before** the
+/// upgrade, so a refusal is an HTTP status a client can read. Refusing after the
+/// upgrade would close the socket with no explanation, and every client would
+/// render it as "reconnecting…" forever.
 async fn channel(
     ws: WebSocketUpgrade,
     Path(channel): Path<String>,
     Query(query): Query<ChannelQuery>,
+    headers: HeaderMap,
     State(state): State<Arc<RelayState>>,
 ) -> Response {
+    // Only seat channels read it; see `auth` for what a seat is.
+    let seat = headers
+        .get(auth::SEAT_HEADER)
+        .and_then(|value| value.to_str().ok());
     let pass = match auth::admit(
         state.auth.as_ref(),
         query.token.as_deref(),
+        seat,
         &channel,
         now_ms(),
     ) {

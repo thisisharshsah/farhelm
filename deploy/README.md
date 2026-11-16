@@ -176,6 +176,15 @@ Both server processes bind loopback and are reached *through* the tunnel. That
 is not decoration: it means a misconfigured firewall cannot expose them, because
 there is nothing listening on a routable address to expose.
 
+The relay also carries Companion (the Mac app and its iPhone, iPad and Watch
+apps) away from home, on *seat channels*: a channel named `c1-` and the start
+of the SHA-256 of a seat, opened by sending that seat in the `X-Relay-Seat`
+header. The seat comes from the key in Companion's pairing QR code, so no
+account is involved and the control plane is never asked; the relay checks a
+hash. A token never opens a seat channel and a seat never opens a token one
+(`crates/farhelm-relay/src/auth.rs`). After changing the relay, put it live with
+`./deploy/redeploy.sh relay`.
+
 ## Stripe
 
 Four values, all optional:
