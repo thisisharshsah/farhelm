@@ -10,8 +10,15 @@ let package = Package(
     products: [
         .library(name: "CompanionKit", targets: ["CompanionKit"]),
     ],
+    dependencies: [
+        // Reaching the Mac away from its network: the relay link, shared
+        // with the Mac app so both ends speak one protocol.
+        .package(path: "../../Shared/CompanionLink"),
+    ],
     targets: [
-        .target(name: "CompanionKit"),
+        .target(name: "CompanionKit", dependencies: [
+            .product(name: "CompanionLink", package: "CompanionLink"),
+        ]),
         .testTarget(name: "CompanionKitTests", dependencies: ["CompanionKit"]),
     ]
 )

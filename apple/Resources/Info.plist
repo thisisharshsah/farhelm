@@ -46,5 +46,7 @@
 	<array>
 		<string>_companion._tcp</string>
 	</array>
+	<key>CompanionRelayURL</key>
+	<string>wss://farhelm-relay.aurovie.com</string>
 </dict>
 </plist>

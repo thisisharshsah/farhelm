@@ -22,8 +22,8 @@ pieces.
   code modes, a Chromium browser, computer use) with iPhone, iPad and Watch
   apps. It has its own model engines (Anthropic, OpenAI, Ollama, subscription
   command-line tools, and Farhelm), its own usage records, its own phone link
-  (QR pairing; Bonjour on the Wi-Fi, Tailscale elsewhere), and its own agent
-  loop and approvals.
+  (QR pairing; Bonjour on the Wi-Fi, and since 2026-11-15 the relay elsewhere,
+  sealed end to end), and its own agent loop and approvals.
 - **Orbit** (`~/Project/_archive/orbit`, last commit 2026-10-02): a Rust
   computer-use core. A closed set of screen actions with no way to run a
   command, leases that expire when the screen changes under them, redaction
@@ -43,7 +43,7 @@ action that the same field still has focus (today only the app is checked).
 | Piece | Farhelm | Companion | Orbit |
 |---|---|---|---|
 | Model access and usage | gateway, registry, one ledger | five engines, `Usage.swift` | cloud planner (design only) |
-| Phone and watch link | relay, end-to-end encrypted, a key per device | `RemoteServer` (Bonjour, Tailscale) | none |
+| Phone and watch link | relay, end-to-end encrypted, a key per device | `RemoteServer` on the Wi-Fi; the same relay elsewhere, a key per pairing | none |
 | Agent loop and approvals | runs; phone and web approve; rule D3 | `AgentJob`, `AgentShell`; only the Mac approves | lease validator; irreversible actions wait for a person |
 | Computer use | none yet | `DeviceControl` (Swift) | `orbit-macos` and the daemon's rules |
 | Clients | web, Tauri, Expo phone, Swift watch | macOS, iPhone, iPad, Watch | web overlay prototype |
@@ -124,7 +124,7 @@ Two rules conflict today:
 | Models | One provider protocol, grown from today's `LLMConfig`: Anthropic; one OpenAI-compatible adapter for OpenAI, Gemini, OpenRouter, Ollama, LM Studio and Farhelm; Apple's on-device model (macOS and iOS 26 and later); subscription command-line tools, read-only. `Usage.swift` keeps the records for the person's own keys |
 | Keys | The Keychain, optionally synced with iCloud Keychain; never in files or logs |
 | Data | SQLite through GRDB in place of today's JSON files; settings stay in UserDefaults; sync with CloudKit's `CKSyncEngine`, which needs macOS 14, iOS 17 and watchOS 10 (Companion's minimums today). Developer ID apps can use CloudKit |
-| Device link | Today's QR pairing stays. Evaluate iroh 1.0 (Swift bindings, devices dial each other by key, direct where possible) so it also works away from home without Tailscale |
+| Device link | QR pairing. On the same Wi-Fi the app reaches the Mac directly; elsewhere both meet on a relay (`Shared/CompanionLink`, built 2026-11-15): the Mac dials out, every frame is sealed with a key that only travels in the QR code (ChaCha20-Poly1305 under HKDF keys, one per direction, channel and sender bound in, repeats refused), and the relay opens the channel with a seat derived from the same key, so it reads nothing. iroh 1.0 stays the candidate for direct device-to-device paths later, behind the same requests |
 | Agent | Accessibility first, then ScreenCaptureKit, with keyboard and mouse events; the three Orbit ideas; App Intents (intent and entity schemas, View Annotations) so Siri, Spotlight and Shortcuts can use Companion; code runs in Apple's Containerization (a small virtual machine per run, macOS 26 on Apple silicon), with today's limits as the fallback |
 | Speech | FluidAudio (Parakeet, speaker labels) plus Apple's SpeechAnalyzer on macOS 26 and later, chosen per language on our own recordings |
 | Quality | `os.Logger`, MetricKit, Swift Testing, Apple's Evaluations framework |
@@ -208,8 +208,13 @@ Two rules conflict today:
    Farhelm's web app becomes that version and keeps its client package. If
    not, it joins the removal candidates.
 2. **The approval split** in rule 1.
-3. **The device link:** keep QR pairing with Bonjour and Tailscale, or move to
-   iroh after the evaluation.
+3. **The device link:** decided 2026-11-15 (user direction: the apps must work
+   away from the home network too): QR pairing, directly on the Wi-Fi and through the
+   relay elsewhere, with nothing to install and no account (see Device link
+   above). Farhelm's relay serves both products: Companion's channels are seat
+   channels (`c1-…`, `farhelm-relay`'s `auth.rs`), Farhelm's keep their control
+   plane tokens. Tailscale still works as one more direct address. iroh is
+   evaluated later only for direct paths.
 4. **Names:** the product name, the folder names, and the clash between the
    model alias `companion` (fennec's tuned model, ADR 0011) and the API client
    `companion`.
@@ -255,8 +260,9 @@ agent loop. They are what lets Companion work alone.
 
 Review later, not proposed for removal yet:
 
-- Farhelm's relay and device pairing (`farhelm-relay`, `FarhelmCrypto`,
-  `FarhelmWatchKit`), once open decisions 1 and 3 are made.
+- Farhelm's device pairing (`FarhelmCrypto`, `FarhelmWatchKit`), once open
+  decision 1 is made. The relay itself stays: Companion reaches the Mac
+  through it.
 - Chromium (CEF), Companion's heaviest dependency; WebKit already works as the
   fallback.
 - The Python runtime bundled in Companion, used only for iCloud Passwords.

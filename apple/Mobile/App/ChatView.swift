@@ -619,11 +619,7 @@ struct TurnView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if turn.image, let client = session.client {
-                AsyncImage(url: client.imageURL(turn: turn.id)) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 10).fill(palette.ink.opacity(0.06)).frame(height: 120)
-                }
+                TurnImage(client: client, turnID: turn.id, placeholder: palette.ink.opacity(0.06))
                 .frame(maxWidth: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -805,6 +801,41 @@ struct TurnView: View {
 // MARK: - Pieces, as on the Mac
 
 /// A round glass button in the top bar.
+/// A turn's picture (a look at the Mac's screen), fetched by the client
+/// whichever way it reaches the Mac, and kept while the app runs so
+/// scrolling back past it does not fetch it again.
+private struct TurnImage: View {
+    let client: CompanionClient
+    let turnID: String
+    let placeholder: Color
+    @State private var image: UIImage?
+
+    private static let kept: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 40
+        return cache
+    }()
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                RoundedRectangle(cornerRadius: 10).fill(placeholder).frame(height: 120)
+            }
+        }
+        .task(id: turnID) {
+            if let kept = Self.kept.object(forKey: turnID as NSString) {
+                image = kept
+                return
+            }
+            guard let data = try? await client.image(turn: turnID), let loaded = UIImage(data: data) else { return }
+            Self.kept.setObject(loaded, forKey: turnID as NSString)
+            image = loaded
+        }
+    }
+}
+
 struct GlassIconButton: View {
     let symbol: String
     let label: String

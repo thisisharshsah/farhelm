@@ -19,6 +19,28 @@ final class PairingTests: XCTestCase {
         XCTAssertNil(PairingLink.parse("companion://pair?id=A&port=80&hosts=&token=t"))  // no address
     }
 
+    func testParsesTheRelayAndItsKey() throws {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        let link = "companion://pair?v=1&id=ABC&name=Mac&port=7345&hosts=mac.local&token=k2m4p6q8r9&relay=wss://relay.example.com&key=\(key)"
+        let mac = try XCTUnwrap(PairingLink.parse(link))
+        XCTAssertEqual(mac.relay, "wss://relay.example.com")
+        XCTAssertEqual(mac.key, key)
+        XCTAssertTrue(mac.reachableAway)
+
+        // Through the relay alone, with no address on a network.
+        let away = "companion://pair?v=1&id=ABC&port=7345&hosts=&token=t&relay=relay.example.com&key=\(key)"
+        XCTAssertEqual(PairingLink.parse(away)?.relay, "wss://relay.example.com")
+    }
+
+    func testARelayNeedsAKeyThatIsOne() throws {
+        let noKey = try XCTUnwrap(PairingLink.parse("companion://pair?id=A&port=1&hosts=a&token=t&relay=wss://relay.example.com"))
+        XCTAssertNil(noKey.relay)
+        XCTAssertFalse(noKey.reachableAway)
+        let badKey = try XCTUnwrap(PairingLink.parse("companion://pair?id=A&port=1&hosts=a&token=t&relay=wss://r.example.com&key=nope"))
+        XCTAssertNil(badKey.key)
+        XCTAssertNil(PairingLink.parse("companion://pair?id=A&port=1&hosts=&token=t&relay=wss://r.example.com&key=nope"))
+    }
+
     func testLastWorkingHostIsTriedFirst() {
         let mac = PairedMac(id: "A", name: "Mac", port: 1, hosts: ["a", "b", "c"], token: "t", lastHost: "c")
         XCTAssertEqual(mac.hostsToTry, ["c", "a", "b"])

@@ -2,8 +2,8 @@ import CompanionKit
 import SwiftUI
 
 /// Companion on iPhone and iPad: follow the chats on your Mac, write to
-/// them, answer the agent and stop it, from the same Wi-Fi or from anywhere
-/// over Tailscale.
+/// them, answer the agent and stop it, on the same Wi-Fi or from anywhere
+/// through your relay.
 @main
 struct CompanionMobileApp: App {
     @State private var store: MacStore

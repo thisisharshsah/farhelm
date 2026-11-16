@@ -1,3 +1,4 @@
+import CompanionLink
 import Foundation
 
 /// What went wrong talking to the Mac, in words for the screen.
@@ -5,15 +6,19 @@ public enum CompanionError: LocalizedError, Sendable {
     case unreachable(String)
     case unpaired
     case server(Int)
+    /// Not reachable directly, and the relay said why not.
+    case away(String, String)
 
     public var errorDescription: String? {
         switch self {
         case .unreachable(let name):
-            return "Can't reach \(name). Check that Companion is open on it with the app connection on, and that this device is on the same Wi-Fi or Tailscale."
+            return "Can't reach \(name). Check that Companion is open on it with the app connection on. Away from its Wi-Fi, turn on Reach this Mac from anywhere in Settings > Remote on the Mac and pair again."
         case .unpaired:
             return "This Mac no longer knows this device. Pair again from Settings > Remote on the Mac."
         case .server(let code):
             return "The Mac answered with an error (\(code))."
+        case .away(let name, let why):
+            return "Can't reach \(name) through the relay. \(why)"
         }
     }
 }
@@ -24,15 +29,39 @@ public struct ChatList: Codable, Sendable {
     public var chats: [ChatSummary]
 }
 
-/// Talks to Companion on one Mac, at one address. `connect` finds the
-/// address that answers.
+/// Talks to Companion on one Mac, by one route: straight to an address on
+/// its network, or through its relay. `connect` finds the route that works,
+/// and every request below goes the same way on either.
 public struct CompanionClient: Sendable {
+    /// How the Mac is reached.
+    public enum Route: Sendable, Equatable {
+        /// Straight to this address: its name or address on the network, or
+        /// its Tailscale address.
+        case direct(String)
+        /// Through the relay, sealed end to end.
+        case relay
+    }
+
     public let mac: PairedMac
-    public let host: String
+    public let route: Route
+    private let link: LinkEndpoint?
+
+    /// The address in use, when the Mac is reached directly.
+    public var host: String? {
+        if case .direct(let host) = route { return host }
+        return nil
+    }
 
     public init(mac: PairedMac, host: String) {
         self.mac = mac
-        self.host = host
+        route = .direct(host)
+        link = nil
+    }
+
+    init(mac: PairedMac, link: LinkEndpoint) {
+        self.mac = mac
+        route = .relay
+        self.link = link
     }
 
     private static let quick: URLSession = {
@@ -62,12 +91,21 @@ public struct CompanionClient: Sendable {
         return decoder
     }()
 
-    /// Tries the Mac's addresses in turn (the one that worked last first)
-    /// and returns a client for the first that answers, with what the Mac
-    /// says about itself.
+    /// Finds a route to the Mac and returns a client on it, with what the
+    /// Mac says about itself. Its addresses are tried first, all at once
+    /// (the one that worked last wins a tie); away from its network, its
+    /// relay, dialed a moment later so a Mac close by never waits on it.
     public static func connect(to mac: PairedMac) async throws -> (CompanionClient, MacInfo) {
-        // All addresses are tried at once; the first in order that answers wins.
         let hosts = mac.hostsToTry
+        var away: Task<Result<(CompanionClient, MacInfo), Error>, Never>?
+        if mac.reachableAway {
+            away = Task {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                if Task.isCancelled { return .failure(CancellationError()) }
+                return await viaRelay(mac)
+            }
+        }
+
         let answers = await withTaskGroup(of: (Int, MacInfo?, Bool).self) { group in
             for (index, host) in hosts.enumerated() {
                 group.addTask {
@@ -87,15 +125,54 @@ public struct CompanionClient: Sendable {
             return all.sorted { $0.0 < $1.0 }
         }
         if let best = answers.first(where: { $0.1 != nil }), let info = best.1 {
+            // Close by: the relay is not needed.
+            away?.cancel()
+            await RelayLinks.shared.stopAll()
             return (CompanionClient(mac: mac, host: hosts[best.0]), info)
         }
-        if answers.contains(where: { $0.2 }) { throw CompanionError.unpaired }
-        throw CompanionError.unreachable(mac.name)
+        if answers.contains(where: { $0.2 }) {
+            away?.cancel()
+            throw CompanionError.unpaired
+        }
+        guard let away else { throw CompanionError.unreachable(mac.name) }
+        let outcome = await away.value
+        switch outcome {
+        case .success(let reached):
+            return reached
+        case .failure(let error):
+            if let error = error as? CompanionError { throw error }
+            let why = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            throw CompanionError.away(mac.name, why)
+        }
+    }
+
+    /// The Mac through its relay: connected, and answering.
+    private static func viaRelay(_ mac: PairedMac) async -> Result<(CompanionClient, MacInfo), Error> {
+        guard let link = await RelayLinks.shared.endpoint(for: mac) else {
+            return .failure(CompanionError.unreachable(mac.name))
+        }
+        do {
+            try await link.waitUntilConnected(timeout: 12)
+        } catch {
+            return .failure(error)
+        }
+        do {
+            let client = CompanionClient(mac: mac, link: link)
+            let info: MacInfo = try await client.get("/info", timeout: 15)
+            return .success((client, info))
+        } catch LinkError.timedOut {
+            // On the relay, but the Mac did not answer: Companion is closed
+            // on it, or the Mac is asleep.
+            return .failure(CompanionError.away(mac.name, "Check that Companion is open on it and the Mac is awake."))
+        } catch {
+            return .failure(error)
+        }
     }
 
     // MARK: Requests
 
-    public func url(_ path: String, _ extra: [URLQueryItem] = []) -> URL {
+    /// A URL on the Mac, for a direct route.
+    func url(_ path: String, _ extra: [URLQueryItem] = []) -> URL {
         var parts = URLComponents()
         parts.scheme = "http"
         parts.host = host
@@ -105,25 +182,49 @@ public struct CompanionClient: Sendable {
         return parts.url!
     }
 
-    private func get<T: Decodable>(_ path: String, session: URLSession = normal) async throws -> T {
-        let (data, response) = try await session.data(from: url(path))
-        try Self.check(response)
+    /// One request, by whichever route this client has: the body and the
+    /// HTTP status. Through the relay, the pairing key stands in for the
+    /// pairing code.
+    private func exchange(_ method: String, _ path: String, _ extra: [URLQueryItem] = [], body: Data = Data(),
+                          type: String = "text/plain; charset=utf-8", session: URLSession = normal,
+                          timeout: TimeInterval = 20) async throws -> (Data, Int) {
+        switch route {
+        case .direct:
+            var request = URLRequest(url: url(path, extra))
+            request.httpMethod = method
+            if method == "GET" {
+                let (data, response) = try await session.data(for: request)
+                return (data, (response as? HTTPURLResponse)?.statusCode ?? 200)
+            }
+            request.setValue(type, forHTTPHeaderField: "Content-Type")
+            if timeout > 20 { request.timeoutInterval = timeout }
+            let (data, response) = try await session.upload(for: request, from: body)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 200)
+        case .relay:
+            guard let link else { throw CompanionError.unreachable(mac.name) }
+            var query: [String: String] = [:]
+            for item in extra { query[item.name] = item.value ?? "" }
+            let answer = try await link.request(LinkRequest(method: method, path: path, query: query, body: body),
+                                                timeout: timeout)
+            return (answer.body, answer.status)
+        }
+    }
+
+    private func get<T: Decodable>(_ path: String, _ extra: [URLQueryItem] = [], session: URLSession = normal,
+                                   timeout: TimeInterval = 20) async throws -> T {
+        let (data, status) = try await exchange("GET", path, extra, session: session, timeout: timeout)
+        try Self.check(status)
         return try Self.decoder.decode(T.self, from: data)
     }
 
     private func post(_ path: String, body: String = "", _ extra: [URLQueryItem] = []) async throws {
-        var request = URLRequest(url: url(path, extra))
-        request.httpMethod = "POST"
-        request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data(body.utf8)
-        let (_, response) = try await Self.normal.data(for: request)
-        try Self.check(response)
+        let (_, status) = try await exchange("POST", path, extra, body: Data(body.utf8))
+        try Self.check(status)
     }
 
-    private static func check(_ response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else { return }
-        if http.statusCode == 401 { throw CompanionError.unpaired }
-        if !(200..<300).contains(http.statusCode) { throw CompanionError.server(http.statusCode) }
+    private static func check(_ status: Int) throws {
+        if status == 401 { throw CompanionError.unpaired }
+        if !(200..<300).contains(status) { throw CompanionError.server(status) }
     }
 
     public func chats() async throws -> ChatList { try await get("/chats") }
@@ -141,12 +242,9 @@ public struct CompanionClient: Sendable {
     /// Sends a photo or file to the Mac, attached to the open chat for the
     /// next message; its id goes with `say`.
     public func attach(_ data: Data, name: String) async throws -> String {
-        var request = URLRequest(url: url("/attach", [URLQueryItem(name: "name", value: name)]))
-        request.httpMethod = "POST"
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 120
-        let (body, response) = try await Self.normal.upload(for: request, from: data)
-        try Self.check(response)
+        let (body, status) = try await exchange("POST", "/attach", [URLQueryItem(name: "name", value: name)], body: data,
+                                                type: "application/octet-stream", timeout: 120)
+        try Self.check(status)
         struct Attached: Decodable { var id: String }
         return try Self.decoder.decode(Attached.self, from: body).id
     }
@@ -183,17 +281,30 @@ public struct CompanionClient: Sendable {
     public func setEffort(_ level: String) async throws { try await post("/effort", body: level) }
     /// A waiting message: send it now (stopping the task), cancel or restore it.
     public func queued(_ action: String, _ id: String) async throws { try await post("/queued", body: "\(action) \(id)") }
-    public func imageURL(turn id: String) -> URL { url("/image", [URLQueryItem(name: "id", value: id)]) }
+
+    /// The picture of a turn in the open chat (a look at the screen).
+    public func image(turn id: String) async throws -> Data {
+        let (data, status) = try await exchange("GET", "/image", [URLQueryItem(name: "id", value: id)], timeout: 60)
+        try Self.check(status)
+        return data
+    }
 
     /// The open chat as it changes: the whole of it first, then what
     /// changes. Ends when the connection does.
     public func updates() -> AsyncThrowingStream<FeedUpdate, Error> {
+        switch route {
+        case .direct: return directUpdates()
+        case .relay: return relayUpdates()
+        }
+    }
+
+    private func directUpdates() -> AsyncThrowingStream<FeedUpdate, Error> {
         let request = URLRequest(url: url("/events"))
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await Self.feed.bytes(for: request)
-                    try Self.check(response)
+                    try Self.check((response as? HTTPURLResponse)?.statusCode ?? 200)
                     var pending = ""
                     for try await line in bytes.lines {
                         guard line.hasPrefix("data:") else { continue }
@@ -205,6 +316,32 @@ public struct CompanionClient: Sendable {
                             continuation.yield(update)
                         } else if pending.count > 4_000_000 {
                             pending = ""
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// The same events through the relay: the Mac sends a full snapshot
+    /// when this device subscribes, then what changes.
+    private func relayUpdates() -> AsyncThrowingStream<FeedUpdate, Error> {
+        let link = link
+        let name = mac.name
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                guard let link else {
+                    continuation.finish(throwing: CompanionError.unreachable(name))
+                    return
+                }
+                do {
+                    for try await event in await link.events() {
+                        if let update = try? Self.decoder.decode(FeedUpdate.self, from: event) {
+                            continuation.yield(update)
                         }
                     }
                     continuation.finish()

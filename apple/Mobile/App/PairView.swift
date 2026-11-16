@@ -66,7 +66,7 @@ struct PairView: View {
             }
 
             Section {
-                Label("Away from your Wi-Fi, install Tailscale on the Mac and on this device, signed in to the same account, and pair again. Companion then reaches your Mac from anywhere.",
+                Label("To reach your Mac away from its Wi-Fi, turn on Reach this Mac from anywhere in Settings > Remote on the Mac before you scan. Everything then goes through your relay, end to end encrypted.",
                       systemImage: "network")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

@@ -22,7 +22,10 @@ let package = Package(
         // pseudo-terminal. Pinned, so a build is the same every time.
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0"),
         // Companion's design, shared with the iPhone, iPad and Watch apps.
-        .package(path: "Shared/CompanionDesign")
+        .package(path: "Shared/CompanionDesign"),
+        // How the apps reach this Mac away from its network, through a
+        // relay that cannot read what it carries. Shared with the apps.
+        .package(path: "Shared/CompanionLink")
     ],
     targets: [
         .executableTarget(
@@ -31,6 +34,7 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "CompanionDesign", package: "CompanionDesign"),
+                .product(name: "CompanionLink", package: "CompanionLink"),
                 "CEFKit"
             ],
             path: "Sources/Companion"

@@ -2048,11 +2048,13 @@ private struct VoiceSetupSheet: View {
     }
 }
 
-/// The Remote section: turn the phone session on, and show the link and a
-/// QR code to reach it.
+/// The Remote section: turn the phone session on, reach it from anywhere
+/// through the relay, and show the link and a QR code to pair with.
 private struct RemoteSettings: View {
     @ObservedObject var server = RemoteServer.shared
+    @ObservedObject var relay = RemoteRelay.shared
     @State private var on = RemoteServer.shared.enabled
+    @State private var relayAddress = RemoteRelay.shared.address
 
     var body: some View {
         SettingsCard("Remote session", icon: "iphone",
@@ -2066,6 +2068,24 @@ private struct RemoteSettings: View {
                       }))
 
             if server.running {
+                RowLine()
+                ToggleRow("Reach this Mac from anywhere",
+                          detail: "Away from this Wi-Fi, the app reaches this Mac through your relay. What passes through is sealed with a key that only travels in the pairing code, so the relay cannot read it. Pair again after turning this on.",
+                          isOn: Binding(get: { relay.enabled }, set: { relay.enabled = $0 }))
+                if relay.enabled {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        SettingField(label: "Relay", text: $relayAddress, mono: true)
+                            .onSubmit { relay.address = relayAddress }
+                        if relayAddress.trimmingCharacters(in: .whitespacesAndNewlines) != relay.address {
+                            PillButton("Use") { relay.address = relayAddress }
+                                .padding(.bottom, 4)
+                        }
+                    }
+                    Text(relayLine.text)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(relayLine.tint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 RowLine()
                 if let link = server.appLink {
                     SettingRow("Pair the app",
@@ -2090,9 +2110,7 @@ private struct RemoteSettings: View {
                                     .foregroundStyle(Theme.ink.opacity(0.85))
                                     .textSelection(.enabled)
                             }
-                            Text(RemoteServer.tailscaleAddress() == nil
-                                 ? "Away from this Wi-Fi: install Tailscale on this Mac and on your phone, signed in to the same account, then pair again. The app reaches the Mac through it from anywhere."
-                                 : "Tailscale is on: the app reaches this Mac from anywhere while your phone is on the same tailnet.")
+                            Text(awayNote)
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(Theme.ink.opacity(0.55))
                                 .fixedSize(horizontal: false, vertical: true)
@@ -2106,7 +2124,7 @@ private struct RemoteSettings: View {
                     .padding(.vertical, 4)
                 } else {
                     SettingRow("Address",
-                               detail: "Join this Mac to Wi-Fi, or turn on Tailscale, to get an address the app can reach.") {
+                               detail: "Join this Mac to Wi-Fi, or turn on Reach this Mac from anywhere, to get somewhere the app can reach.") {
                         EmptyView()
                     }
                 }
@@ -2119,6 +2137,35 @@ private struct RemoteSettings: View {
                     .foregroundStyle(Theme.rose)
             }
         }
+    }
+
+    /// How the relay is doing, in a line.
+    private var relayLine: (text: String, tint: Color) {
+        switch relay.status {
+        case .connected:
+            let host = relay.relayURL?.host ?? "the relay"
+            return (relay.listening ? "Connected to \(host). The app is following through it." : "Connected to \(host).",
+                    Theme.mint)
+        case .connecting:
+            return ("Connecting to the relay…", Theme.ink.opacity(0.55))
+        case .failed(let why):
+            return (why, Theme.rose)
+        case .noAddress:
+            return ("Set the relay's address (wss://…).", Theme.rose)
+        case .off:
+            return ("Off.", Theme.ink.opacity(0.55))
+        }
+    }
+
+    /// How the app reaches this Mac away from this Wi-Fi.
+    private var awayNote: String {
+        if relay.enabled, relay.relayURL != nil {
+            return "Away from this Wi-Fi the app reaches this Mac through the relay, once paired with this code."
+        }
+        if RemoteServer.tailscaleAddress() != nil {
+            return "Tailscale is on: the app reaches this Mac from anywhere while your phone is on the same tailnet."
+        }
+        return "Away from this Wi-Fi: turn on Reach this Mac from anywhere, then pair again."
     }
 }
 

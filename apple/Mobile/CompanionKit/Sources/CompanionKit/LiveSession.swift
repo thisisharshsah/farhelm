@@ -3,14 +3,14 @@ import Observation
 
 /// The live view of the Mac in use: the chat open on it, kept up to date
 /// from its feed, and its list of chats. It reconnects by itself, trying
-/// every address the Mac can be reached at.
+/// every address the Mac can be reached at, then its relay.
 @MainActor
 @Observable
 public final class LiveSession {
     public enum Link: Equatable {
         case idle
         case connecting
-        case live(host: String)
+        case live(CompanionClient.Route)
         case failed(String)
     }
 
@@ -27,6 +27,9 @@ public final class LiveSession {
     /// other than the open one.
     private var listTicker: Task<Void, Never>?
     private var lastChat = ""
+    /// The relay connection being closed by `stop`. Following starts again
+    /// only once it is, so the close cannot catch the new connection.
+    private var closing: Task<Void, Never>?
 
     public init(store: MacStore) {
         self.store = store
@@ -55,6 +58,8 @@ public final class LiveSession {
         listTicker?.cancel()
         listTicker = nil
         if case .live = link { link = .idle }
+        // A relay connection is not kept open while nothing follows it.
+        closing = Task { await RelayLinks.shared.stopAll() }
     }
 
     /// Starts again, for another Mac or after pairing anew.
@@ -70,6 +75,7 @@ public final class LiveSession {
     }
 
     private func follow() async {
+        await closing?.value
         var wait: UInt64 = 1
         while !Task.isCancelled {
             guard let mac = store.selected else {
@@ -81,7 +87,7 @@ public final class LiveSession {
                 let (client, info) = try await CompanionClient.connect(to: mac)
                 self.client = client
                 store.update(mac.id, info: info, workingHost: client.host)
-                link = .live(host: client.host)
+                link = .live(client.route)
                 wait = 1
                 await refreshChats()
                 for try await update in client.updates() {

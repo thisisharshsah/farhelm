@@ -3,7 +3,8 @@ import Observation
 import Security
 
 /// The Macs this device has paired with. Names and addresses are kept in
-/// the app's defaults; each pairing code is kept in the Keychain.
+/// the app's defaults; each pairing code, and each relay key, is kept in
+/// the Keychain.
 @MainActor
 @Observable
 public final class MacStore {
@@ -42,6 +43,7 @@ public final class MacStore {
     public func remove(_ id: String) {
         macs.removeAll { $0.id == id }
         Self.keychainDelete(account: id)
+        Self.keychainDelete(account: Self.keyAccount(id))
         if selectedID == id { selectedID = macs.first?.id }
         save()
     }
@@ -56,6 +58,9 @@ public final class MacStore {
             // Its own addresses first; one found on the network that it did
             // not list is kept at the end.
             mac.hosts = info.hosts + mac.hosts.filter { !info.hosts.contains($0) }
+            // Its relay moved, or was turned off. The key stays: only a new
+            // pairing changes it.
+            if let relay = info.relay { mac.relay = relay.isEmpty ? nil : relay }
         }
         if let workingHost { mac.lastHost = workingHost }
         guard mac != macs[index] else { return }
@@ -85,6 +90,7 @@ public final class MacStore {
         var port: Int
         var hosts: [String]
         var lastHost: String?
+        var relay: String?
     }
 
     private func load() {
@@ -94,17 +100,29 @@ public final class MacStore {
         macs = stored.compactMap { item in
             guard let token = Self.keychainRead(account: item.id) else { return nil }
             return PairedMac(id: item.id, name: item.name, port: item.port, hosts: item.hosts,
-                             token: token, lastHost: item.lastHost)
+                             token: token, lastHost: item.lastHost,
+                             relay: item.relay, key: Self.keychainRead(account: Self.keyAccount(item.id)))
         }
     }
 
     private func save() {
-        let stored = macs.map { Stored(id: $0.id, name: $0.name, port: $0.port, hosts: $0.hosts, lastHost: $0.lastHost) }
+        let stored = macs.map { Stored(id: $0.id, name: $0.name, port: $0.port, hosts: $0.hosts,
+                                       lastHost: $0.lastHost, relay: $0.relay) }
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: Self.listKey)
         }
-        for mac in macs { Self.keychainWrite(mac.token, account: mac.id) }
+        for mac in macs {
+            Self.keychainWrite(mac.token, account: mac.id)
+            if let key = mac.key {
+                Self.keychainWrite(key, account: Self.keyAccount(mac.id))
+            } else {
+                Self.keychainDelete(account: Self.keyAccount(mac.id))
+            }
+        }
     }
+
+    /// Where a Mac's relay key is kept: beside its pairing code.
+    private static func keyAccount(_ id: String) -> String { id + ".link" }
 
     // MARK: Keychain
 
