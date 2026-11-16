@@ -3,6 +3,10 @@ import Combine
 
 enum LLMProviderKind: String, CaseIterable, Identifiable {
     case farhelm, anthropic, openai, ollama
+    /// Any other service that speaks OpenAI's chat completions (Gemini,
+    /// OpenRouter, LM Studio, or one of your own), through one adapter;
+    /// which one is `AppSettings.service`.
+    case compatible
     /// A subscription, through the vendor's own command-line tool.
     case subscription
 
@@ -14,6 +18,7 @@ enum LLMProviderKind: String, CaseIterable, Identifiable {
         case .anthropic: return "Claude (Anthropic API)"
         case .openai: return "OpenAI API"
         case .ollama: return "Local (Ollama)"
+        case .compatible: return "More services (Gemini, OpenRouter, LM Studio, your own)"
         case .subscription: return "Subscription (Claude Code, Codex, Antigravity)"
         }
     }
@@ -97,6 +102,11 @@ final class AppSettings: ObservableObject {
     @Published var ollamaURL: String { didSet { d.set(ollamaURL, forKey: "ollamaURL") } }
     @Published var farhelmURL: String { didSet { d.set(farhelmURL, forKey: "farhelmURL") } }
     @Published var farhelmModel: String { didSet { d.set(farhelmModel, forKey: "farhelmModel") } }
+    /// The "More services" engine: the service in use (a `CompatibleService`
+    /// id), and each service's model and address (when not its own).
+    @Published var service: String { didSet { d.set(service, forKey: "service") } }
+    @Published var serviceModels: [String: String] { didSet { d.set(serviceModels, forKey: "serviceModels") } }
+    @Published var serviceAddresses: [String: String] { didSet { d.set(serviceAddresses, forKey: "serviceAddresses") } }
     @Published var panelStyle: PanelStyle { didSet { d.set(panelStyle.rawValue, forKey: "panelStyle") } }
     @Published var panelDarkness: Double { didSet { d.set(panelDarkness, forKey: "panelDarkness") } }
     @Published var captureMic: Bool { didSet { d.set(captureMic, forKey: "captureMic") } }
@@ -230,6 +240,9 @@ final class AppSettings: ObservableObject {
         ollamaURL = d.string(forKey: "ollamaURL") ?? "http://127.0.0.1:11434"
         farhelmURL = d.string(forKey: "farhelmURL") ?? "http://127.0.0.1:7842/p/companion"
         farhelmModel = d.string(forKey: "farhelmModel") ?? ""
+        service = d.string(forKey: "service") ?? CompatibleService.choices[0].id
+        serviceModels = d.dictionary(forKey: "serviceModels") as? [String: String] ?? [:]
+        serviceAddresses = d.dictionary(forKey: "serviceAddresses") as? [String: String] ?? [:]
         panelStyle = PanelStyle(rawValue: d.string(forKey: "panelStyle") ?? "") ?? .frosted
         panelDarkness = d.object(forKey: "panelDarkness") as? Double ?? 0.3
         captureMic = d.object(forKey: "captureMic") as? Bool ?? true
@@ -326,6 +339,46 @@ final class ContextStore {
     }
 }
 
+// MARK: - More services
+
+extension AppSettings {
+    /// The service the "More services" engine uses.
+    var compatibleService: CompatibleService {
+        CompatibleService.choices.first { $0.id == service } ?? CompatibleService.choices[0]
+    }
+
+    /// The model chosen for a service ("" before one is).
+    func model(for service: CompatibleService) -> String {
+        serviceModels[service.id] ?? ""
+    }
+
+    /// The address set for a service, or "" to use its own.
+    func address(for service: CompatibleService) -> String {
+        serviceAddresses[service.id] ?? ""
+    }
+
+    /// Whether what is sent stays on this Mac (or its network).
+    var engineRunsHere: Bool {
+        switch provider {
+        case .farhelm, .ollama: return true
+        case .compatible:
+            let chosen = compatibleService
+            return chosen.runsLocally(at: address(for: chosen))
+        case .anthropic, .openai, .subscription: return false
+        }
+    }
+
+    /// An engine billed by use through its API, where the step limits in
+    /// Settings > Usage apply: not a subscription, and not one on this Mac.
+    var engineBilledByUse: Bool {
+        switch provider {
+        case .anthropic, .openai: return true
+        case .compatible: return !engineRunsHere
+        case .farhelm, .ollama, .subscription: return false
+        }
+    }
+}
+
 // MARK: - Effort, per model
 
 extension AppSettings {
@@ -336,6 +389,7 @@ extension AppSettings {
         case .anthropic: return "\(provider.rawValue)|\(anthropicModel)"
         case .openai: return "\(provider.rawValue)|\(openAIModel)"
         case .ollama: return "\(provider.rawValue)|\(ollamaModel)"
+        case .compatible: return "\(provider.rawValue)|\(service)|\(model(for: compatibleService))"
         case .subscription: return "\(provider.rawValue)|\(cliAgent)|\(cliModel)"
         }
     }

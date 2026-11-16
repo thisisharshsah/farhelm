@@ -368,7 +368,7 @@ final class SuggestionEngine {
                                                            screenText: String(screenText.suffix(ContextBudget.current.screenCharacters)),
                                                            transcript: render(transcript),
                                                            question: question))
-        if config.kind == .anthropic || config.kind == .openai {
+        if config.takesPictures {
             request.image = image
         }
         return try await LLM.stream(grounded(request, task: .screen).tagged("Screen answer"), config: config)
@@ -674,6 +674,23 @@ final class SuggestionEngine {
             return LLMConfig(kind: .openai, apiKey: key, model: settings.openAIModel, baseURL: "")
         case .ollama:
             return LLMConfig(kind: .ollama, apiKey: "", model: settings.ollamaModel, baseURL: settings.ollamaURL)
+        case .compatible:
+            let service = settings.compatibleService
+            let key = Keychain.read(service.keyAccount) ?? service.keyVariable.flatMap { env[$0] } ?? ""
+            if service.keyRequired, key.isEmpty {
+                throw LLMError.notConfigured("Add your \(service.name) API key in Settings (the gear > Engine), or switch to another engine.")
+            }
+            let model = settings.model(for: service)
+            guard !model.isEmpty else {
+                throw LLMError.notConfigured("Choose a \(service.name) model in Settings (the gear > Engine).")
+            }
+            let address = settings.address(for: service)
+            guard !service.address(address).isEmpty else {
+                throw LLMError.notConfigured("Set \(service.name)'s address in Settings (the gear > Engine).")
+            }
+            var config = LLMConfig(kind: .compatible, apiKey: key, model: model, baseURL: address)
+            config.service = service.id
+            return config
         case .subscription:
             // The tool holds the sign-in. `model` names the tool here and
             // `baseURL` carries the model it is asked for, if any.

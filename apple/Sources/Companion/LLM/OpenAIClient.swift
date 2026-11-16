@@ -1,32 +1,27 @@
 import Foundation
 
-/// OpenAI-style chat completions. Also the wire format Farhelm's front door
-/// speaks (POST /p/<client>/v1/chat/completions), so both providers use this.
+/// OpenAI-style chat completions, for every service that speaks them: OpenAI,
+/// Farhelm's front door (POST /p/<client>/v1/chat/completions), and the
+/// "More services" engine. What differs between them is in `CompatibleService`.
 enum OpenAIClient {
-    static func compatibleStream(_ req: ChatRequest,
-                                 endpoint: URL,
-                                 bearer: String,
-                                 model: String?,
-                                 unreachableMessage: String?,
-                                 sendsImages: Bool = false,
-                                 effort: String? = nil,
-                                 sendsEffortField: Bool = true) async throws -> AsyncThrowingStream<String, Error> {
-        var request = URLRequest(url: endpoint)
+    static func stream(_ req: ChatRequest, config: LLMConfig,
+                       service: CompatibleService) async throws -> AsyncThrowingStream<String, Error> {
+        var request = URLRequest(url: try service.url("/chat/completions", configured: config.baseURL))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !bearer.isEmpty {
-            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        if !config.apiKey.isEmpty {
+            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         }
-        // Only OpenAI itself gets the picture; Farhelm's front door refuses images.
+        let model: String? = config.model.isEmpty ? nil : config.model
         // Open-weight reasoning models (gpt-oss) read their effort from a
         // line in the instructions, whatever the server in front of them
         // does with the request field below.
         var instructions = req.fullSystem
-        if let effort, model == nil || (model ?? "").lowercased().contains("gpt-oss") {
+        if let effort = config.effort, model == nil || (model ?? "").lowercased().contains("gpt-oss") {
             instructions = "Reasoning: \(effort)\n\n" + instructions
         }
         var messages: [[String: Any]] = [["role": "system", "content": instructions]]
-        if sendsImages, let image = req.image {
+        if service.images, let image = req.image {
             messages += req.wireMessages(image: image, as: .openAI)
         } else {
             messages += req.wireMessages.map { $0 as [String: Any] }
@@ -35,17 +30,13 @@ enum OpenAIClient {
             "stream": true,
             "messages": messages
         ]
-        if let model, !model.isEmpty {
-            body["model"] = model
-        }
-        // A gateway that checks its input strictly could refuse a field it
-        // does not know, so the field goes only where it is documented.
-        if let effort, sendsEffortField {
+        if let model { body["model"] = model }
+        // A server that checks its input strictly could refuse a field it
+        // does not know, so optional fields go only where they are documented.
+        if let effort = config.effort, service.reasoningEffort {
             body["reasoning_effort"] = effort
         }
-        // Ask OpenAI to report what the request used at the end of the
-        // stream. Other gateways are not asked, but are listened to.
-        if sendsEffortField {
+        if service.reportsUsage {
             body["stream_options"] = ["include_usage": true]
         }
         request.httpBody = try LLM.jsonBody(body)
@@ -54,11 +45,8 @@ enum OpenAIClient {
         let response: URLResponse
         do {
             (bytes, response) = try await URLSession.shared.bytes(for: request)
-        } catch {
-            if let unreachableMessage {
-                throw LLMError.network(unreachableMessage)
-            }
-            throw error
+        } catch let error as URLError where error.code != .cancelled {
+            throw LLMError.network(service.unreachable(at: config.baseURL))
         }
         try await LLM.ensureOK(response, bytes: bytes)
 

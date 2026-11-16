@@ -86,6 +86,19 @@ struct LLMConfig {
     var baseURL: String
     /// "low", "medium" or "high", or nil to leave it to the engine.
     var effort: String? = nil
+    /// For "More services": which one (a `CompatibleService` id).
+    var service = ""
+
+    /// What its usage is recorded under: the engine, or for "More
+    /// services" the service itself ("gemini", "openrouter").
+    var usageEngine: String {
+        kind == .compatible ? service : kind.rawValue
+    }
+
+    /// Whether the engine is shown a picture with the last message.
+    var takesPictures: Bool {
+        kind == .anthropic || (CompatibleService.behind(self)?.images ?? false)
+    }
 }
 
 enum LLMError: LocalizedError {
@@ -157,8 +170,7 @@ enum LLM {
     static func stream(_ request: ChatRequest, config: LLMConfig) async throws -> AsyncThrowingStream<String, Error> {
         var request = request
         // An attached picture is shown to an engine that can look at one.
-        if request.image == nil, config.kind == .anthropic || config.kind == .openai,
-           let first = request.pictures.first {
+        if request.image == nil, config.takesPictures, let first = request.pictures.first {
             request.image = Self.jpeg(ofPictureAt: first)
         }
         let probe = UsageProbe()
@@ -169,7 +181,7 @@ enum LLM {
         // A picture is charged as tokens too; this is a middling estimate.
         let pictureTokens = request.image == nil ? 0 : 1_200
         let purpose = request.purpose
-        let engine = config.kind.rawValue
+        let engine = config.usageEngine
         let model = config.model
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -224,28 +236,11 @@ enum LLM {
         switch config.kind {
         case .anthropic:
             return try await AnthropicClient.stream(request, config: config)
-        case .openai:
-            return try await OpenAIClient.compatibleStream(
-                request,
-                endpoint: URL(string: "https://api.openai.com/v1/chat/completions")!,
-                bearer: config.apiKey,
-                model: config.model,
-                unreachableMessage: nil,
-                sendsImages: true,
-                effort: config.effort)
-        case .farhelm:
-            let base = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
-            guard let endpoint = URL(string: base + "/v1/chat/completions") else {
-                throw LLMError.notConfigured("Invalid Farhelm gateway URL in Settings.")
-            }
-            return try await OpenAIClient.compatibleStream(
-                request,
-                endpoint: endpoint,
-                bearer: config.apiKey,
-                model: config.model.isEmpty ? nil : config.model,
-                unreachableMessage: "Farhelm runner not reachable at \(base). Is it running on this Mac?",
-                effort: config.effort,
-                sendsEffortField: false)
+        case .openai, .farhelm, .compatible:
+            // One adapter for every service that speaks OpenAI's chat
+            // completions; what differs between them is in CompatibleService.
+            return try await OpenAIClient.stream(request, config: config,
+                                                 service: CompatibleService.behind(config) ?? .other)
         case .ollama:
             return try await OllamaClient.stream(request, config: config)
         case .subscription:

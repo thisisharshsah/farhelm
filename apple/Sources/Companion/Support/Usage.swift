@@ -6,7 +6,8 @@ struct UsageRecord: Codable, Identifiable {
     var id = UUID()
     var date = Date()
     var conversation: UUID?
-    /// "anthropic", "openai", "farhelm", "ollama".
+    /// "anthropic", "openai", "farhelm", "ollama", or for More services the
+    /// service's id ("gemini", "lmstudio").
     var engine: String
     var model: String
     /// What the request was for: "Live reply", "Agent", "Transcript polish"…
@@ -24,7 +25,7 @@ struct UsageRecord: Codable, Identifiable {
     var seconds: Double
 
     var tokens: Int { input + cacheRead + cacheWrite + output }
-    var isLocal: Bool { engine == "farhelm" || engine == "ollama" }
+    var isLocal: Bool { engine == "ollama" || (CompatibleService.named(engine)?.local ?? false) }
 }
 
 /// Dollars per million tokens.

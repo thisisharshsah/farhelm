@@ -488,6 +488,9 @@ final class AppState: ObservableObject {
             return "OpenAI · \(settings.openAIModel)"
         case .ollama:
             return "Ollama · \(settings.ollamaModel)"
+        case .compatible:
+            let service = settings.compatibleService
+            return "\(service.name) · \(settings.model(for: service))"
         case .subscription:
             let agents = CLIAgents.shared
             let name = agents.name(of: settings.cliAgent)
@@ -3223,14 +3226,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// The time limit on one model step: only for API models (Anthropic,
-    /// OpenAI), as set in Settings > Usage, since a stuck call there costs
-    /// money and holds the task. Local models and subscriptions take as
-    /// long as they need; Stop is always there.
+    /// The time limit on one model step: only for engines billed by use
+    /// (Anthropic, OpenAI, a hosted service), as set in Settings > Usage,
+    /// since a stuck call there costs money and holds the task. Local models
+    /// and subscriptions take as long as they need; Stop is always there.
     static var apiStepLimit: Double? {
         let settings = AppSettings.shared
-        guard settings.provider == .anthropic || settings.provider == .openai,
-              settings.apiStepMinutes > 0 else { return nil }
+        guard settings.engineBilledByUse, settings.apiStepMinutes > 0 else { return nil }
         return Double(settings.apiStepMinutes) * 60
     }
 
@@ -3239,8 +3241,7 @@ final class AppState: ObservableObject {
     /// and local models, or the limit turned off.
     static var apiStepBudget: Int? {
         let settings = AppSettings.shared
-        guard settings.provider == .anthropic || settings.provider == .openai,
-              settings.agentStepBudget > 0 else { return nil }
+        guard settings.engineBilledByUse, settings.agentStepBudget > 0 else { return nil }
         return max(10, settings.agentStepBudget)
     }
 

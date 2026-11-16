@@ -69,7 +69,7 @@ struct SettingsView: View {
         /// its name: the settings that live in it.
         var keywords: String {
             switch self {
-            case .engine: return "model claude openai farhelm ollama api key effort context window provider"
+            case .engine: return "model claude openai farhelm ollama gemini openrouter lm studio openai-compatible api key effort context window provider"
             case .you: return "details about me memory remember context folder profile"
             case .listening: return "microphone mic system audio voice speaker english sensitivity enroll reference"
             case .replies: return "auto reply suggest questions polish transcript notes"
@@ -479,6 +479,125 @@ struct Segmented<Value: Hashable>: View {
     }
 }
 
+// MARK: - More services
+
+/// More services: any service that speaks OpenAI's chat completions, one
+/// at a time. Which one, its key (in the Keychain), its address, and its model.
+private struct MoreServicesSettings: View {
+    @ObservedObject var settings: AppSettings
+    @State private var key = ""
+    @State private var models: [String] = []
+    @State private var status: String?
+
+    private var service: CompatibleService { settings.compatibleService }
+
+    /// The address in use: the one set here, or the service's own.
+    private var address: Binding<String> {
+        Binding(get: {
+            let own = settings.address(for: service)
+            return own.isEmpty ? service.defaultAddress : own
+        }, set: { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            settings.serviceAddresses[service.id] = trimmed == service.defaultAddress ? "" : trimmed
+        })
+    }
+
+    private var model: Binding<String> {
+        Binding(get: { settings.model(for: service) },
+                set: { settings.serviceModels[service.id] = $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+    }
+
+    var body: some View {
+        SettingsCard("\(service.name) connection", icon: "link", status: status) {
+            SettingRow("Service", detail: service.place) {
+                Picker("", selection: $settings.service) {
+                    ForEach(CompatibleService.choices) { choice in
+                        Text(choice.name).tag(choice.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 170)
+            }
+            if let hint = service.keyHint {
+                SettingField(label: service.keyRequired ? "API key" : "API key (optional)", text: $key, secure: true)
+                    .onChange(of: key) { _, value in
+                        Keychain.write(value, account: service.keyAccount)
+                    }
+                Note(hint + " The key is kept in your Keychain."
+                     + (service.keyVariable.map { " The \($0) environment variable works too." } ?? ""))
+            }
+            SettingField(label: service.defaultAddress.isEmpty ? "Address, up to /v1" : "Address",
+                         text: address, mono: true)
+            RowLine().padding(.top, 4)
+            SettingRow("Model", detail: models.isEmpty ? "Refresh to list its models, or type one below." : nil) {
+                HStack(spacing: 6) {
+                    Picker("", selection: model) {
+                        if model.wrappedValue.isEmpty {
+                            Text("Choose").tag("")
+                        } else if !models.contains(model.wrappedValue) {
+                            Text(model.wrappedValue).tag(model.wrappedValue)
+                        }
+                        ForEach(models, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 170)
+                    PillButton("Refresh", icon: "arrow.clockwise") {
+                        Task { await loadModels() }
+                    }
+                }
+            }
+            SettingField(label: "Or type a model ID", text: model, mono: true)
+            if service.runsLocally(at: settings.address(for: service)) {
+                RowLine()
+                SettingRow("Context window", detail: "Match what the model is loaded with; requests are sized to fit.") {
+                    Picker("", selection: $settings.localContextTokens) {
+                        ForEach(ContextBudget.localChoices, id: \.self) { tokens in
+                            Text("\(tokens / 1000)k tokens").tag(tokens)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+        }
+        .onAppear { reload() }
+        .onChange(of: settings.service) { _, _ in reload() }
+    }
+
+    /// The chosen service's key and models, after choosing another.
+    private func reload() {
+        key = Keychain.read(service.keyAccount) ?? ""
+        models = []
+        status = nil
+        if !service.keyRequired || !key.isEmpty {
+            Task { await loadModels() }
+        }
+    }
+
+    @MainActor
+    private func loadModels() async {
+        let chosen = service
+        status = "Loading…"
+        do {
+            let list = try await chosen.models(configured: settings.address(for: chosen),
+                                               key: Keychain.read(chosen.keyAccount) ?? key)
+            guard chosen == service else { return }
+            models = list
+            status = list.isEmpty ? "No models listed" : "\(list.count) models"
+        } catch {
+            guard chosen == service else { return }
+            models = []
+            if case LLMError.http(let code, _) = error {
+                status = code == 401 || code == 403 ? "Key not accepted" : "Error \(code)"
+            } else {
+                status = "Not reachable"
+            }
+        }
+    }
+}
+
 // MARK: - Subscriptions
 
 /// The subscription tools: which are on this Mac, which one is in use and
@@ -677,6 +796,7 @@ private struct EngineSettings: View {
         case .anthropic: return ("Claude", "Anthropic API", "sparkle")
         case .openai: return ("OpenAI", "OpenAI API", "circle.hexagongrid")
         case .ollama: return ("Ollama", "On this Mac", "desktopcomputer")
+        case .compatible: return ("More services", "Gemini, OpenRouter, LM Studio", "square.grid.2x2")
         case .subscription: return ("Subscriptions", "Claude, ChatGPT, Gemini", "person.badge.key")
         }
     }
@@ -808,6 +928,8 @@ private struct EngineSettings: View {
                 contextRow
                 Note("Install from ollama.com, then run: ollama pull \(settings.ollamaModel)")
             }
+        case .compatible:
+            MoreServicesSettings(settings: settings)
         case .subscription:
             SubscriptionSettings(settings: settings)
         }
@@ -1554,7 +1676,7 @@ private struct UsageSettings: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(showsModel ? "\(LLMProviderKind(rawValue: row.engine)?.shortName ?? row.engine) \(ModelName.pretty(row.model))" : row.id)
+                        Text(showsModel ? "\(CompatibleService.named(row.engine)?.name ?? LLMProviderKind(rawValue: row.engine)?.shortName ?? row.engine) \(ModelName.pretty(row.model))" : row.id)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.ink.opacity(0.92))
                             .lineLimit(1)

@@ -33,6 +33,7 @@ struct ContextBudget {
     /// known to take more can be given its own line.
     private static let hostedWindows: [(prefix: String, tokens: Int)] = [
         ("claude", 200_000),
+        ("gemini", 1_000_000),
         ("gpt", 128_000),
         ("o", 128_000)
     ]
@@ -50,13 +51,22 @@ struct ContextBudget {
             return ContextBudget(window: hostedWindow(settings.openAIModel, fallback: 128_000), hosted: true)
         case .farhelm, .ollama:
             return ContextBudget(window: max(settings.localContextTokens, 4_000), hosted: false)
+        case .compatible:
+            // A model on this Mac is sized like the other local engines; a
+            // hosted one by its name.
+            if settings.engineRunsHere {
+                return ContextBudget(window: max(settings.localContextTokens, 4_000), hosted: false)
+            }
+            return ContextBudget(window: hostedWindow(settings.model(for: settings.compatibleService), fallback: 128_000),
+                                 hosted: true)
         case .subscription:
             return ContextBudget(window: 200_000, hosted: true)
         }
     }
 
     private static func hostedWindow(_ model: String, fallback: Int) -> Int {
-        let name = model.lowercased()
+        // OpenRouter names models after their maker ("anthropic/claude-…").
+        let name = model.lowercased().split(separator: "/").last.map(String.init) ?? ""
         return hostedWindows.first { name.hasPrefix($0.prefix) }?.tokens ?? fallback
     }
 

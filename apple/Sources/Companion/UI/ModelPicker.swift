@@ -9,6 +9,7 @@ extension LLMProviderKind {
         case .anthropic: return "Claude"
         case .openai: return "OpenAI"
         case .ollama: return "Ollama"
+        case .compatible: return "More services"
         case .subscription: return "Subscriptions"
         }
     }
@@ -19,12 +20,25 @@ extension LLMProviderKind {
         case .anthropic: return "sparkle"
         case .openai: return "circle.hexagongrid"
         case .ollama: return "desktopcomputer"
+        case .compatible: return "square.grid.2x2"
         case .subscription: return "person.badge.key"
         }
     }
 
-    /// Runs on this Mac, so nothing leaves it.
+    /// Runs on this Mac, so nothing leaves it. More services depends on the
+    /// service: see `AppSettings.engineRunsHere` and `EngineCatalog.place`.
     var isLocal: Bool { self == .farhelm || self == .ollama }
+}
+
+extension AppSettings {
+    /// The tool or service whose logo stands for the engine in use, if any.
+    var logoTool: String? {
+        switch provider {
+        case .subscription: return cliAgent
+        case .compatible: return service
+        default: return nil
+        }
+    }
 }
 
 /// An engine's own logo, drawn in one colour so it takes a tint like the
@@ -47,6 +61,10 @@ struct EngineLogo: View {
         guard !name.isEmpty else { return nil }
         if let kind = LLMProviderKind.allCases.first(where: { $0 != .subscription && $0.shortName == name }) {
             return (kind, nil)
+        }
+        // A service of More services, by its own name ("Gemini · …").
+        if let service = CompatibleService.choices.first(where: { $0.name == name }) {
+            return (.compatible, service.id)
         }
         // A tool's name, also as it was written before ("Codex (ChatGPT)").
         if let adapter = CLIAgents.shared.adapters.first(where: { name == $0.name || name.hasPrefix($0.name + " ") }) {
@@ -161,6 +179,7 @@ struct ModelPill: View {
         case .anthropic: return ModelName.pretty(settings.anthropicModel)
         case .openai: return ModelName.pretty(settings.openAIModel)
         case .ollama: return ModelName.pretty(settings.ollamaModel)
+        case .compatible: return ModelName.pretty(settings.model(for: settings.compatibleService))
         case .subscription:
             // The logo says which tool; a tool left to pick its own model
             // shows the one it says it picks, when it says.
@@ -178,9 +197,7 @@ struct ModelPill: View {
             HStack(spacing: 5) {
                 // The engine's mark sits on a small disc, like the mark
                 // inside Auto beside it.
-                EngineLogo(kind: settings.provider,
-                           tool: settings.provider == .subscription ? settings.cliAgent : nil,
-                           size: 10)
+                EngineLogo(kind: settings.provider, tool: settings.logoTool, size: 10)
                     .foregroundStyle(isOpen ? Theme.accent : Theme.ink.opacity(0.75))
                     .frame(width: 16, height: 16)
                     .background(Circle().fill((isOpen ? Theme.accent : Theme.ink).opacity(isOpen ? 0.22 : 0.12)))
@@ -379,7 +396,9 @@ struct ModelHoverCard: View {
     private var subscription: Bool { settings.provider == .subscription }
 
     private var engine: String {
-        subscription ? agents.name(of: settings.cliAgent) : settings.provider.shortName
+        if subscription { return agents.name(of: settings.cliAgent) }
+        if settings.provider == .compatible { return settings.compatibleService.name }
+        return settings.provider.shortName
     }
 
     private var model: String {
@@ -388,6 +407,7 @@ struct ModelHoverCard: View {
         case .anthropic: return ModelName.pretty(settings.anthropicModel)
         case .openai: return ModelName.pretty(settings.openAIModel)
         case .ollama: return ModelName.pretty(settings.ollamaModel)
+        case .compatible: return ModelName.pretty(settings.model(for: settings.compatibleService))
         case .subscription:
             if settings.cliModel.isEmpty {
                 return agents.version(of: "", for: settings.cliAgent) ?? "Auto"
@@ -419,7 +439,7 @@ struct ModelHoverCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
-                EngineLogo(kind: settings.provider, tool: subscription ? settings.cliAgent : nil, size: 13)
+                EngineLogo(kind: settings.provider, tool: settings.logoTool, size: 13)
                     .foregroundStyle(Theme.accent)
                 Text(engine)
                     .font(.system(size: 12, weight: .semibold))
@@ -472,7 +492,7 @@ struct ModelHoverCard: View {
                     }
                 }
             } else {
-                Text(settings.provider.isLocal ? "Runs on this Mac." : "Sent to its API, billed by use.")
+                Text(settings.engineRunsHere ? "Runs on this Mac." : "Sent to its API, billed by use.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Theme.ink.opacity(0.55))
             }
@@ -749,18 +769,19 @@ struct ModelPicker: View {
         let inUse = self.inUse(group)
         let model = current(group)
         let subscription = group.kind == .subscription
+        let local = EngineCatalog.place(group) == "local"
         return HStack(spacing: 8) {
             EngineLogo(kind: group.kind, tool: group.tool, size: 12.5)
                 .foregroundStyle(inUse ? Theme.accent : Theme.ink.opacity(0.65))
                 .frame(width: 18)
-            Text(group.tool.map { agents.name(of: $0) } ?? group.kind.shortName)
+            Text(EngineCatalog.name(group))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(inUse ? Theme.accent : Theme.ink.opacity(0.94))
-            Image(systemName: subscription ? "person.fill" : (group.kind.isLocal ? "lock.fill" : "cloud"))
+            Image(systemName: subscription ? "person.fill" : (local ? "lock.fill" : "cloud"))
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(Theme.ink.opacity(0.4))
                 .help(subscription ? "On your subscription, through its own tool"
-                      : (group.kind.isLocal ? "Runs on this Mac" : "Sent to its API"))
+                      : (local ? "Runs on this Mac" : "Sent to its API"))
             Spacer(minLength: 6)
             // Closed, the row still says which model that engine would use.
             if !open {
@@ -790,7 +811,7 @@ struct ModelPicker: View {
             .fill(Theme.ink.opacity(open ? 0.06 : 0)))
         .contentShape(Rectangle())
         .onTapGesture { choose(group, model) }
-        .help("Use \(group.tool.map { agents.name(of: $0) } ?? group.kind.shortName) with \(model.isEmpty ? "its default model" : title(group, model))")
+        .help("Use \(EngineCatalog.name(group)) with \(model.isEmpty ? "its default model" : title(group, model))")
     }
 
     var body: some View {
@@ -816,7 +837,8 @@ struct ModelPicker: View {
                                 choose(group, model)
                             }
                             .help(model.isEmpty
-                                  ? (group.kind == .subscription ? "The tool picks the model" : "Farhelm picks the model")
+                                  ? (group.kind == .subscription ? "The tool picks the model"
+                                     : group.kind == .compatible ? "Choose its model in Settings" : "Farhelm picks the model")
                                   : model)
                             .padding(.leading, 18)
                             .transition(.opacity)
@@ -916,6 +938,7 @@ struct CurrentEngineModels: View {
         case .farhelm: list = [""] + app.farhelmModels
         case .openai: list = [settings.openAIModel]
         case .ollama: list = [settings.ollamaModel]
+        case .compatible: list = [current]
         }
         if !list.contains(current) { list.insert(current, at: 0) }
         return list
@@ -928,11 +951,18 @@ struct CurrentEngineModels: View {
         case .farhelm: return settings.farhelmModel
         case .openai: return settings.openAIModel
         case .ollama: return settings.ollamaModel
+        case .compatible: return settings.model(for: settings.compatibleService)
         }
     }
 
     private func name(_ model: String) -> String {
-        if model.isEmpty { return settings.provider == .subscription ? "Default (the tool picks)" : "Default" }
+        if model.isEmpty {
+            switch settings.provider {
+            case .subscription: return "Default (the tool picks)"
+            case .compatible: return "No model chosen"
+            default: return "Default"
+            }
+        }
         return settings.provider == .subscription
             ? agents.title(of: model, for: settings.cliAgent)
             : ModelName.pretty(model)
@@ -947,6 +977,7 @@ struct CurrentEngineModels: View {
         case .farhelm: settings.farhelmModel = model
         case .openai: settings.openAIModel = model
         case .ollama: settings.ollamaModel = model
+        case .compatible: settings.serviceModels[settings.compatibleService.id] = model
         }
     }
 

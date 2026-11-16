@@ -30,6 +30,11 @@ struct SetupGuide: View {
         case .anthropic: return has("anthropic", "ANTHROPIC_API_KEY")
         case .openai: return has("openai", "OPENAI_API_KEY")
         case .ollama: return true
+        case .compatible:
+            let settings = AppSettings.shared
+            let service = settings.compatibleService
+            return !settings.model(for: service).isEmpty
+                && (!service.keyRequired || has(service.keyAccount, service.keyVariable ?? ""))
         // The tool holds its own sign-in; choosing it is all there is to do here.
         case .subscription: return true
         }

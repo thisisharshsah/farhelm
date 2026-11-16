@@ -42,7 +42,7 @@ final class AgentSession {
     enum Wire {
         /// Claude's Messages API with tool use.
         case anthropic
-        /// Chat completions with tool calls (OpenAI, Farhelm).
+        /// Chat completions with tool calls (OpenAI, Farhelm, More services).
         case openAI
         /// Steps written as lines of text.
         case text
@@ -76,7 +76,10 @@ final class AgentSession {
         switch config.kind {
         case .anthropic: wire = .anthropic
         case .openai, .farhelm: wire = .openAI
-        default: wire = .text
+        // A service that takes tool calls gets them; one that does not
+        // writes its steps as lines of text.
+        case .compatible: wire = (CompatibleService.behind(config)?.tools ?? false) ? .openAI : .text
+        case .ollama, .subscription: wire = .text
         }
         // Claude thinks first on agent work unless an effort was chosen.
         if config.effort == nil, config.kind == .anthropic { config.effort = "medium" }
@@ -249,8 +252,10 @@ final class AgentSession {
         var assistant: [String: Any] = ["role": "assistant", "content": reply.text.isEmpty ? NSNull() : reply.text]
         if !reply.calls.isEmpty {
             assistant["tool_calls"] = reply.calls.map { call -> [String: Any] in
-                ["id": call.id, "type": "function",
-                 "function": ["name": call.name, "arguments": call.arguments]]
+                var sent: [String: Any] = ["id": call.id, "type": "function",
+                                           "function": ["name": call.name, "arguments": call.arguments]]
+                sent.merge(call.extra) { ours, _ in ours }
+                return sent
             }
         }
         messages.append(assistant)
@@ -374,6 +379,9 @@ struct ToolCall {
     var arguments = "{}"
     /// Why the call cannot run (its input was cut off).
     let problem: String?
+    /// Anything else a service put on an OpenAI-style call (Gemini's
+    /// thought signature), sent back with the call as it came.
+    var extra: [String: Any] = [:]
 }
 
 // MARK: - The tools, for engines that call them natively
@@ -661,7 +669,7 @@ extension AgentTools {
     }
 }
 
-// MARK: - Chat completions with tools (OpenAI, Farhelm)
+// MARK: - Chat completions with tools (OpenAI, Farhelm, More services)
 
 struct OpenAIAgentReply {
     var text = ""
@@ -672,23 +680,15 @@ struct OpenAIAgentReply {
 enum OpenAIAgent {
     static func turn(system: String, pinned: String, messages: [[String: Any]], tools: [[String: Any]],
                      config: LLMConfig, maxOutput: Int) async throws -> OpenAIAgentReply {
-        let endpoint: URL
-        let isOpenAI = config.kind == .openai
-        if isOpenAI {
-            endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
-        } else {
-            let base = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
-            guard let url = URL(string: base + "/v1/chat/completions") else {
-                throw LLMError.notConfigured("Invalid gateway URL in Settings.")
-            }
-            endpoint = url
+        guard let service = CompatibleService.behind(config) else {
+            throw LLMError.notConfigured("This engine does not take tool calls.")
         }
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: try service.url("/chat/completions", configured: config.baseURL))
         request.httpMethod = "POST"
-        // How long the connection may sit with nothing arriving. OpenAI's
-        // API streams, so five minutes of silence means it is stuck; a
-        // local gateway's model can think quietly for much longer.
-        request.timeoutInterval = config.kind == .openai ? 300 : 86_400
+        // How long the connection may sit with nothing arriving. A hosted
+        // API streams, so five minutes of silence means it is stuck; a model
+        // on this Mac can think quietly for much longer.
+        request.timeoutInterval = service.runsLocally(at: config.baseURL) ? 86_400 : 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !config.apiKey.isEmpty { request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization") }
 
@@ -704,14 +704,10 @@ enum OpenAIAgent {
             "tool_choice": "auto"
         ]
         if !config.model.isEmpty { body["model"] = config.model }
-        if isOpenAI {
-            body["max_completion_tokens"] = maxOutput
-            body["stream_options"] = ["include_usage": true]
-            body["parallel_tool_calls"] = true
-            if let effort = config.effort { body["reasoning_effort"] = effort }
-        } else {
-            body["max_tokens"] = maxOutput
-        }
+        body[service.completionTokens ? "max_completion_tokens" : "max_tokens"] = maxOutput
+        if service.reportsUsage { body["stream_options"] = ["include_usage": true] }
+        if service.parallelToolCalls { body["parallel_tool_calls"] = true }
+        if let effort = config.effort, service.reasoningEffort { body["reasoning_effort"] = effort }
         request.httpBody = try LLM.jsonBody(body)
 
         let started = Date()
@@ -719,15 +715,15 @@ enum OpenAIAgent {
         let response: URLResponse
         do {
             (bytes, response) = try await URLSession.shared.bytes(for: request)
-        } catch {
-            if !isOpenAI { throw LLMError.network("Farhelm runner not reachable at \(config.baseURL). Is it running on this Mac?") }
-            throw error
+        } catch let error as URLError where error.code != .cancelled {
+            throw LLMError.network(service.unreachable(at: config.baseURL))
         }
         try await LLM.ensureOK(response, bytes: bytes)
 
         var reply = OpenAIAgentReply()
         // Calls arrive in pieces, by their place in the list.
         var ids: [Int: String] = [:], names: [Int: String] = [:], arguments: [Int: String] = [:]
+        var extras: [Int: [String: Any]] = [:], latest = -1
         var input: Int?, cached = 0, output: Int?
         var received = 0
         for try await line in bytes.lines {
@@ -749,14 +745,29 @@ enum OpenAIAgent {
                 received += text.utf8.count
             }
             for piece in delta["tool_calls"] as? [[String: Any]] ?? [] {
-                let index = piece["index"] as? Int ?? 0
-                if let id = piece["id"] as? String, !id.isEmpty { ids[index] = id }
-                if let function = piece["function"] as? [String: Any] {
-                    if let name = function["name"] as? String { names[index, default: ""] += name }
-                    if let part = function["arguments"] as? String {
-                        arguments[index, default: ""] += part
-                        received += part.utf8.count
-                    }
+                let function = piece["function"] as? [String: Any]
+                let id = (piece["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let name = function?["name"] as? String
+                let index: Int
+                if let place = piece["index"] as? Int {
+                    index = place
+                } else {
+                    // Some services (Gemini) leave the place out. A piece with
+                    // a new id, or a name and no id, starts the next call; any
+                    // other piece goes on with the last one.
+                    let starts = id.map { $0 != ids[latest] } ?? !(name ?? "").isEmpty
+                    index = starts ? latest + 1 : max(latest, 0)
+                }
+                latest = max(latest, index)
+                if let id { ids[index] = id }
+                if let name { names[index, default: ""] += name }
+                if let part = function?["arguments"] as? String {
+                    arguments[index, default: ""] += part
+                    received += part.utf8.count
+                }
+                // Anything else on the call goes back with it as it came.
+                for (key, value) in piece where !["index", "id", "type", "function"].contains(key) {
+                    extras[index, default: [:]][key] = value
                 }
             }
         }
@@ -769,11 +780,12 @@ enum OpenAIAgent {
                                         arguments: parsed == nil ? "{}" : (json.isEmpty ? "{}" : json),
                                         problem: parsed == nil
                                             ? "This call was cut off before its input was complete, so it did not run. Send it again; write a large file in parts."
-                                            : nil))
+                                            : nil,
+                                        extra: extras[index] ?? [:]))
         }
 
         let sent = (try? JSONSerialization.data(withJSONObject: messages).count) ?? 0
-        let record = UsageRecord(engine: config.kind.rawValue, model: config.model, purpose: "Agent",
+        let record = UsageRecord(engine: config.usageEngine, model: config.model, purpose: "Agent",
                                  input: input ?? ContextUse.tokens(sent + instructions.utf8.count), cacheRead: cached, cacheWrite: 0,
                                  output: output ?? ContextUse.tokens(received),
                                  exact: input != nil && output != nil, seconds: Date().timeIntervalSince(started))
