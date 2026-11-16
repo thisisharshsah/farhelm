@@ -31,7 +31,7 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### U1. A first answer takes many steps, and the two guides do not meet
 
-- **Today:** Farhelm's quickstart is an install script and `farhelm setup`, which then walks four things (a model credential, hooks, fleet sign-in, run at login) and says agent tasks cannot run without the first. It does not mention `farhelm engine`, although local models through the engine have been the working default since 2026-10-28. Companion is built from source with `bash build.sh`, which downloads Chromium (about 250 MB); no CI job builds or publishes it. A setup guide view exists in Companion and was not read.
+- **Today:** Farhelm's quickstart is an install script and `farhelm setup`, which then walks four things (a model credential, hooks, fleet sign-in, run at login) and says agent tasks cannot run without the first. It does not mention `farhelm engine`, although local models through the engine have been the working default since 2026-10-28. Companion is built from source with `bash build.sh`, which downloads Chromium (about 250 MB); no CI job builds or publishes it. Companion's own setup guide is a checklist of five things (microphone, AI model, your details, screen recording, your voice). It counts the microphone and a model as the essentials, and the model row only opens Settings to pick an engine and add a key: nothing in that view installs or starts a local model. Its code still lists Ollama as an engine (line 32), although project direction on 2026-11-09 says nothing uses it any more.
 - **Evidence:** `docs/quickstart.md`, `apple/README.md`, `.github/workflows/ci.yml`, `apple/Sources/Companion/UI/SetupGuide.swift`
 - **Reference products:** Cursor: download, sign in, pick a folder, open the agent with Cmd I. Sign-up steps for ChatGPT, Devin, Macro and monday.com: (not verified).
 - **Size:** M
@@ -119,8 +119,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### U12. Apple devices only
 
-- **Today:** Companion is the only interface in the plan and is Swift for Mac, iPhone, iPad and Watch. Whether a web version is kept for everyone else is open decision 1.
-- **Evidence:** `docs/adr/0013-farhelm-companion-orbit.md`, `apple/README.md`
+- **Today:** Companion is the only interface in the plan and is Swift for Mac, iPhone, iPad and Watch. Whether a web version is kept for everyone else is open decision 1. The repository also holds Farhelm's web app and an Expo phone app aimed at iOS and Android (sign-in, machine picker, command approvals and change-set review). The phone app's README says no screen of it has been rendered, so it is not evidence of a working Android client.
+- **Evidence:** `docs/adr/0013-farhelm-companion-orbit.md`, `apple/README.md`, `mobile/README.md` (lines 66 to 70), `mobile/src/App.tsx`
 - **Reference products:** Cursor runs on macOS, Windows and Linux. ChatGPT runs on web, iOS and Android; a Windows app by name: (not verified). Macro lists iOS and Android; web, Mac and Windows: (not verified).
 - **Size:** L
 - **Next task:** The owner decides open decision 1. If kept, the existing web app is that version and stays in CI.
@@ -203,8 +203,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### E2. The Team plan promises an audit log that is not built
 
-- **Today:** The Team plan's limits set `audit_log: true`, and the limits are sent to clients in the workspace payload. The only record of account changes is a printed line per request, and the comment says it is deliberately not an audit table. The runner does keep every approval decision permanently, which is a real base.
-- **Evidence:** `crates/farhelm-cloud/src/plan.rs` (lines 113 to 114 and 155), `crates/farhelm-cloud/src/api.rs` (lines 102 to 134), `crates/farhelm-cloud/src/model.rs`, `crates/farhelm-sqlite/migrations/0001_init.sql`
+- **Today:** The Team plan's limits set `audit_log: true`, the limits are sent to clients in the workspace payload, and the web app's plan card turns that flag into the words "Exportable audit log" for a buyer. A search of `web/src` for "audit" finds only that card: no screen shows or exports one. The only record of account changes is a printed line per request, and the comment says it is deliberately not an audit table. Two real bases exist. The runner keeps every approval decision permanently. Companion appends every agent step (start, end or declined, and who allowed it) to a monthly file on the Mac, opened for appending only, with keys scrubbed and long typed text kept as its length. That file stays on one Mac and is not tied to a person, and the search found no caller that reads it back, so no viewer or export was seen.
+- **Evidence:** `crates/farhelm-cloud/src/plan.rs` (lines 113 to 114 and 155), `web/src/components/Account.tsx` (lines 590 to 592), `crates/farhelm-cloud/src/api.rs` (lines 102 to 134), `crates/farhelm-cloud/src/model.rs`, `crates/farhelm-sqlite/migrations/0001_init.sql`, `apple/Sources/Companion/Support/ActionRecord.swift`, `apple/Sources/Companion/AppState.swift` (lines 2466 to 2531)
 - **Reference products:** monday.com has an audit log and an Audit Log API. ChatGPT Enterprise has an audit log through its Compliance API. Cursor lists audit logs on Enterprise. Devin's audit logs: (not verified).
 - **Size:** M
 - **Next task:** An append-only audit table in the control plane for member, device, key and plan changes, with the actor, and an export route gated on the plan flag. Until then, set the flag to false.
@@ -219,8 +219,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### E4. A teammate can only be added after signing up alone
 
-- **Today:** There are no invitations: the person creates an account, then an admin adds them by address. The top plan allows 25 members, and there is no tier above Team. Companion has no other people at all (rule 4 of ADR 0013: "there is no view for anyone else").
-- **Evidence:** `crates/farhelm-cloud/src/api.rs` (lines 692 to 730), `crates/farhelm-cloud/src/plan.rs`, `docs/adr/0013-farhelm-companion-orbit.md`
+- **Today:** There are no invitations: the person creates an account, then an admin adds them by address and picks Viewer, Member or Admin. The web app says so itself under People ("They need an account first; there is no email being sent from here"). The phone app leaves member management out on purpose. The top plan allows 25 members, and there is no tier above Team. Companion has no other people at all (rule 4 of ADR 0013: "there is no view for anyone else").
+- **Evidence:** `crates/farhelm-cloud/src/api.rs` (lines 692 to 730), `web/src/components/Account.tsx` (lines 464 to 505), `mobile/src/screens/Account.tsx` (lines 4 to 8), `crates/farhelm-cloud/src/plan.rs`, `docs/adr/0013-farhelm-companion-orbit.md`
 - **Reference products:** ChatGPT Business starts at two seats with roles and an admin console. Devin's Teams plan covers up to 100 users. Macro prices per seat for teams.
 - **Size:** M
 - **Next task:** Single-use, expiring invitation links that an admin copies and passes on, which need no mail transport.
