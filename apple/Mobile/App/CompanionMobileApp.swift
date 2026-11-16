@@ -10,6 +10,7 @@ struct CompanionMobileApp: App {
     @State private var session: LiveSession
     @State private var discovery = Discovery()
     @State private var watch: WatchBridge
+    @State private var glasses: Glasses
     @Environment(\.scenePhase) private var phase
 
     init() {
@@ -18,6 +19,7 @@ struct CompanionMobileApp: App {
         _store = State(initialValue: store)
         _session = State(initialValue: session)
         _watch = State(initialValue: WatchBridge(store: store, session: session))
+        _glasses = State(initialValue: Glasses(session: session))
     }
 
     var body: some Scene {
@@ -26,6 +28,7 @@ struct CompanionMobileApp: App {
                 .environment(store)
                 .environment(session)
                 .environment(discovery)
+                .environment(glasses)
                 .onOpenURL(perform: pair)
                 .onAppear {
                     watch.activate()
@@ -41,8 +44,12 @@ struct CompanionMobileApp: App {
                         discovery.start()
                         session.start()
                     case .background:
-                        session.stop()
-                        discovery.stop()
+                        // While the glasses show Companion the Mac is still
+                        // followed: the phone is in a pocket, not put away.
+                        if !glasses.showing {
+                            session.stop()
+                            discovery.stop()
+                        }
                     default:
                         break
                     }
@@ -51,8 +58,10 @@ struct CompanionMobileApp: App {
         }
     }
 
-    /// A `companion://pair` link, from the Camera app or the scanner.
+    /// A `companion://pair` link, from the Camera app or the scanner, or
+    /// the Meta AI app coming back with a link of the same scheme.
     private func pair(_ url: URL) {
+        if glasses.handle(url) { return }
         guard let mac = PairingLink.parse(url.absoluteString) else { return }
         store.add(mac)
         session.restart()

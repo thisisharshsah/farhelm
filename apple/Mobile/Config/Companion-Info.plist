@@ -21,6 +21,30 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_companion._tcp</string>
+		<string>_bonjour._tcp</string>
+	</array>
+	<!-- Meta Wearables Device Access Toolkit: the Meta AI app comes back
+	     with a companion:// link. In Developer Mode the app ID and client
+	     token stay empty; for a release channel, set META_APP_ID and
+	     CLIENT_TOKEN as build settings. -->
+	<key>MWDAT</key>
+	<dict>
+		<key>AppLinkURLScheme</key>
+		<string>companion://</string>
+		<key>MetaAppID</key>
+		<string>$(META_APP_ID)</string>
+		<key>ClientToken</key>
+		<string>$(CLIENT_TOKEN)</string>
+		<key>TeamID</key>
+		<string>$(DEVELOPMENT_TEAM)</string>
+	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Companion uses Bluetooth to connect to your glasses.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
 	</array>
 </dict>
 </plist>

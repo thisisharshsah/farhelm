@@ -161,6 +161,7 @@ struct SidebarView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(palette.accent)
             }
+            GlassesButton()
             Menu {
                 if store.macs.count > 1 {
                     Picker("Mac", selection: Binding(get: { store.selected?.id ?? "" },

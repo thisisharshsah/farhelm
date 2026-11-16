@@ -175,6 +175,11 @@ public final class LiveSession {
         try await required().open(chatID)
     }
 
+    /// One project's chats, newest first.
+    public func projectChats(_ id: String) async throws -> ProjectChats {
+        try await required().projectChats(id)
+    }
+
     public func newChat() async throws {
         try await required().newChat()
     }

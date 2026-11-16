@@ -75,6 +75,15 @@ public struct ProjectList: Codable, Sendable {
     public var projects: [ProjectSummary]
 }
 
+/// One project's chats, newest first (`/project/chats`).
+public struct ProjectChats: Codable, Sendable {
+    public var id: String
+    public var name: String
+    /// The project's folder on the Mac, nil when none is set.
+    public var folder: String?
+    public var chats: [ChatSummary]
+}
+
 /// One thing the agent did.
 public struct WorkStep: Codable, Hashable, Sendable {
     public var kind: String

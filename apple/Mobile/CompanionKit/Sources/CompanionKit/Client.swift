@@ -232,6 +232,10 @@ public struct CompanionClient: Sendable {
         let list: ProjectList = try await get("/projects")
         return list.projects
     }
+    /// One project's chats, newest first.
+    public func projectChats(_ id: String) async throws -> ProjectChats {
+        try await get("/project/chats", [URLQueryItem(name: "id", value: id)])
+    }
     public func state() async throws -> FeedUpdate { try await get("/state") }
     /// Sends a message to the chat open on the Mac (an answer, while the
     /// agent asks).
