@@ -1,8 +1,8 @@
 import type {
   ModesView, RepositoryDiscovery, Project, ProjectPage, ProjectRepository, ProjectRepositoryPage, ProjectTaskPage,
   SearchHit, TaskRecovery, TaskView, TaskDetail, WorkspaceSearch, WorkItemDetail, WorkItemPage, WorkItemView,
-} from "./api.ts";
-import { SEARCH_HIT_KINDS, WORK_ITEM_STATUSES, WORK_MODES } from "./api.ts";
+} from "./contracts.ts";
+import { SEARCH_HIT_KINDS, WORK_ITEM_STATUSES, WORK_MODES } from "./contracts.ts";
 
 const MAX_DESCRIPTION_BYTES = 16_000;
 const MAX_PAGE_SIZE = 100;

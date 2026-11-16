@@ -1,5 +1,5 @@
 /** Project conversation contract, mirrored from farhelm-proto/src/chat.rs. */
-import type { WorkMode } from "./api.ts";
+import type { WorkMode } from "./contracts.ts";
 export interface ProjectChat {
   id: string;
   project_id: string;
