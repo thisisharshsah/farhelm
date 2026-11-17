@@ -196,8 +196,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### S9. The board across projects shows a capped slice of the work
 
-- **Today:** The web board that spans every project asks for at most 50 projects and the first 100 tasks of each. When it stops short it says so on screen ("Some tasks are not loaded") and points to search for the rest, where the runner supports search. A single project's board also asks for 100 tasks; whether it then loads more was not checked.
-- **Evidence:** `web/src/components/WorkBoard.tsx` (lines 142, 533 to 544 and 596)
+- **Today:** The web board that spans every project asks for at most 50 projects and the first 100 tasks of each. When it stops short it says so on screen ("Some tasks are not loaded") and points to search for the rest, where the runner supports search. A single project's board also asks for 100 tasks and never asks for the next page: when there are more, all it does is say "Showing the first 100 tasks in this project". A paged list helper already exists, and the project workspace builds its repository, conversation, task and run lists on it; neither board uses it.
+- **Evidence:** `web/src/components/WorkBoard.tsx` (lines 142 to 155, 533 to 544 and 596), `web/src/components/workspace-list.ts`, `web/src/components/ProjectWorkspace.tsx` (lines 89 to 104)
 - **Reference products:** monday.com's limits on items per board: (not verified).
 - **Size:** S
 - **Next task:** Page the cross-project board (more projects, and more tasks per project) and filter on the runner, so the counts shown are the counts that exist.
