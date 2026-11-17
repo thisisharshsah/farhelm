@@ -44,6 +44,12 @@ struct OverlayView: View {
     /// The status line (and the plan, when open) floating just above the
     /// chat box: the conversation ends above it too.
     @State private var statusHeight: CGFloat = 0
+    /// The room the conversation leaves under itself for the chat box and
+    /// what hangs over it, once they have stopped moving. They open and
+    /// close with a spring and are measured on every frame of it: given
+    /// each of those heights, the chat was rebuilt and scrolled again for
+    /// every frame after a reply ended.
+    @State private var settledBottom: CGFloat = 82
     /// The card over the chat box (a question, a permission or the
     /// suggestions row) and the popup hanging over it (models, effort),
     /// measured, so the arrow back to the newest floats just above them.
@@ -97,7 +103,7 @@ struct OverlayView: View {
                 // Pinned, the sidebar takes its own column on the left in
                 // chat. In code it sits between the workspace and the chat
                 // instead (see below).
-                if app.sidebarPinned, !app.showSettings, !codeLayout {
+                if app.sidebarPinned, !app.showSettings, !splitLayout {
                     SidebarView(toggle: AnyView(sidebarToggle))
                         .panelCard()
                         .padding(.top, topHeight)
@@ -148,8 +154,18 @@ struct OverlayView: View {
                     // Room under the bar for the sidebar's toggle row, so the
                     // first message starts below it.
                     ChatThread(topInset: (10 + (toggleInChat ? 38 : 0)) / zoom,
-                               bottomInset: (bottomHeight + statusHeight) / zoom,
+                               bottomInset: settledBottom / zoom,
                                toolsBottom: (8 + toolsHeight) / zoom)
+                        // The room under the conversation follows the chat
+                        // box and what hangs over it only once they have
+                        // stopped moving: one change for the chat, not one
+                        // per frame of their spring.
+                        .task(id: bottomHeight + statusHeight) {
+                            let room = bottomHeight + statusHeight
+                            try? await Task.sleep(nanoseconds: 150_000_000)
+                            guard !Task.isCancelled else { return }
+                            if abs(room - settledBottom) > 0.5 { settledBottom = room }
+                        }
                         .padding(.horizontal, Theme.gutter / zoom)
                         .contentZoom(settings.contentZoom * settings.chatTextScale)
                         .frame(maxHeight: .infinity)
@@ -218,6 +234,26 @@ struct OverlayView: View {
                 // the chat box.
                 if !app.showSettings {
                     VStack(spacing: 0) {
+                    // What the agent is doing, and the plan's progress.
+                    // It hangs from a line of no height at the top of this
+                    // stack and grows upward from it, over the end of the
+                    // conversation: just above the chat box, or above the
+                    // card when one is open, never over the card's buttons.
+                    // It takes no room: no blank band opens under it.
+                    Color.clear
+                        .frame(height: 0)
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .bottom) {
+                            WorkStatusBar()
+                                .padding(.horizontal, Theme.gutter)
+                                .padding(.bottom, 2)
+                                .background(measure { if abs($0 - statusHeight) > 0.5 { statusHeight = $0 } })
+                        }
+                        // It rides up and down with the card under it.
+                        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.pendingApproval?.id)
+                        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.pendingQuestion?.id)
+                        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.nextSteps?.steps)
+                        .zIndex(9)
                     VStack(spacing: 0) { actionCard }
                         .background(measure { if abs($0 - cardHeight) > 0.5 { cardHeight = $0 } })
                         .animation(.spring(response: 0.36, dampingFraction: 0.8), value: app.agentRunning)
@@ -269,20 +305,6 @@ struct OverlayView: View {
                         // Above the chat box and its controls, so it floats
                         // over them instead of overlapping with them.
                         .zIndex(10)
-                    // What the agent is doing, and the plan's progress,
-                    // just above the chat box.
-                    // It floats over the end of the conversation, taking
-                    // no room: no blank band opens above the chat box.
-                    Color.clear
-                        .frame(height: 0)
-                        .frame(maxWidth: .infinity)
-                        .overlay(alignment: .bottom) {
-                            WorkStatusBar()
-                                .padding(.horizontal, Theme.gutter)
-                                .padding(.bottom, 2)
-                                .background(measure { if abs($0 - statusHeight) > 0.5 { statusHeight = $0 } })
-                        }
-                        .zIndex(9)
                     inputBar
                         .padding(.bottom, 2)
                     }
@@ -299,7 +321,7 @@ struct OverlayView: View {
                 // When the right column is given the whole panel, the chat
                 // steps aside: it keeps its place and its state, takes no
                 // room, and comes back the moment it is asked for.
-                .frame(width: sideIsFull ? 0 : (codeLayout ? codeChatShown : nil))
+                .frame(width: sideIsFull ? 0 : (splitLayout ? codeChatShown : nil))
                 .clipped()
                 .opacity(sideIsFull ? 0 : 1)
                 .allowsHitTesting(!sideIsFull)
@@ -338,7 +360,7 @@ struct OverlayView: View {
                 // workspace and the chat. This row is laid out right to
                 // left there, so coming after the chat puts them on its
                 // left; dragging their divider left widens them.
-                if codeLayout, app.sidebarPinned, !sideIsFull {
+                if splitLayout, app.sidebarPinned, !sideIsFull {
                     ColumnDivider(width: { app.sidebarWidth },
                                   direction: -1,
                                   resize: { app.overlay?.dragColumn(left: true, to: $0) },
@@ -355,9 +377,9 @@ struct OverlayView: View {
                 // The column on the right: details of the session, the
                 // browser, or the workspace.
                 if let side = app.sidePanel {
-                    if codeLayout, !sideIsFull {
+                    if splitLayout, !sideIsFull {
                         // In code the divider sets the chat's width; the
-                        // workspace has the rest.
+                        // workspace has the rest. In Advanced, the board.
                         ColumnDivider(width: { codeChatShown },
                                       direction: -1,
                                       resize: {
@@ -402,14 +424,14 @@ struct OverlayView: View {
                         // the workspace's files, editor and terminal), with
                         // the gaps of the window between them.
                         .padding(.top, topHeight)
-                        .frame(width: sideIsFull || codeLayout ? nil : sideWidth(side))
+                        .frame(width: sideIsFull || splitLayout ? nil : sideWidth(side))
                         // In code the workspace takes what is left, down to
                         // nothing, and never more: it gives way first.
                         // Pinned to the left: if the workspace is ever wider
                         // than its room, the editor's far edge gives way, not
                         // the activity bar.
-                        .frame(minWidth: sideIsFull || codeLayout ? 0 : nil,
-                               maxWidth: sideIsFull || codeLayout ? .infinity : nil,
+                        .frame(minWidth: sideIsFull || splitLayout ? 0 : nil,
+                               maxWidth: sideIsFull || splitLayout ? .infinity : nil,
                                alignment: .topLeading)
                         .clipped()
                         .environment(\.layoutDirection, .leftToRight)
@@ -419,7 +441,7 @@ struct OverlayView: View {
                 // Laid out right to left in code, which is all it takes to
                 // put the chat on the right; each column reads left to
                 // right as ever.
-                .environment(\.layoutDirection, codeLayout ? .rightToLeft : .leftToRight)
+                .environment(\.layoutDirection, splitLayout ? .rightToLeft : .leftToRight)
                 }
                 // The panels sit a gap in from the window's edges, as they
                 // sit a gap apart.
@@ -628,6 +650,12 @@ struct OverlayView: View {
     /// Code with its workspace open: files and editor in the middle, chat
     /// on the right.
     private var codeLayout: Bool { app.codeMode && app.sidePanel == .workspace && !app.showSettings }
+    /// Advanced with its board open: the board in the middle, and on the
+    /// right the chat with the project's supervisor (or a run's chat).
+    private var boardLayout: Bool { app.advancedMode && app.sidePanel == .board && !app.showSettings }
+    /// The chat is a column on the right of what is worked on: the
+    /// workspace in code, the board in Advanced. One arrangement for both.
+    private var splitLayout: Bool { codeLayout || boardLayout }
     /// The chat column's width in code, kept to what the panel can give.
     private var codeChatShown: CGFloat {
         // The chat has a share of the room, not a set width, so it grows
@@ -656,6 +684,7 @@ struct OverlayView: View {
     /// The least the workspace (and the details beside it, when open) may
     /// have, so the chat can never grow and push them off the screen.
     private var codeLeftLeast: CGFloat {
+        if boardLayout { return OverlayController.boardLeast }
         let details = codeDetailsShown ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + Theme.panelGap : 0
         return codeWorkspaceLeast + details
     }
@@ -752,20 +781,27 @@ struct OverlayView: View {
             // short with an ellipsis and never squeezed out altogether.
             .frame(minWidth: 72, alignment: .leading)
             .layoutPriority(1)
-            // The two sides of the app, side by side: chat and code. The
-            // one in use is colored.
+            // The three sides of the app, side by side: chat, code and
+            // Advanced. The one in use is colored.
             ToolbarGroup {
-                IconButton("bubble.left.and.bubble.right",
-                           help: app.codeMode ? "Chat: back to plain conversation" : "Chat",
-                           tint: app.codeMode ? nil : Theme.accent) {
+                IconButton(AppMode.chat.icon,
+                           help: app.mode == .chat ? AppMode.chat.help : "Chat: back to plain conversation",
+                           tint: app.mode == .chat ? Theme.accent : nil) {
                     app.setCode(false)
                 }
                 // Code: files and editor, search, changes with undo, terminal.
                 // It works in a folder, so the first click asks for one.
-                IconButton("chevron.left.forwardslash.chevron.right",
-                           help: "Code: work on a repository. Files and editor, search, changes with undo, terminal.",
+                IconButton(AppMode.code.icon,
+                           help: AppMode.code.help,
                            tint: app.codeMode ? Theme.accent : nil) {
                     app.setCode(true)
+                }
+                // Advanced: a project's board, planned and kept by its
+                // supervisor, with the supervisor's chat beside it.
+                IconButton(AppMode.advanced.icon,
+                           help: AppMode.advanced.help,
+                           tint: app.advancedMode ? Theme.accent : nil) {
+                    app.setAdvanced(true)
                 }
             }
             // Every command and, in code, every file, by name, just after the
@@ -905,7 +941,7 @@ struct OverlayView: View {
             IconButton("sidebar.left",
                        help: app.sidebarPinned
                            ? "Close the sidebar"
-                           : (codeLayout ? "Conversations. Hover to peek, click to keep open." : "Conversations. Click to keep open."),
+                           : (splitLayout ? "Conversations. Hover to peek, click to keep open." : "Conversations. Click to keep open."),
                        tint: app.sidebarPinned ? Theme.accent : nil) {
                 sidebarPeek = false
                 app.refreshHistory()
@@ -976,12 +1012,12 @@ struct OverlayView: View {
     }
 
     /// How far above the bottom stack's foot the arrow floats: over the chat
-    /// box, then the card (when one is open), or the status line, plan or
-    /// popup hanging just above the chat box if that reaches higher.
+    /// box, the card (when one is open) and the status line or plan hanging
+    /// above them, or over a popup hanging just above the chat box if that
+    /// reaches higher.
     private var arrowLift: CGFloat {
         let inputHeight = max(0, bottomHeight - cardHeight)
-        let hanging = max(statusHeight, popupHeight)
-        return max(bottomHeight, inputHeight + hanging) + 6
+        return max(bottomHeight + statusHeight, inputHeight + popupHeight) + 6
     }
 
     /// Everything optional in setup is done too.
@@ -1726,8 +1762,9 @@ struct ChatThread: View {
     /// The message that sticks at the top while its reply scrolls under it,
     /// and how far it is moved down to stay there. It is the message itself,
     /// held in place, until the end of its reply pushes it up and away.
+    /// How far is kept in `scrollState.pin`, outside the view's state: it
+    /// changes on every scroll frame.
     @State private var pinnedTurn: UUID?
-    @State private var pinOffset: CGFloat = 0
 
     /// Where it sticks: below the bar, the filters and the icons that show
     /// at the top right on hover.
@@ -1753,7 +1790,7 @@ struct ChatThread: View {
             }
         }
         if found != pinnedTurn { pinnedTurn = found }
-        if abs(offset - pinOffset) > 0.25 { pinOffset = offset }
+        if abs(offset - scrollState.pin.offset) > 0.25 { scrollState.pin.offset = offset }
     }
 
     /// Room kept above the first entry for the bar and the filters. It stays
@@ -1831,7 +1868,7 @@ struct ChatThread: View {
                                     // Moved first, measured after: the measure is where
                                     // it sits in the conversation, not where it is drawn
                                     // while held, or holding it would undo itself.
-                                    .offset(y: pinnedTurn == turn.id ? pinOffset : 0)
+                                    .modifier(HeldAtTop(pin: scrollState.pin, held: pinnedTurn == turn.id))
                                     .background(GeometryReader { geometry in
                                         Color.clear.preference(key: BubbleFramesKey.self,
                                                                value: [turn.id: geometry.frame(in: .named("thread"))])
@@ -2324,6 +2361,27 @@ final class ThreadScrollState {
     var turnFrames: [UUID: CGRect] = [:]
     var bubbleFrames: [UUID: CGRect] = [:]
     var endY: CGFloat = 0
+    /// How far the held request is moved down, watched by the bubbles
+    /// themselves and not by the chat.
+    let pin = PinTracker()
+}
+
+/// How far the request held at the top is moved down to stay there. It
+/// changes on every scroll frame while one is held, so only the bubbles
+/// watch it: kept in the chat's own state, it rebuilt the whole chat on
+/// every frame.
+final class PinTracker: ObservableObject {
+    @Published var offset: CGFloat = 0
+}
+
+/// Moves a request's bubble down while it is held at the top.
+private struct HeldAtTop: ViewModifier {
+    @ObservedObject var pin: PinTracker
+    let held: Bool
+
+    func body(content: Content) -> some View {
+        content.offset(y: held ? pin.offset : 0)
+    }
 }
 
 /// One exchange: the prompt (heard, typed or captured), the screenshot when
