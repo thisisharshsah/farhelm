@@ -24,8 +24,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 ### What was not checked
 
 - Nothing was built or run. Source files were found by listing and text search, and only some were read. First pass: the documents and ADRs named in the task, `apple/README.md` up to line 124, and parts of `crates/farhelm-cloud/src`, `crates/farhelm-runner/src/front_door.rs` and `mobile/src/App.tsx`.
-- A second pass on 2026-11-16 read these. In `web/src`: `App.tsx` (lines 1 to 281) and, under `components/`, `Account.tsx`, `WorkspaceSearch.tsx`, `Auth.tsx` (to line 294), `WorkBoard.tsx` (to line 479) and `ProjectChat.tsx` (to line 70). In `mobile/`: `README.md`, `src/App.tsx` (to line 301), `src/screens/Task.tsx` (to line 350) and `src/screens/Account.tsx` (to line 357). In `packages/client-core/src`: `api.ts`, `cloud.ts` (all but lines 362 to 574), `transport.ts` (lines 60 to 200 and 405 to 470) and `contracts.ts` (lines 225 to 275). In `apple/Sources/Companion`: `Screen/Redaction.swift` (to line 245), `Support/ActionRecord.swift`, `UI/SetupGuide.swift`, and the lines of `AppState.swift` and `Support/DeviceControl.swift` cited in this document.
-- Still not opened: the other files under `web/src/components`, the rest of `web/src`, `mobile/src/screens/Session.tsx`, `Pairing.tsx` and `Watch.tsx`, `mobile/src/components/pieces.tsx` and `mobile/watch`. A helper asked to sweep those folders ran out of rounds three times and reported nothing, so they were covered by word searches only.
+- A second pass on 2026-11-16 read these files: `web/src/App.tsx` (lines 1 to 281), `web/src/components/Account.tsx`, `web/src/components/WorkspaceSearch.tsx`, `web/src/components/Auth.tsx` (to line 294), `web/src/components/WorkBoard.tsx` (to line 479), `web/src/components/ProjectChat.tsx` (to line 70), `mobile/README.md`, `mobile/src/App.tsx` (to line 301), `mobile/src/screens/Task.tsx` (to line 350), `mobile/src/screens/Account.tsx` (to line 357), `packages/client-core/src/api.ts`, `packages/client-core/src/cloud.ts` (all but lines 362 to 574), `packages/client-core/src/transport.ts` (lines 60 to 200 and 405 to 470), `packages/client-core/src/contracts.ts` (lines 225 to 275), `apple/Sources/Companion/Screen/Redaction.swift` (to line 245), `apple/Sources/Companion/Support/ActionRecord.swift`, `apple/Sources/Companion/UI/SetupGuide.swift`, and the lines of `apple/Sources/Companion/AppState.swift` and `apple/Sources/Companion/Support/DeviceControl.swift` cited in this document.
+- Still not opened: the other files under `web/src/components`, the rest of `web/src`, `mobile/src/screens/Session.tsx`, `mobile/src/screens/Pairing.tsx`, `mobile/src/screens/Watch.tsx`, `mobile/src/components/pieces.tsx`, the rest of `mobile/src` and `mobile/watch`. A helper asked to sweep those folders ran out of rounds three times and reported nothing, so they were covered by word searches only.
 - "There is no X" rests on text searches of `crates/` and `apple/Sources` for the terms named in each gap. For the web and phone apps it rests on the list of operations a screen can ask a server for: the `Transport` interface (`packages/client-core/src/transport.ts`, lines 67 to 185) and the account client (`packages/client-core/src/cloud.ts`, from line 579). A search for `fetch(` finds one use in `web/src` (the service worker) and none in `mobile/src`, so screens reach a server only through those two. A feature under another name, or one that needs no server, would be missed.
 - Orbit's three safety ideas (ADR 0013, step 2) were checked in a second pass by reading the code, not by running it. All three are in Companion and called from the agent's step loop: password fields and card numbers are blacked out before a capture is released, and password managers are never pictured (`apple/Sources/Companion/Screen/Redaction.swift`, called from `apple/Sources/Companion/Screen/ScreenReader.swift`); every step is appended to a permanent record (`apple/Sources/Companion/Support/ActionRecord.swift`); and a type, key or click step is refused when the field or window changed since it was planned (`apple/Sources/Companion/Support/DeviceControl.swift`, lines 219 to 240, called at `apple/Sources/Companion/AppState.swift`, lines 2539 to 2540). ADR 0013 still lists them as missing; it was not changed, because this task may only touch `docs/reviews/`. None of the three was exercised in a running app, and no test for them was looked for.
 
@@ -97,8 +97,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### U9. Approvals work differently in the two products, and Companion's stop at the Mac
 
-- **Today:** Companion's phone page and app can watch and send, but Allow and Deny stay on the Mac. Farhelm lets a phone or the web approve and records which device did. The split is an open decision.
-- **Evidence:** `apple/README.md` (Remote session), `apple/Sources/Companion/Support/RemoteServer.swift`, `docs/adr/0013-farhelm-companion-orbit.md`
+- **Today:** Companion's phone page and app can watch and send, but Allow and Deny stay on the Mac. Farhelm lets a phone or the web approve and records which device did. Farhelm also has an Apple Watch package that lists sessions and clears ordinary approvals, with destructive commands refused from a wrist. Its README says no line of its screens has run on a watch, so it is not evidence of working wrist approvals. The split is an open decision.
+- **Evidence:** `apple/README.md` (Remote session), `apple/Sources/Companion/Support/RemoteServer.swift`, `docs/adr/0013-farhelm-companion-orbit.md`, `mobile/watch/README.md` (lines 19 to 23 and 103 to 114), `mobile/watch/Sources/FarhelmWatchUI/Views.swift`
 - **Reference products:** Cursor has mobile clients for its agents; whether approvals happen there: (not verified).
 - **Size:** M
 - **Next task:** The owner settles rule 1 of ADR 0013; then routine approvals from a paired iPhone over `apple/Shared/CompanionLink`, with destructive ones kept on the Mac.
@@ -121,8 +121,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### U12. Apple devices only
 
-- **Today:** Companion is the only interface in the plan and is Swift for Mac, iPhone, iPad and Watch. Whether a web version is kept for everyone else is open decision 1. The repository also holds Farhelm's web app and an Expo phone app aimed at iOS and Android (sign-in, machine picker, command approvals and change-set review). The phone app's README says no screen of it has been rendered, so it is not evidence of a working Android client.
-- **Evidence:** `docs/adr/0013-farhelm-companion-orbit.md`, `apple/README.md`, `mobile/README.md` (lines 66 to 70), `mobile/src/App.tsx`
+- **Today:** Companion is the only interface in the plan and is Swift for Mac, iPhone, iPad and Watch. Whether a web version is kept for everyone else is open decision 1. The repository also holds Farhelm's web app and an Expo phone app aimed at iOS and Android (sign-in, machine picker, command approvals and change-set review). The phone app's README says no screen of it has been rendered, so it is not evidence of a working Android client. The same holds for Farhelm's watch package under `mobile/watch`: its logic has tests, and its README says no line of its screens has run on a watch.
+- **Evidence:** `docs/adr/0013-farhelm-companion-orbit.md`, `apple/README.md`, `mobile/README.md` (lines 66 to 70), `mobile/src/App.tsx`, `mobile/watch/README.md` (lines 103 to 110)
 - **Reference products:** Cursor runs on macOS, Windows and Linux. ChatGPT runs on web, iOS and Android; a Windows app by name: (not verified). Macro lists iOS and Android; web, Mac and Windows: (not verified).
 - **Size:** L
 - **Next task:** The owner decides open decision 1. If kept, the existing web app is that version and stays in CI.
@@ -193,6 +193,14 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 - **Size:** L
 - **Next task:** An ADR for the async storage boundary, then Postgres for the control plane only.
 
+### S9. The board across projects shows a capped slice of the work
+
+- **Today:** The web board that spans every project asks for at most 50 projects and the first 100 tasks of each. When it stops short it says so on screen ("Some tasks are not loaded") and points to search for the rest, where the runner supports search. A single project's board also asks for 100 tasks; whether it then loads more was not checked.
+- **Evidence:** `web/src/components/WorkBoard.tsx` (lines 142, 533 to 544 and 596)
+- **Reference products:** monday.com's limits on items per board: (not verified).
+- **Size:** S
+- **Next task:** Page the cross-project board (more projects, and more tasks per project) and filter on the runner, so the counts shown are the counts that exist.
+
 ## 3. Enterprise
 
 ### E1. Roles and grants are defined but not enforced where work runs
@@ -245,8 +253,8 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### E7. No admin view of use and spend across people
 
-- **Today:** Farhelm records calls per project in one ledger and Companion keeps its own usage file per Mac, with budgets per project. Nothing shows or limits use per person or team, and local compute is priced at zero. In the web app the cost dashboard is asked for one session at a time, and the account screen counts machines, devices and people against the plan's limits and nothing else; a search of `web/src/components/Overview.tsx` for "member" finds nothing. The phone app leaves the cost dashboard out on purpose.
-- **Evidence:** `apple/Sources/Companion/Support/Usage.swift`, `crates/farhelm-domain/src/price.rs`, `packages/client-core/src/api.ts` (lines 296 to 300), `web/src/components/Account.tsx` (lines 103 to 119), `packages/client-core/src/cloud.ts` (lines 59 to 63), `mobile/README.md` (line 30), `docs/adr/0009-specialists-and-modes.md`
+- **Today:** Farhelm records calls per project in one ledger and Companion keeps its own usage file per Mac, with budgets per project. Nothing shows or limits use per person or team, and local compute is priced at zero. The web app's home screen shows one "Spend today" total for the whole runner, and the phone's fleet screen shows the same total beside the cache hit rate (an earlier version of this review left that total out). The cost dashboard is asked for one session at a time and splits spend by hour and by tier, not by person or project. The account screen counts machines, devices and people against the plan's limits and nothing else; a search of `web/src/components/Overview.tsx` for "member" finds nothing. The phone app leaves the cost dashboard out on purpose.
+- **Evidence:** `apple/Sources/Companion/Support/Usage.swift`, `crates/farhelm-domain/src/price.rs`, `packages/client-core/src/api.ts` (lines 296 to 300), `web/src/components/Overview.tsx` (line 110), `web/src/components/views.tsx` (lines 352 to 433), `mobile/src/App.tsx` (lines 758 to 768), `web/src/components/Account.tsx` (lines 103 to 119), `packages/client-core/src/cloud.ts` (lines 59 to 63), `mobile/README.md` (line 30), `docs/adr/0009-specialists-and-modes.md`
 - **Reference products:** Cursor has usage analytics, with group spend limits on Enterprise. Devin has cost controls by team and by user. ChatGPT Business has usage visibility and spend controls.
 - **Size:** M
 - **Next task:** Per-member and per-project totals from the ledger in the account area, and a compute-time meter for local models.
