@@ -105,11 +105,11 @@ The goal this measures against: make Farhelm and Companion easier to use than th
 
 ### U10. No automations, reminders or templates
 
-- **Today:** Due-date reminders and monday.com-style automations are listed as not done, and the earlier review says durable automations still need a design.
-- **Evidence:** `docs/adr/0014-advanced-mode.md`, `docs/reviews/2026-10-22-platform-review.md`
+- **Today:** Due-date reminders and monday.com-style automations are listed as not done, and the earlier review says durable automations still need a design. One fixed notice does exist on the Farhelm side: when a browser with push turned on is woken, the web app's service worker names the command waiting for approval, or the change set waiting for review, in a notification, and offers Approve and Deny for anything that is not destructive. It is built in, not a rule a person can set. The code that sends the wake-up was not read, and none of it was run. Companion sends no system notification: a search of `apple/` for "UserNotification" finds nothing.
+- **Evidence:** `docs/adr/0014-advanced-mode.md`, `docs/reviews/2026-10-22-platform-review.md`, `web/src/sw.ts` (lines 182 to 207), `web/src/notification.ts` (lines 106 to 188), `web/src/push.ts`
 - **Reference products:** monday.com sells automations and integrations by monthly action quota and offers more than 200 templates. ChatGPT lists scheduled tasks. Cursor lists an automations page (title only, contents not verified).
 - **Size:** L
-- **Next task:** One rule in the board package first ("when a task enters Review, notify"), then due-date reminders, before any rule builder.
+- **Next task:** One rule in the board package first ("when a task enters Review, notify"), shown as a system notification on the Mac, which Companion does not send today; Farhelm's notice for a waiting change set is the pattern to follow. Then due-date reminders, before any rule builder.
 
 ### U11. Companion's chats, boards and usage live on one Mac
 
