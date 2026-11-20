@@ -1,0 +1,16 @@
+{
+  "name": "Lens",
+  "short_name": "Lens",
+  "description": "Your glasses, your apps and one chat for both.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07060c",
+  "theme_color": "#07060c",
+  "icons": [
+    { "src": "/lens-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/lens-icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/lens-icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

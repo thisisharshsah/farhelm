@@ -24,6 +24,11 @@ desktop/src-tauri/gen/schemas/
 
 # Built clients
 web/dist/
+glasses/dist/
+# Local Cloudflare state (D1 data, deploy redirect) and dev secrets.
+glasses/.wrangler/
+.dev.vars
+.dev.vars.*
 # Staging for deploy/live-web.sh's swap.
 web/.dist-next/
 web/.dist-old/

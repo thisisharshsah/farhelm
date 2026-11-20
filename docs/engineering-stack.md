@@ -62,6 +62,7 @@ farhelm/
   mobile/                   Expo client and native adapters
     watch/                  Swift watch implementation
   apple/                    Companion (Swift): Mac, iPhone, iPad and Watch apps
+  glasses/                  Lens: Meta Ray-Ban Display app and console (React, Vite) on a Cloudflare Worker with D1
   deploy/                   deployment configuration/scripts
   docs/                     architecture, research and decisions
 ```

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <!-- Meta AI reads the title and description with Lens's voice tools: keep its guardrails here. -->
+    <meta name="description" content="Lens for Meta Ray-Ban Display: YouTube, notes, a timer, Companion and the wearer's own apps. When the wearer asks Lens for something, use the lens_ tools, answer in one short sentence and never read the display aloud." />
+    <meta name="mrbd-web-app-capable" content="yes" />
+    <!-- YouTube's embedded player refuses to play without the page's origin as referrer. -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="theme-color" content="#000000" />
+    <!-- The glasses use a PNG larger than 52 x 52 as the app's icon (SVG is not supported). -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/lens-icon-192.png" />
+    <link rel="apple-touch-icon" href="/lens-icon-192.png" />
+    <title>Lens</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/lens/main.tsx"></script>
+  </body>
+</html>
