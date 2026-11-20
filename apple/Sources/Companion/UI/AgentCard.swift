@@ -8,23 +8,112 @@ import SwiftUI
 /// Allow, Always allow and Deny underneath. A step that goes through flashes a
 /// checkmark; one that fails shakes the card. Stopping is done from the
 /// chat box, where the send button turns into Stop.
+///
+/// In a project that is run from a board, the project's supervisor says
+/// which answer it recommends: that answer carries "Recommended", and its
+/// reason is given under the answers. The person decides, unless the
+/// board is set to let the supervisor answer in their place: then the
+/// card says that it is answering, and stays only where the answer is
+/// still the person's, with the reason why.
 struct AgentCard: View {
+    /// What the supervisor recommends for the approval or question with
+    /// this id, when it was asked.
+    private func advice(for subject: UUID) -> ReviewAdvice? {
+        guard let advice = app.currentJob?.advice, advice.subject == subject else { return nil }
+        return advice
+    }
+
     /// Allow, Always allow and Deny for what the agent asks to do.
     private func choices(_ proposal: AgentProposal, short: Bool) -> some View {
-        HStack(spacing: short ? 6 : 8) {
+        let given = advice(for: proposal.id)
+        let pick = given?.decision
+        let why = given.map { "Recommended by the supervisor (\($0.by)). \($0.reason)" } ?? ""
+        // "Always allow" is offered only where it can be remembered.
+        let offersAlways = !proposal.remember.isEmpty || proposal.steps.contains(where: { $0.kind.usesKeyboard })
+        return HStack(alignment: .top, spacing: short ? 6 : 8) {
             Button { app.decide(.allow) } label: { Chip("Allow", icon: "checkmark", tint: Theme.accent) }
                 .buttonStyle(.plain)
                 .help("Run this once (or say \"allow\")")
-            if !proposal.remember.isEmpty || proposal.steps.contains(where: { $0.kind.usesKeyboard }) {
+                .recommended(pick == .allow || (pick == .always && !offersAlways), why: why)
+            if offersAlways {
                 Button { app.decide(.always) } label: { Chip(short ? "Always" : "Always allow", icon: "checkmark.circle") }
                     .buttonStyle(.plain)
                     .help(proposal.remember.isEmpty
                           ? "Run this, and stop asking about clicks and typing for the rest of this task"
                           : "Run this, and never ask again about: \(proposal.remember.joined(separator: ", "))")
+                    .recommended(pick == .always, why: why)
             }
             Button { app.decide(.deny) } label: { Chip("Deny", icon: "xmark", tint: Theme.rose) }
                 .buttonStyle(.plain)
                 .help("Do not run this; the task stops (or say \"deny\")")
+                .recommended(pick == .deny, why: why)
+        }
+    }
+
+    /// A quiet line under the answers.
+    private func quiet(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10.5))
+            .foregroundStyle(Theme.ink.opacity(0.6))
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+            .transition(.opacity)
+    }
+
+    /// The supervisor's recommendation in words, under the answers:
+    /// which one, and why. While it is being asked, that it is, and
+    /// whether its answer will be taken. Where it answers in the person's
+    /// place but not here, why this one is theirs.
+    @ViewBuilder
+    private func adviceLine(_ advice: ReviewAdvice?, answer: String?) -> some View {
+        if let advice {
+            switch advice.state {
+            case .asking:
+                HStack(spacing: 5) {
+                    LoadingMark(state: .thinking, size: 11)
+                    Text(advice.answers ? "The supervisor is answering this for you. You can answer first."
+                         : "The supervisor is weighing this. You can answer without waiting.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.ink.opacity(0.48))
+                        .lineLimit(1)
+                }
+                .transition(.opacity)
+            case .given(_, let reason):
+                HStack(alignment: .top, spacing: 5) {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.top, 2.5)
+                    Text("The supervisor recommends \(answer ?? "an answer")" + (reason.isEmpty ? "." : ": " + reason))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.ink.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .help("From \(advice.by), this project's supervisor. It is advice: you decide.")
+                .transition(.opacity)
+            case .left(let reason):
+                quiet("The supervisor left this one to you" + (reason.isEmpty ? "." : ": " + reason))
+            case .nothing:
+                if advice.answers {
+                    quiet("The supervisor gave no answer, so this one waits for you.")
+                }
+            }
+            // On a board where it answers for the person, why not here.
+            if let reserved = advice.reserved {
+                quiet("This one is yours to answer: \(reserved).")
+            }
+        }
+    }
+
+    /// The answer the supervisor recommends for an approval, in the
+    /// words on its button.
+    private func decisionName(_ advice: ReviewAdvice?) -> String? {
+        switch advice?.decision {
+        case .allow?: return "Allow"
+        case .always?: return "Always allow"
+        case .deny?: return "Deny"
+        case nil: return nil
         }
     }
 
@@ -91,10 +180,17 @@ struct AgentCard: View {
                 // Its choices, as bubbles that arrive one after another;
                 // one click answers.
                 if !question.options.isEmpty {
-                    ChoiceBubbles(question.options, numbered: true) { option in
-                        app.answerAgent(option)
+                    // The answer the supervisor recommends says so.
+                    let pick = advice(for: question.id)?.option
+                    ChoiceBubbles(question.options.enumerated().map { place, option in
+                        Bubble(option, icon: place == pick ? "star.fill" : nil,
+                               detail: place == pick ? "Recommended" : nil)
+                    }, numbered: true) { place in
+                        app.answerAgent(question.options[place])
                     }
                     .id(question.id)
+                    adviceLine(advice(for: question.id),
+                               answer: pick.flatMap { question.options.indices.contains($0) ? "\"\(question.options[$0])\"" : nil })
                 }
                 Text(question.options.isEmpty ? "Type your answer below." : "Or type your own answer below.")
                     .font(.system(size: 10.5))
@@ -118,6 +214,7 @@ struct AgentCard: View {
                     choices(proposal, short: true)
                 }
                 .transition(.opacity)
+                adviceLine(advice(for: proposal.id), answer: decisionName(advice(for: proposal.id)))
             }
         }
         .padding(.horizontal, 13)

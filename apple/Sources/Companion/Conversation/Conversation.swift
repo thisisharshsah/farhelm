@@ -48,6 +48,9 @@ struct WorkStep: Codable, Equatable {
     /// A question's choices, and the answer given.
     var options: [String]?
     var answer: String?
+    /// Who gave the answer, when it was not the person: the project's
+    /// supervisor in their place, with its reason.
+    var answeredBy: String?
 
     private static func phrase(_ kind: Kind, _ count: Int) -> String {
         let plural = count == 1 ? "" : "s"
@@ -173,6 +176,14 @@ struct SavedLine: Codable, Equatable {
 struct Conversation: Identifiable, Codable, Equatable {
     static let defaultTitle = "New conversation"
 
+    /// What a chat is to its project's board.
+    enum Kind: String, Codable {
+        /// The chat with the project's supervisor.
+        case supervisor
+        /// A task's chat, which every run of the task shares.
+        case task
+    }
+
     var id = UUID()
     var title = Conversation.defaultTitle
     var createdAt = Date()
@@ -210,6 +221,14 @@ struct Conversation: Identifiable, Codable, Equatable {
     /// works in the project's folder. Optional, so chats saved before
     /// projects existed load as plain chats.
     var projectID: UUID?
+    /// What the chat is to its project's board; nil for one of the
+    /// person's own. Chats saved before this load as the person's own
+    /// until their board says otherwise (`Advanced.prepareChats`).
+    var kind: Kind?
+    /// The task whose chat this is, for a task's chat.
+    var taskID: UUID?
+    /// When the person archived it; nil while it is listed.
+    var archivedAt: Date?
 
     /// How much this conversation holds. `spoken` is the size of the
     /// transcript when the live one is fuller than the saved one.
@@ -259,6 +278,9 @@ extension Conversation {
         draftAttachments = try values.decodeIfPresent([UUID].self, forKey: .draftAttachments)
         draftScreen = try values.decodeIfPresent(Bool.self, forKey: .draftScreen)
         projectID = try values.decodeIfPresent(UUID.self, forKey: .projectID)
+        kind = try values.decodeIfPresent(Kind.self, forKey: .kind)
+        taskID = try values.decodeIfPresent(UUID.self, forKey: .taskID)
+        archivedAt = try values.decodeIfPresent(Date.self, forKey: .archivedAt)
     }
 }
 
@@ -308,6 +330,23 @@ struct ConversationSummary: Identifiable, Equatable {
     var tokens = 0
     /// The project the conversation is in, if any.
     var projectID: UUID? = nil
+    /// What it is to its project's board, and its task (`Conversation.kind`).
+    var kind: Conversation.Kind? = nil
+    var taskID: UUID? = nil
+    var archivedAt: Date? = nil
+
+    /// A saved conversation, as the lists show it.
+    init(_ conversation: Conversation) {
+        id = conversation.id
+        title = conversation.title
+        updatedAt = conversation.lastActivity
+        turnCount = conversation.turns.count
+        tokens = conversation.contextUse().total
+        projectID = conversation.projectID
+        kind = conversation.kind
+        taskID = conversation.taskID
+        archivedAt = conversation.archivedAt
+    }
 }
 
 /// How much a conversation holds, in tokens (estimated from its length),
@@ -369,12 +408,7 @@ final class ConversationStore {
             .compactMap { url -> ConversationSummary? in
                 guard let data = try? Data(contentsOf: url),
                       let conversation = try? decoder.decode(Conversation.self, from: data) else { return nil }
-                return ConversationSummary(id: conversation.id,
-                                           title: conversation.title,
-                                           updatedAt: conversation.lastActivity,
-                                           turnCount: conversation.turns.count,
-                                           tokens: conversation.contextUse().total,
-                                           projectID: conversation.projectID)
+                return ConversationSummary(conversation)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -395,12 +429,7 @@ final class ConversationStore {
                 parts += conversation.turns.flatMap { [$0.prompt, $0.answer] }
                 let haystack = parts.joined(separator: "\n").lowercased()
                 guard words.allSatisfy({ haystack.contains($0) }) else { return nil }
-                return ConversationSummary(id: conversation.id,
-                                           title: conversation.title,
-                                           updatedAt: conversation.lastActivity,
-                                           turnCount: conversation.turns.count,
-                                           tokens: conversation.contextUse().total,
-                                           projectID: conversation.projectID)
+                return ConversationSummary(conversation)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }

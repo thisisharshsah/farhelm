@@ -257,13 +257,22 @@ final class ChangeStore: ObservableObject {
     // MARK: Git
 
     /// Commits the changes made since the last commit to git, in whichever
-    /// repositories the files belong to. Only the files Companion changed
-    /// are added, on the branch that is checked out; nothing is pushed.
+    /// repositories the files belong to (a task's own copy is one of its
+    /// own, on the task's branch). Only the files Companion changed are
+    /// added, on the branch that is checked out; nothing is pushed. With
+    /// `conversation`, only that chat's changes are committed: runs going
+    /// on at once each commit their own work, under their own message.
     /// The commit is the user's: their git name, a message saying what
     /// changed, and no co-author or AI credit (see `CommitHygiene`).
-    func commitPending(message: String) async {
-        let ids = uncommitted
-        uncommitted = []
+    func commitPending(message: String, conversation: UUID? = nil) async {
+        var ids = uncommitted
+        if let conversation {
+            let own = Set(changes.lazy.filter { $0.conversation == conversation }.map(\.id))
+            ids = uncommitted.filter { own.contains($0) }
+            uncommitted.removeAll { own.contains($0) }
+        } else {
+            uncommitted = []
+        }
         guard AppSettings.shared.historyGit, !ids.isEmpty else { return }
         let paths = Array(Set(changes.filter { ids.contains($0.id) }.map(\.path)))
         var byRepository: [String: [String]] = [:]

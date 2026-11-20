@@ -596,6 +596,7 @@ struct OverlayView: View {
     }
 
     private var pillText: String {
+        if app.currentJob?.supervisorAnswering == true { return "The supervisor is answering" }
         if app.pendingQuestion != nil { return "Companion has a question" }
         if app.pendingApproval != nil { return "Companion needs your OK" }
         if app.agentRunning { return app.agentStatus ?? "Working" }
@@ -1798,10 +1799,12 @@ struct ChatThread: View {
     /// conversation shifts while a reply is written.
     private var topRoom: CGFloat { topInset + 30 }
 
-    /// The newest message the user typed, and the conversation it is in.
-    /// When only the message changes, one was just sent.
+    /// The newest request the user made (typed, or by hotkey or button,
+    /// as a screen answer is), and the conversation it is in. When only
+    /// the request changes, one was just made.
     private var sendMark: [String] {
-        ["\(app.conversation.id)", allTurns.last { $0.origin == .typed }?.id.uuidString ?? ""]
+        ["\(app.conversation.id)",
+         allTurns.last { $0.origin == .typed || $0.origin == .manual }?.id.uuidString ?? ""]
     }
 
     /// A mark just above a typed message, so scrolling to it leaves the
@@ -1945,6 +1948,9 @@ struct ChatThread: View {
                 .modifier(ScrolledToEnd(room: 0) { atEnd in
                     if atEnd != followNewest { followNewest = atEnd }
                 })
+                // Following, the end stays in place as the content grows, in
+                // the same layout, with no scroll a moment later.
+                .modifier(KeepsEnd(active: followNewest))
                 // The request whose reply fills the view, held at the top
                 // once its own bubble has scrolled away.
                 .onPreferenceChange(TurnFramesKey.self) { frames in
@@ -1970,14 +1976,33 @@ struct ChatThread: View {
                     scrollState.content = metrics.content
                     scrollState.viewport = metrics.viewport
                     if resized || grew, followNewest {
-                        proxy.scrollTo(Self.endID, anchor: .bottom)
+                        // Once this layout is in: scrolled from in here, the
+                        // view went to where the end was before it grew,
+                        // always a step behind (and a last line of speech was
+                        // never caught up with). One scroll waits at a time.
+                        if !scrollState.scrollQueued {
+                            scrollState.scrollQueued = true
+                            DispatchQueue.main.async {
+                                scrollState.scrollQueued = false
+                                proxy.scrollTo(Self.endID, anchor: .bottom)
+                            }
+                        }
                         return
                     }
                     // Otherwise this only notes whether the end of the
-                    // conversation is in view.
+                    // conversation is in view. Where the scroll view says
+                    // where it is (macOS 15 and later, `ScrolledToEnd`),
+                    // only scrolling away stops the following: content that
+                    // grows in a jump (a picture, a long block, a paragraph
+                    // of the transcript, the agent's status over the chat
+                    // box) must not.
                     let end = metrics.bottom
                     let atBottom = end - metrics.viewport < 40
-                    if atBottom != followNewest { followNewest = atBottom }
+                    if #available(macOS 15.0, *) {
+                        if atBottom, !followNewest { followNewest = true }
+                    } else if atBottom != followNewest {
+                        followNewest = atBottom
+                    }
                 }
                 .onAppear {
                     DispatchQueue.main.async { proxy.scrollTo(Self.endID, anchor: .bottom) }
@@ -2361,6 +2386,8 @@ final class ThreadScrollState {
     var turnFrames: [UUID: CGRect] = [:]
     var bubbleFrames: [UUID: CGRect] = [:]
     var endY: CGFloat = 0
+    /// A scroll to the end waits for the layout in progress to finish.
+    var scrollQueued = false
     /// How far the held request is moved down, watched by the bubbles
     /// themselves and not by the chat.
     let pin = PinTracker()
@@ -4126,18 +4153,47 @@ private struct LinkAction: View {
 /// Tells whether a scroll view shows the end of its content (not counting
 /// `room` of free space after it), from the scroll view's own geometry,
 /// where the system offers it (macOS 15 and later).
+///
+/// Only scrolling takes the view away from the end. When the content grows
+/// (or the view gets shorter) under a view that was at the end, the end
+/// moved, not the person: it is still followed, however big the jump.
 private struct ScrolledToEnd: ViewModifier {
     let room: CGFloat
     let changed: (Bool) -> Void
 
+    /// Where the view is scrolled to, and how much there is to scroll.
+    private struct Spot: Equatable {
+        var offset: CGFloat
+        var content: CGFloat
+        var container: CGFloat
+    }
+
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { geometry in
-                let end = geometry.contentSize.height - room
-                return geometry.contentOffset.y + geometry.containerSize.height >= end - 40
-            } action: { _, atEnd in
+            content.onScrollGeometryChange(for: Spot.self) { geometry in
+                Spot(offset: geometry.contentOffset.y, content: geometry.contentSize.height,
+                     container: geometry.containerSize.height)
+            } action: { old, new in
+                let atEnd = new.offset + new.container >= new.content - room - 40
+                if !atEnd, abs(new.offset - old.offset) < 0.5 { return }
                 changed(atEnd)
             }
+        } else {
+            content
+        }
+    }
+}
+
+/// While the newest is followed, the end of the conversation stays where
+/// it is when the content grows (a reply, a line of speech) or the view
+/// changes size: the system moves the view in the same layout, so nothing
+/// lags behind (macOS 15 and later). Not followed, the view stays put.
+private struct KeepsEnd: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.defaultScrollAnchor(active ? .bottom : nil, for: .sizeChanges)
         } else {
             content
         }

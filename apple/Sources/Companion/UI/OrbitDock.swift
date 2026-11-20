@@ -201,7 +201,8 @@ struct OrbitDockView: View {
     }
 
     private var status: Status {
-        if app.leadJob?.pendingApproval != nil || app.leadJob?.pendingQuestion != nil { return .waiting }
+        // Waiting on the person, not on a supervisor answering for them.
+        if app.leadJob?.waitsOnPerson == true { return .waiting }
         if app.anyAgentRunning { return .working }
         if let finished = dock.finished { return finished.failed ? .failed : .done }
         return .idle
@@ -218,8 +219,10 @@ struct OrbitDockView: View {
     }
 
     private var subtitle: String {
-        if let question = app.leadJob?.pendingQuestion { return question.question }
-        if app.leadJob?.pendingApproval != nil { return "Waiting for you to allow a step" }
+        if let job = app.leadJob, job.waitsOnPerson {
+            if let question = job.pendingQuestion { return question.question }
+            return "Waiting for you to allow a step"
+        }
         if app.anyAgentRunning { return app.leadJob?.status ?? "Working" }
         if let finished = dock.finished {
             let first = finished.answer.components(separatedBy: .newlines)

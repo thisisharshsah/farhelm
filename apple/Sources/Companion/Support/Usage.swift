@@ -6,7 +6,7 @@ struct UsageRecord: Codable, Identifiable {
     var id = UUID()
     var date = Date()
     var conversation: UUID?
-    /// "anthropic", "openai", "farhelm", "ollama", or for More services the
+    /// "anthropic", "openai", "farhelm", "ollama", "apple", or for More services the
     /// service's id ("gemini", "lmstudio").
     var engine: String
     var model: String
@@ -23,9 +23,16 @@ struct UsageRecord: Codable, Identifiable {
     var exact: Bool
     /// How long the request took.
     var seconds: Double
+    /// The board task the request worked on and the project it is in, when
+    /// it was made in Advanced mode or in a project's chat. Optional, so
+    /// lines written before these existed still load.
+    var workItem: UUID?
+    var project: UUID?
 
     var tokens: Int { input + cacheRead + cacheWrite + output }
-    var isLocal: Bool { engine == "ollama" || (CompatibleService.named(engine)?.local ?? false) }
+    var isLocal: Bool {
+        LLMProviderKind(rawValue: engine)?.isLocal ?? (CompatibleService.named(engine)?.local ?? false)
+    }
 }
 
 /// Dollars per million tokens.
@@ -146,6 +153,16 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    /// Files a request under the work it was made for: the scope it ran
+    /// in, or, for a request made outside any, the chat that is open.
+    func add(_ record: UsageRecord, scope: WorkScope?) {
+        var filed = record
+        filed.conversation = scope?.conversation ?? AppState.shared.conversation.id
+        filed.workItem = scope?.workItem
+        filed.project = scope?.project ?? (scope == nil ? AppState.shared.conversation.projectID : nil)
+        add(filed)
+    }
+
     func add(_ record: UsageRecord) {
         records.append(record)
         guard var line = try? encoder.encode(record) else { return }
@@ -175,18 +192,36 @@ final class UsageStore: ObservableObject {
     /// Everything as a spreadsheet, one request per row, with its cost at
     /// today's prices.
     func csv() -> String {
-        var rows = ["date,engine,model,purpose,input,cache_read,cache_write,output,exact,seconds,cost_usd,conversation"]
+        var rows = ["date,engine,model,purpose,input,cache_read,cache_write,output,exact,seconds,cost_usd,conversation,task,project"]
         let stamp = ISO8601DateFormatter()
         for record in records {
             rows.append([
                 stamp.string(from: record.date), record.engine, record.model.isEmpty ? "auto" : record.model,
                 record.purpose, "\(record.input)", "\(record.cacheRead)", "\(record.cacheWrite)", "\(record.output)",
                 record.exact ? "yes" : "estimated", String(format: "%.2f", record.seconds),
-                String(format: "%.6f", PriceBook.shared.cost(of: record)), record.conversation?.uuidString ?? ""
+                String(format: "%.6f", PriceBook.shared.cost(of: record)), record.conversation?.uuidString ?? "",
+                record.workItem?.uuidString ?? "", record.project?.uuidString ?? ""
             ].joined(separator: ","))
         }
         return rows.joined(separator: "\n")
     }
+}
+
+/// Whom a piece of work is for and where it runs: the chat, and in a
+/// project the board task and the project. It is set once around the work
+/// (`WorkScope.$current.withValue`) and follows everything the work does,
+/// however deep and through every task it starts, so each request to an
+/// engine is filed where it belongs even when its chat is not the one on
+/// screen. Work done outside any scope belongs to the open chat.
+struct WorkScope: Sendable {
+    var conversation: UUID?
+    /// The board task a run is working on (Advanced mode).
+    var workItem: UUID?
+    var project: UUID?
+    /// The folder the work is done in, for a tool that is started in one.
+    var directory: String?
+
+    @TaskLocal static var current: WorkScope?
 }
 
 /// Filled in by an engine's client while a request streams, when the engine

@@ -233,7 +233,9 @@ Each step leaves everything working.
 4. **One provider layer in Companion**, with keys in the Keychain.
    Begun 2026-11-15 on the `provider-layer` branch: one adapter for every
    OpenAI-compatible service, with the services as data
-   (`LLM/CompatibleServices.swift`). Apple's on-device model follows.
+   (`LLM/CompatibleServices.swift`). Apple's on-device model followed on
+   the `apple-model` branch (`LLM/AppleModel.swift`). Apple's larger model on
+   Private Cloud Compute (macOS 27) needs an entitlement from Apple first.
 5. **The contract:** Farhelm's OpenAPI document and capabilities call,
    Companion's generated client, shared fixtures in CI.
 6. **Companion's data in SQLite with iCloud sync**, moving today's JSON files

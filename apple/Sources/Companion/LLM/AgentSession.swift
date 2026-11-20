@@ -79,14 +79,16 @@ final class AgentSession {
         // A service that takes tool calls gets them; one that does not
         // writes its steps as lines of text.
         case .compatible: wire = (CompatibleService.behind(config)?.tools ?? false) ? .openAI : .text
-        case .ollama, .subscription: wire = .text
+        case .ollama, .apple, .subscription: wire = .text
         }
         // Claude thinks first on agent work unless an effort was chosen.
         if config.effort == nil, config.kind == .anthropic { config.effort = "medium" }
         self.config = config
         self.task = task
         self.pinned = pinned
-        let budget = ContextBudget.current
+        // Sized to the engine this task works with, which for a run from
+        // a board need not be the one in use.
+        let budget = ContextBudget.of(config)
         inputLimit = budget.agentInputTokens
         outputLimit = budget.agentOutputTokens
     }
@@ -651,11 +653,8 @@ enum AnthropicAgent {
         let record = UsageRecord(engine: config.kind.rawValue, model: config.model, purpose: "Agent",
                                  input: input, cacheRead: cacheRead, cacheWrite: cacheWrite, output: output,
                                  exact: true, seconds: Date().timeIntervalSince(started))
-        await MainActor.run {
-            var filed = record
-            filed.conversation = AppState.shared.conversation.id
-            UsageStore.shared.add(filed)
-        }
+        let scope = WorkScope.current
+        await MainActor.run { UsageStore.shared.add(record, scope: scope) }
         return reply
     }
 }
@@ -789,11 +788,8 @@ enum OpenAIAgent {
                                  input: input ?? ContextUse.tokens(sent + instructions.utf8.count), cacheRead: cached, cacheWrite: 0,
                                  output: output ?? ContextUse.tokens(received),
                                  exact: input != nil && output != nil, seconds: Date().timeIntervalSince(started))
-        await MainActor.run {
-            var filed = record
-            filed.conversation = AppState.shared.conversation.id
-            UsageStore.shared.add(filed)
-        }
+        let scope = WorkScope.current
+        await MainActor.run { UsageStore.shared.add(record, scope: scope) }
         return reply
     }
 }

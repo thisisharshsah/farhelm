@@ -638,7 +638,7 @@ final class OverlayController {
         if app.compact, !app.pillExpanded { return }
         if left, !app.sidebarPinned { return }
         guard left || app.sidePanel != nil else { return }
-        let wide = app.sidePanel == .browser || app.sidePanel == .workspace
+        let wide = app.sidePanel == .browser || app.sidePanel == .workspace || app.sidePanel == .board
         let least: CGFloat = left ? Self.sidebarLeast : (wide ? 320 : 220)
         let other = left ? appliedRight : appliedLeft
         // The chat column is always left with at least its narrowest, and
@@ -747,6 +747,12 @@ final class OverlayController {
             }
             return max(panelMinSize.width, left + Self.chatLeast + right + gapsWidth)
         }
+        if app.advancedMode, app.sidePanel == .board, !app.showSettings {
+            // In Advanced the board has the middle, as the workspace has
+            // in code, and needs room for two of its columns at least.
+            let left = app.sidebarPinned ? max(Self.sidebarLeast, app.sidebarWidth) : 0
+            return max(panelMinSize.width, left + Self.chatLeast + Self.boardLeast + gapsWidth)
+        }
         let left = app.sidebarPinned ? Self.sidebarLeast : 0
         let right = app.sidePanel.map(Self.sideLeast) ?? 0
         return max(panelMinSize.width, left + Self.chatLeast + right + gapsWidth)
@@ -755,6 +761,10 @@ final class OverlayController {
     /// The least the workspace takes in code: the activity bar, the files
     /// and room for the code beside them.
     static var codeWorkspaceLeast: CGFloat { 40 + 150 + Theme.panelGap + 320 }
+
+    /// The least the board takes in Advanced: its header on one line and
+    /// two columns of tasks side by side.
+    static let boardLeast: CGFloat = 520
 
     /// The room the gaps between the panels take: one at each side of the
     /// window and one between every two columns.

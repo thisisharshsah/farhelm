@@ -487,9 +487,19 @@ final class SuggestionEngine {
             .filter { !$0.isEmpty }
     }
 
-    /// A new agent task's conversation with the model in use.
-    func agentSession(task: String) throws -> AgentSession {
-        AgentSession(task: task, config: try makeConfig(withEffort: true), pinned: KnowledgeIndex.shared.pinned())
+    /// A new agent task's conversation with the model in use, or with
+    /// the engine and model given (a run from a board works with the
+    /// model its task was given).
+    func agentSession(task: String, engine: EngineChoice? = nil) throws -> AgentSession {
+        let config = try makeConfig(withEffort: true, engine: engine)
+        // A task needs room for its instructions, the task itself and what
+        // each step shows; Apple's on-device model holds far less.
+        let holds = ContextBudget.of(config).window
+        if config.kind == .apple, holds < AppleModel.agentContext {
+            throw LLMError.notConfigured("Apple's on-device model holds about \(holds) tokens, too few for a task. "
+                                         + "Switch to another engine with the model button to run it.")
+        }
+        return AgentSession(task: task, config: config, pinned: KnowledgeIndex.shared.pinned())
     }
 
     /// What has been done, numbered, made to fit in `room` characters.
@@ -510,9 +520,10 @@ final class SuggestionEngine {
     /// One round of a helper: a question, what it has read so far, and
     /// its next few steps or its report. It is given nothing of the task
     /// it is helping with, and nothing about the user.
-    func helperStep(question: String, directory: String, done: [String]) async throws -> String {
-        let config = try makeConfig()
-        let budget = ContextBudget.current
+    func helperStep(question: String, directory: String, done: [String],
+                    engine: EngineChoice? = nil) async throws -> String {
+        let config = try makeConfig(engine: engine)
+        let budget = ContextBudget.of(config)
         let history = Self.history(of: done, room: budget.transcriptCharacters(.ask))
         let user = """
         ## Question
@@ -641,7 +652,13 @@ final class SuggestionEngine {
     /// longer is worth it: typed questions, screen answers and the agent.
     /// Live replies and background work (polish, notes, recheck) always use
     /// the engine's own default, so they stay fast.
-    private func makeConfig(withEffort: Bool = false) throws -> LLMConfig {
+    private func makeConfig(withEffort: Bool = false, engine: EngineChoice? = nil) throws -> LLMConfig {
+        // Another engine than the one in use, with the effort chosen for it.
+        if let engine {
+            var config = try engine.config()
+            if withEffort { config.effort = engine.effort }
+            return config
+        }
         var config = try baseConfig()
         if withEffort {
             let effort = AppSettings.shared.chosenEffort
@@ -650,52 +667,9 @@ final class SuggestionEngine {
         return config
     }
 
+    /// The engine in use, ready to be asked (see `EngineChoice.config`).
     private func baseConfig() throws -> LLMConfig {
-        let settings = AppSettings.shared
-        let env = ProcessInfo.processInfo.environment
-        switch settings.provider {
-        case .farhelm:
-            let key = Keychain.read("farhelm") ?? env["FARHELM_API_KEY"] ?? ""
-            guard !key.isEmpty else {
-                throw LLMError.notConfigured("Add your Farhelm client key in Settings. One-time setup on this Mac: farhelm clients add companion")
-            }
-            return LLMConfig(kind: .farhelm, apiKey: key, model: settings.farhelmModel, baseURL: settings.farhelmURL)
-        case .anthropic:
-            let key = Keychain.read("anthropic") ?? env["ANTHROPIC_API_KEY"] ?? ""
-            guard !key.isEmpty else {
-                throw LLMError.notConfigured("Add an Anthropic API key in Settings (the gear > Engine), or switch to another provider.")
-            }
-            return LLMConfig(kind: .anthropic, apiKey: key, model: settings.anthropicModel, baseURL: "")
-        case .openai:
-            let key = Keychain.read("openai") ?? env["OPENAI_API_KEY"] ?? ""
-            guard !key.isEmpty else {
-                throw LLMError.notConfigured("Add an OpenAI API key in Settings, or switch to another provider.")
-            }
-            return LLMConfig(kind: .openai, apiKey: key, model: settings.openAIModel, baseURL: "")
-        case .ollama:
-            return LLMConfig(kind: .ollama, apiKey: "", model: settings.ollamaModel, baseURL: settings.ollamaURL)
-        case .compatible:
-            let service = settings.compatibleService
-            let key = Keychain.read(service.keyAccount) ?? service.keyVariable.flatMap { env[$0] } ?? ""
-            if service.keyRequired, key.isEmpty {
-                throw LLMError.notConfigured("Add your \(service.name) API key in Settings (the gear > Engine), or switch to another engine.")
-            }
-            let model = settings.model(for: service)
-            guard !model.isEmpty else {
-                throw LLMError.notConfigured("Choose a \(service.name) model in Settings (the gear > Engine).")
-            }
-            let address = settings.address(for: service)
-            guard !service.address(address).isEmpty else {
-                throw LLMError.notConfigured("Set \(service.name)'s address in Settings (the gear > Engine).")
-            }
-            var config = LLMConfig(kind: .compatible, apiKey: key, model: model, baseURL: address)
-            config.service = service.id
-            return config
-        case .subscription:
-            // The tool holds the sign-in. `model` names the tool here and
-            // `baseURL` carries the model it is asked for, if any.
-            return LLMConfig(kind: .subscription, apiKey: "", model: settings.cliAgent, baseURL: settings.cliModel)
-        }
+        try EngineChoice.inUse.config()
     }
 }
 

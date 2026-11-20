@@ -9,12 +9,15 @@ enum SidePanelMode: Equatable {
     case browser
     /// Files and an editor, search, the history of changes, a terminal.
     case workspace
+    /// Advanced mode's board: a project's tasks, their runs and their cost.
+    case board
 
     var width: CGFloat {
         switch self {
         case .details: return 300
         case .browser: return 460
         case .workspace: return 520
+        case .board: return 620
         }
     }
 }
@@ -27,11 +30,13 @@ struct SidePanel: View {
 
     var body: some View {
         // Details and the browser are one panel each; the workspace is
-        // several (files, editor, terminal) and draws its own.
+        // several (files, editor, terminal) and draws its own, and so
+        // does the board (its header, its views, a task's details).
         switch mode {
         case .details: filled(SessionDetails()).panelCard()
         case .browser: filled(BrowserPane()).panelCard()
         case .workspace: filled(WorkspacePane())
+        case .board: filled(BoardPane())
         }
     }
 

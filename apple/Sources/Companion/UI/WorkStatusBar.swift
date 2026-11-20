@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// What the agent is doing, on one line just above the chat box: the
-/// working mark and its status at the left, and on the right the plan's
-/// progress ring ("2 of 6"). A click on it opens the checklist right
-/// above, over the chat box's edge; another click closes it.
+/// What the agent is doing, on one line just above the chat box (above
+/// the agent's card, when that is open): the working mark and its status
+/// at the left, and on the right the plan's progress ring ("2 of 6"). A
+/// click on it opens the checklist right above; another click closes it.
 /// The conversation itself keeps only what was said and done.
 struct WorkStatusBar: View {
     @EnvironmentObject var app: AppState
@@ -13,7 +13,12 @@ struct WorkStatusBar: View {
         app.conversation.turns.last { app.streamingTurns.contains($0.id) }
     }
 
-    private var working: Bool { app.agentHere || turn != nil }
+    /// The agent has stopped for a yes or an answer. Its card, right under
+    /// this line, says so and has the buttons, so the status is left out
+    /// rather than said twice.
+    private var asking: Bool { app.pendingApproval != nil || app.pendingQuestion != nil }
+
+    private var working: Bool { !asking && (app.agentHere || turn != nil) }
 
     /// The plan of the newest reply: live while it runs, and kept (all
     /// ticked) until the next message, so it can still be looked over.

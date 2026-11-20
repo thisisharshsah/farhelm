@@ -69,7 +69,7 @@ struct SettingsView: View {
         /// its name: the settings that live in it.
         var keywords: String {
             switch self {
-            case .engine: return "model claude openai farhelm ollama gemini openrouter lm studio openai-compatible api key effort context window provider"
+            case .engine: return "model claude openai farhelm ollama apple intelligence on-device gemini openrouter lm studio openai-compatible api key effort context window provider"
             case .you: return "details about me memory remember context folder profile"
             case .listening: return "microphone mic system audio voice speaker english sensitivity enroll reference"
             case .replies: return "auto reply suggest questions polish transcript notes"
@@ -479,6 +479,33 @@ struct Segmented<Value: Hashable>: View {
     }
 }
 
+// MARK: - Apple's model
+
+/// Apple's on-device model: whether this Mac can use it, and what it holds.
+private struct AppleModelSettings: View {
+    @State private var reason = AppleModel.unavailableReason
+    @State private var summary = ""
+
+    var body: some View {
+        SettingsCard("Apple Intelligence", icon: "apple.logo",
+                     status: reason == nil ? "Ready" : "Not available",
+                     statusTint: reason == nil ? Theme.mint : Theme.amber) {
+            SettingRow("On this Mac", detail: reason ?? "Free and private, and it works offline. Nothing to install and no key.") {
+                PillButton("Check again", icon: "arrow.clockwise") { refresh() }
+            }
+            if reason == nil {
+                Note(summary + " Agent tasks need more than it holds, so they ask for another engine.")
+            }
+        }
+        .onAppear { refresh() }
+    }
+
+    private func refresh() {
+        reason = AppleModel.unavailableReason
+        summary = ContextBudget.current.summary
+    }
+}
+
 // MARK: - More services
 
 /// More services: any service that speaks OpenAI's chat completions, one
@@ -796,6 +823,7 @@ private struct EngineSettings: View {
         case .anthropic: return ("Claude", "Anthropic API", "sparkle")
         case .openai: return ("OpenAI", "OpenAI API", "circle.hexagongrid")
         case .ollama: return ("Ollama", "On this Mac", "desktopcomputer")
+        case .apple: return ("Apple", "On this Mac", "apple.logo")
         case .compatible: return ("More services", "Gemini, OpenRouter, LM Studio", "square.grid.2x2")
         case .subscription: return ("Subscriptions", "Claude, ChatGPT, Gemini", "person.badge.key")
         }
@@ -928,6 +956,8 @@ private struct EngineSettings: View {
                 contextRow
                 Note("Install from ollama.com, then run: ollama pull \(settings.ollamaModel)")
             }
+        case .apple:
+            AppleModelSettings()
         case .compatible:
             MoreServicesSettings(settings: settings)
         case .subscription:

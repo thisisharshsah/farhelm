@@ -25,7 +25,11 @@ let package = Package(
         .package(path: "Shared/CompanionDesign"),
         // How the apps reach this Mac away from its network, through a
         // relay that cannot read what it carries. Shared with the apps.
-        .package(path: "Shared/CompanionLink")
+        .package(path: "Shared/CompanionLink"),
+        // Advanced mode's board as plain data and rules (tasks, runs,
+        // what a supervisor may change, what the work cost), with its
+        // own tests. Shared, so the apps can show the same board.
+        .package(path: "Shared/CompanionBoard")
     ],
     targets: [
         .executableTarget(
@@ -35,9 +39,13 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "CompanionDesign", package: "CompanionDesign"),
                 .product(name: "CompanionLink", package: "CompanionLink"),
+                .product(name: "CompanionBoard", package: "CompanionBoard"),
                 "CEFKit"
             ],
-            path: "Sources/Companion"
+            path: "Sources/Companion",
+            // Apple's on-device model (FoundationModels) is on macOS 26 and
+            // later. Linked weakly, so the app still opens on older versions.
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-weak_framework", "-Xlinker", "FoundationModels"])]
         ),
         .target(
             name: "CEFKit",

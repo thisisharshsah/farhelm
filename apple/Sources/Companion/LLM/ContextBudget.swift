@@ -51,6 +51,9 @@ struct ContextBudget {
             return ContextBudget(window: hostedWindow(settings.openAIModel, fallback: 128_000), hosted: true)
         case .farhelm, .ollama:
             return ContextBudget(window: max(settings.localContextTokens, 4_000), hosted: false)
+        case .apple:
+            // As much as the system says the model holds.
+            return ContextBudget(window: AppleModel.contextTokens, hosted: false)
         case .compatible:
             // A model on this Mac is sized like the other local engines; a
             // hosted one by its name.
@@ -59,6 +62,30 @@ struct ContextBudget {
             }
             return ContextBudget(window: hostedWindow(settings.model(for: settings.compatibleService), fallback: 128_000),
                                  hosted: true)
+        case .subscription:
+            return ContextBudget(window: 200_000, hosted: true)
+        }
+    }
+
+    /// The budget for a given engine and model, whether or not it is the
+    /// one in use: a run from a board works with the model its task was
+    /// given. For the engine in use this is `current`.
+    @MainActor
+    static func of(_ config: LLMConfig) -> ContextBudget {
+        let local = ContextBudget(window: max(AppSettings.shared.localContextTokens, 4_000), hosted: false)
+        switch config.kind {
+        case .anthropic:
+            return ContextBudget(window: hostedWindow(config.model, fallback: 200_000), hosted: true)
+        case .openai:
+            return ContextBudget(window: hostedWindow(config.model, fallback: 128_000), hosted: true)
+        case .farhelm, .ollama:
+            return local
+        case .apple:
+            return ContextBudget(window: AppleModel.contextTokens, hosted: false)
+        case .compatible:
+            let service = CompatibleService.behind(config) ?? .other
+            if service.runsLocally(at: config.baseURL) { return local }
+            return ContextBudget(window: hostedWindow(config.model, fallback: 128_000), hosted: true)
         case .subscription:
             return ContextBudget(window: 200_000, hosted: true)
         }

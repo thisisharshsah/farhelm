@@ -1,4 +1,5 @@
 import AppKit
+import CompanionBoard
 import Foundation
 
 /// Keys that run a command while Companion's panel is the window in use.
@@ -322,9 +323,24 @@ extension CommandRegistry {
                 app.sidebarPinned.toggle()
                 app.overlay?.setSidebar(app.sidebarPinned)
             },
-            Command(id: "view.chat", title: "Switch to Chat", category: "View", icon: "bubble.left.and.bubble.right",
-                    available: { AppState.shared.codeMode }) {
+            Command(id: "view.chat", title: "Switch to Chat", category: "View", icon: AppMode.chat.icon,
+                    available: { AppState.shared.mode != .chat }) {
                 app.setCode(false)
+            },
+            Command(id: "view.advanced", title: "Switch to Advanced", category: "View", icon: AppMode.advanced.icon,
+                    available: { !AppState.shared.advancedMode }) {
+                app.setAdvanced(true)
+            },
+            Command(id: "board.newTask", title: "New Task on the Board", category: "Board", icon: "plus.rectangle.on.rectangle",
+                    available: { AppState.shared.advancedMode && Advanced.shared.lastProject != nil }) {
+                guard let project = Advanced.shared.lastProject else { return }
+                Advanced.shared.selectedItem = Advanced.shared.addTask("New task", status: .todo, in: project.id)
+            },
+            Command(id: "board.report", title: "Ask the Supervisor for a Status Report", category: "Board",
+                    icon: "chart.bar.doc.horizontal",
+                    available: { AppState.shared.advancedMode && Advanced.shared.lastProject != nil }) {
+                guard let project = Advanced.shared.lastProject else { return }
+                app.tellSupervisor(BoardPrompts.report, project: project)
             },
             Command(id: "view.code", title: "Switch to Code", category: "View",
                     icon: "chevron.left.forwardslash.chevron.right",

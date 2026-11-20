@@ -34,8 +34,53 @@ chromium() {
   fi
 }
 
+# The Metal compiler, for SwiftTerm's shader, is not inside Xcode. It is a
+# component Xcode downloads, and macOS mounts it under /var/run at a path
+# that is new each time it is mounted. After a restart, or when the
+# component is updated, it can be left unmounted, or mounted at a new path
+# while the plan the last build saved still names the old one: a saved plan
+# is used again as long as the project and Xcode are the same, wherever the
+# component is. Either way Shaders.metal fails with "unable to spawn
+# process .../metal (No such file or directory)". So before building, have
+# Xcode mount the component when Xcode says it is missing, and drop a saved
+# plan that names a mount which is gone. What was compiled stays, so the
+# build that follows is still an incremental one.
+metal_toolchain() {
+  local said
+  if ! said=$(xcrun --sdk macosx metal --version 2>&1) \
+      && [[ "$said" == *downloadComponent* || "$said" == *"Metal Toolchain"* ]]; then
+    echo "The Metal Toolchain is not mounted. Asking Xcode for it: xcodebuild -downloadComponent MetalToolchain"
+    echo "If nothing moves for a few minutes, press Ctrl-C, install it from Xcode > Settings > Components"
+    echo "(or restart the Mac) and build again."
+    xcodebuild -downloadComponent MetalToolchain || true
+    if ! xcrun --sdk macosx metal --version >/dev/null 2>&1; then
+      echo "WARNING: the Metal compiler still does not run, so SwiftTerm's shader will not build."
+    fi
+  fi
+  local plan mount gone dropped=""
+  for plan in .build/out/Intermediates.noindex/XCBuildData/*.xcbuilddata; do
+    [[ -f "$plan/manifest.json" ]] || continue
+    gone=""
+    # The manifest is one long line: cut it at the quotes, so that every
+    # path is on a line of its own.
+    for mount in $(LC_ALL=C tr '"' '\n' < "$plan/manifest.json" \
+        | LC_ALL=C grep -oE '/[A-Za-z0-9._/-]*com\.apple\.MobileAsset\.MetalToolchain-[A-Za-z0-9._-]+' \
+        | sort -u || true); do
+      [[ -d "$mount" ]] || gone="$mount"
+    done
+    if [[ -n "$gone" ]]; then
+      rm -rf "$plan"
+      dropped="$gone"
+    fi
+  done
+  if [[ -n "$dropped" ]]; then
+    echo "The saved build plan named a Metal Toolchain mount that is gone ($(basename "$dropped")); working the plan out again."
+  fi
+}
+
 build() {
   chromium
+  metal_toolchain
   # Run through xcrun with the macOS SDK: SwiftTerm has a Metal shader, and
   # the metal compiler only finds the downloaded Metal Toolchain when it is
   # started with an SDK set. A plain `swift build` fails on Shaders.metal.

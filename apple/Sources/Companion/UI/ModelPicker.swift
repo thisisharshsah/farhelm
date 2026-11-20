@@ -9,6 +9,7 @@ extension LLMProviderKind {
         case .anthropic: return "Claude"
         case .openai: return "OpenAI"
         case .ollama: return "Ollama"
+        case .apple: return "Apple"
         case .compatible: return "More services"
         case .subscription: return "Subscriptions"
         }
@@ -20,6 +21,7 @@ extension LLMProviderKind {
         case .anthropic: return "sparkle"
         case .openai: return "circle.hexagongrid"
         case .ollama: return "desktopcomputer"
+        case .apple: return "apple.logo"
         case .compatible: return "square.grid.2x2"
         case .subscription: return "person.badge.key"
         }
@@ -27,7 +29,7 @@ extension LLMProviderKind {
 
     /// Runs on this Mac, so nothing leaves it. More services depends on the
     /// service: see `AppSettings.engineRunsHere` and `EngineCatalog.place`.
-    var isLocal: Bool { self == .farhelm || self == .ollama }
+    var isLocal: Bool { self == .farhelm || self == .ollama || self == .apple }
 }
 
 extension AppSettings {
@@ -179,6 +181,7 @@ struct ModelPill: View {
         case .anthropic: return ModelName.pretty(settings.anthropicModel)
         case .openai: return ModelName.pretty(settings.openAIModel)
         case .ollama: return ModelName.pretty(settings.ollamaModel)
+        case .apple: return AppleModel.modelName
         case .compatible: return ModelName.pretty(settings.model(for: settings.compatibleService))
         case .subscription:
             // The logo says which tool; a tool left to pick its own model
@@ -407,6 +410,7 @@ struct ModelHoverCard: View {
         case .anthropic: return ModelName.pretty(settings.anthropicModel)
         case .openai: return ModelName.pretty(settings.openAIModel)
         case .ollama: return ModelName.pretty(settings.ollamaModel)
+        case .apple: return AppleModel.modelName
         case .compatible: return ModelName.pretty(settings.model(for: settings.compatibleService))
         case .subscription:
             if settings.cliModel.isEmpty {
@@ -742,6 +746,16 @@ struct ModelPicker: View {
 
     private func note(_ group: EngineGroup, _ model: String) -> String? { EngineCatalog.note(group, model) }
 
+    /// What an engine's empty model means, for its tooltip.
+    private func defaultHelp(_ group: EngineGroup) -> String {
+        switch group.kind {
+        case .subscription: return "The tool picks the model"
+        case .compatible: return "Choose its model in Settings"
+        case .apple: return "Apple's on-device model"
+        default: return "Farhelm picks the model"
+        }
+    }
+
     /// As tall as what is open, up to a limit; beyond that it scrolls.
     private var listHeight: CGFloat {
         let rows = groups.filter { expanded.contains($0.id) }.reduce(0) { $0 + $1.models.count }
@@ -836,10 +850,7 @@ struct ModelPicker: View {
                                      selected: inUse(group) && current(group) == model) {
                                 choose(group, model)
                             }
-                            .help(model.isEmpty
-                                  ? (group.kind == .subscription ? "The tool picks the model"
-                                     : group.kind == .compatible ? "Choose its model in Settings" : "Farhelm picks the model")
-                                  : model)
+                            .help(model.isEmpty ? defaultHelp(group) : model)
                             .padding(.leading, 18)
                             .transition(.opacity)
                         }
@@ -938,6 +949,7 @@ struct CurrentEngineModels: View {
         case .farhelm: list = [""] + app.farhelmModels
         case .openai: list = [settings.openAIModel]
         case .ollama: list = [settings.ollamaModel]
+        case .apple: list = [""]
         case .compatible: list = [current]
         }
         if !list.contains(current) { list.insert(current, at: 0) }
@@ -951,6 +963,7 @@ struct CurrentEngineModels: View {
         case .farhelm: return settings.farhelmModel
         case .openai: return settings.openAIModel
         case .ollama: return settings.ollamaModel
+        case .apple: return ""
         case .compatible: return settings.model(for: settings.compatibleService)
         }
     }
@@ -960,6 +973,7 @@ struct CurrentEngineModels: View {
             switch settings.provider {
             case .subscription: return "Default (the tool picks)"
             case .compatible: return "No model chosen"
+            case .apple: return AppleModel.modelName
             default: return "Default"
             }
         }
@@ -977,6 +991,7 @@ struct CurrentEngineModels: View {
         case .farhelm: settings.farhelmModel = model
         case .openai: settings.openAIModel = model
         case .ollama: settings.ollamaModel = model
+        case .apple: break
         case .compatible: settings.serviceModels[settings.compatibleService.id] = model
         }
     }

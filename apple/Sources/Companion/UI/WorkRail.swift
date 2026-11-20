@@ -311,8 +311,11 @@ private struct QuestionCard: View {
                     .foregroundStyle(Theme.ink.opacity(0.92))
                     .fixedSize(horizontal: false, vertical: true)
                 let options = step.options ?? []
+                // Who answered: the person, or the project's supervisor
+                // in their place.
+                let said = step.answeredBy == nil ? "You said" : "The supervisor said"
                 if options.isEmpty {
-                    Text("You said: \(step.answer ?? "")")
+                    Text("\(said): \(step.answer ?? "")")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.ink.opacity(0.7))
                 } else {
@@ -329,10 +332,16 @@ private struct QuestionCard: View {
                         }
                     }
                     if let answer = step.answer, !options.contains(answer) {
-                        Text("You said: \(answer)")
+                        Text("\(said): \(answer)")
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.ink.opacity(0.7))
                     }
+                }
+                if let who = step.answeredBy {
+                    Text("Answered in your place by \(who)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(10)

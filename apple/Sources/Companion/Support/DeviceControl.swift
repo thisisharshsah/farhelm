@@ -108,6 +108,9 @@ struct AgentQuestion: Identifiable, Equatable {
     let id = UUID()
     let question: String
     let options: [String]
+    /// It is the task's own check-in after many steps ("Carry on?"), not
+    /// a question about the work.
+    var isCheckIn = false
 
     /// "Which branch? | main | develop" is a question with two answers.
     init(_ text: String) {

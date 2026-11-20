@@ -105,12 +105,15 @@ enum LLMError: LocalizedError {
     case notConfigured(String)
     case http(Int, String)
     case network(String)
+    /// The engine could not answer, in words for the screen.
+    case engine(String)
 
     var errorDescription: String? {
         switch self {
         case .notConfigured(let message): return message
         case .http(let code, let body): return "Provider error \(code): \(String(body.prefix(300)))"
         case .network(let message): return message
+        case .engine(let message): return message
         }
     }
 }
@@ -175,6 +178,8 @@ enum LLM {
         }
         let probe = UsageProbe()
         request.usage = probe
+        // Whom the request is for, as it stands where it is made.
+        let scope = WorkScope.current
         let started = Date()
         let inner = try await send(request, config: config)
         let sentBytes = request.fullSystem.utf8.count + request.messages.reduce(0) { $0 + $1.content.utf8.count }
@@ -205,11 +210,7 @@ enum LLM {
                                          output: probe.output ?? ContextUse.tokens(receivedBytes),
                                          exact: probe.input != nil && probe.output != nil,
                                          seconds: Date().timeIntervalSince(started))
-                await MainActor.run {
-                    var filed = record
-                    filed.conversation = AppState.shared.conversation.id
-                    UsageStore.shared.add(filed)
-                }
+                await MainActor.run { UsageStore.shared.add(record, scope: scope) }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -243,6 +244,8 @@ enum LLM {
                                                  service: CompatibleService.behind(config) ?? .other)
         case .ollama:
             return try await OllamaClient.stream(request, config: config)
+        case .apple:
+            return try AppleModel.stream(request)
         case .subscription:
             return try await CLIAgentClient.stream(request, config: config)
         }

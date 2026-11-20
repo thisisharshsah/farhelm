@@ -127,7 +127,7 @@ final class AppState: ObservableObject {
         switch mode {
         case .details: return detailsWidth
         case .browser: return browserWidth
-        case .workspace: return workspaceWidth
+        case .workspace, .board: return workspaceWidth
         }
     }
 
@@ -135,7 +135,7 @@ final class AppState: ObservableObject {
         switch mode {
         case .details: detailsWidth = width
         case .browser: browserWidth = width
-        case .workspace: workspaceWidth = width
+        case .workspace, .board: workspaceWidth = width
         }
     }
 
@@ -155,8 +155,13 @@ final class AppState: ObservableObject {
     /// Pages visited, for the suggestions on a new tab. Shared by every
     /// chat's browser.
     private lazy var webHistory = BrowserHistory(directory: ContextStore.shared.baseDir)
+    /// The side of the app in use: plain chat, code, or Advanced (a
+    /// project's board, kept by its supervisor).
+    @Published private(set) var mode: AppMode = .chat
     /// The code side of the app is in use, rather than plain chat.
-    @Published var codeMode = false
+    var codeMode: Bool { mode == .code }
+    /// Advanced is in use: the board in the middle, the chat beside it.
+    var advancedMode: Bool { mode == .advanced }
     /// A browser session for each chat that has opened one: its own tabs
     /// and its own sign-ins, apart from every other chat's. Sessions are
     /// kept in memory only, so they all end when the app quits.
@@ -204,6 +209,9 @@ final class AppState: ObservableObject {
     private var jobWatchers: [UUID: AnyCancellable] = [:]
     /// What a task that ended early left for "continue", by chat.
     private var unfinishedReports: [UUID: String] = [:]
+    /// Every chat's task is being stopped at once (quitting), which is
+    /// not the person stopping any one of them.
+    private var stoppingAll = false
     /// Next-step suggestions being worked out after a task, by chat.
     private var followUps: [UUID: Task<Void, Never>] = [:]
     /// Bumped to ask the panel to put the cursor in the input box.
@@ -239,12 +247,13 @@ final class AppState: ObservableObject {
     /// else one waiting on you, else any.
     var leadJob: AgentJob? {
         currentJob
-            ?? jobs.values.first { $0.pendingQuestion != nil || $0.pendingApproval != nil }
+            ?? jobs.values.first { $0.waitsOnPerson }
             ?? jobs.values.first
     }
-    /// The chats waiting on you: a question or an approval.
+    /// The chats waiting on you: a question or an approval that nobody
+    /// is answering in your place (a project's supervisor may be).
     var chatsWaiting: Set<UUID> {
-        Set(jobs.values.filter { $0.pendingQuestion != nil || $0.pendingApproval != nil }.map(\.chatID))
+        Set(jobs.values.filter { $0.waitsOnPerson }.map(\.chatID))
     }
 
     /// The agent's record for the other prompts, so every answer agrees
@@ -488,6 +497,8 @@ final class AppState: ObservableObject {
             return "OpenAI · \(settings.openAIModel)"
         case .ollama:
             return "Ollama · \(settings.ollamaModel)"
+        case .apple:
+            return "Apple · \(AppleModel.modelName)"
         case .compatible:
             let service = settings.compatibleService
             return "\(service.name) · \(settings.model(for: service))"
@@ -1770,6 +1781,7 @@ final class AppState: ObservableObject {
                      kind: TurnKind,
                      reveal: Bool,
                      keeping draft: String = "",
+                     label: String? = nil,
                      make: @escaping @MainActor () async throws -> AsyncThrowingStream<String, Error>) {
         tasks[kind]?.cancel()
         if let previous = runningTurn[kind] {
@@ -1790,7 +1802,7 @@ final class AppState: ObservableObject {
                 $0.matched = nil
             }
             $0.error = nil
-            $0.model = engineLabel
+            $0.model = label ?? engineLabel
         }
         if draft.isEmpty {
             startTracking(kind)
@@ -1799,12 +1811,18 @@ final class AppState: ObservableObject {
             showHistory = false
             overlay?.showPanel()
         }
-        tasks[kind] = Task { @MainActor in
+        // The answer's requests are filed to this chat, wherever the chat
+        // is by the time they end.
+        let scope = WorkScope(conversation: conversation.id, workItem: nil, project: conversation.projectID,
+                              directory: nil)
+        tasks[kind] = WorkScope.$current.withValue(scope) { () -> Task<Void, Never> in Task { @MainActor in
             defer { self.quietTurns.remove(turnID) }
             do {
                 let stream = try await make()
-                // What the answer is drawing on, shown under it.
-                let sources = self.suggester.lastSources
+                // What the answer is drawing on, shown under it (an answer
+                // with a label of its own, the supervisor's, draws on the
+                // board, not on the user's details).
+                let sources = label == nil ? self.suggester.lastSources : []
                 self.updateTurn(turnID) { $0.sources = sources.isEmpty ? nil : sources }
                 var fresh = ""
                 // What the screen shows of the answer, and when it was last
@@ -1879,7 +1897,7 @@ final class AppState: ObservableObject {
             } else {
                 self.persist()
             }
-        }
+        } }
     }
 
     private func cancelRuns() {
@@ -2144,7 +2162,10 @@ final class AppState: ObservableObject {
         // be done on the Mac goes to the agent, anything else is answered.
         // In code, every message is work on the repository, so it goes to
         // the agent, which reads and changes files there.
-        if codeMode || Self.looksLikeTask(text) {
+        if currentProject != nil, Advanced.shared.isSupervisorChat(conversation.id) {
+            // The project's supervisor: it answers here and keeps the board.
+            askSupervisor(text)
+        } else if codeMode || (advancedMode && currentProject != nil) || Self.looksLikeTask(text) {
             runAgent(text)
         } else if attachScreen {
             answerScreenNow(question: text)
@@ -2203,7 +2224,7 @@ final class AppState: ObservableObject {
     /// it at any point. After a set number of steps (Settings > Agent) it
     /// stops to ask whether to carry on, so a long task is never cut off
     /// and never runs away either.
-    func runAgent(_ task: String, in existing: UUID? = nil) {
+    func runAgent(_ task: String, in existing: UUID? = nil, engine: EngineChoice? = nil) {
         // The chat it works in: the one the turn is in, open or left.
         let chatID = existing.flatMap { id in
             backgroundChats.first(where: { $0.value.turns.contains { $0.id == id } })?.key
@@ -2234,12 +2255,27 @@ final class AppState: ObservableObject {
             turnID = existing
             updateTurn(existing) { $0.answer = "" }
         } else {
-            turnID = appendTurn(ChatTurn(kind: .reply, origin: .typed, prompt: task, model: engineLabel))
+            turnID = appendTurn(ChatTurn(kind: .reply, origin: .typed, prompt: task, model: engine?.label ?? engineLabel))
         }
         let chat = chatID == conversation.id ? conversation : (backgroundChats[chatID] ?? conversation)
-        let start = Self.startDirectory(of: chat)
+        // A message in a board task's chat goes with the task it is about.
+        let background = Advanced.shared.taskBackground(for: chat, message: task)
+        let start = Self.startDirectory(of: chat, loadingBoard: true)
         let repository = Self.hasWorkFolder(chat) ? start : ""
         let job = AgentJob(chatID: chatID, turnID: turnID, task: task, startDirectory: start, repository: repository)
+        // A run from a board works with the model its task was given;
+        // anything else, with the engine in use.
+        job.engine = engine
+        // Whom this work is for: its chat and project, and on a board the
+        // task a run in this chat belongs to. Every request the task makes
+        // is filed there, wherever the chat is by then.
+        let scope = WorkScope(conversation: chatID,
+                              workItem: Advanced.shared.runBegan(in: chatID, project: chat.projectID,
+                                                                 engine: engine ?? .inUse),
+                              project: chat.projectID,
+                              directory: repository.isEmpty ? nil : start)
+        // Steps are limited in time and number only where each costs money.
+        let billed = engine?.billedByUse ?? AppSettings.shared.engineBilledByUse
         job.inlineReviewPath = nextInlineReview
         nextInlineReview = nil
         jobs[chatID] = job
@@ -2253,7 +2289,7 @@ final class AppState: ObservableObject {
         let pictures = chatID == conversation.id ? sentPictures : []
         showHistory = false
         overlay?.showPanel()
-        job.run = Task { @MainActor in
+        job.run = WorkScope.$current.withValue(scope) { () -> Task<Void, Never> in Task { @MainActor in
             // However the task ends, it is cleared, exactly once.
             defer { self.endAgent(job) }
             var directory = job.startDirectory
@@ -2267,12 +2303,12 @@ final class AppState: ObservableObject {
                 + unfinished
                 + "\nIf this message asks to continue, pick up from what is left and do not redo finished steps."
             let brief = task + notes + ProjectContext.note(for: job.repository)
-                + carried
+                + carried + background
             // The whole task is one conversation with the model: every step
             // and its result stay in it, in order.
             let session: AgentSession
             do {
-                session = try self.suggester.agentSession(task: brief)
+                session = try self.suggester.agentSession(task: brief, engine: job.engine)
                 session.pictures = pictures
             } catch {
                 self.finishAgent(job, error.localizedDescription, failed: true)
@@ -2285,7 +2321,7 @@ final class AppState: ObservableObject {
             // only for API models, as set in Settings > Usage, since each
             // step costs money. Subscriptions and local models go on until
             // the task is done (Stop always works).
-            let stepBudget = Self.apiStepBudget
+            let stepBudget = Self.apiStepBudget(billed: billed)
             var stepLimit = stepBudget ?? Int.max
             // A backstop: a task that goes round and round without taking
             // any step is ended.
@@ -2324,7 +2360,7 @@ final class AppState: ObservableObject {
                 do {
                     let seenNow = AgentObservation(directory: directory, frontApp: seen.header, screenText: seen.text,
                                                    clickable: looks ? DeviceControl.shared.clickableLabels() : [])
-                    let turn = try await Self.limitedForAPI { try await session.next(seenNow) }
+                    let turn = try await Self.limitedForAPI(billed: billed) { try await session.next(seenNow) }
                     if Task.isCancelled { return }
                     if let refusal = turn.refusal {
                         self.finishAgent(job, "Can't do that: \(refusal)", failed: true)
@@ -2428,16 +2464,37 @@ final class AppState: ObservableObject {
                     let commands = asking.filter { $0.kind == .run }.map(\.value)
                     let remember = commands.flatMap { AgentPermissions.toRemember($0, remembered: remembered, autoApproveReads: autoReads) }
                     job.status = "Waiting for your OK"
-                    job.pendingApproval = AgentProposal(steps: asking, directory: directory, remember: remember)
-                    if !self.panelVisible { self.hasUnseen = true }
+                    let proposal = AgentProposal(steps: asking, directory: directory, remember: remember)
+                    job.pendingApproval = proposal
+                    // In a project run from a board, its supervisor says
+                    // which answer it recommends; the card shows it. On a
+                    // board set to take its answer, it answers in the
+                    // person's place where the rules let it.
+                    Advanced.shared.advise(job, on: proposal)
+                    if job.supervisorAnswering {
+                        job.status = "The supervisor is answering"
+                    } else if !self.panelVisible {
+                        self.hasUnseen = true
+                    }
                     let decision: AgentDecision = await withCheckedContinuation { job.approval = $0 }
                     job.pendingApproval = nil
+                    let answerer = job.takeAnswerer()
                     if Task.isCancelled { return }
                     switch decision {
                     case .deny:
-                        ActionRecord.shared.declined(asking, task: job.id, chat: job.chatID)
+                        ActionRecord.shared.declined(asking, task: job.id, chat: job.chatID, by: answerer.record)
                         let declined = asking.map(\.label).joined(separator: "; ")
-                        self.finishAgent(job, "Not run, as you declined: \(declined). Tell me what to do instead.", failed: true)
+                        // A no is the end of the task, and nobody's to
+                        // take back but the person's.
+                        job.declined(by: answerer)
+                        switch answerer {
+                        case .person:
+                            self.finishAgent(job, "Not run, as you declined: \(declined). Tell me what to do instead.", failed: true)
+                        case .supervisor(let model, let reason):
+                            self.finishAgent(job, "Not run: the supervisor (\(model)) declined it in your place: \(declined)."
+                                             + (reason.isEmpty ? "" : " Its reason: \(reason)")
+                                             + " Tell me what to do instead.", failed: true)
+                        }
                         return
                     case .always:
                         var allowed = AppSettings.shared.agentAllowed
@@ -2450,7 +2507,14 @@ final class AppState: ObservableObject {
                         }
                         for step in asking { approvedBy[step.id] = "you, and to always allow it" }
                     case .allow:
-                        for step in asking { approvedBy[step.id] = "you" }
+                        for step in asking { approvedBy[step.id] = answerer.record }
+                        // Said in the chat too, so it can be seen later
+                        // who let these run, and why.
+                        if case .supervisor(let model, let reason) = answerer {
+                            job.log.append("Said: The supervisor (\(model)) allowed "
+                                           + (asking.count == 1 ? "this step" : "these \(asking.count) steps")
+                                           + " in your place" + (reason.isEmpty ? "." : ": \(reason)"))
+                        }
                     }
                 }
 
@@ -2540,19 +2604,30 @@ final class AppState: ObservableObject {
                         ScreenTurns.shared.release(job)
                         job.status = "Waiting for your answer"
                         job.pendingQuestion = question
+                        Advanced.shared.advise(job, on: question)
+                        if job.supervisorAnswering { job.status = "The supervisor is answering" }
                         self.publishProgress(job)
-                        if !self.panelVisible { self.hasUnseen = true }
+                        if !self.panelVisible, !job.supervisorAnswering { self.hasUnseen = true }
                         let answer: String? = await withCheckedContinuation { job.questionAnswer = $0 }
                         job.pendingQuestion = nil
+                        let answerer = job.takeAnswerer()
                         if Task.isCancelled { return }
                         guard let answer, !answer.isEmpty else {
+                            // It still waits for an answer only the
+                            // person can give.
+                            job.declined(by: .person)
                             self.finishAgent(job, question.question, failed: true)
                             return
                         }
                         job.currentWhy = nil
                         job.log.append("Asked: \(question.question) You said: \(answer)")
                         job.asks[job.log.count - 1] = question.options
-                        job.context.append("ASK: \(question.question)\nResult: the user answered: \(answer)")
+                        if case .supervisor(let model, let reason) = answerer {
+                            job.answeredBy[job.log.count - 1] = "the supervisor (\(model))" + (reason.isEmpty ? "" : ": \(reason)")
+                            job.context.append("ASK: \(question.question)\nResult: the project's supervisor answered in the user's place: \(answer)")
+                        } else {
+                            job.context.append("ASK: \(question.question)\nResult: the user answered: \(answer)")
+                        }
                         self.publishProgress(job)
                     case .plan:
                         // The checklist is the agent's own; it only needs showing.
@@ -2784,25 +2859,38 @@ final class AppState: ObservableObject {
                     if stepsRun >= stepLimit {
                         // A long task is not cut off: it checks in, and
                         // carries on for as many steps again on a yes.
-                        let question = AgentQuestion("I have taken \(stepsRun) steps and the task is not finished yet. Carry on? | Carry on | Stop here")
+                        var question = AgentQuestion("I have taken \(stepsRun) steps and the task is not finished yet. Carry on? | Carry on | Stop here")
+                        question.isCheckIn = true
                         job.status = "Waiting for your answer"
                         job.pendingQuestion = question
+                        Advanced.shared.advise(job, on: question)
+                        if job.supervisorAnswering { job.status = "The supervisor is answering" }
                         self.publishProgress(job)
-                        if !self.panelVisible { self.hasUnseen = true }
+                        if !self.panelVisible, !job.supervisorAnswering { self.hasUnseen = true }
                         let answer: String? = await withCheckedContinuation { job.questionAnswer = $0 }
                         job.pendingQuestion = nil
+                        let answerer = job.takeAnswerer()
                         if Task.isCancelled { return }
                         let said = (answer ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                         let lowered = said.lowercased()
                         if said.isEmpty || lowered.hasPrefix("stop") || lowered == "no" {
                             // What was done and what is left is reported,
                             // and kept for the next message in this chat.
+                            // Whoever said stop meant it: nothing takes
+                            // the task up again but the person.
+                            job.declined(by: answerer)
                             self.finishAgent(job, self.reportUnfinished(job, "Stopped after \(stepsRun) steps, before the task was finished."), failed: true)
                             return
                         }
                         stepLimit += stepBudget ?? 0
+                        // The supervisor carries a long task on only so
+                        // often in a row; a yes from the person starts
+                        // that count again.
+                        job.carriedOn = answerer == .person ? 0 : job.carriedOn + 1
                         // Anything else typed there is direction for the rest.
-                        job.context.append("ASK: \(stepsRun) steps taken, carry on?\nResult: the user answered: \(said)")
+                        job.context.append("ASK: \(stepsRun) steps taken, carry on?\nResult: "
+                                           + (answerer == .person ? "the user answered" : "the project's supervisor answered in the user's place")
+                                           + ": \(said)")
                         // The rest of this round was planned before the
                         // answer, so the next round starts from it.
                         break
@@ -2823,7 +2911,7 @@ final class AppState: ObservableObject {
                     try? await Task.sleep(nanoseconds: 700_000_000)
                 }
             }
-        }
+        } }
     }
 
     /// A terminal beside the chat running a command, for work the user and
@@ -2872,8 +2960,10 @@ final class AppState: ObservableObject {
             let output: String
             do {
                 let history = done
-                output = try await Self.limitedForAPI {
-                    try await self.suggester.helperStep(question: question, directory: directory, done: history)
+                let engine = job.engine
+                output = try await Self.limitedForAPI(billed: engine?.billedByUse) {
+                    try await self.suggester.helperStep(question: question, directory: directory, done: history,
+                                                        engine: engine)
                 }
             } catch {
                 return AgentTools.Outcome(ok: false, text: "The helper could not go on: \(error.localizedDescription)")
@@ -2976,7 +3066,8 @@ final class AppState: ObservableObject {
             if line.hasPrefix("Asked: "), let split = line.range(of: " You said: ") {
                 return WorkStep(kind: .ask,
                                 title: String(line[line.index(line.startIndex, offsetBy: 7)..<split.lowerBound]),
-                                options: job.asks[index], answer: String(line[split.upperBound...]))
+                                options: job.asks[index], answer: String(line[split.upperBound...]),
+                                answeredBy: job.answeredBy[index])
             }
             if line.hasPrefix("Ran `"), let end = line.range(of: "` (", options: .backwards) {
                 let command = String(line[line.index(line.startIndex, offsetBy: 5)..<end.lowerBound])
@@ -3135,9 +3226,14 @@ final class AppState: ObservableObject {
         // repository, and the workspace's file list catches up.
         let finished = job.task.isEmpty ? "agent task" : job.task
         // The commit says what changed, from the first line of the report.
-        let subject = CommitHygiene.subject(from: message, fallback: finished)
+        // A task that did not finish says so, rather than taking its error
+        // ("Cancelled", a tool's limit) as the subject.
+        let named = anyChat(job.chatID)?.title ?? ""
+        let subject = failed
+            ? "Unfinished: " + CommitHygiene.subject(from: named.isEmpty ? finished : named, fallback: "agent task")
+            : CommitHygiene.subject(from: message, fallback: finished)
         Task { @MainActor in
-            await ChangeStore.shared.commitPending(message: subject)
+            await ChangeStore.shared.commitPending(message: subject, conversation: job.chatID)
             self.workspace.refreshAll()
         }
         do {
@@ -3155,6 +3251,7 @@ final class AppState: ObservableObject {
             }
         }
         job.lastReport = message
+        job.endedFailed = failed
         if failed {
             stepFailures += 1
         } else {
@@ -3211,9 +3308,15 @@ final class AppState: ObservableObject {
         if findTurn(job.turnID)?.answer.isEmpty == true {
             let report = reportUnfinished(job, "Stopped.")
             updateTurn(job.turnID) { $0.answer = report }
+            // A board keeps how far the run got.
+            if job.lastReport.isEmpty { job.lastReport = report }
         }
         jobs[job.chatID] = nil
         jobWatchers[job.chatID] = nil
+        // A board hears how a run in one of its chats ended, and what
+        // cut it short when something did.
+        Advanced.shared.runEnded(in: job.chatID, failed: job.endedFailed, report: job.lastReport,
+                                 ending: job.howItEnded(stoppingAll: stoppingAll))
         let chatID = job.chatID
         // The next message waiting in this chat goes now.
         if chatID == conversation.id, queued[chatID]?.isEmpty == false {
@@ -3230,24 +3333,34 @@ final class AppState: ObservableObject {
     /// (Anthropic, OpenAI, a hosted service), as set in Settings > Usage,
     /// since a stuck call there costs money and holds the task. Local models
     /// and subscriptions take as long as they need; Stop is always there.
-    static var apiStepLimit: Double? {
+    static var apiStepLimit: Double? { apiStepLimit(billed: AppSettings.shared.engineBilledByUse) }
+
+    /// The same for a given engine: `billed` says whether it is billed by use.
+    static func apiStepLimit(billed: Bool) -> Double? {
         let settings = AppSettings.shared
-        guard settings.engineBilledByUse, settings.apiStepMinutes > 0 else { return nil }
+        guard billed, settings.apiStepMinutes > 0 else { return nil }
         return Double(settings.apiStepMinutes) * 60
     }
 
     /// How many steps an API model takes before the agent asks whether to
     /// carry on (Settings > Usage), or nil for no check-in: subscriptions
     /// and local models, or the limit turned off.
-    static var apiStepBudget: Int? {
+    static var apiStepBudget: Int? { apiStepBudget(billed: AppSettings.shared.engineBilledByUse) }
+
+    /// The same for a given engine: `billed` says whether it is billed by use.
+    static func apiStepBudget(billed: Bool) -> Int? {
         let settings = AppSettings.shared
-        guard settings.engineBilledByUse, settings.agentStepBudget > 0 else { return nil }
+        guard billed, settings.agentStepBudget > 0 else { return nil }
         return max(10, settings.agentStepBudget)
     }
 
     /// Runs a model step under the API limit, or with none.
-    private static func limitedForAPI<T>(_ work: @escaping @MainActor () async throws -> T) async throws -> T {
-        guard let seconds = apiStepLimit else { return try await work() }
+    /// `billed` says whether the engine doing the work is billed by use;
+    /// nil goes by the engine in use.
+    private static func limitedForAPI<T>(billed: Bool? = nil,
+                                         _ work: @escaping @MainActor () async throws -> T) async throws -> T {
+        let limit = apiStepLimit(billed: billed ?? AppSettings.shared.engineBilledByUse)
+        guard let seconds = limit else { return try await work() }
         return try await limited(seconds, work)
     }
 
@@ -3369,7 +3482,11 @@ final class AppState: ObservableObject {
         }
         // In code the workspace is what the right column comes back to:
         // closing the details or the browser returns to it, not to plain chat.
-        let mode = (mode == nil && codeMode) ? .workspace : mode
+        // In Advanced it is the board that it comes back to.
+        var mode = mode
+        if mode == nil {
+            if codeMode { mode = .workspace } else if advancedMode { mode = .board }
+        }
         // Closing the column, or switching to the details, brings the chat back.
         if mode == nil || mode == .details { sideFull = false }
         sidePanel = mode
@@ -3523,6 +3640,18 @@ final class AppState: ObservableObject {
             path: FileManager.default.fileExists(atPath: path) ? path : nil))
     }
 
+    /// Shows how a file on a board task's branch differs from where the
+    /// branch began, side by side in the workspace of the task's chat
+    /// (which works in the task's copy).
+    func showBranchChange(in chat: UUID, title: String, subtitle: String, before: String, after: String, path: String?) {
+        openConversation(chat)
+        guard conversation.id == chat else { return }
+        if !codeMode { setCode(true) }
+        if sidePanel != .workspace { showSide(.workspace) }
+        workspace.use(root: workspaceRoot)
+        workspace.showDiff(DiffDocument(title: title, subtitle: subtitle, before: before, after: after, path: path))
+    }
+
     func showEdit(_ path: String, of task: TaskUse) {
         let from = task.date.addingTimeInterval(-1)
         // Changes are kept newest first.
@@ -3674,6 +3803,8 @@ final class AppState: ObservableObject {
 
     /// Stops every chat's task (quitting).
     func stopAllAgents() {
+        stoppingAll = true
+        defer { stoppingAll = false }
         for chatID in Array(jobs.keys) { stopAgent(in: chatID) }
     }
 
@@ -4256,10 +4387,15 @@ final class AppState: ObservableObject {
     /// working folder from Settings.
     var agentStartDirectory: String { Self.startDirectory(of: conversation) }
 
-    /// Where a chat's agent starts: its project's folder, else its folder,
-    /// else a folder attached to it, else the folder set for the agent.
-    static func startDirectory(of chat: Conversation) -> String {
-        shared.project(of: chat)?.folder
+    /// Where a chat's agent starts: a board task's own copy of the
+    /// repository, for the task's chat while the copy is open; else its
+    /// project's folder, else its folder, else a folder attached to it,
+    /// else the folder set for the agent. `loadingBoard` reads the
+    /// project's board first when it has not been read yet (not while a
+    /// view is being drawn).
+    static func startDirectory(of chat: Conversation, loadingBoard: Bool = false) -> String {
+        Advanced.shared.copyDirectory(of: chat, loadingBoard: loadingBoard)
+            ?? shared.project(of: chat)?.folder
             ?? chat.workFolder
             ?? (chat.attachments ?? []).last { $0.isFolder == true }?.path
             ?? AppSettings.shared.agentDirectory
@@ -4319,12 +4455,30 @@ final class AppState: ObservableObject {
     /// does not turn it on, and the chat stays a chat.
     func setCode(_ on: Bool) {
         if on, currentProject == nil { return }
-        codeMode = on
+        mode = on ? .code : .chat
         if on {
             showSide(.workspace)
-        } else if sidePanel == .workspace {
+        } else if sidePanel == .workspace || sidePanel == .board {
             showSide(nil)
         }
+    }
+
+    /// Switches to Advanced, the third side of the app: the project's
+    /// board in the middle (its plan as tasks, each with the model it is
+    /// given to, and what the work costs), and beside it the chat with the
+    /// project's supervisor, the model that writes the plan and keeps it.
+    /// It works on the open chat's project; with none, the board asks for
+    /// one. Chat and Code leave it.
+    func setAdvanced(_ on: Bool) {
+        guard on else {
+            if advancedMode { setCode(false) }
+            return
+        }
+        mode = .advanced
+        codeDetails = false
+        sideFull = false
+        showSide(.board)
+        if let project = currentProject ?? Advanced.shared.lastProject { Advanced.shared.open(project) }
     }
 
     /// The Code button: code in a project chat; in a plain chat, a word on
@@ -4339,13 +4493,16 @@ final class AppState: ObservableObject {
 
     /// Code follows the open chat: on in a project chat, off in a plain one.
     private func followChatForCode() {
+        // Advanced stays on while the chat beside the board changes (the
+        // supervisor's, a run's): the board follows the project by itself.
+        guard !advancedMode else { return }
         let inProject = currentProject != nil
         if codeMode != inProject { setCode(inProject) }
     }
 
     /// A note for the agent on the repository a code chat works in.
     private var repositoryNote: String {
-        guard codeMode, hasWorkFolder else { return "" }
+        guard codeMode || advancedMode, hasWorkFolder else { return "" }
         let folder = agentStartDirectory
         return "\n\nThis is a code chat. The repository to work in and maintain is \(folder). Keep your work inside it unless told otherwise."
     }
@@ -4419,13 +4576,68 @@ final class AppState: ObservableObject {
 
     /// Asks for a folder (folders only) and adds it as a project named
     /// after the folder. A folder already on the list is not added again.
+    /// A folder whose project was taken off the list gets that project
+    /// back as it was (the same project, under the name it had), so its
+    /// chats and its board are its own again.
     func addProject() {
         chooseProjectFolder(prompt: "Add Project", start: nil) { [weak self] url in
             guard let self else { return }
             let path = url.standardizedFileURL.path
             guard !self.projects.contains(where: { $0.folder == path }) else { return }
-            self.projects.append(Project(name: url.lastPathComponent, folder: path))
+            var remembered = self.removedProjects
+            if let index = remembered.lastIndex(where: { $0.folder == path }) {
+                self.projects.append(remembered.remove(at: index))
+                self.removedProjects = remembered
+            } else {
+                self.projects.append(Project(name: url.lastPathComponent, folder: path))
+            }
             self.store.saveProjects(self.projects)
+            self.followChatForCode()
+            self.refreshHistory()
+        }
+    }
+
+    /// The projects taken off the list, oldest first, remembered so that
+    /// adding a project's folder again brings the project back as it was.
+    /// Only the latest few dozen are kept.
+    private var removedProjects: [Project] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: "removedProjects") else { return [] }
+            return (try? JSONDecoder().decode([Project].self, from: data)) ?? []
+        }
+        set {
+            UserDefaults.standard.set(try? JSONEncoder().encode(Array(newValue.suffix(40))), forKey: "removedProjects")
+        }
+    }
+
+    /// The projects that are off the list but remembered.
+    var removedProjectIDs: Set<UUID> { Set(removedProjects.map(\.id)) }
+
+    /// Puts back on the list a project that was taken off it when that
+    /// still cut its chats loose (`Advanced.bringBack`): the same project,
+    /// under the id its board carries, with the chats that were its
+    /// inside it again. Its folder is asked for when it is not known or
+    /// is no longer there. `then` is called once it is on the list.
+    func reviveProject(id: UUID, name: String, folder: String?, chats: Set<UUID>,
+                       then: @escaping @MainActor (Project) -> Void) {
+        guard !projects.contains(where: { $0.id == id }) else { return }
+        let revive: @MainActor (String) -> Void = { [weak self] path in
+            guard let self, !self.projects.contains(where: { $0.id == id }) else { return }
+            let known = name.trimmingCharacters(in: .whitespaces)
+            let project = Project(id: id, name: known.isEmpty ? (path as NSString).lastPathComponent : known,
+                                  folder: path)
+            self.projects.append(project)
+            self.store.saveProjects(self.projects)
+            self.gather(chats, into: id, from: id)
+            then(project)
+        }
+        var isFolder: ObjCBool = false
+        if let folder, FileManager.default.fileExists(atPath: folder, isDirectory: &isFolder), isFolder.boolValue {
+            revive(folder)
+        } else {
+            chooseProjectFolder(prompt: "Choose Folder", start: folder) { url in
+                revive(url.standardizedFileURL.path)
+            }
         }
     }
 
@@ -4468,16 +4680,17 @@ final class AppState: ObservableObject {
         store.saveProjects(projects)
     }
 
-    /// Takes a project off the list. Only the list changes: its chats stay,
-    /// as plain chats, and the folder and every file in it are left as
-    /// they are.
+    /// Takes a project off the list. Only the list changes. Its chats
+    /// stay, and are plain chats for as long as it is off the list; its
+    /// board is kept; and the folder and every file in it are left as
+    /// they are. Nothing is cut loose from it: the project is remembered,
+    /// so adding its folder again brings it back as it was, with its
+    /// chats inside it and its board (`addProject`).
     func removeProject(_ id: UUID) {
-        projects.removeAll { $0.id == id }
+        guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        let gone = projects.remove(at: index)
         store.saveProjects(projects)
-        for item in store.list() where item.projectID == id {
-            setProject(nil, of: item.id)
-        }
-        if conversation.projectID == id { setProject(nil, of: conversation.id) }
+        removedProjects = removedProjects.filter { $0.id != gone.id && $0.folder != gone.folder } + [gone]
         followChatForCode()
         refreshHistory()
     }
@@ -5037,5 +5250,214 @@ final class AppState: ObservableObject {
     func cancelEnrollment() {
         enrollTask?.cancel()
         enrollTask = nil
+    }
+}
+
+// MARK: - Advanced: the supervisor's chat and the board's runs
+
+/// What Advanced mode needs of the app's own workings: the chat that
+/// answers as a project's supervisor, and runs started for a board's tasks
+/// in chats of their own. The rules of the board, the supervisor's
+/// instructions and what happens when a run ends are in `Advanced`; this is
+/// only the part that has to live with the chats and the agent.
+extension AppState {
+    /// A message to the open chat's project's supervisor. It answers in
+    /// the chat like any reply, and what it asks for on the board is
+    /// carried out as the answer ends (see `Advanced.supervisorStream`).
+    private func askSupervisor(_ text: String) {
+        guard let project = currentProject else {
+            ask(text)
+            return
+        }
+        let prior = conversation.turns
+        // The supervisor's model, or the one standing in while it is out
+        // of its limit.
+        let label = Advanced.shared.currentSupervisor(for: project.id).label
+        let turnID = appendTurn(ChatTurn(kind: .reply, origin: .typed, prompt: text, model: label))
+        // The files sent with this message go to the supervisor as text.
+        let files = attachments.filter { messageAttachments.contains($0.id) }
+        run(turnID: turnID, kind: .reply, reveal: true, label: label) {
+            try await Advanced.shared.supervisorStream(message: text, history: prior, attached: files,
+                                                       project: project)
+        }
+    }
+
+    /// Sends words to a project's supervisor as if they were typed in its
+    /// chat (a button on the board that asks for a report, say). The chat
+    /// is opened first, so the answer is seen where it is given.
+    func tellSupervisor(_ text: String, project: Project) {
+        Advanced.shared.open(project)
+        guard Advanced.shared.isSupervisorChat(conversation.id) else { return }
+        send(text)
+    }
+
+    /// Opens a project's supervisor chat, making it the first time (or
+    /// again, if it was deleted). Returns the chat.
+    func openSupervisorChat(_ known: UUID?, project: Project) -> UUID {
+        if let known {
+            if known == conversation.id { return known }
+            if backgroundChats[known] != nil || store.load(known) != nil {
+                openConversation(known)
+                return known
+            }
+        }
+        newConversation(in: project.id)
+        conversation.title = "\(project.name) supervisor"
+        conversation.kind = .supervisor
+        // Saved at once, though it is empty, so it is on the project's
+        // list from the start and keeps its place there.
+        store.save(conversation)
+        refreshHistory()
+        return conversation.id
+    }
+
+    /// Whether another run fits beside the tasks going on (Settings >
+    /// Agent sets how many chats' tasks run at once).
+    var hasRoomForRun: Bool {
+        jobs.count < max(1, AppSettings.shared.agentMaxTasks)
+    }
+
+    /// Starts an agent run for a board task in a new chat of its project,
+    /// without leaving the chat that is open: the run's chat is kept live
+    /// like one that was left while it worked, and can be opened from the
+    /// board or the sidebar at any time. `registered` is called with the
+    /// new chat before the agent starts, so the board knows the run from
+    /// its first request on. Returns the chat, or nil when no more runs
+    /// fit beside the ones going on.
+    func startBoardRun(title: String, brief: String, project: UUID, task: UUID? = nil, engine: EngineChoice,
+                       access: AgentAccess?, registered: (UUID) -> Void) -> UUID? {
+        guard hasRoomForRun else { return nil }
+        var chat = Conversation()
+        chat.title = String(title.prefix(80))
+        chat.projectID = project
+        chat.access = access?.rawValue
+        // The task's chat: every later run of the task goes into it too.
+        chat.kind = task == nil ? nil : .task
+        chat.taskID = task
+        let turn = ChatTurn(kind: .reply, origin: .typed, prompt: brief, model: engine.label)
+        chat.turns = [turn]
+        backgroundChats[chat.id] = chat
+        store.save(chat)
+        refreshHistory()
+        registered(chat.id)
+        runAgent(brief, in: turn.id, engine: engine)
+        return chat.id
+    }
+
+    /// A chat wherever it is: open, left while it works, or saved.
+    func anyChat(_ id: UUID) -> Conversation? {
+        chat(id) ?? store.load(id)
+    }
+
+    /// A task the supervisor was to answer for waits on the person after
+    /// all (it left the answer to them, or gave none): it is said the
+    /// way it is when a task stops for them.
+    func leftToPerson(_ job: AgentJob) {
+        guard job.pendingApproval != nil || job.pendingQuestion != nil else { return }
+        job.status = job.pendingQuestion != nil ? "Waiting for your answer" : "Waiting for your OK"
+        if !panelVisible || conversation.id != job.chatID { hasUnseen = true }
+    }
+
+    /// Starts an agent's task in a chat that has one already: a task's
+    /// next run in the task's chat, or "continue" where work stopped. The
+    /// chat shows `prompt` as a message of its own, the way the person
+    /// would type it; the agent starts each message knowing only what the
+    /// message says, so it is given `brief` (the task, and how far it got)
+    /// rather than the bare words. `title` and `access`, when given, are
+    /// the chat's from now on; with `task`, it is that task's chat.
+    /// `registered` is called just before the agent starts. Returns
+    /// whether it started.
+    func continueRun(in chatID: UUID, prompt: String = "continue", brief: String, engine: EngineChoice?,
+                     title: String? = nil, access: AgentAccess? = nil, task: UUID? = nil,
+                     registered: () -> Void = {}) -> Bool {
+        guard hasRoomForRun, jobs[chatID] == nil else { return false }
+        let turn = ChatTurn(kind: .reply, origin: .typed, prompt: prompt, model: engine?.label ?? engineLabel)
+        func carry(_ chat: inout Conversation) {
+            chat.turns.append(turn)
+            if let title { chat.title = String(title.prefix(80)) }
+            if let access { chat.access = access.rawValue }
+            if let task {
+                chat.kind = .task
+                chat.taskID = task
+            }
+        }
+        if chatID == conversation.id {
+            carry(&conversation)
+        } else {
+            guard var chat = backgroundChats[chatID] ?? store.load(chatID) else { return false }
+            carry(&chat)
+            backgroundChats[chatID] = chat
+            store.save(chat)
+            refreshHistory()
+        }
+        registered()
+        runAgent(brief, in: turn.id, engine: engine)
+        return true
+    }
+
+    /// Changes a chat wherever it is: open, left working in the
+    /// background, or saved. Returns whether it was found.
+    @discardableResult
+    func updateChat(_ id: UUID, _ change: (inout Conversation) -> Void) -> Bool {
+        if id == conversation.id {
+            change(&conversation)
+            persist()
+            return true
+        }
+        if var live = backgroundChats[id] {
+            change(&live)
+            backgroundChats[id] = live
+            saveBackgroundSoon(id)
+            return true
+        }
+        guard var saved = store.load(id) else { return false }
+        change(&saved)
+        store.save(saved)
+        return true
+    }
+
+    /// Puts one of the person's own chats away, or back on the list.
+    func setArchived(_ id: UUID, _ archived: Bool) {
+        guard updateChat(id, { $0.archivedAt = archived ? Date() : nil }) else { return }
+        refreshHistory()
+    }
+
+    /// What was last asked in a chat and how it was answered, for someone
+    /// working out whether the work there is finished: the task (the
+    /// last message that was not a bare "continue"), the last answer,
+    /// and the steps that answer took, latest last.
+    func lastExchange(in chatID: UUID) -> (asked: String, answer: String, steps: [String])? {
+        guard let chat = anyChat(chatID), let turn = chat.turns.last else { return nil }
+        let asked = chat.turns.last(where: { $0.prompt.lowercased() != "continue" })?.prompt ?? turn.prompt
+        let steps = (turn.steps ?? []).filter { $0.kind != .note && $0.kind != .think }
+            .map { $0.title + ($0.failed ? " (failed)" : "") }
+        return (asked, turn.answer, steps)
+    }
+
+    /// Puts chats back into the project they were cut loose from, when
+    /// its board is brought back (`Advanced.restore`): only chats that
+    /// are in no project now, or still name the project the board had.
+    /// A chat that has since been put in another project stays there.
+    func gather(_ chats: Set<UUID>, into project: UUID, from former: UUID) {
+        var places: [UUID: UUID?] = [:]
+        for item in store.list() { places[item.id] = item.projectID }
+        places[conversation.id] = conversation.projectID
+        for (id, chat) in backgroundChats { places[id] = chat.projectID }
+        for id in chats {
+            guard let place = places[id] else { continue }
+            if place == nil || place == former { setProject(project, of: id) }
+        }
+        followChatForCode()
+        refreshHistory()
+    }
+
+    /// Deletes a chat in which nothing was ever said and nothing runs:
+    /// the supervisor's chat made for a board that then made way for
+    /// another. The open chat is never deleted this way.
+    func discardIfEmpty(_ id: UUID) {
+        guard id != conversation.id, jobs[id] == nil, let chat = anyChat(id),
+              chat.turns.isEmpty, chat.transcript.isEmpty else { return }
+        backgroundChats[id] = nil
+        deleteConversation(id)
     }
 }

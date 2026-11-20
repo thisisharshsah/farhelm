@@ -945,8 +945,11 @@ enum CLIAgentClient {
             }
             // In code the tool starts in the chat's repository, so it can
             // read it. Otherwise it starts somewhere empty and neutral.
+            // Work with a folder of its own (an agent task in a repository,
+            // whichever chat is open) starts there.
             let app = AppState.shared
-            var directory = app.codeMode && app.hasWorkFolder ? app.agentStartDirectory : ""
+            var directory = WorkScope.current?.directory
+                ?? (app.codeMode && app.hasWorkFolder ? app.agentStartDirectory : "")
             if directory.isEmpty || !FileManager.default.fileExists(atPath: directory) {
                 let neutral = FileManager.default.temporaryDirectory.appendingPathComponent("companion-cli", isDirectory: true)
                 try? FileManager.default.createDirectory(at: neutral, withIntermediateDirectories: true)

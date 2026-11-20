@@ -419,6 +419,13 @@ final class RemoteServer: ObservableObject {
             send(html: Self.page, on: connection)
             return
         }
+        // The browser's page and the glasses' page are public like the one
+        // above; what they show is asked for with the pairing code.
+        if request.path == "/web" || request.path == "/glass" {
+            let glass = request.path == "/glass" || request.query["glass"] == "1"
+            send(html: glass ? Self.glassPage : Self.webPage, on: connection)
+            return
+        }
         // What iOS needs to add the page to the Home Screen as an app.
         if request.path == "/manifest.json" {
             respond(status: "200 OK", type: "application/manifest+json", body: Data(Self.manifest.utf8), on: connection)
@@ -614,6 +621,12 @@ final class RemoteServer: ObservableObject {
             return .json(chatsJSON())
         case ("GET", "/projects"):
             return .json(projectsJSON())
+        case ("GET", "/project/chats"):
+            // One project's chats (`id` is the project's), for a browser.
+            if let raw = request.query["id"], let id = UUID(uuidString: raw), let json = projectChatsJSON(id) {
+                return .json(json)
+            }
+            return .text(404, "No such project.")
         case ("POST", "/open"):
             let raw = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
             if let id = UUID(uuidString: raw) { AppState.shared.openConversation(id) }
@@ -825,6 +838,29 @@ final class RemoteServer: ObservableObject {
         }
         let data = (try? JSONSerialization.data(withJSONObject: ["projects": list])) ?? Data("{}".utf8)
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// One project's saved chats, newest first, each in the shape `/chats`
+    /// gives, with the project's name and folder. Nil when the project is
+    /// not on the list.
+    private func projectChatsJSON(_ id: UUID) -> String? {
+        let app = AppState.shared
+        guard let project = app.projects.first(where: { $0.id == id }) else { return nil }
+        // Every saved chat, not the sidebar's search results.
+        let list: [[String: Any]] = app.store.list().filter { $0.projectID == id }.prefix(60).map { summary in
+            ["id": summary.id.uuidString,
+             "title": summary.title,
+             "date": summary.updatedAt.timeIntervalSince1970,
+             "turns": summary.turnCount,
+             "running": app.jobs[summary.id] != nil,
+             "waiting": app.chatsWaiting.contains(summary.id)]
+        }
+        let root: [String: Any] = ["id": project.id.uuidString,
+                                   "name": project.name,
+                                   "folder": project.folder.map { $0 as Any } ?? NSNull(),
+                                   "current": app.conversation.id.uuidString,
+                                   "chats": list]
+        return Self.json(root)
     }
 
     /// A file name from the phone, safe to put on disk.

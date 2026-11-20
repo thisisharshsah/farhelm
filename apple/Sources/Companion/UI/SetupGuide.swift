@@ -30,6 +30,7 @@ struct SetupGuide: View {
         case .anthropic: return has("anthropic", "ANTHROPIC_API_KEY")
         case .openai: return has("openai", "OPENAI_API_KEY")
         case .ollama: return true
+        case .apple: return AppleModel.unavailableReason == nil
         case .compatible:
             let settings = AppSettings.shared
             let service = settings.compatibleService
@@ -76,7 +77,7 @@ struct SetupGuide: View {
             }
             row(done: Self.modelConfigured,
                 title: "AI model",
-                detail: "Pick an engine and add its key. This writes the replies.") {
+                detail: "Pick an engine and add its key (Apple's on-device model needs none). This writes the replies.") {
                 settingsLink("Engine")
             }
             row(done: !settings.userDetails.isEmpty,

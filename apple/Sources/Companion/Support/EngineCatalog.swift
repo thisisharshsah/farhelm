@@ -28,6 +28,7 @@ enum EngineCatalog {
         case .anthropic: return !(Keychain.read("anthropic") ?? "").isEmpty
         case .openai: return !(Keychain.read("openai") ?? "").isEmpty
         case .ollama: return true
+        case .apple: return AppleModel.unavailableReason == nil
         case .compatible: return !readyServices.isEmpty
         case .subscription: return !agents.installed.isEmpty
         }
@@ -57,6 +58,8 @@ enum EngineCatalog {
                 return [Engine(kind: kind, models: [settings.openAIModel])]
             case .ollama:
                 return [Engine(kind: kind, models: [settings.ollamaModel])]
+            case .apple:
+                return [Engine(kind: kind, models: [""])]
             case .compatible:
                 return readyServices.map { service in
                     Engine(kind: kind, tool: service.id, models: [settings.model(for: service)])
@@ -86,6 +89,7 @@ enum EngineCatalog {
         case .anthropic: return settings.anthropicModel
         case .openai: return settings.openAIModel
         case .ollama: return settings.ollamaModel
+        case .apple: return ""
         case .compatible: return settings.serviceModels[engine.tool ?? settings.service] ?? ""
         case .subscription:
             if engine.tool == settings.cliAgent { return settings.cliModel }
@@ -101,6 +105,7 @@ enum EngineCatalog {
         case .anthropic: settings.anthropicModel = model
         case .openai: settings.openAIModel = model
         case .ollama: settings.ollamaModel = model
+        case .apple: break
         case .compatible:
             settings.service = engine.tool ?? settings.service
             settings.serviceModels[settings.service] = model
@@ -123,6 +128,7 @@ enum EngineCatalog {
     static func title(_ engine: Engine, _ model: String) -> String {
         // A service has no default model to fall back on.
         if engine.kind == .compatible, model.isEmpty { return "No model chosen" }
+        if engine.kind == .apple { return AppleModel.modelName }
         guard engine.kind == .subscription else { return ModelName.pretty(model) }
         return agents.title(of: model, for: engine.tool ?? "")
     }
@@ -133,6 +139,7 @@ enum EngineCatalog {
         let kind = engine.kind
         if kind == .farhelm, model.isEmpty { return "Farhelm picks" }
         if kind == .compatible, model.isEmpty { return "Choose one in Settings" }
+        if kind == .apple { return "Free, private, offline" }
         if kind == .subscription, model.isEmpty {
             return agents.version(of: "", for: engine.tool ?? "") ?? "The tool picks"
         }

@@ -1,0 +1,415 @@
+import XCTest
+@testable import CompanionBoard
+
+private let project = UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!
+private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+
+private func minutes(_ count: Double) -> Date { t0.addingTimeInterval(count * 60) }
+
+private func choice(_ model: String) -> ModelChoice { ModelChoice(engine: "anthropic", model: model) }
+
+/// A list of two models, by the names a supervisor would use.
+private func models(_ name: String) -> (choice: ModelChoice, label: String)? {
+    switch name {
+    case "m1": return (ModelChoice(engine: "ollama", model: "qwen3-coder:30b"), "Ollama · qwen3-coder:30b")
+    case "m2": return (choice("claude-sonnet-5-5"), "Claude · Sonnet 5.5")
+    default: return nil
+    }
+}
+
+final class BoardTests: XCTestCase {
+    func testTasksAreNumberedAndNeverReuseANumber() {
+        var board = Board(project: project, now: t0)
+        let first = board.add(title: "One", by: .person, now: t0)
+        let second = board.add(title: "Two", by: .person, now: t0)
+        XCTAssertEqual([first.key, second.key], ["T-1", "T-2"])
+        board.remove(second.id, by: .person, now: t0)
+        XCTAssertEqual(board.add(title: "Three", by: .person, now: t0).key, "T-3")
+    }
+
+    func testATitleIsOneLineAndNeverEmpty() {
+        var board = Board(project: project, now: t0)
+        XCTAssertEqual(board.add(title: "  First line\nsecond line ", by: .person, now: t0).title, "First line")
+        XCTAssertEqual(board.add(title: "   ", by: .person, now: t0).title, "Untitled task")
+    }
+
+    func testMovingKeepsWhenWorkStartedAndFinished() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", by: .person, now: t0)
+        board.move(item.id, to: .inProgress, by: .person, now: minutes(1))
+        board.move(item.id, to: .done, by: .person, now: minutes(5))
+        XCTAssertEqual(board.item(item.id)?.startedAt, minutes(1))
+        XCTAssertEqual(board.item(item.id)?.finishedAt, minutes(5))
+        // Reopened: it is no longer finished, and it started when it first did.
+        board.move(item.id, to: .todo, by: .person, now: minutes(6))
+        XCTAssertNil(board.item(item.id)?.finishedAt)
+        XCTAssertEqual(board.item(item.id)?.startedAt, minutes(1))
+    }
+
+    func testDroppingATaskAboveAnotherPutsItThere() {
+        var board = Board(project: project, now: t0)
+        let a = board.add(title: "A", by: .person, now: t0)
+        let b = board.add(title: "B", by: .person, now: t0)
+        let c = board.add(title: "C", by: .person, now: t0)
+        board.move(c.id, to: .todo, above: a.id, by: .person, now: t0)
+        XCTAssertEqual(board.items(in: .todo).map(\.title), ["C", "A", "B"])
+        board.move(a.id, to: .todo, above: nil, by: .person, now: t0)
+        XCTAssertEqual(board.items(in: .todo).map(\.title), ["C", "B", "A"])
+        _ = b
+    }
+
+    func testOnlyTasksWithNothingToWaitOnAreReadyMostPressingFirst() {
+        var board = Board(project: project, now: t0)
+        let base = board.add(title: "Base", by: .person, now: t0)
+        let next = board.add(title: "Next", priority: .urgent, dependsOn: [base.number], by: .person, now: t0)
+        let side = board.add(title: "Side", priority: .high, by: .person, now: t0)
+        _ = board.add(title: "Later", status: .backlog, by: .person, now: t0)
+        XCTAssertEqual(board.ready.map(\.title), ["Side", "Base"])
+        board.move(base.id, to: .done, by: .person, now: t0)
+        XCTAssertEqual(board.ready.map(\.title), ["Next", "Side"])
+        XCTAssertTrue(board.blockers(of: board.item(next.id)!).isEmpty)
+        _ = side
+    }
+
+    func testWaitsThatWouldMakeACircleAreRefused() {
+        var board = Board(project: project, now: t0)
+        let a = board.add(title: "A", by: .person, now: t0)
+        let b = board.add(title: "B", dependsOn: [a.number], by: .person, now: t0)
+        let c = board.add(title: "C", dependsOn: [b.number], by: .person, now: t0)
+        // A waiting on C would be A -> C -> B -> A.
+        XCTAssertEqual(board.setDependencies(a.id, to: [c.number, a.number, 99], now: t0), [c.number, a.number, 99])
+        XCTAssertEqual(board.item(a.id)?.dependsOn, [])
+        XCTAssertEqual(board.setDependencies(c.id, to: [a.number, b.number], now: t0), [])
+        XCTAssertEqual(board.item(c.id)?.dependsOn, [a.number, b.number])
+    }
+
+    func testRemovingATaskFreesWhatWaitedOnIt() {
+        var board = Board(project: project, now: t0)
+        let a = board.add(title: "A", by: .person, now: t0)
+        let b = board.add(title: "B", dependsOn: [a.number], by: .person, now: t0)
+        board.remove(a.id, by: .person, now: t0)
+        XCTAssertEqual(board.item(b.id)?.dependsOn, [])
+    }
+
+    func testARunMovesItsTaskAsItGoes() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: minutes(1)),
+                       by: .person, now: minutes(1))
+        XCTAssertEqual(board.item(item.id)?.status, .inProgress)
+        XCTAssertEqual(board.running.map(\.id), [item.id])
+        XCTAssertTrue(board.ready.isEmpty)
+
+        let ended = board.endRun(in: chat, outcome: .succeeded, report: "Done.", now: minutes(9))
+        XCTAssertEqual(ended?.run.outcome, .succeeded)
+        XCTAssertEqual(ended?.run.endedAt, minutes(9))
+        XCTAssertEqual(board.item(item.id)?.status, .review)
+        XCTAssertNil(board.item(item.id)?.activeRun)
+        // The same chat ending again changes nothing.
+        XCTAssertNil(board.endRun(in: chat, outcome: .failed, report: nil, now: minutes(10)))
+    }
+
+    func testAFailedOrStoppedRunSendsTheTaskBackToToDo() {
+        for outcome in [WorkRun.Outcome.failed, .stopped] {
+            var board = Board(project: project, now: t0)
+            let item = board.add(title: "Work", by: .person, now: t0)
+            let chat = UUID()
+            board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                           by: .person, now: t0)
+            board.endRun(in: chat, outcome: outcome, report: nil, now: minutes(2))
+            XCTAssertEqual(board.item(item.id)?.status, .todo)
+        }
+    }
+
+    func testATaskMovedByHandWhileItRanStaysWhereItWasPut() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        board.move(item.id, to: .backlog, by: .person, now: minutes(1))
+        board.endRun(in: chat, outcome: .succeeded, report: nil, now: minutes(2))
+        XCTAssertEqual(board.item(item.id)?.status, .backlog)
+    }
+
+    func testAReviewClosesTheTaskOrSendsItBackWithNotes() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", status: .review, by: .person, now: t0)
+        board.review(item.id, Review(verdict: .changesRequested, notes: "Tests are missing.", by: "Supervisor",
+                                     date: minutes(1)), now: minutes(1))
+        XCTAssertEqual(board.item(item.id)?.status, .todo)
+        XCTAssertEqual(board.item(item.id)?.notes.last?.text, "Review: Tests are missing.")
+        board.review(item.id, Review(verdict: .approved, notes: "", by: "You", date: minutes(2)), now: minutes(2))
+        XCTAssertEqual(board.item(item.id)?.status, .done)
+    }
+
+    func testARecommendedReviewMovesNothing() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        board.endRun(in: chat, outcome: .succeeded, report: "Done.", now: minutes(5))
+        XCTAssertTrue(board.recommend(item.id, Review(verdict: .changesRequested, notes: "A test fails.",
+                                                      by: "Supervisor", date: minutes(6)), now: minutes(6)))
+        XCTAssertEqual(board.item(item.id)?.status, .review)
+        XCTAssertEqual(board.item(item.id)?.runs.last?.advice?.verdict, .changesRequested)
+        XCTAssertNil(board.item(item.id)?.runs.last?.review)
+    }
+
+    func testWhatTheSupervisorPickedStaysWhenAPersonChoosesAnother() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", by: .person, now: t0)
+        board.apply([.assign(ref: "T-1", model: "m1", reason: "Small.")], model: models, now: t0)
+        board.assign(item.id, Assignment(model: choice("claude-opus-5-5"), label: "Claude · Opus 5.5", reason: "",
+                                         source: .person, accepted: true, date: t0), by: .person, now: t0)
+        XCTAssertEqual(board.item(item.id)?.assignment?.label, "Claude · Opus 5.5")
+        XCTAssertEqual(board.item(item.id)?.suggestion?.label, "Ollama · qwen3-coder:30b")
+    }
+
+    func testOnlyARunThatStoppedByItselfIsCarriedOnWithoutThePerson() {
+        var board = Board(project: project, now: t0)
+        let chat = UUID()
+        func attempt(carriesOn: Bool? = nil) -> WorkRun {
+            WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0, carriesOn: carriesOn)
+        }
+        // It failed by itself: the supervisor may say "continue".
+        let failed = board.add(title: "Failed", by: .person, now: t0)
+        board.beginRun(failed.id, attempt(), by: .person, now: t0)
+        board.endRun(in: chat, outcome: .failed, report: "The model timed out.", ending: .itself, now: minutes(1))
+        XCTAssertTrue(board.mayCarryOn(board.item(failed.id)!))
+        // Carried on twice in a row and failed again: now it waits for a person.
+        for minute in [2.0, 4.0] {
+            board.beginRun(failed.id, attempt(carriesOn: true), by: .supervisor, now: minutes(minute))
+            board.endRun(in: chat, outcome: .failed, report: "", ending: .itself, now: minutes(minute + 1))
+        }
+        XCTAssertEqual(board.carryOns(of: board.item(failed.id)!), BoardRules.carryOnLimit)
+        XCTAssertFalse(board.mayCarryOn(board.item(failed.id)!))
+        // Started by a person again, the count starts again.
+        board.beginRun(failed.id, attempt(), by: .person, now: minutes(6))
+        board.endRun(in: chat, outcome: .failed, report: "", ending: .itself, now: minutes(7))
+        XCTAssertTrue(board.mayCarryOn(board.item(failed.id)!))
+
+        // What a person stopped, or was refused, is theirs to take up again.
+        for ending in [WorkRun.Ending.person, .supervisor] {
+            let other = UUID()
+            let item = board.add(title: "Halted", by: .person, now: t0)
+            board.beginRun(item.id, WorkRun(conversation: other, model: choice("m"), modelLabel: "M", startedAt: t0),
+                           by: .person, now: t0)
+            board.endRun(in: other, outcome: ending == .person ? .stopped : .failed, report: "", ending: ending,
+                         now: minutes(1))
+            XCTAssertEqual(board.item(item.id)?.runs.last?.ending, ending)
+            XCTAssertFalse(board.mayCarryOn(board.item(item.id)!))
+        }
+
+        // A task moved since the run left it is where the person wants it.
+        board.move(failed.id, to: .backlog, by: .person, now: minutes(8))
+        XCTAssertFalse(board.mayCarryOn(board.item(failed.id)!))
+        XCTAssertEqual(board.stoppedHalfway.map(\.title), [])
+    }
+
+    func testARunTheAppQuitUnderIsCarriedOnHoweverOftenThatHappens() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Long work", by: .person, now: t0)
+        let chat = UUID()
+        for round in 0..<4 {
+            board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M",
+                                            startedAt: minutes(Double(round)), carriesOn: round > 0),
+                           by: round == 0 ? .person : .supervisor, now: minutes(Double(round)))
+            // The app starts again with nothing running.
+            XCTAssertEqual(board.closeLostRuns(except: [], now: minutes(Double(round) + 0.5)), 1)
+            XCTAssertEqual(board.item(item.id)?.runs.last?.ending, .quit)
+            XCTAssertTrue(board.mayCarryOn(board.item(item.id)!))
+        }
+        XCTAssertEqual(board.stoppedHalfway.map(\.title), ["Long work"])
+    }
+
+    func testARunSavedBeforeItWasKeptWhatCutItShortIsToldApartByItsReport() throws {
+        // Found cut off when the app next started: nothing was ever reported.
+        let lost = """
+        {"id":"00000000-0000-0000-0000-000000000009","conversation":"00000000-0000-0000-0000-00000000000A",
+         "model":{"engine":"anthropic","model":"m"},"modelLabel":"M","startedAt":"2027-01-15T08:00:00Z",
+         "outcome":"stopped"}
+        """
+        // Stopped by a person while the app ran: it has a report, if only an empty one.
+        let stopped = """
+        {"id":"00000000-0000-0000-0000-00000000000B","conversation":"00000000-0000-0000-0000-00000000000C",
+         "model":{"engine":"anthropic","model":"m"},"modelLabel":"M","startedAt":"2027-01-15T08:00:00Z",
+         "outcome":"stopped","report":""}
+        """
+        // Failed: nobody can tell whether a step was refused.
+        let failed = """
+        {"id":"00000000-0000-0000-0000-00000000000D","conversation":"00000000-0000-0000-0000-00000000000E",
+         "model":{"engine":"anthropic","model":"m"},"modelLabel":"M","startedAt":"2027-01-15T08:00:00Z",
+         "outcome":"failed","report":"Not run, as you declined: Run: git push."}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var board = Board(project: project, now: t0)
+        var answers: [Bool] = []
+        for json in [lost, stopped, failed] {
+            let run = try decoder.decode(WorkRun.self, from: Data(json.utf8))
+            XCTAssertNil(run.ending)
+            XCTAssertNil(run.carriesOn)
+            let item = board.add(title: "Old", by: .person, now: t0)
+            board.update(item.id, now: t0) { $0.runs = [run] }
+            answers.append(board.mayCarryOn(board.item(item.id)!))
+        }
+        XCTAssertEqual(answers, [true, false, false])
+    }
+
+    func testRunsCutOffByQuittingAreClosedAndTheirTasksGoBack() {
+        var board = Board(project: project, now: t0)
+        let lost = board.add(title: "Lost", by: .person, now: t0)
+        let live = board.add(title: "Live", by: .person, now: t0)
+        let lostChat = UUID(), liveChat = UUID()
+        board.beginRun(lost.id, WorkRun(conversation: lostChat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        board.beginRun(live.id, WorkRun(conversation: liveChat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        XCTAssertEqual(board.closeLostRuns(except: [liveChat], now: minutes(30)), 1)
+        XCTAssertEqual(board.item(lost.id)?.status, .todo)
+        XCTAssertEqual(board.item(lost.id)?.runs.last?.outcome, .stopped)
+        XCTAssertEqual(board.item(live.id)?.status, .inProgress)
+    }
+
+    func testTheHistoryKeepsOnlyItsNewestLines() {
+        var board = Board(project: project, now: t0)
+        for index in 0..<(Board.activityLimit + 25) {
+            board.log("Line \(index)", by: .person, now: t0)
+        }
+        XCTAssertEqual(board.activity.count, Board.activityLimit)
+        XCTAssertEqual(board.activity.last?.text, "Line \(Board.activityLimit + 24)")
+    }
+
+    func testABoardSavedWithFewerFieldsStillLoads() throws {
+        let json = """
+        {"project":"00000000-0000-0000-0000-0000000000AA",
+         "items":[{"id":"00000000-0000-0000-0000-000000000001","number":4,"title":"Old task"}]}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let board = try decoder.decode(Board.self, from: Data(json.utf8))
+        XCTAssertEqual(board.items.first?.status, .todo)
+        XCTAssertEqual(board.items.first?.priority, .medium)
+        // The next number is past every number in use, whatever was saved.
+        XCTAssertEqual(board.nextNumber, 5)
+        XCTAssertTrue(board.settings.reviewGate)
+        XCTAssertFalse(board.settings.autopilot)
+        // Nobody answers in the person's place unless they said so.
+        XCTAssertFalse(board.settings.followsAdvice)
+        XCTAssertFalse(board.settings.supervisorAnswers)
+    }
+
+    func testTheSupervisorOnlyAnswersWhereItAlsoRecommends() {
+        var settings = BoardSettings()
+        XCTAssertFalse(settings.supervisorAnswers)
+        settings.followsAdvice = true
+        XCTAssertTrue(settings.supervisorAnswers)
+        // With no recommendation there is nothing to take.
+        settings.advice = false
+        XCTAssertFalse(settings.supervisorAnswers)
+    }
+
+    func testABoardSurvivesBeingSavedAndLoaded() throws {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", details: "Do it.", acceptance: ["It works"], priority: .high,
+                             kind: .bug, milestone: "Phase 1", estimateTokens: 20_000, by: .supervisor, now: t0)
+        board.assign(item.id, Assignment(model: choice("claude-sonnet-5-5"), label: "Claude · Sonnet 5.5",
+                                         reason: "Everyday work.", source: .supervisor, accepted: false, date: t0),
+                     by: .supervisor, now: t0)
+        board.budget = Budget(tokens: 1_000_000, dollars: 20)
+        board.settings.followsAdvice = true
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try decoder.decode(Board.self, from: encoder.encode(board)), board)
+    }
+
+    func testStatusesAreReadAsPeopleWriteThem() {
+        XCTAssertEqual(WorkStatus(loose: "In Progress"), .inProgress)
+        XCTAssertEqual(WorkStatus(loose: "in-progress"), .inProgress)
+        XCTAssertEqual(WorkStatus(loose: "to do"), .todo)
+        XCTAssertEqual(WorkStatus(loose: "Completed"), .done)
+        XCTAssertNil(WorkStatus(loose: "someday maybe"))
+        XCTAssertEqual(WorkPriority(loose: "P0"), .urgent)
+        XCTAssertEqual(WorkKind(loose: "Bug fix"), .bug)
+    }
+}
+
+final class OperationTests: XCTestCase {
+    func testAPlanIsAddedWithItsWaitsAndModels() {
+        var board = Board(project: project, now: t0)
+        let summary = board.apply([
+            .setGoal("Ship sign-in"),
+            .add(label: "a", ItemPatch(title: "Design the form", kind: .design, model: "m2", reason: "Open-ended.")),
+            // It waits on a task added later in the same reply.
+            .add(label: "b", ItemPatch(title: "Build the form", dependsOn: ["a", "c"], estimateTokens: 40_000, model: "m1")),
+            .add(label: "c", ItemPatch(title: "Write the API", status: .backlog)),
+        ], model: models, now: t0)
+        XCTAssertEqual(summary.added, 3)
+        XCTAssertEqual(summary.assigned, 2)
+        XCTAssertTrue(summary.goalChanged)
+        XCTAssertTrue(summary.problems.isEmpty)
+        XCTAssertEqual(board.goal, "Ship sign-in")
+        XCTAssertEqual(board.item(number: 2)?.dependsOn, [1, 3])
+        XCTAssertEqual(board.item(number: 1)?.assignment?.label, "Claude · Sonnet 5.5")
+        XCTAssertEqual(board.item(number: 1)?.assignment?.accepted, false)
+        XCTAssertEqual(board.item(number: 3)?.status, .backlog)
+        XCTAssertEqual(summary.sentence, "Set the goal, added 3 tasks and suggested a model for 2 tasks.")
+    }
+
+    func testWhatCannotBeDoneIsSkippedAndSaid() {
+        var board = Board(project: project, now: t0)
+        let kept = board.add(title: "Has a run", by: .person, now: t0)
+        board.beginRun(kept.id, WorkRun(conversation: UUID(), model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        let summary = board.apply([
+            .move(ref: "T-9", .done),
+            .assign(ref: "T-1", model: "m7", reason: ""),
+            .remove(ref: "T-1"),
+            .move(ref: "T-1", .backlog),
+            .add(label: nil, ItemPatch(title: "  ")),
+        ], model: models, now: t0)
+        XCTAssertTrue(summary.isEmpty)
+        XCTAssertEqual(summary.problems.count, 5)
+        XCTAssertEqual(board.items.count, 1)
+        XCTAssertEqual(board.item(kept.id)?.status, .inProgress)
+    }
+
+    func testASupervisorCannotAddWorkAsAlreadyDone() {
+        var board = Board(project: project, now: t0)
+        board.apply([.add(label: nil, ItemPatch(title: "Claimed done", status: .done))], model: models, now: t0)
+        XCTAssertEqual(board.items.first?.status, .todo)
+    }
+
+    func testAModelAPersonChoseIsNotReplaced() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Work", by: .person, now: t0)
+        board.assign(item.id, Assignment(model: choice("claude-opus-5-5"), label: "Claude · Opus 5.5", reason: "",
+                                         source: .person, accepted: true, date: t0), by: .person, now: t0)
+        let summary = board.apply([.assign(ref: "1", model: "m1", reason: "Cheaper.")], model: models, now: t0)
+        XCTAssertEqual(summary.assigned, 0)
+        XCTAssertEqual(board.item(item.id)?.assignment?.label, "Claude · Opus 5.5")
+    }
+
+    func testTasksAreFoundByTheNamesASupervisorUses() {
+        var board = Board(project: project, now: t0)
+        board.add(title: "One", by: .person, now: t0)
+        for ref in ["T-1", "t1", "#1", "1", " Task 1 ", "task-1"] {
+            XCTAssertEqual(board.item(ref: ref)?.number, 1, ref)
+        }
+        XCTAssertNil(board.item(ref: "T-2"))
+        XCTAssertNil(board.item(ref: "one"))
+    }
+
+    func testARunawayReplyCannotFloodTheBoard() {
+        var board = Board(project: project, now: t0)
+        let many = (0..<(Board.operationLimit + 40)).map { BoardOperation.add(label: nil, ItemPatch(title: "Task \($0)")) }
+        let summary = board.apply(many, model: models, now: t0)
+        XCTAssertEqual(summary.added, Board.operationLimit)
+        XCTAssertEqual(summary.problems.count, 1)
+    }
+}

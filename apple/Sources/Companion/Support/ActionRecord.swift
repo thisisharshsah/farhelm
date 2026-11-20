@@ -61,12 +61,13 @@ final class ActionRecord {
         write(line)
     }
 
-    /// Steps the user said no to: nothing ran.
-    func declined(_ steps: [ActionStep], task: UUID, chat: UUID) {
+    /// Steps that were said no to: nothing ran. `by` says who said it:
+    /// the user, or the project's supervisor in their place.
+    func declined(_ steps: [ActionStep], task: UUID, chat: UUID, by: String = "you") {
         for step in steps where Self.records(step.kind) {
             write([
                 "event": "declined", "step": step.id.uuidString, "task": task.uuidString, "chat": chat.uuidString,
-                "kind": "\(step.kind)", "what": Self.describe(step, passwordField: false)
+                "kind": "\(step.kind)", "what": Self.describe(step, passwordField: false), "by": by
             ])
         }
     }
