@@ -109,7 +109,7 @@ Two rules conflict today:
 
 | | Companion alone | With Farhelm too |
 |---|---|---|
-| Models | The person's API keys (Anthropic, OpenAI, Gemini, OpenRouter), Apple's on-device model, Ollama or LM Studio, subscription command-line tools | Adds Farhelm's managed local models (llama.cpp, MLX) and its shared limits |
+| Models | The person's API keys (Anthropic, OpenAI, Gemini, OpenRouter), Ollama or LM Studio, subscription command-line tools | Adds Farhelm's managed local models (llama.cpp, MLX) and its shared limits |
 | Data | On each device, synced through the person's iCloud | The same; Farhelm keeps only engine data: models, keys for other clients, runs, usage |
 | Devices | Mac, iPhone and Watch pair directly by QR code | Can also reach a Farhelm on another machine |
 | Agent | Acts and asks for approval on the Mac | Long runs keep going after the app closes |
@@ -121,7 +121,7 @@ Two rules conflict today:
 | Layer | Choice |
 |---|---|
 | Language and UI | Swift 6 language mode; SwiftUI with AppKit where needed; Observation for app state, so views redraw only for what they read. Minimums stay macOS 14, iOS 17 and watchOS 10; newer features sit behind availability checks |
-| Models | One provider protocol, grown from today's `LLMConfig`: Anthropic; one OpenAI-compatible adapter for OpenAI, Gemini, OpenRouter, LM Studio, Farhelm and any other compatible server; Ollama keeps its own client, since its OpenAI-compatible route cannot set the context size; Apple's on-device model (macOS and iOS 26 and later); subscription command-line tools, read-only. `Usage.swift` keeps the records for the person's own keys |
+| Models | One provider protocol, grown from today's `LLMConfig`: Anthropic; one OpenAI-compatible adapter for OpenAI, Gemini, OpenRouter, LM Studio, Farhelm and any other compatible server; Ollama keeps its own client, since its OpenAI-compatible route cannot set the context size; subscription command-line tools, read-only. `Usage.swift` keeps the records for the person's own keys |
 | Keys | The Keychain, optionally synced with iCloud Keychain; never in files or logs |
 | Data | SQLite through GRDB in place of today's JSON files; settings stay in UserDefaults; sync with CloudKit's `CKSyncEngine`, which needs macOS 14, iOS 17 and watchOS 10 (Companion's minimums today). Developer ID apps can use CloudKit |
 | Device link | QR pairing. On the same Wi-Fi the app reaches the Mac directly; elsewhere both meet on a relay (`Shared/CompanionLink`, built 2026-11-15): the Mac dials out, every frame is sealed with a key that only travels in the QR code (ChaCha20-Poly1305 under HKDF keys, one per direction, channel and sender bound in, repeats refused), and the relay opens the channel with a seat derived from the same key, so it reads nothing. iroh 1.0 stays the candidate for direct device-to-device paths later, behind the same requests |
@@ -233,9 +233,9 @@ Each step leaves everything working.
 4. **One provider layer in Companion**, with keys in the Keychain.
    Begun 2026-11-15 on the `provider-layer` branch: one adapter for every
    OpenAI-compatible service, with the services as data
-   (`LLM/CompatibleServices.swift`). Apple's on-device model followed on
-   the `apple-model` branch (`LLM/AppleModel.swift`). Apple's larger model on
-   Private Cloud Compute (macOS 27) needs an entitlement from Apple first.
+   (`LLM/CompatibleServices.swift`). Apple's on-device model was built on
+   the `apple-model` branch and then left out (user direction, 2026-11-20):
+   it is not needed.
 5. **The contract:** Farhelm's OpenAPI document and capabilities call,
    Companion's generated client, shared fixtures in CI.
 6. **Companion's data in SQLite with iCloud sync**, moving today's JSON files

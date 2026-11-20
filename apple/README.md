@@ -15,7 +15,7 @@ Plan: Companion works on its own, with the person's own model keys; Farhelm is a
 - Notes for later: when you stop listening (and whenever you press the wand in the Notes view) the conversation is written up as structured notes: a short summary, a section per topic, decisions, action items and open questions. They are saved with the conversation, refreshed after a recheck, and the save button exports the notes plus the cleaned transcript as a Markdown file
 - Guided voice setup: read five short sentences aloud, one at a time, and it advances as it hears you
 - Voice separation on the mic (optional): record your voice once, then in-person talks and speakerphone calls work too; your voice stays You, every other voice becomes P1, P2, ... and triggers suggestions. Three FluidAudio models work together. Live, the streaming Sortformer diarizer follows the continuous mic stream (primed with your recording), and each finished utterance also gets a voiceprint (WeSpeaker embedding) that is compared with your own voice and the voices heard so far: it overrules the diarizer when the voice clearly says otherwise and folds a voice the diarizer split in two back into one person. On Recheck, the offline pyannote pipeline (segmentation, embeddings, VBx clustering) re-labels the whole recorded session at once, which is the most accurate, and the live labels then follow its naming. Mic audio for this is kept in memory only (up to 30 minutes). Phone calls taken on the Mac (FaceTime, iPhone call relay) already arrive as system audio
-- Reply suggestions streamed from your Farhelm gateway (local models with routing, cache and one ledger), Claude, OpenAI, Ollama, Apple's on-device model, or More services (Gemini, OpenRouter, LM Studio or any OpenAI-compatible server), switchable anytime
+- Reply suggestions streamed from your Farhelm gateway (local models with routing, cache and one ledger), Claude, OpenAI, Ollama, or More services (Gemini, OpenRouter, LM Studio or any OpenAI-compatible server), switchable anytime
 - Screen answers: one hotkey takes a picture of what you are looking at and answers the question shown. It zooms in on the window under the mouse pointer and captures it at full resolution, instead of the whole monitor, so small text and diagrams keep their detail. The window itself is captured, so other windows overlapping it are left out. With Claude, OpenAI or Gemini as the engine the picture itself is sent along with the OCR text (Apple Vision, on-device), so diagrams, charts and figures are understood; the other engines get the text only. Optional auto-watch mode
 - Screen watcher: with Screen on, Companion glances at the screen every few seconds (3 by default; 2, 3, 5 or 10 in Settings) with a tiny capture, reads it only when it changed and then held still, and answers only a question it has not answered yet; after a minute without change it slows to every 10 seconds
 - Agent, from the chat: there is one chat box. A question is answered; a message that asks for something to be done on the Mac ("deploy the frontend", "what changed in this repo since yesterday", "write a prompt about the settings window in the Claude chat and send it") goes to the agent, by its wording or because the model hands it over (so "can you do it" about something on screen works). It works like a coding agent, in rounds: it proposes the next step, you allow it, it runs, and the result goes back to the model, until the task is done or it needs you
@@ -151,14 +151,6 @@ Any service that speaks OpenAI's chat completions works through one adapter: Gem
 - Services are data: `Sources/Companion/LLM/CompatibleServices.swift`. Adding one is a new entry there, not new code. OpenAI and Farhelm go through the same adapter and keep their own place in Settings.
 - Ollama keeps its own client: its OpenAI-compatible route cannot set the context size, which Companion sets on every request.
 
-### Apple's on-device model
-
-On a Mac with Apple Intelligence (macOS 26 or later), Companion can answer with Apple's own model: free, private, offline, and no key. Choose Apple in Settings > Engine.
-
-- It holds a few thousand tokens, prompt and answer together. Companion asks the system how many and sizes every request to fit.
-- Agent tasks need far more, so with Apple chosen a task asks for another engine.
-- Source: `Sources/Companion/LLM/AppleModel.swift`. The framework is linked weakly, so the app still opens on macOS 14 and 15.
-
 ## Using it
 
 - Window buttons: the red, yellow and green dots at the top left close the panel (the circle or Cmd+Shift+Space brings it back), shrink it to a pill, and enlarge it to fill most of the screen (click again to go back)
@@ -174,9 +166,8 @@ On a Mac with Apple Intelligence (macOS 26 or later), Companion can answer with 
 ## Requirements
 
 - macOS 14+ on Apple Silicon
-- Xcode 26.4+ or its Command Line Tools (the macOS 26.4 SDK or later; `xcode-select --install`)
+- Xcode 26+ or its Command Line Tools (the macOS 26 SDK; `xcode-select --install`)
 - First launch downloads the Parakeet model (about 1 GB, cached afterwards)
-- Apple's on-device model needs only Apple Intelligence turned on (macOS 26 or later).
 - For local models: a running Farhelm runner (`farhelm clients add companion` once, key goes in Settings; default gateway http://127.0.0.1:7842/p/companion), [Ollama](https://ollama.com), or LM Studio's server. For API providers: an Anthropic, OpenAI, Gemini or OpenRouter key, or any other server that speaks OpenAI's chat completions.
 
 ## Build and run

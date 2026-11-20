@@ -492,13 +492,6 @@ final class SuggestionEngine {
     /// model its task was given).
     func agentSession(task: String, engine: EngineChoice? = nil) throws -> AgentSession {
         let config = try makeConfig(withEffort: true, engine: engine)
-        // A task needs room for its instructions, the task itself and what
-        // each step shows; Apple's on-device model holds far less.
-        let holds = ContextBudget.of(config).window
-        if config.kind == .apple, holds < AppleModel.agentContext {
-            throw LLMError.notConfigured("Apple's on-device model holds about \(holds) tokens, too few for a task. "
-                                         + "Switch to another engine with the model button to run it.")
-        }
         return AgentSession(task: task, config: config, pinned: KnowledgeIndex.shared.pinned())
     }
 

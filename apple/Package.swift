@@ -42,10 +42,7 @@ let package = Package(
                 .product(name: "CompanionBoard", package: "CompanionBoard"),
                 "CEFKit"
             ],
-            path: "Sources/Companion",
-            // Apple's on-device model (FoundationModels) is on macOS 26 and
-            // later. Linked weakly, so the app still opens on older versions.
-            linkerSettings: [.unsafeFlags(["-Xlinker", "-weak_framework", "-Xlinker", "FoundationModels"])]
+            path: "Sources/Companion"
         ),
         .target(
             name: "CEFKit",

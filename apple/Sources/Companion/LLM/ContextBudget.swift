@@ -51,9 +51,6 @@ struct ContextBudget {
             return ContextBudget(window: hostedWindow(settings.openAIModel, fallback: 128_000), hosted: true)
         case .farhelm, .ollama:
             return ContextBudget(window: max(settings.localContextTokens, 4_000), hosted: false)
-        case .apple:
-            // As much as the system says the model holds.
-            return ContextBudget(window: AppleModel.contextTokens, hosted: false)
         case .compatible:
             // A model on this Mac is sized like the other local engines; a
             // hosted one by its name.
@@ -80,8 +77,6 @@ struct ContextBudget {
             return ContextBudget(window: hostedWindow(config.model, fallback: 128_000), hosted: true)
         case .farhelm, .ollama:
             return local
-        case .apple:
-            return ContextBudget(window: AppleModel.contextTokens, hosted: false)
         case .compatible:
             let service = CompatibleService.behind(config) ?? .other
             if service.runsLocally(at: config.baseURL) { return local }

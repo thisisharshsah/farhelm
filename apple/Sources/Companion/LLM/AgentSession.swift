@@ -79,7 +79,7 @@ final class AgentSession {
         // A service that takes tool calls gets them; one that does not
         // writes its steps as lines of text.
         case .compatible: wire = (CompatibleService.behind(config)?.tools ?? false) ? .openAI : .text
-        case .ollama, .apple, .subscription: wire = .text
+        case .ollama, .subscription: wire = .text
         }
         // Claude thinks first on agent work unless an effort was chosen.
         if config.effort == nil, config.kind == .anthropic { config.effort = "medium" }

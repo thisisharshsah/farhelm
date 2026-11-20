@@ -105,15 +105,12 @@ enum LLMError: LocalizedError {
     case notConfigured(String)
     case http(Int, String)
     case network(String)
-    /// The engine could not answer, in words for the screen.
-    case engine(String)
 
     var errorDescription: String? {
         switch self {
         case .notConfigured(let message): return message
         case .http(let code, let body): return "Provider error \(code): \(String(body.prefix(300)))"
         case .network(let message): return message
-        case .engine(let message): return message
         }
     }
 }
@@ -244,8 +241,6 @@ enum LLM {
                                                  service: CompatibleService.behind(config) ?? .other)
         case .ollama:
             return try await OllamaClient.stream(request, config: config)
-        case .apple:
-            return try AppleModel.stream(request)
         case .subscription:
             return try await CLIAgentClient.stream(request, config: config)
         }

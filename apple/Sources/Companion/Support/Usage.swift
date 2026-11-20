@@ -6,7 +6,7 @@ struct UsageRecord: Codable, Identifiable {
     var id = UUID()
     var date = Date()
     var conversation: UUID?
-    /// "anthropic", "openai", "farhelm", "ollama", "apple", or for More services the
+    /// "anthropic", "openai", "farhelm", "ollama", or for More services the
     /// service's id ("gemini", "lmstudio").
     var engine: String
     var model: String

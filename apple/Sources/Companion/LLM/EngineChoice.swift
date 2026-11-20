@@ -43,7 +43,6 @@ struct EngineChoice: Equatable {
         case .anthropic: return EngineChoice(kind: .anthropic, model: settings.anthropicModel)
         case .openai: return EngineChoice(kind: .openai, model: settings.openAIModel)
         case .ollama: return EngineChoice(kind: .ollama, model: settings.ollamaModel)
-        case .apple: return EngineChoice(kind: .apple, model: "")
         case .compatible:
             let service = settings.compatibleService
             return EngineChoice(kind: .compatible, tool: service.id, model: settings.model(for: service))
@@ -93,10 +92,6 @@ struct EngineChoice: Equatable {
             return LLMConfig(kind: .openai, apiKey: key, model: model, baseURL: "")
         case .ollama:
             return LLMConfig(kind: .ollama, apiKey: "", model: model, baseURL: settings.ollamaURL)
-        case .apple:
-            if let reason = AppleModel.unavailableReason { throw LLMError.notConfigured(reason) }
-            // It has one model, named for the usage records.
-            return LLMConfig(kind: .apple, apiKey: "", model: AppleModel.modelName, baseURL: "")
         case .compatible:
             let service = self.service
             let key = Keychain.read(service.keyAccount) ?? service.keyVariable.flatMap { env[$0] } ?? ""
@@ -128,7 +123,6 @@ struct EngineChoice: Equatable {
         switch kind {
         case .farhelm: return LLMConfig(kind: .farhelm, apiKey: "", model: model, baseURL: settings.farhelmURL)
         case .ollama: return LLMConfig(kind: .ollama, apiKey: "", model: model, baseURL: settings.ollamaURL)
-        case .apple: return LLMConfig(kind: .apple, apiKey: "", model: AppleModel.modelName, baseURL: "")
         case .compatible:
             var config = LLMConfig(kind: .compatible, apiKey: "", model: model, baseURL: settings.address(for: service))
             config.service = service.id
@@ -151,9 +145,8 @@ struct EngineChoice: Equatable {
     var effort: String? {
         let key: String
         switch kind {
-        // Neither takes an effort from here: a tool reads its own, and
-        // Apple's on-device model takes none.
-        case .subscription, .apple: return nil
+        // A tool reads its own effort, not one from here.
+        case .subscription: return nil
         case .compatible: key = "\(kind.rawValue)|\(tool ?? "")|\(model)"
         case .farhelm, .anthropic, .openai, .ollama: key = "\(kind.rawValue)|\(model)"
         }
@@ -166,7 +159,7 @@ struct EngineChoice: Equatable {
     @MainActor
     var runsHere: Bool {
         switch kind {
-        case .farhelm, .ollama, .apple: return true
+        case .farhelm, .ollama: return true
         case .compatible: return service.runsLocally(at: AppSettings.shared.address(for: service))
         case .anthropic, .openai, .subscription: return false
         }
@@ -179,7 +172,7 @@ struct EngineChoice: Equatable {
         switch kind {
         case .anthropic, .openai: return true
         case .compatible: return !runsHere
-        case .farhelm, .ollama, .apple, .subscription: return false
+        case .farhelm, .ollama, .subscription: return false
         }
     }
 
@@ -188,7 +181,7 @@ struct EngineChoice: Equatable {
         switch kind {
         case .anthropic, .openai, .farhelm: return true
         case .compatible: return service.tools
-        case .ollama, .apple, .subscription: return false
+        case .ollama, .subscription: return false
         }
     }
 
@@ -198,7 +191,6 @@ struct EngineChoice: Equatable {
         switch kind {
         case .compatible: return (service.id, model)
         case .subscription: return (kind.rawValue, tool ?? "")
-        case .apple: return (kind.rawValue, AppleModel.modelName)
         case .farhelm, .anthropic, .openai, .ollama: return (kind.rawValue, model)
         }
     }

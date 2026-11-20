@@ -3,8 +3,6 @@ import Combine
 
 enum LLMProviderKind: String, CaseIterable, Identifiable {
     case farhelm, anthropic, openai, ollama
-    /// Apple's on-device model, behind Apple Intelligence (macOS 26 and later).
-    case apple
     /// Any other service that speaks OpenAI's chat completions (Gemini,
     /// OpenRouter, LM Studio, or one of your own), through one adapter;
     /// which one is `AppSettings.service`.
@@ -20,7 +18,6 @@ enum LLMProviderKind: String, CaseIterable, Identifiable {
         case .anthropic: return "Claude (Anthropic API)"
         case .openai: return "OpenAI API"
         case .ollama: return "Local (Ollama)"
-        case .apple: return "Apple Intelligence (on this Mac)"
         case .compatible: return "More services (Gemini, OpenRouter, LM Studio, your own)"
         case .subscription: return "Subscription (Claude Code, Codex, Antigravity)"
         }
@@ -363,7 +360,7 @@ extension AppSettings {
     /// Whether what is sent stays on this Mac (or its network).
     var engineRunsHere: Bool {
         switch provider {
-        case .farhelm, .ollama, .apple: return true
+        case .farhelm, .ollama: return true
         case .compatible:
             let chosen = compatibleService
             return chosen.runsLocally(at: address(for: chosen))
@@ -377,7 +374,7 @@ extension AppSettings {
         switch provider {
         case .anthropic, .openai: return true
         case .compatible: return !engineRunsHere
-        case .farhelm, .ollama, .apple, .subscription: return false
+        case .farhelm, .ollama, .subscription: return false
         }
     }
 }
@@ -392,18 +389,15 @@ extension AppSettings {
         case .anthropic: return "\(provider.rawValue)|\(anthropicModel)"
         case .openai: return "\(provider.rawValue)|\(openAIModel)"
         case .ollama: return "\(provider.rawValue)|\(ollamaModel)"
-        case .apple: return provider.rawValue
         case .compatible: return "\(provider.rawValue)|\(service)|\(model(for: compatibleService))"
         case .subscription: return "\(provider.rawValue)|\(cliAgent)|\(cliModel)"
         }
     }
 
     /// The effort levels the engine in use takes. A subscription tool has
-    /// its own; one with none offers no choice, and neither does Apple's
-    /// on-device model.
+    /// its own; one with none offers no choice.
     var effortLevels: [String] {
         if provider == .subscription { return CLIAgents.shared.adapter(cliAgent)?.efforts ?? [] }
-        if provider == .apple { return [] }
         return Effort.allCases.compactMap(\.wire)
     }
 

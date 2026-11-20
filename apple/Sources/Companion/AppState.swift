@@ -497,8 +497,6 @@ final class AppState: ObservableObject {
             return "OpenAI · \(settings.openAIModel)"
         case .ollama:
             return "Ollama · \(settings.ollamaModel)"
-        case .apple:
-            return "Apple · \(AppleModel.modelName)"
         case .compatible:
             let service = settings.compatibleService
             return "\(service.name) · \(settings.model(for: service))"

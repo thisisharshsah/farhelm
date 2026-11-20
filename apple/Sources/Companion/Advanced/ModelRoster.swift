@@ -25,9 +25,6 @@ enum ModelRoster {
     static var entries: [Entry] {
         var found: [EngineChoice] = []
         for engine in EngineCatalog.engines {
-            // Apple's on-device model holds too little for a task: an agent
-            // turns it away (`SuggestionEngine.agentSession`).
-            if engine.kind == .apple, AppleModel.contextTokens < AppleModel.agentContext { continue }
             for model in engine.models {
                 // A service with no model chosen cannot be asked yet.
                 if engine.kind == .compatible, model.isEmpty { continue }
