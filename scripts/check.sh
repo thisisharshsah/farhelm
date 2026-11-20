@@ -9,6 +9,17 @@ set -euo pipefail
 # Every command below is written from the repository root.
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# rustup installs cargo in ~/.cargo/bin and leaves it to the shell profile to put
+# that folder on PATH. A shell that skips the profile (a git hook, CI, an editor
+# task, an agent run) would stop at the first Rust step with "cargo: command not
+# found", so fall back to rustup's own location when cargo is not already found.
+if ! command -v cargo >/dev/null 2>&1; then
+  cargo_bin="${CARGO_HOME:-${HOME:-}/.cargo}/bin"
+  if [ -x "$cargo_bin/cargo" ]; then
+    export PATH="$cargo_bin:$PATH"
+  fi
+fi
+
 step() { printf '\n\033[1m▸ %s\033[0m\n' "$1"; }
 
 step "Web app + service worker build"

@@ -11,6 +11,11 @@
 tunnel: TUNNEL-UUID
 credentials-file: /Users/harshsah/.cloudflared/TUNNEL-UUID.json
 
+# A fixed metrics port outside 20241–20245. Left unset, cloudflared takes the
+# first free port in that range, and after a reboot that can be one another
+# tunnel has pinned (the career tunnel crash-looped this way, 2026-11-10).
+metrics: 127.0.0.1:20254
+
 # Rules are matched top to bottom; the first match wins.
 ingress:
   # The relay's WebSocket. Its own hostname rather than a path on the main one,
