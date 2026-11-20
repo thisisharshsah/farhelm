@@ -46,3 +46,6 @@ web/public/dl/
 mobile/ios/
 mobile/android/
 .expo/
+
+# Farhelm's API clients on this machine (`farhelm clients add`), with key hashes.
+clients.toml
