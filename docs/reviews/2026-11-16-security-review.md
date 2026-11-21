@@ -373,7 +373,7 @@ Ranking: critical means control of the Mac or of accounts by an attacker who nee
 
 ## 8. Status, 2026-11-20
 
-Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift changes are not yet built or tried on a device.
+Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift changes are not yet built or tried on a device. Next by severity: H5 (enrolment under an existing machine's name), then H1.
 
 | ID | Status | Where |
 |---|---|---|
@@ -384,6 +384,10 @@ Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift cha
 | M10 | Partly: agent commands get a short list of variables (`AgentProcess.plainEnvironment`). CLI tools still get the app's environment, since they may need their own settings | `AgentProcess.swift`, `AgentShell.swift` |
 | M11 | Partly: the runner refuses `/v1` through any tunnel or proxy. The live tunnel file is still outside the repository; the path rule to use is in `deploy/README.md` | `crates/farhelm-runner/src/api.rs` |
 | H1 | Open: the code still crosses the local network in clear. The listener now refuses connections from outside this Mac's own networks | `RemoteServer.isNearby` |
+| H3 | Fixed: ten failed sign-ins for an account, or a hundred from one address (a /64 for IPv6), in fifteen minutes, then a wait, a correct password included; twenty sign-ups an hour from one address. Argon2 runs off the async workers, four at a time, after the database lock is released. `CF-Connecting-IP` is believed only from a loopback peer. Still worth adding: a Cloudflare rate rule for `/v1/auth/*` | `crates/farhelm-cloud/src/throttle.rs`, `api.rs` (`login`, `signup`, `client_address`), `store.rs` (`authenticate`) |
+| H4 | Fixed: push endpoints must be https, on the standard port, on Google's, Apple's, Mozilla's or Microsoft's push service; at most 1,024 characters and 20 devices a channel; no redirects; the other end's answer is not logged | `crates/farhelm-relay/src/push.rs` (`acceptable_endpoint`), `lib.rs`, `webpush.rs` |
+| M2 | Fixed: the stats address asks for the channel's token, as a wake-up does | `crates/farhelm-relay/src/lib.rs` (`channel_stats`) |
+| M8 | Fixed: the relay binds loopback unless told otherwise | `crates/farhelm-relay/src/cli.rs` |
 
 New findings, 2026-11-20:
 

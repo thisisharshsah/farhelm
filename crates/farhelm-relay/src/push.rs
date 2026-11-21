@@ -43,6 +43,61 @@ use crate::webpush::{self, PushError, VapidKey};
 /// arrives within this window.
 const MIN_INTERVAL: Duration = Duration::from_secs(10);
 
+/// The push services browsers hand out endpoints on; a leading dot means any
+/// host under that domain. A subscription anywhere else is refused, or the
+/// relay would POST wherever a caller pointed it, from the machine it runs on
+/// (security review, H4).
+const PUSH_HOSTS: &[&str] = &[
+    // Chrome, and the browsers built on it.
+    "fcm.googleapis.com",
+    // Safari (web.push.apple.com).
+    ".push.apple.com",
+    // Firefox.
+    ".push.services.mozilla.com",
+    // Edge on Windows.
+    ".notify.windows.com",
+];
+
+/// The longest endpoint taken. Real ones are a few hundred characters.
+const MAX_ENDPOINT_LEN: usize = 1_024;
+
+/// Devices one channel can have waiting for push: enough for a person's
+/// browsers and phones, and a bound on what one wake-up sends.
+const MAX_SUBSCRIPTIONS: usize = 20;
+
+/// Whether an endpoint is on a browser push service, over https on the
+/// standard port, with nothing in it that could point the request elsewhere.
+pub fn acceptable_endpoint(endpoint: &str) -> Result<(), &'static str> {
+    if endpoint.len() > MAX_ENDPOINT_LEN {
+        return Err("that endpoint is too long");
+    }
+    let Some(rest) = endpoint.strip_prefix("https://") else {
+        return Err("a push endpoint must be https");
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return Err("that is not a browser push service");
+    }
+    let host = match authority.rsplit_once(':') {
+        Some((host, "443")) => host,
+        Some(_) => return Err("a push endpoint must use the standard port"),
+        None => authority,
+    }
+    .to_ascii_lowercase();
+    let known = PUSH_HOSTS.iter().any(|allowed| {
+        if allowed.starts_with('.') {
+            host.ends_with(allowed)
+        } else {
+            host == *allowed
+        }
+    });
+    if known {
+        Ok(())
+    } else {
+        Err("that is not a browser push service")
+    }
+}
+
 /// A browser's WebPush subscription, as `PushManager.subscribe()` returns it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Subscription {
@@ -82,7 +137,8 @@ impl PushRegistry {
         }
     }
 
-    pub fn subscribe(&self, channel: &str, subscription: Subscription) {
+    /// Adds a device, or replaces it; false when the channel is full.
+    pub fn subscribe(&self, channel: &str, subscription: Subscription) -> bool {
         let mut channels = self.channels.lock().expect("push registry poisoned");
         let entry = channels.entry(channel.to_owned()).or_default();
         // Re-subscribing with the same endpoint replaces rather than duplicates:
@@ -93,9 +149,12 @@ impl PushRegistry {
             .find(|candidate| candidate.endpoint == subscription.endpoint)
         {
             *existing = subscription;
-        } else {
+        } else if entry.subscriptions.len() < MAX_SUBSCRIPTIONS {
             entry.subscriptions.push(subscription);
+        } else {
+            return false;
         }
+        true
     }
 
     pub fn subscriber_count(&self, channel: &str) -> usize {
@@ -219,8 +278,19 @@ pub async fn subscribe(
             Json(serde_json::json!({ "error": "endpoint is required" })),
         );
     }
+    if let Err(problem) = acceptable_endpoint(&subscription.endpoint) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": problem })),
+        );
+    }
 
-    state.push.subscribe(&channel, subscription);
+    if !state.push.subscribe(&channel, subscription) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": "this channel has as many devices as it can take" })),
+        );
+    }
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -271,6 +341,48 @@ pub async fn vapid_public_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_browser_push_services_are_accepted() {
+        for endpoint in [
+            "https://fcm.googleapis.com/fcm/send/abc",
+            "https://web.push.apple.com/QGuQ",
+            "https://updates.push.services.mozilla.com/wpush/v2/gAAA",
+            "https://wns2-par02p.notify.windows.com/w/?token=x",
+            "https://FCM.googleapis.com:443/fcm/send/abc",
+        ] {
+            assert_eq!(acceptable_endpoint(endpoint), Ok(()), "{endpoint}");
+        }
+        for endpoint in [
+            "http://fcm.googleapis.com/fcm/send/abc",
+            "https://127.0.0.1:7844/v1/runners/heartbeat",
+            "https://localhost/x",
+            "https://[::1]/x",
+            "https://fcm.googleapis.com:8443/x",
+            "https://fcm.googleapis.com@evil.example/x",
+            "https://evil.example/fcm.googleapis.com",
+            "https://notpush.apple.com/x",
+            "https://push.apple.com.evil.example/x",
+        ] {
+            assert!(acceptable_endpoint(endpoint).is_err(), "{endpoint}");
+        }
+        let long = format!("https://fcm.googleapis.com/{}", "a".repeat(1_100));
+        assert!(acceptable_endpoint(&long).is_err());
+    }
+
+    #[test]
+    fn a_channel_takes_so_many_devices_and_a_known_one_again() {
+        let registry = PushRegistry::new();
+        for n in 0..MAX_SUBSCRIPTIONS {
+            assert!(registry.subscribe(
+                "chan",
+                subscription(&format!("https://fcm.googleapis.com/{n}"))
+            ));
+        }
+        assert!(!registry.subscribe("chan", subscription("https://fcm.googleapis.com/one-more")));
+        assert!(registry.subscribe("chan", subscription("https://fcm.googleapis.com/0")));
+        assert_eq!(registry.subscriber_count("chan"), MAX_SUBSCRIPTIONS);
+    }
 
     fn subscription(endpoint: &str) -> Subscription {
         Subscription {

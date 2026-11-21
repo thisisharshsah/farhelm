@@ -62,7 +62,7 @@ every subscription a browser made is bound to the public half it saw, so a new
 key silently stops waking every device that ever subscribed.
 
 DEFAULTS:
-    --port 7843    --bind 0.0.0.0    --push-subject <this project's URL>
+    --port 7843    --bind 127.0.0.1    --push-subject <this project's URL>
 ";
 
 /// Run the relay from `farhelm relay`'s arguments.
@@ -81,7 +81,10 @@ pub fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let port: u16 = value_of("--port")
         .and_then(|raw| raw.parse().ok())
         .unwrap_or(DEFAULT_PORT);
-    let bind = value_of("--bind").unwrap_or_else(|| "0.0.0.0".to_owned());
+    // Loopback unless told otherwise: the tunnel reaches it there, and an
+    // address open to the network is a choice to make, not a default
+    // (security review, M8).
+    let bind = value_of("--bind").unwrap_or_else(|| "127.0.0.1".to_owned());
     let vapid_path = value_of("--vapid-key");
     let subject = value_of("--push-subject").unwrap_or_else(|| DEFAULT_PUSH_SUBJECT.to_owned());
     let auth_key = value_of("--auth-key");

@@ -319,8 +319,9 @@ pub async fn deliver(
         return Err(PushError::Expired);
     }
     if !status.is_success() {
-        let detail = response.text().await.unwrap_or_default();
-        return Err(PushError::Http(format!("{status}: {}", detail.trim())));
+        // The status only: what the other end said is not written to the log
+        // (security review, H4).
+        return Err(PushError::Http(status.to_string()));
     }
     Ok(())
 }

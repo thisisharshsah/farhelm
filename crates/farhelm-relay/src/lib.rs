@@ -104,8 +104,11 @@ impl RelayState {
             push_subject,
             // One client, so connections to a push service are pooled rather
             // than renegotiating TLS for every wake-up.
+            // No redirects: a push service answers where it was asked
+            // (security review, H4).
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
         })
@@ -185,20 +188,29 @@ fn now_ms() -> i64 {
 
 /// `GET /v1/channel/{channel}/stats`: connection counts for one channel.
 ///
-/// Not a privacy leak: knowing the channel id already lets you join it and see
-/// the same traffic (as ciphertext). It exists so an operator can tell "nobody
-/// is connected" from "connected but silent" without attaching a debugger.
+/// It exists so an operator can tell "nobody is connected" from "connected but
+/// silent" without attaching a debugger. On a gated relay a channel's name
+/// does not let you join it, and the counts say when someone is at their
+/// machine, so the same token is asked for as for a wake-up (security review,
+/// M2).
 async fn channel_stats(
     Path(channel): Path<String>,
+    Query(query): Query<ChannelQuery>,
     State(state): State<Arc<RelayState>>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Err(denied) = admit_to(&state, query.token.as_deref(), &channel) {
+        return denied;
+    }
     let stats = state.hub.stats(&channel).unwrap_or_default();
-    Json(serde_json::json!({
-        "members": stats.members,
-        "delivered": stats.delivered,
-        "bytes": stats.bytes,
-        "push_subscribers": state.push.subscriber_count(&channel),
-    }))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "members": stats.members,
+            "delivered": stats.delivered,
+            "bytes": stats.bytes,
+            "push_subscribers": state.push.subscriber_count(&channel),
+        })),
+    )
 }
 
 /// `GET /v1/channel/{channel}`: the WebSocket every party connects to.
