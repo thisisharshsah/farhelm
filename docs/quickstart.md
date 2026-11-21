@@ -104,7 +104,8 @@ destructive = ["make reset-staging", "flyctl apps destroy"]
 ```
 
 Anything destructive can only be cleared **from a phone**, never a watch, never
-a notification button. Check your rule fires before you rely on it; `policy
+a notification button, never the runner's own page on this Mac (which can still
+deny it). Check your rule fires before you rely on it; `policy
 <command>` exists so you don't have to find out by asking an agent to run
 something drastic.
 

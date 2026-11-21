@@ -228,6 +228,84 @@ async fn the_task_list_is_identical_over_both_transports() {
     );
 }
 
+fn destructive_approval(state: &AppState) {
+    state
+        .store
+        .create_approval(&Approval {
+            id: "rm".into(),
+            session_id: "s1".into(),
+            tool: "Bash".into(),
+            payload: "rm -rf build".into(),
+            risk: Risk::Destructive,
+            decision: None,
+            decided_via: None,
+            requested_at: NOW,
+            decided_at: None,
+        })
+        .unwrap();
+}
+
+/// Where the transports differ on purpose (security review, R1): the local
+/// API cannot tell a person from a program on this Mac, so it cannot approve
+/// a destructive command, whatever surface it names. A paired device, whose
+/// requests are sealed with its own key, can.
+#[tokio::test]
+async fn only_a_paired_device_approves_a_destructive_command() {
+    let state = fixture();
+    destructive_approval(&state);
+    let addr = serve(Arc::clone(&state)).await;
+
+    for via in ["web", "phone"] {
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/approvals/rm/decision"))
+            .json(&serde_json::json!({ "decision": "approved", "via": via }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403, "approved over HTTP as {via}");
+    }
+    assert!(
+        state
+            .store
+            .get_approval("rm")
+            .unwrap()
+            .unwrap()
+            .is_pending()
+    );
+
+    commands::execute(
+        &state,
+        Command::Decide {
+            approval_id: "rm".into(),
+            decision: Decision::Approved,
+        },
+        DecidedVia::Phone,
+    )
+    .await
+    .unwrap();
+    let decided = state.store.get_approval("rm").unwrap().unwrap();
+    assert_eq!(decided.decision, Some(Decision::Approved));
+    assert_eq!(decided.decided_via, Some(DecidedVia::Phone));
+}
+
+/// Stopping a command is always safe, so the local API can still deny one.
+#[tokio::test]
+async fn the_local_api_can_still_deny_a_destructive_command() {
+    let state = fixture();
+    destructive_approval(&state);
+    let addr = serve(Arc::clone(&state)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/approvals/rm/decision"))
+        .json(&serde_json::json!({ "decision": "denied", "via": "web" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let decided = state.store.get_approval("rm").unwrap().unwrap();
+    assert_eq!(decided.decision, Some(Decision::Denied));
+}
+
 /// The D3 rule is the same rule on both paths.
 ///
 /// The HTTP handler maps it to 403 and the relay to a `command_error`, but the

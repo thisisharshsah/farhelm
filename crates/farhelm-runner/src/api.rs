@@ -23,7 +23,9 @@ use farhelm_app::time::now_ms;
 use farhelm_domain::BudgetRules as _;
 use farhelm_gateway::prompt::{StableContext, Turn};
 use farhelm_gateway::{CompleteRequest as GatewayRequest, GatewayError};
-use farhelm_proto::types::{Approval, DecidedVia, Decision, Session, SessionStatus, TaskType};
+use farhelm_proto::types::{
+    Approval, DecidedVia, Decision, Risk, Session, SessionStatus, TaskType,
+};
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
@@ -960,6 +962,23 @@ async fn decide(
     Path(id): Path<String>,
     Json(body): Json<DecisionBody>,
 ) -> ApiResult<ApprovalView> {
+    // A destructive command is approved only from a paired device, whose
+    // requests are sealed with its own key. This API cannot tell a person from
+    // a program on this Mac, the agent it supervises included, whatever `via`
+    // says (security review, R1). Denying one stays open to it.
+    if body.decision == Decision::Approved
+        && state
+            .store
+            .get_approval(&id)?
+            .is_some_and(|approval| approval.risk == Risk::Destructive)
+    {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            message: "approve destructive commands from your phone; here you can deny them"
+                .to_owned(),
+        });
+    }
+
     // The guard and the race resolution both live in `commands`, shared with the
     // relay link; a decision arriving over the relay gets identical treatment.
     commands::execute(

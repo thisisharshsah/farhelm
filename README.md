@@ -493,8 +493,10 @@ yourself. From then on every tool call Claude Code makes waits for you.
 
 Destructive commands (`rm -rf`, `git push --force`, `DROP TABLE`, `mkfs`,
 `sudo`, `curl | sh`, `terraform destroy`, `kubectl delete`, publishing…) are
-classified server-side and **cannot be approved from a watch or a notification
-action**: the API returns 403. The classifier is a speed bump on the approval
+classified server-side and **cannot be approved from a watch, a notification
+action or the runner's own page on this Mac**: the API returns 403. The local API
+cannot tell you from a program on the Mac, the supervised agent included, so a
+paired phone approves them; the page can still deny them. The classifier is a speed bump on the approval
 UX, not a sandbox; see `crates/farhelm-domain/src/risk.rs`.
 
 The built-in list can't know about your stack. Add your own rules:
