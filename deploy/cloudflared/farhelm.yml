@@ -39,5 +39,14 @@ ingress:
     originRequest:
       connectTimeout: 10s
 
+  # This machine's MCP connector, when it is one (FARHELM_MCP_URL): only the
+  # connector's paths. The runner's own API is for this machine alone and
+  # refuses tunnel traffic anyway (`api::local_only`).
+  # - hostname: farhelm-mac.aurovie.com
+  #   path: '^/(mcp|\.well-known/oauth-protected-resource(/mcp)?)$'
+  #   service: http://127.0.0.1:7852
+  # - hostname: farhelm-mac.aurovie.com
+  #   service: http_status:404
+
   # Anything else is a typo or a scan.
   - service: http_status:404

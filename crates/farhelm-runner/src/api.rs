@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -99,6 +99,109 @@ fn is_public_path(path: &str) -> bool {
     path == "/v1/health"
 }
 
+/// The Vite dev server and its preview: the one cross-origin caller this API
+/// expects. The production app is served by the runner itself.
+const DEV_ORIGINS: &[&str] = &[
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+];
+
+/// Headers only Cloudflare adds: a request carrying one came through a tunnel.
+const CLOUDFLARE_HEADERS: &[&str] = &["cf-connecting-ip", "cf-ray"];
+
+/// Headers any proxy may add. Allowed only when every address in them is this
+/// machine's, as with a dev server proxying to the runner on the same Mac.
+const FORWARDING_HEADERS: &[&str] = &["x-forwarded-for", "x-forwarded-host", "x-real-ip"];
+
+/// Keeps `/v1/*` for this machine's own clients when no local token is set.
+///
+/// Binding loopback is not enough on its own. A tunnel (`cloudflared`)
+/// connects from loopback too, so a public hostname routed to this port puts
+/// every route below on the internet with no credential; and a web page can
+/// reach loopback through DNS rebinding (its own name, resolving here) or fire
+/// a request whose answer it cannot read. Each leaves a mark the caller cannot
+/// remove: a `Host` that is not this machine, a proxy's headers, or an
+/// `Origin` that is not the runner's own page. Such requests are refused;
+/// `/v1/health` stays open, as it does with the token.
+///
+/// This does not tell one program on this Mac from another: anything running
+/// as its user can still call the API (security review, R1).
+async fn local_only(request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if is_public_path(request.uri().path()) {
+        return next.run(request).await;
+    }
+    match local_request_problem(request.headers()) {
+        None => next.run(request).await,
+        Some(problem) => (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": problem })),
+        )
+            .into_response(),
+    }
+}
+
+/// Why a request did not come from this machine's own clients, if it did not.
+fn local_request_problem(headers: &HeaderMap) -> Option<&'static str> {
+    const THROUGH_PROXY: &str = "the runner's API does not answer through a tunnel or proxy";
+
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if host.is_some_and(|host| !is_loopback_host(host)) {
+        return Some("the runner's API answers only on this machine");
+    }
+    if CLOUDFLARE_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+        || headers.contains_key(axum::http::header::FORWARDED)
+    {
+        return Some(THROUGH_PROXY);
+    }
+    for name in FORWARDING_HEADERS {
+        for value in headers.get_all(*name) {
+            let local = value
+                .to_str()
+                .is_ok_and(|text| text.split(',').map(str::trim).all(is_loopback_host));
+            if !local {
+                return Some(THROUGH_PROXY);
+            }
+        }
+    }
+    if let Some(origin) = headers.get(axum::http::header::ORIGIN) {
+        let allowed = origin.to_str().is_ok_and(|origin| {
+            DEV_ORIGINS.contains(&origin)
+                || host.is_some_and(|host| origin.eq_ignore_ascii_case(&format!("http://{host}")))
+        });
+        if !allowed {
+            return Some("requests from other web pages are refused");
+        }
+    }
+    None
+}
+
+/// Whether a `Host` value, or an address in a forwarding header, names this
+/// machine: `127.0.0.1`, `[::1]`, `localhost` or a `*.localhost` name, with
+/// or without a port.
+fn is_loopback_host(authority: &str) -> bool {
+    let authority = authority.trim();
+    let host = match authority.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or_default(),
+        // A bare address, IPv6 included, has no port to cut off.
+        None if authority.parse::<std::net::IpAddr>().is_ok() => authority,
+        None => authority
+            .rsplit_once(':')
+            .map_or(authority, |(host, _port)| host),
+    };
+    let host = host.to_ascii_lowercase();
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     router_with_auth(state, LocalAuth::open())
 }
@@ -140,7 +243,7 @@ pub fn router_with_auth(state: Arc<AppState>, auth: LocalAuth) -> Router {
                 }
             },
         )),
-        None => router,
+        None => router.layer(axum::middleware::from_fn(local_only)),
     }
 }
 
@@ -205,13 +308,6 @@ fn base_router(state: Arc<AppState>) -> Router {
 /// the same access to every website on the internet.
 fn local_cors() -> CorsLayer {
     use axum::http::{HeaderName, Method};
-
-    const DEV_ORIGINS: &[&str] = &[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-    ];
 
     CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])

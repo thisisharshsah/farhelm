@@ -285,6 +285,20 @@ FARHELM_MCP_URL=https://farhelm-<name>.aurovie.com farhelm serve …
 Keep the hostname **first-level** (`farhelm-<name>`, not `<name>.farhelm`); see
 the Universal SSL note at the top of this file.
 
+Route only the connector's paths to it, and nothing else on that hostname:
+
+```yaml
+  - hostname: farhelm-<name>.aurovie.com
+    path: '^/(mcp|\.well-known/oauth-protected-resource(/mcp)?)$'
+    service: http://127.0.0.1:<port>
+  - hostname: farhelm-<name>.aurovie.com
+    service: http_status:404
+```
+
+The runner refuses its own `/v1` API through a tunnel or proxy anyway
+(`api::local_only`, since 2026-11-20), but without the path rule the front
+door and the web app would still answer there.
+
 
 ## Keeping the web app live while you work
 
