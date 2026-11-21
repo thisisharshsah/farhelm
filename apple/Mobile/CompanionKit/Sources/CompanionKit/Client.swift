@@ -6,6 +6,8 @@ public enum CompanionError: LocalizedError, Sendable {
     case unreachable(String)
     case unpaired
     case server(Int)
+    /// Something only the Mac itself may do, such as raising access.
+    case onlyOnMac
     /// Not reachable directly, and the relay said why not.
     case away(String, String)
 
@@ -17,6 +19,8 @@ public enum CompanionError: LocalizedError, Sendable {
             return "This Mac no longer knows this device. Pair again from Settings > Remote on the Mac."
         case .server(let code):
             return "The Mac answered with an error (\(code))."
+        case .onlyOnMac:
+            return "Do this on the Mac itself. From here, access can only be lowered."
         case .away(let name, let why):
             return "Can't reach \(name) through the relay. \(why)"
         }
@@ -224,6 +228,7 @@ public struct CompanionClient: Sendable {
 
     private static func check(_ status: Int) throws {
         if status == 401 { throw CompanionError.unpaired }
+        if status == 403 { throw CompanionError.onlyOnMac }
         if !(200..<300).contains(status) { throw CompanionError.server(status) }
     }
 

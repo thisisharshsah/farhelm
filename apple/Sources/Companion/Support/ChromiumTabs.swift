@@ -169,6 +169,7 @@ final class ChromiumTab: NSObject, ObservableObject, Identifiable, ChromiumBrows
 
 extension ChromiumTab: PasswordPage {
     var passwordID: ObjectIdentifier { ObjectIdentifier(self) }
+    var passwordHost: String? { url?.host }
 
     /// The arguments become constants, then the body runs in the page.
     func runPasswordScript(_ body: String, _ arguments: [String: Any]) async {

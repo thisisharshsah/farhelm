@@ -1007,7 +1007,9 @@ enum CLIAgentClient {
             }
         }
 
-        let process = Process()
+        // The tool runs commands of its own: not counted as Companion by
+        // macOS (see `AgentProcess`).
+        let process = AgentProcess()
         process.executableURL = URL(fileURLWithPath: plan.path)
         process.arguments = arguments
         process.currentDirectoryURL = URL(fileURLWithPath: plan.directory)

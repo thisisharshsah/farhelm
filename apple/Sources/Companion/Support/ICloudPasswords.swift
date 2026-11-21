@@ -439,11 +439,17 @@ final class ICloudPasswords: ObservableObject {
 
     func fill(_ login: Login, host: String, page: PasswordPage) {
         Task { @MainActor in
+            guard page.passwordHost == host else { return }
             let answer = await request("get", ["domain": host, "username": login.username])
             guard checkPaired(answer),
                   let entry = (answer?["result"] as? [[String: Any]])?.first,
                   let password = entry["password"] as? String else {
                 if state == .ready { detail = "iCloud Passwords did not give the password for \(login.username)." }
+                return
+            }
+            // The page may have gone to another site while the password came.
+            guard page.passwordHost == host else {
+                detail = "The page changed before the password arrived, so it was not filled."
                 return
             }
             await page.runPasswordScript("return window.__companionFill && window.__companionFill(u, p)",
@@ -483,7 +489,11 @@ final class ICloudPasswords: ObservableObject {
 
     func handle(_ body: [String: Any], page: PasswordPage) {
         let id = page.passwordID
-        let host = body["host"] as? String ?? ""
+        // The site is the one the browser has open, not the one the page
+        // names: a page that names another site is ignored, so it can never
+        // be offered that site's logins.
+        let host = page.passwordHost ?? ""
+        if let named = body["host"] as? String, named != host { return }
         switch body["type"] as? String {
         case "form":
             if let kind = FormKind(rawValue: body["kind"] as? String ?? "") {
@@ -615,11 +625,16 @@ final class ICloudPasswords: ObservableObject {
     })();
     """#
 
+    /// The script's own world in a WebKit page: the page's scripts can
+    /// neither see nor replace its functions, nor post to its channel.
+    static let world = WKContentWorld.world(name: "CompanionPasswords")
+
     /// Adds the script and its message channel to a browser configuration.
     static func install(in configuration: WKWebViewConfiguration) {
         let controller = configuration.userContentController
-        controller.addUserScript(WKUserScript(source: pageScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
-        controller.add(PasswordMessages.shared, name: "companionPasswords")
+        controller.addUserScript(WKUserScript(source: pageScript, injectionTime: .atDocumentEnd,
+                                              forMainFrameOnly: true, in: world))
+        controller.add(PasswordMessages.shared, contentWorld: world, name: "companionPasswords")
     }
 }
 
@@ -641,14 +656,17 @@ final class PasswordMessages: NSObject, WKScriptMessageHandler {
 @MainActor
 protocol PasswordPage: AnyObject {
     var passwordID: ObjectIdentifier { get }
+    /// The site the browser has open in this page, whatever the page says.
+    var passwordHost: String? { get }
     /// Runs a function body in the page with these arguments (JSON values).
     func runPasswordScript(_ body: String, _ arguments: [String: Any]) async
 }
 
 extension WKWebView: PasswordPage {
     var passwordID: ObjectIdentifier { ObjectIdentifier(self) }
+    var passwordHost: String? { url?.host }
 
     func runPasswordScript(_ body: String, _ arguments: [String: Any]) async {
-        _ = try? await callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .page)
+        _ = try? await callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: ICloudPasswords.world)
     }
 }

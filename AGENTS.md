@@ -79,6 +79,7 @@ This is the canonical, living instruction file for work in this repository. Last
 - Track dataset source, revision, license/permission, teacher lineage where known and preprocessing. Customer data needs explicit permission before shared training; segregate tenants and prevent evaluation leakage.
 - Keep secrets, model weights, customer databases, private traces and datasets out of Git and routine logs. Use synthetic/redacted fixtures. Record provider spend separately from local compute and capacity costs.
 - Preserve existing crypto/interoperability guarantees; prefer maintained cryptographic primitives and libraries. Do not invent new crypto or weaken transport security for convenience.
+- The runner's `/v1` API is for this machine's own clients: `api::local_only` refuses requests through a tunnel or proxy, with another `Host`, or from another web page (`tests/local_api_guard.rs`). Route a public hostname to a runner only with a path rule for what must be public (`deploy/README.md`). Companion starts agent commands through `AgentProcess`, so they do not inherit its macOS permissions; never start a model-driven command with `Process`. Open items: [security review, section 8](docs/reviews/2026-11-16-security-review.md).
 
 ## Verification and completion
 

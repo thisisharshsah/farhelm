@@ -54,6 +54,27 @@ final class RemoteServer: ObservableObject {
     private var dirty = true
     private var lastFullCheck = Date()
     private var changeWatch: Set<AnyCancellable> = []
+    /// Connections whose request has not arrived in full yet.
+    private var pending: Set<ObjectIdentifier> = []
+    /// Where each connection comes from, to count wrong codes by address.
+    private var peers: [ObjectIdentifier: String] = [:]
+    /// Wrong pairing codes by address (security review, L6): past
+    /// `wrongCodeLimit` within `wrongCodeWindow`, that address is refused
+    /// until the window has passed.
+    private var wrongCodes: [String: (count: Int, since: Date)] = [:]
+
+    /// What a request may be (security review, M1). The head is judged
+    /// before any body is waited for.
+    private static let headerLimit = 16 * 1024
+    private static let bodyLimit = 1_000_000
+    private static let attachmentLimit = 40_000_000
+    private static let connectionLimit = 32
+    /// How long a request may take to arrive in full.
+    private static let requestDeadline: TimeInterval = 120
+    /// High enough that a page still trying an old code after "New code"
+    /// never locks out its own phone; low enough to make guessing hopeless.
+    private static let wrongCodeLimit = 1_000
+    private static let wrongCodeWindow: TimeInterval = 600
 
     /// The port it tries first; if taken, the system picks a free one.
     private let preferredPort: UInt16 = 7345
@@ -317,8 +338,23 @@ final class RemoteServer: ObservableObject {
     // MARK: Connections
 
     private func accept(_ connection: NWConnection) {
+        // This Mac and its own network only: the server says it answers
+        // there, and now it does. A full house waits for a slot.
+        guard Self.isNearby(connection.endpoint), buffers.count < Self.connectionLimit else {
+            connection.cancel()
+            return
+        }
         let id = ObjectIdentifier(connection)
         buffers[id] = Data()
+        pending.insert(id)
+        if case let .hostPort(host, _) = connection.endpoint { peers[id] = "\(host)" }
+        // A request not in full by then is dropped, so slow connections
+        // cannot hold every slot.
+        Task { @MainActor [weak self, weak connection] in
+            try? await Task.sleep(for: .seconds(Self.requestDeadline))
+            guard let self, let connection, self.pending.contains(id) else { return }
+            connection.cancel()
+        }
         connection.stateUpdateHandler = { [weak self] state in
             if case .cancelled = state {
                 Task { @MainActor in self?.drop(id) }
@@ -333,18 +369,30 @@ final class RemoteServer: ObservableObject {
     private func drop(_ id: ObjectIdentifier) {
         buffers[id] = nil
         feeds[id] = nil
+        pending.remove(id)
+        peers[id] = nil
     }
 
     private func receive(on connection: NWConnection, id: ObjectIdentifier) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
             Task { @MainActor in
                 guard let self else { return }
-                if let data, !data.isEmpty, var buffer = self.buffers[id] {
-                    buffer.append(data)
-                    self.buffers[id] = buffer
-                    if let request = self.takeRequest(id: id) {
+                if let data, !data.isEmpty, self.buffers[id] != nil {
+                    // In place: a copy of the buffer for every piece made a
+                    // large upload slow, on the main thread.
+                    self.buffers[id]?.append(data)
+                    switch self.takeRequest(id: id) {
+                    case .complete(let request):
+                        self.pending.remove(id)
                         self.route(request, on: connection, id: id)
                         return   // routing decides whether to keep reading
+                    case .refused(let status, let reason):
+                        self.pending.remove(id)
+                        self.buffers[id] = nil
+                        self.send(status: status, body: reason, on: connection)
+                        return
+                    case .waiting:
+                        break
                     }
                 }
                 if error != nil || done {
@@ -367,33 +415,48 @@ final class RemoteServer: ObservableObject {
         var data: Data
     }
 
-    /// Pulls a whole request out of the buffer once it has arrived, or nil
-    /// while it is still coming.
-    private func takeRequest(id: ObjectIdentifier) -> Request? {
-        guard let buffer = buffers[id],
-              let headerEnd = buffer.range(of: Data("\r\n\r\n".utf8)) else { return nil }
+    /// What became of what a connection has sent so far.
+    private enum Taken {
+        /// Not all there yet.
+        case waiting
+        case complete(Request)
+        /// Refused before the rest is read: a status line and a reason.
+        case refused(String, String)
+    }
+
+    /// Pulls a whole request out of the buffer once it has arrived.
+    ///
+    /// What can be judged from the head is judged before the body is waited
+    /// for (security review, M1): the head's size, a length that is missing
+    /// its sense or over the route's cap, and the pairing code. So a caller
+    /// without the code cannot make this Mac hold a large body, or stop it
+    /// with a length that does not add up.
+    private func takeRequest(id: ObjectIdentifier) -> Taken {
+        guard let buffer = buffers[id] else { return .waiting }
+        guard let headerEnd = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+            return buffer.count > Self.headerLimit
+                ? .refused("431 Request Header Fields Too Large", "Too large.") : .waiting
+        }
+        let bad = Taken.refused("400 Bad Request", "Bad request.")
         let headerData = buffer[buffer.startIndex..<headerEnd.lowerBound]
-        guard let header = String(data: headerData, encoding: .utf8) else { return nil }
+        guard headerData.count <= Self.headerLimit,
+              let header = String(data: headerData, encoding: .utf8) else { return bad }
         let lines = header.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first else { return nil }
-        let parts = requestLine.components(separatedBy: " ")
-        guard parts.count >= 2 else { return nil }
+        let parts = (lines.first ?? "").components(separatedBy: " ")
+        guard parts.count >= 2 else { return bad }
         let method = parts[0]
         let target = parts[1]
 
-        var contentLength = 0
+        var lengths: Set<String> = []
         for line in lines.dropFirst() {
             let pair = line.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             if pair.count == 2, pair[0].lowercased() == "content-length" {
-                contentLength = Int(pair[1]) ?? 0
+                lengths.insert(pair[1])
             }
         }
-
-        let bodyStart = headerEnd.upperBound
-        let available = buffer.distance(from: bodyStart, to: buffer.endIndex)
-        guard available >= contentLength else { return nil }   // body still arriving
-        let bodyData = buffer[bodyStart..<buffer.index(bodyStart, offsetBy: contentLength)]
-        buffers[id] = Data()   // request taken; buffer cleared
+        guard lengths.count <= 1 else { return bad }
+        let contentLength = lengths.first.map { Int($0) ?? -1 } ?? 0
+        guard contentLength >= 0 else { return bad }
 
         var path = target
         var query: [String: String] = [:]
@@ -407,8 +470,130 @@ final class RemoteServer: ObservableObject {
                 }
             }
         }
-        return Request(method: method, path: path, query: query,
-                       body: String(data: bodyData, encoding: .utf8) ?? "", data: Data(bodyData))
+        // The code before the body: without it, nothing more is read.
+        if !Self.isPublic(path) {
+            let peer = peers[id] ?? ""
+            if tooManyWrongCodes(from: peer) {
+                return .refused("429 Too Many Requests", "Too many wrong codes. Try again in a few minutes.")
+            }
+            guard !token.isEmpty, Self.sameCode(query["token"] ?? "", token) else {
+                noteWrongCode(from: peer)
+                return .refused("401 Unauthorized", "Pair this device again.")
+            }
+        }
+        let cap = path == "/attach" ? Self.attachmentLimit : Self.bodyLimit
+        guard contentLength <= cap else { return .refused("413 Payload Too Large", "Too large.") }
+
+        let bodyStart = headerEnd.upperBound
+        guard buffer.distance(from: bodyStart, to: buffer.endIndex) >= contentLength else { return .waiting }
+        let bodyData = buffer[bodyStart..<buffer.index(bodyStart, offsetBy: contentLength)]
+        buffers[id] = Data()   // request taken; buffer cleared
+        return .complete(Request(method: method, path: path, query: query,
+                                 body: String(data: bodyData, encoding: .utf8) ?? "", data: Data(bodyData)))
+    }
+
+    /// What answers without the pairing code: the pages, and what iOS needs
+    /// to add them to the Home Screen. What they show is asked for with it.
+    private static func isPublic(_ path: String) -> Bool {
+        ["/", "/index.html", "/web", "/glass", "/manifest.json", "/icon.png"].contains(path)
+    }
+
+    /// The pairing code compared in the same time whatever it holds.
+    private static func sameCode(_ given: String, _ expected: String) -> Bool {
+        let given = Array(given.utf8), expected = Array(expected.utf8)
+        guard given.count == expected.count else { return false }
+        return zip(given, expected).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
+    }
+
+    private func tooManyWrongCodes(from peer: String) -> Bool {
+        guard let entry = wrongCodes[peer] else { return false }
+        if Date().timeIntervalSince(entry.since) > Self.wrongCodeWindow {
+            wrongCodes[peer] = nil
+            return false
+        }
+        return entry.count >= Self.wrongCodeLimit
+    }
+
+    private func noteWrongCode(from peer: String) {
+        let now = Date()
+        if let entry = wrongCodes[peer], now.timeIntervalSince(entry.since) <= Self.wrongCodeWindow {
+            wrongCodes[peer] = (entry.count + 1, entry.since)
+        } else {
+            wrongCodes[peer] = (1, now)
+        }
+    }
+
+    /// Whether a connection comes from this Mac or its own network: loopback,
+    /// private and link-local addresses, the shared range that VPNs such as
+    /// Tailscale use, or an address on one of this Mac's own networks (a
+    /// campus network may give out public addresses).
+    static func isNearby(_ endpoint: NWEndpoint) -> Bool {
+        guard case let .hostPort(host, _) = endpoint else { return false }
+        switch host {
+        case .ipv4(let address):
+            let bytes = [UInt8](address.rawValue)
+            return isNearby(v4: bytes) || localNetworks().v4.contains { $0.holds(bytes) }
+        case .ipv6(let address):
+            let bytes = [UInt8](address.rawValue)
+            guard bytes.count == 16 else { return false }
+            // An IPv4 address written as IPv6 (::ffff:a.b.c.d).
+            if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
+                let v4 = Array(bytes[12..<16])
+                return isNearby(v4: v4) || localNetworks().v4.contains { $0.holds(v4) }
+            }
+            if address == .loopback { return true }
+            if bytes[0] == 0xfe, bytes[1] & 0xc0 == 0x80 { return true }   // fe80::/10
+            if bytes[0] & 0xfe == 0xfc { return true }                     // fc00::/7
+            return localNetworks().v6.contains(Data(bytes[0..<8]))
+        default:
+            return false
+        }
+    }
+
+    private static func isNearby(v4 bytes: [UInt8]) -> Bool {
+        guard bytes.count == 4 else { return false }
+        switch (bytes[0], bytes[1]) {
+        case (127, _), (10, _), (192, 168), (169, 254), (172, 16...31), (100, 64...127): return true
+        default: return false
+        }
+    }
+
+    /// An IPv4 network this Mac is on: its address and mask, byte by byte.
+    private struct Network {
+        let address: [UInt8]
+        let mask: [UInt8]
+
+        func holds(_ other: [UInt8]) -> Bool {
+            other.count == 4 && (0..<4).allSatisfy { other[$0] & mask[$0] == address[$0] & mask[$0] }
+        }
+    }
+
+    /// The networks of this Mac's own interfaces: IPv4 subnets (none wider
+    /// than a /8, so an odd interface cannot let everyone in) and the /64
+    /// prefixes of its IPv6 addresses.
+    private static func localNetworks() -> (v4: [Network], v6: Set<Data>) {
+        var v4: [Network] = []
+        var v6: Set<Data> = []
+        var first: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&first) == 0 else { return (v4, v6) }
+        defer { freeifaddrs(first) }
+        var cursor = first
+        while let entry = cursor {
+            defer { cursor = entry.pointee.ifa_next }
+            guard let address = entry.pointee.ifa_addr else { continue }
+            if address.pointee.sa_family == UInt8(AF_INET), let mask = entry.pointee.ifa_netmask {
+                var ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
+                var netmask = mask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
+                let network = Network(address: withUnsafeBytes(of: &ip) { Array($0) },
+                                      mask: withUnsafeBytes(of: &netmask) { Array($0) })
+                if network.mask.first == 0xff { v4.append(network) }
+            } else if address.pointee.sa_family == UInt8(AF_INET6) {
+                var ip = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee.sin6_addr }
+                let bytes = withUnsafeBytes(of: &ip) { Data($0) }
+                v6.insert(Data(bytes.prefix(8)))
+            }
+        }
+        return (v4, v6)
     }
 
     // MARK: Routing
@@ -441,7 +626,7 @@ final class RemoteServer: ObservableObject {
         }
 
         let given = request.query["token"] ?? ""
-        guard !token.isEmpty, given == token else {
+        guard !token.isEmpty, Self.sameCode(given, token) else {
             send(status: "401 Unauthorized", body: "Pair this device again.", on: connection)
             return
         }
@@ -578,9 +763,15 @@ final class RemoteServer: ObservableObject {
             }
             return .ok
         case ("POST", "/access"):
-            // Manual, Auto (edits) or Auto (full access), for this chat.
+            // Manual, Auto (edits) or Auto (full access), for this chat. From
+            // here it only comes down: raising it is decided at the Mac, where
+            // its approvals are (security review, C1).
             let raw = request.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let access = AgentAccess(rawValue: raw) { AppState.shared.setAgentAccess(access) }
+            guard let access = AgentAccess(rawValue: raw) else { return .ok }
+            guard access.reach <= AppState.shared.agentAccess.reach else {
+                return .text(403, "Raise access on the Mac.")
+            }
+            AppState.shared.setAgentAccess(access)
             return .ok
         case ("POST", "/effort"):
             // A level the engine takes, or "" to leave it to the model.
@@ -1042,7 +1233,7 @@ final class RemoteServer: ObservableObject {
       const sendBtn = document.getElementById('send');
       let agentRunning = false;
 
-      function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+      function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
       // Just enough formatting to read: code blocks, inline code, bold.
       function fmt(s){
         const parts = s.split('```');

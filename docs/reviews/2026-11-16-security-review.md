@@ -370,3 +370,23 @@ Ranking: critical means control of the Mac or of accounts by an attacker who nee
 4. H4 and M8: the push endpoint allow-list and the relay's defaults.
 5. H5 and M7: enrolment.
 6. M1, M2 and M3, each a short, contained fix, then the rest in order.
+
+## 8. Status, 2026-11-20
+
+Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift changes are not yet built or tried on a device.
+
+| ID | Status | Where |
+|---|---|---|
+| C1 | Fixed: from a phone or the relay, access can only be lowered. Raising it is answered 403, and the iPhone app says to do it on the Mac | `RemoteServer.swift` (`/access`), `CompanionKit/Client.swift` |
+| H2 | Fixed: the phone page's `esc` escapes quotes, as the browser page's does | `RemoteServer.swift` (the phone page) |
+| M1 | Fixed: the head is capped at 16 KB; a missing, negative or doubled length is refused; the code is checked before the body; bodies are capped (40 MB for `/attach`, 1 MB otherwise); at most 32 connections, each with 120 seconds to send its request; the buffer grows in place | `RemoteServer.swift` (`takeRequest`, `accept`, `receive`) |
+| L6 | Fixed: compared in constant time; past 1,000 wrong codes in ten minutes an address is refused | `RemoteServer.swift` |
+| M10 | Partly: agent commands get a short list of variables (`AgentProcess.plainEnvironment`). CLI tools still get the app's environment, since they may need their own settings | `AgentProcess.swift`, `AgentShell.swift` |
+| M11 | Partly: the runner refuses `/v1` through any tunnel or proxy. The live tunnel file is still outside the repository; the path rule to use is in `deploy/README.md` | `crates/farhelm-runner/src/api.rs` |
+| H1 | Open: the code still crosses the local network in clear. The listener now refuses connections from outside this Mac's own networks | `RemoteServer.isNearby` |
+
+New findings, 2026-11-20:
+
+- **R1. The runner's local API trusts every program on this Mac.** `/v1` needs no credential on loopback, and an approval states its own channel (`decide` takes `via` from the body), so a script, or an agent the runner supervises, can clear a command, destructive ones included. Websites, DNS rebinding and tunnels are now refused (`api::local_only`, tested in `tests/local_api_guard.rs`); a program on this Mac is not. Fix, to decide: require a person for a destructive approval made here (a passkey with Touch ID in the web app), or take those only from a paired phone.
+- **R2. Agent commands ran with Companion's macOS permissions.** What `Process` starts counts as Companion for screen recording, the microphone, accessibility and automation. Fixed: `AgentShell` and the CLI agents start through `AgentProcess`, which disclaims that responsibility, as Terminal does for its shells. A command that drives another app through AppleScript is now asked about in its own name.
+- **R3. A page could name another site to iCloud Passwords.** The page script reported `location.hostname`, and `fill` trusted it, so a page could be offered another site's logins and handed the password the person picked. Fixed: the site comes from the browser (`PasswordPage.passwordHost`) and is checked again just before filling; in WebKit the script runs in a content world of its own, out of the page's reach. In Chromium tabs it still runs in the page's world.

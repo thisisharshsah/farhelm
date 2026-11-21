@@ -30,7 +30,7 @@ private final class OutputBox: @unchecked Sendable {
 actor AgentShell {
     static let shared = AgentShell()
 
-    private var process: Process?
+    private var process: AgentProcess?
     private static let marker = "__COMPANION_CWD__"
     /// How much of a command's output is kept (the end of it).
     private static let outputLimit = 6_000
@@ -40,18 +40,21 @@ actor AgentShell {
     /// a command that leaves something running in the background (which
     /// keeps the pipe open) cannot hang the agent.
     func run(_ command: String, in directory: String, timeout: TimeInterval = 120) async -> ShellResult {
-        let process = Process()
+        // Not counted as Companion by macOS: see `AgentProcess`.
+        let process = AgentProcess()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         // After the command, report the folder it ended in and keep its exit code.
         let script = "\(command)\n__companion_status=$?\nprintf '\\n\(Self.marker)%s\\n' \"$PWD\"\nexit $__companion_status"
         process.arguments = ["-lc", script]
         let folder = FileManager.default.fileExists(atPath: directory) ? directory : NSHomeDirectory()
         process.currentDirectoryURL = URL(fileURLWithPath: folder)
+        process.environment = AgentProcess.plainEnvironment()
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        // No terminal: a command that waits for input gets end-of-file instead of hanging.
-        process.standardInput = FileHandle.nullDevice
+        // No terminal: a command that waits for input gets end-of-file instead
+        // of hanging (nil is /dev/null).
+        process.standardInput = nil
 
         let box = OutputBox()
         let reading = pipe.fileHandleForReading
@@ -134,6 +137,15 @@ enum AgentAccess: String, CaseIterable, Identifiable {
     case manual, autoEdit, full
 
     var id: String { rawValue }
+
+    /// How far it goes without asking, to compare two levels.
+    var reach: Int {
+        switch self {
+        case .manual: return 0
+        case .autoEdit: return 1
+        case .full: return 2
+        }
+    }
 
     var title: String {
         switch self {
