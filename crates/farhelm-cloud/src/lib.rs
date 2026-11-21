@@ -42,6 +42,7 @@ pub mod model;
 pub mod plan;
 pub mod secret;
 pub mod store;
+pub mod throttle;
 pub mod watch;
 
 use farhelm_crypto::token::TokenSigner;
@@ -81,6 +82,8 @@ pub struct CloudState {
     pub signer: TokenSigner,
     pub billing: Billing,
     pub config: CloudConfig,
+    /// Attempt limits and the Argon2 queue for sign-in and sign-up.
+    pub throttle: throttle::Throttle,
 }
 
 /// Unix milliseconds.

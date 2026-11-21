@@ -271,9 +271,12 @@ impl CloudStore {
     /// oracle, which is how credential-stuffing lists get built.
     pub fn authenticate(&self, email: &str, password: &str) -> Result<Option<Account>> {
         let normalized = normalize_email(email);
-        let conn = self.lock()?;
 
-        let found: Option<(String, String)> = conn
+        // Read under the lock and check outside it: an Argon2 check takes tens
+        // of milliseconds, and the one connection serves every other request
+        // (security review, H3).
+        let found: Option<(String, String)> = self
+            .lock()?
             .query_row(
                 "SELECT id, password_hash FROM account WHERE email_normalized = ?1",
                 params![normalized],
@@ -296,7 +299,6 @@ impl CloudStore {
         if !secret::verify_password(password, &hash).unwrap_or(false) {
             return Ok(None);
         }
-        drop(conn);
         self.account(&id).map(Some)
     }
 

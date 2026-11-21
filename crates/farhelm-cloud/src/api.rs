@@ -37,6 +37,7 @@ use crate::model::{
 use crate::plan::{Limits, Plan, Resource, Usage, may_add};
 use crate::secret;
 use crate::store::{StoreError, new_id};
+use crate::throttle;
 use crate::{CloudState, now_ms};
 
 /// How long an access token is good for.
@@ -96,7 +97,51 @@ pub fn router(state: Arc<CloudState>) -> Router {
         // Native app are both cross-origin.
         .layer(cors())
         .layer(axum::middleware::from_fn(record_change))
+        .layer(axum::middleware::from_fn(client_address))
         .with_state(state)
+}
+
+/// Who is asking, as far as the attempt limits can tell.
+#[derive(Debug, Clone, Copy)]
+pub struct ClientAddress(pub std::net::IpAddr);
+
+/// Works out [`ClientAddress`] for every request.
+///
+/// Behind the tunnel every connection comes from loopback, so Cloudflare's
+/// `CF-Connecting-IP` names the caller. It is believed only from a loopback
+/// peer, since anyone else could write it.
+async fn client_address(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0.ip());
+    let forwarded = request
+        .headers()
+        .get("cf-connecting-ip")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<std::net::IpAddr>().ok());
+    let address = match (peer, forwarded) {
+        (Some(peer), Some(forwarded)) if peer.is_loopback() => forwarded,
+        (Some(peer), _) => peer,
+        // Served without the peer's details, as in tests.
+        (None, Some(forwarded)) => forwarded,
+        (None, None) => std::net::IpAddr::from([0, 0, 0, 0]),
+    };
+    request.extensions_mut().insert(ClientAddress(address));
+    next.run(request).await
+}
+
+/// The answer once an attempt limit is reached.
+fn too_many(wait_ms: i64) -> ApiError {
+    let minutes = (wait_ms + 59_999) / 60_000;
+    let unit = if minutes == 1 { "minute" } else { "minutes" };
+    ApiError::new(
+        StatusCode::TOO_MANY_REQUESTS,
+        format!("too many attempts; try again in {minutes} {unit}"),
+    )
 }
 
 /// One line per request that changes something.
@@ -392,6 +437,7 @@ pub struct RefreshResponse {
 
 async fn signup(
     State(state): State<Arc<CloudState>>,
+    axum::Extension(client): axum::Extension<ClientAddress>,
     Json(body): Json<SignupBody>,
 ) -> ApiResult<AuthResponse> {
     let email = body.email.trim();
@@ -403,8 +449,26 @@ async fn signup(
         return Err(ApiError::bad_request("a name is required"));
     }
 
-    let hash = secret::hash_password(&body.password)
-        .map_err(|err| ApiError::bad_request(err.to_string()))?;
+    // Each sign-up costs an Argon2 hash: so many an hour from one address, a
+    // few at a time, off the async workers.
+    let asked_at = now_ms();
+    let limits = [(
+        throttle::address_key("sign-up", client.0),
+        throttle::ADDRESS_SIGNUPS,
+    )];
+    if let Err(wait_ms) = state.throttle.check(&limits, asked_at) {
+        return Err(too_many(wait_ms));
+    }
+    state.throttle.count(&limits, asked_at);
+    let turn = state.throttle.hashing().await;
+    let password = body.password.clone();
+    let hash = tokio::task::spawn_blocking(move || {
+        let _turn = turn;
+        secret::hash_password(&password)
+    })
+    .await
+    .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "the sign-up failed"))?
+    .map_err(|err| ApiError::bad_request(err.to_string()))?;
     let org_name = body
         .org_name
         .as_deref()
@@ -423,14 +487,47 @@ async fn signup(
 
 async fn login(
     State(state): State<Arc<CloudState>>,
+    axum::Extension(client): axum::Extension<ClientAddress>,
     Json(body): Json<LoginBody>,
 ) -> ApiResult<AuthResponse> {
-    let account = state
-        .store
-        .authenticate(&body.email, &body.password)?
-        .ok_or_else(|| ApiError::unauthorized("that email and password do not match"))?;
-
+    // So many failures for an account, and from an address, then a wait,
+    // a correct password included (security review, H3).
     let now = now_ms();
+    let account_key = throttle::account_key(&crate::model::normalize_email(&body.email));
+    let limits = [
+        (account_key.clone(), throttle::ACCOUNT_FAILURES),
+        (
+            throttle::address_key("sign-in", client.0),
+            throttle::ADDRESS_FAILURES,
+        ),
+    ];
+    if let Err(wait_ms) = state.throttle.check(&limits, now) {
+        return Err(too_many(wait_ms));
+    }
+
+    let turn = state.throttle.hashing().await;
+    let checking = Arc::clone(&state);
+    let (email, password) = (body.email.clone(), body.password.clone());
+    let found = tokio::task::spawn_blocking(move || {
+        let _turn = turn;
+        checking.store.authenticate(&email, &password)
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the sign-in check failed",
+        )
+    })??;
+    let Some(account) = found else {
+        state.throttle.count(&limits, now);
+        eprintln!("  sign-in    refused, from {}", client.0);
+        return Err(ApiError::unauthorized(
+            "that email and password do not match",
+        ));
+    };
+    state.throttle.clear(&account_key);
+
     // The first organisation is the one a session lands in. Switching is a
     // future affordance; today an account has exactly one until somebody is
     // invited to a second.

@@ -36,6 +36,7 @@ async fn spawn() -> World {
             relay_url: "ws://127.0.0.1:7843".into(),
             public_url: base.clone(),
         },
+        throttle: Default::default(),
     });
 
     let router = api::router(Arc::clone(&state)).merge(mcp::router(state));

@@ -278,6 +278,7 @@ fn serve(
         signer,
         billing,
         config: config.clone(),
+        throttle: Default::default(),
     });
 
     let mut router = api::router(Arc::clone(&state)).merge(crate::mcp::router(Arc::clone(&state)));
@@ -324,12 +325,16 @@ fn serve(
             false => println!("  billing    off: every workspace is on the Free plan"),
         }
 
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-                println!("\nshutting down");
-            })
-            .await?;
+        // With each connection's peer, so the attempt limits can tell who asks.
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+            println!("\nshutting down");
+        })
+        .await?;
         Ok(())
     })
 }

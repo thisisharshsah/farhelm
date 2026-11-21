@@ -50,6 +50,7 @@ async fn spawn() -> World {
             relay_url: format!("ws://{relay_addr}"),
             public_url: format!("http://{cloud_addr}"),
         },
+        throttle: Default::default(),
     });
     tokio::spawn(async move {
         axum::serve(cloud_listener, api::router(state))
@@ -981,4 +982,42 @@ async fn a_device_code_nobody_issued_is_answered_the_same_as_an_expired_one() {
         )
         .await;
     assert_eq!(answer["status"], "expired");
+}
+
+/// Guessing has a limit (security review, H3): past ten failed sign-ins an
+/// account refuses even its own password for a while, and another account is
+/// not held up by it.
+#[tokio::test]
+async fn repeated_wrong_passwords_hold_an_account_for_a_while() {
+    let world = spawn().await;
+    world.sign_up("ada@example.com").await;
+    world.sign_up("grace@example.com").await;
+
+    for _ in 0..10 {
+        let (status, _) = world
+            .post(
+                "/v1/auth/login",
+                None,
+                json!({"email": "ada@example.com", "password": "not the password"}),
+            )
+            .await;
+        assert_eq!(status, 401);
+    }
+    let (status, body) = world
+        .post(
+            "/v1/auth/login",
+            None,
+            json!({"email": "Ada@Example.com ", "password": "correct horse battery"}),
+        )
+        .await;
+    assert_eq!(status, 429, "{body}");
+
+    let (status, _) = world
+        .post(
+            "/v1/auth/login",
+            None,
+            json!({"email": "grace@example.com", "password": "correct horse battery"}),
+        )
+        .await;
+    assert_eq!(status, 200);
 }
