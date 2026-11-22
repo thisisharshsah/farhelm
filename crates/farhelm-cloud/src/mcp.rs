@@ -757,6 +757,22 @@ fn escape(raw: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// The content security policy's source for [`PAGE_STYLE`]: its hash, so the
+/// policy allows that one inline block and nothing else inline on a page
+/// where people type their password (`crate::headers`).
+pub(crate) fn page_style_source() -> String {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let css = PAGE_STYLE
+        .strip_prefix("<style>")
+        .and_then(|rest| rest.strip_suffix("</style>"))
+        .unwrap_or(PAGE_STYLE);
+    format!(
+        "'sha256-{}'",
+        base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(css.as_bytes()))
+    )
+}
+
 const PAGE_STYLE: &str = r#"<style>
 :root{color-scheme:light dark;--bg:#f9f9f7;--fg:#0b0b0b;--muted:#52514e;--line:rgba(11,11,11,.12);--accent:#2a78d6;--card:#fff}
 @media(prefers-color-scheme:dark){:root{--bg:#0d0d0d;--fg:#fff;--muted:#c3c2b7;--line:rgba(255,255,255,.14);--card:#1a1a19}}

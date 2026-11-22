@@ -37,6 +37,7 @@
 pub mod api;
 pub mod billing;
 pub mod cli;
+pub mod headers;
 pub mod mcp;
 pub mod model;
 pub mod plan;
@@ -44,6 +45,8 @@ pub mod secret;
 pub mod store;
 pub mod throttle;
 pub mod watch;
+
+use std::sync::Arc;
 
 use farhelm_crypto::token::TokenSigner;
 
@@ -84,6 +87,27 @@ pub struct CloudState {
     pub config: CloudConfig,
     /// Attempt limits and the Argon2 queue for sign-in and sign-up.
     pub throttle: throttle::Throttle,
+}
+
+/// The whole service as one router: the API, the MCP connector, the web app
+/// when `app_dir` holds its build, and the security headers on every answer
+/// (`headers`). The binary serves this; tests can drive the same thing.
+pub fn app(state: Arc<CloudState>, app_dir: Option<&str>) -> axum::Router {
+    let headers = Arc::new(headers::SecurityHeaders::new(&state.config));
+    let mut router = api::router(Arc::clone(&state)).merge(mcp::router(state));
+    if let Some(dir) = app_dir {
+        // Unknown paths fall back to index.html so the hash-routed PWA survives
+        // a hard refresh. `/v1/*` is matched first and never reaches this.
+        let index = std::path::Path::new(dir).join("index.html");
+        router = router.fallback_service(
+            tower_http::services::ServeDir::new(dir)
+                .fallback(tower_http::services::ServeFile::new(index)),
+        );
+    }
+    router.layer(axum::middleware::from_fn_with_state(
+        headers,
+        headers::apply,
+    ))
 }
 
 /// Unix milliseconds.

@@ -176,6 +176,15 @@ Both server processes bind loopback and are reached *through* the tunnel. That
 is not decoration: it means a misconfigured firewall cannot expose them, because
 there is nothing listening on a routable address to expose.
 
+Every answer from `farhelm-cloud` carries security headers built from its own
+flags (`crates/farhelm-cloud/src/headers.rs`): a content security policy that
+lets a page run only this origin's scripts and connect only to this origin and
+the relay named by `--relay-url`, no framing, no MIME sniffing and no
+`Referer`, `no-store` on the API, and HSTS when `--public-url` is HTTPS. So the
+web app served from here signs in only to this deployment. A feature that needs
+another origin, an inline script or a frame changes the policy there, with its
+test (`tests/security_headers.rs`).
+
 The relay also carries Companion (the Mac app and its iPhone, iPad and Watch
 apps) away from home, on *seat channels*: a channel named `c1-` and the start
 of the SHA-256 of a seat, opened by sending that seat in the `X-Relay-Seat`

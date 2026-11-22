@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::{CloudConfig, CloudState, DEFAULT_PORT, api, billing::Billing, store::CloudStore};
+use crate::{CloudConfig, CloudState, DEFAULT_PORT, billing::Billing, store::CloudStore};
 use farhelm_crypto::token::TokenSigner;
 
 pub const USAGE: &str = "\
@@ -281,16 +281,7 @@ fn serve(
         throttle: Default::default(),
     });
 
-    let mut router = api::router(Arc::clone(&state)).merge(crate::mcp::router(Arc::clone(&state)));
-    if let Some(dir) = app_dir {
-        // Unknown paths fall back to index.html so the hash-routed PWA survives
-        // a hard refresh. `/v1/*` is matched first and never reaches this.
-        let index = std::path::Path::new(dir).join("index.html");
-        router = router.fallback_service(
-            tower_http::services::ServeDir::new(dir)
-                .fallback(tower_http::services::ServeFile::new(index)),
-        );
-    }
+    let router = crate::app(Arc::clone(&state), app_dir);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
