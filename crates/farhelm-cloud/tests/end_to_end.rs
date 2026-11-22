@@ -514,21 +514,25 @@ async fn a_reinstalled_machine_does_not_silently_become_the_old_one() {
         .await;
     let runner_id = first["runner_id"].as_str().unwrap().to_owned();
 
-    // Same name, different key.
+    // Same name, different key: parked for an admin, and nothing handed out
+    // (security review, H5).
+    let replacement = public_key();
     let (status, second) = world
         .post(
             "/v1/runners/enroll",
             Some(&key),
-            json!({"name": "mac-studio", "public_key": public_key(), "version": "0.1.0"}),
+            json!({"name": "mac-studio", "public_key": replacement, "version": "0.1.0"}),
         )
         .await;
-    assert_eq!(status, 200);
+    assert_eq!(status, 409);
     assert_eq!(second["key_change_pending"], true);
-    // The channel has *not* moved: devices are still talking to the machine
-    // whose key was pinned.
-    assert_eq!(second["channel"], farhelm_proto::channel_for(&original));
+    assert!(
+        second.get("runner_token").is_none(),
+        "handed a token to an unconfirmed key"
+    );
 
-    // And no device can get a seat until a human confirms.
+    // Devices keep reaching the machine whose key is pinned: anyone with an
+    // enrolment key could otherwise cut them all off.
     let (_, device) = world
         .post(
             "/v1/devices",
@@ -536,17 +540,17 @@ async fn a_reinstalled_machine_does_not_silently_become_the_old_one() {
             json!({"kind": "phone", "name": "iPhone", "public_key": public_key()}),
         )
         .await;
-    let (status, refused) = world
+    let (status, seat) = world
         .post(
             "/v1/channel-token",
             Some(&access),
             json!({"runner_id": runner_id, "device_id": device["id"]}),
         )
         .await;
-    assert_eq!(status, 403, "handed out a seat on an unconfirmed machine");
-    assert!(refused["error"].as_str().unwrap().contains("identity"));
+    assert_eq!(status, 200, "{seat}");
+    assert_eq!(seat["runner_public_key"], original);
 
-    // The owner confirms, and it works.
+    // The owner confirms, and the new install gets in on its next try.
     let (status, _) = world
         .post(
             &format!("/v1/runners/{runner_id}/approve-key"),
@@ -555,14 +559,63 @@ async fn a_reinstalled_machine_does_not_silently_become_the_old_one() {
         )
         .await;
     assert_eq!(status, 200);
+    let (status, third) = world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({"name": "mac-studio", "public_key": replacement, "version": "0.1.0"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{third}");
+    assert_eq!(third["runner_id"], runner_id);
+    assert_eq!(third["channel"], farhelm_proto::channel_for(&replacement));
+}
+
+#[tokio::test]
+async fn a_rejected_key_leaves_the_machine_on_file_as_it_was() {
+    let world = spawn().await;
+    let (access, _) = world.sign_up("harsh@example.com").await;
+    let key = world.enrollment_key(&access).await;
+
+    let original = public_key();
+    let (_, first) = world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({"name": "mac-studio", "public_key": original, "version": "0.1.0"}),
+        )
+        .await;
+    let runner_id = first["runner_id"].as_str().unwrap().to_owned();
     let (status, _) = world
         .post(
-            "/v1/channel-token",
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({"name": "mac-studio", "public_key": public_key(), "version": "0.1.0"}),
+        )
+        .await;
+    assert_eq!(status, 409);
+
+    let (status, rejected) = world
+        .post(
+            &format!("/v1/runners/{runner_id}/reject-key"),
             Some(&access),
-            json!({"runner_id": runner_id, "device_id": device["id"]}),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "{rejected}");
+    assert_eq!(rejected["needs_key_approval"], false);
+    assert_eq!(rejected["public_key"], original);
+
+    // The machine on file carries on as before.
+    let (status, again) = world
+        .post(
+            "/v1/runners/enroll",
+            Some(&key),
+            json!({"name": "mac-studio", "public_key": original, "version": "0.1.0"}),
         )
         .await;
     assert_eq!(status, 200);
+    assert_eq!(again["channel"], farhelm_proto::channel_for(&original));
 }
 
 #[tokio::test]

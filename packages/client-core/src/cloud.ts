@@ -661,6 +661,10 @@ export class CloudClient {
     return this.call<RunnerView>("POST", `/v1/runners/${id}/approve-key`, {});
   }
 
+  rejectRunnerKey(id: string): Promise<RunnerView> {
+    return this.call<RunnerView>("POST", `/v1/runners/${id}/reject-key`, {});
+  }
+
   forgetRunner(id: string): Promise<void> {
     return this.call("DELETE", `/v1/runners/${id}`);
   }

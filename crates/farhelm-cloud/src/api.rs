@@ -75,6 +75,7 @@ pub fn router(state: Arc<CloudState>) -> Router {
             patch(rename_runner).delete(forget_runner),
         )
         .route("/v1/runners/{id}/approve-key", post(approve_key))
+        .route("/v1/runners/{id}/reject-key", post(reject_key))
         .route("/v1/channel-token", post(channel_token))
         .route(
             "/v1/enrollment-keys",
@@ -976,6 +977,20 @@ async fn approve_key(
     )))
 }
 
+/// Turn down a machine's new identity: the pinned key stays. An install that
+/// keeps asking with the rejected key parks it again, so if it was not yours,
+/// revoke the enrolment keys too.
+async fn reject_key(
+    caller: Caller,
+    State(state): State<Arc<CloudState>>,
+    Path(id): Path<String>,
+) -> ApiResult<RunnerView> {
+    owned_runner(&state, &caller, &id)?;
+    caller.requires(Role::Admin)?;
+    state.store.set_pending_key(&id, None)?;
+    Ok(Json(RunnerView::of(state.store.runner(&id)?, now_ms())))
+}
+
 async fn forget_runner(
     caller: Caller,
     State(state): State<Arc<CloudState>>,
@@ -1021,8 +1036,9 @@ pub struct EnrollResponse {
     /// with it; the enrolment key is not needed again.
     pub runner_token: String,
     pub runner_token_expires_at: i64,
-    /// Set when this machine's key differs from the pinned one. The runner keeps
-    /// working on its old channel; a human has to approve the change.
+    /// Always false here: a key that differs from the one pinned under the
+    /// machine's name is answered 409 with `key_change_pending: true` and no
+    /// token (security review, H5). Kept for runners that read it.
     pub key_change_pending: bool,
 }
 
@@ -1039,7 +1055,7 @@ async fn enroll_runner(
     State(state): State<Arc<CloudState>>,
     headers: axum::http::HeaderMap,
     Json(body): Json<EnrollBody>,
-) -> ApiResult<EnrollResponse> {
+) -> Result<Response, ApiError> {
     let key = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -1079,11 +1095,23 @@ async fn enroll_runner(
 
             match by_name {
                 Some(existing) => {
+                    // A reinstall, or someone holding an enrolment key and a
+                    // name. Either way nothing is handed out until an admin
+                    // approves the key: no token, no channel, no sign of life
+                    // on the machine on file (security review, H5). Devices
+                    // keep reaching the pinned key meanwhile, and the new
+                    // install asks again until it is approved or rejected.
                     state
                         .store
                         .set_pending_key(&existing.id, Some(&body.public_key))?;
-                    state.store.touch_runner(&existing.id, &body.version, now)?;
-                    (state.store.runner(&existing.id)?, true)
+                    return Ok((
+                        StatusCode::CONFLICT,
+                        Json(serde_json::json!({
+                            "error": "this machine's new key is waiting for an admin to approve it in the web app",
+                            "key_change_pending": true,
+                        })),
+                    )
+                        .into_response());
                 }
                 None => {
                     let subscription = state.store.subscription(&org_id)?;
@@ -1122,7 +1150,8 @@ async fn enroll_runner(
         runner_token,
         runner_token_expires_at: expires_at,
         key_change_pending,
-    }))
+    })
+    .into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1272,19 +1301,17 @@ pub struct ChannelTokenResponse {
 
 /// `POST /v1/channel-token`: a seat on a runner's channel, for fifteen minutes.
 ///
-/// Refused for a runner with a pending key change: handing out a token then
-/// would mean devices talking to a machine whose identity nobody has confirmed.
+/// Given while a key change is pending too: the channel, and the key devices
+/// seal to, are still the pinned ones, and the install that offered the new
+/// key holds no token until an admin approves it. Refusing here would let
+/// anyone with an enrolment key cut every device off a machine (security
+/// review, H5).
 async fn channel_token(
     caller: Caller,
     State(state): State<Arc<CloudState>>,
     Json(body): Json<ChannelTokenBody>,
 ) -> ApiResult<ChannelTokenResponse> {
     let runner = owned_runner(&state, &caller, &body.runner_id)?;
-    if runner.pending_public_key.is_some() {
-        return Err(ApiError::forbidden(
-            "this machine's identity changed; an admin has to confirm it before devices reconnect",
-        ));
-    }
 
     // Named rather than left to the store's generic not-found, because this
     // handler can 404 for two entirely different reasons with two opposite

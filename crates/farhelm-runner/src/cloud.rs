@@ -124,13 +124,16 @@ pub enum CloudError {
     Unreachable(String),
     /// The control plane answered, and the answer was no.
     Refused(String),
+    /// This machine's key is not the one on file under its name, and is
+    /// waiting for an admin to approve it. Worth asking again.
+    AwaitingApproval(String),
 }
 
 impl std::fmt::Display for CloudError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CloudError::Unreachable(why) => write!(f, "could not reach the control plane: {why}"),
-            CloudError::Refused(why) => f.write_str(why),
+            CloudError::Refused(why) | CloudError::AwaitingApproval(why) => f.write_str(why),
         }
     }
 }
@@ -471,6 +474,9 @@ pub async fn enroll_with_retry(
                 return Ok(session);
             }
             Err(CloudError::Refused(why)) => return Err(CloudError::Refused(why)),
+            Err(CloudError::AwaitingApproval(why)) => {
+                return Err(CloudError::AwaitingApproval(why));
+            }
             Err(err) => {
                 if tokio::time::Instant::now() + backoff >= deadline {
                     return Err(err);
@@ -512,12 +518,22 @@ pub async fn enroll(config: &CloudConfig, public_key: &str) -> Result<CloudSessi
         .map_err(|err| CloudError::Unreachable(err.to_string()))?;
 
     if !status.is_success() {
-        return Err(CloudError::Refused(
-            body.get("error")
-                .and_then(|error| error.as_str())
-                .unwrap_or("enrolment was refused")
-                .to_owned(),
-        ));
+        let why = body
+            .get("error")
+            .and_then(|error| error.as_str())
+            .unwrap_or("enrolment was refused")
+            .to_owned();
+        // A new key under a name on file: parked for an admin, with nothing
+        // handed out until then.
+        if status == reqwest::StatusCode::CONFLICT
+            && body
+                .get("key_change_pending")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        {
+            return Err(CloudError::AwaitingApproval(why));
+        }
+        return Err(CloudError::Refused(why));
     }
 
     let enrolled: EnrollResponse =
@@ -595,9 +611,9 @@ where
                     }
                     if beat.key_change_pending {
                         eprintln!(
-                            "cloud link: this machine's identity does not match the one on \
-                             file; devices cannot connect until an admin confirms it in the \
-                             web app"
+                            "cloud link: another install offered a new key under this \
+                             machine's name; devices keep using this one until an admin \
+                             approves or rejects it in the web app"
                         );
                     }
 

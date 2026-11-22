@@ -135,6 +135,7 @@ export function AccountScreen({
         onPick={onPickRunner}
         onRename={(id, name) => run(() => cloud.renameRunner(id, name))}
         onApproveKey={(id) => run(() => cloud.approveRunnerKey(id))}
+        onRejectKey={(id) => run(() => cloud.rejectRunnerKey(id))}
         onForget={(id) => run(() => cloud.forgetRunner(id))}
       />
 
@@ -189,6 +190,7 @@ function Machines({
   onPick,
   onRename,
   onApproveKey,
+  onRejectKey,
   onForget,
 }: {
   runners: RunnerView[];
@@ -197,6 +199,7 @@ function Machines({
   onPick: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onApproveKey: (id: string) => void;
+  onRejectKey: (id: string) => void;
   onForget: (id: string) => void;
 }) {
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -246,7 +249,6 @@ function Machines({
                 <button
                   className="btn btn-small"
                   onClick={() => onPick(runner.id)}
-                  disabled={runner.needs_key_approval}
                 >
                   Watch
                 </button>
@@ -264,18 +266,35 @@ function Machines({
               <div className="notice warn-text">
                 <b>This machine&rsquo;s identity changed.</b>
                 <p className="tile-note">
-                  It is offering a different key from the one on file. That is
-                  what a reinstall looks like, and also what somebody standing
-                  in front of it looks like. Devices cannot connect until you
-                  say which.
+                  An install under this name is offering a different key
+                  {runner.pending_public_key ? (
+                    <>
+                      {" "}
+                      (<code className="key-fragment">
+                        {runner.pending_public_key.slice(0, 12)}…
+                      </code>)
+                    </>
+                  ) : null}
+                  . That is what a reinstall looks like, and also what somebody
+                  holding an enrolment key looks like. Devices keep using the
+                  key on file, and the new install waits, until you say which.
+                  If it was not you, reject it and revoke your enrolment keys.
                 </p>
                 {canAdminister ? (
-                  <button
-                    className="btn btn-approve"
-                    onClick={() => onApproveKey(runner.id)}
-                  >
-                    That was me, accept the new key
-                  </button>
+                  <div className="approval-actions">
+                    <button
+                      className="btn btn-approve"
+                      onClick={() => onApproveKey(runner.id)}
+                    >
+                      That was me, accept the new key
+                    </button>
+                    <button
+                      className="btn btn-deny"
+                      onClick={() => onRejectKey(runner.id)}
+                    >
+                      Not me, reject it
+                    </button>
+                  </div>
                 ) : (
                   <p className="tile-note">An admin has to confirm it.</p>
                 )}

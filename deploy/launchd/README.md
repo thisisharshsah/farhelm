@@ -47,8 +47,9 @@ the plist: `~/Library/LaunchAgents` is not a secret store. The runner job is
 
 The runner's key file *is* what the control plane pins at first enrolment.
 Start the runner with a different one and it enrols as a stranger under the same
-hostname: the fleet shows **"this machine's identity changed"**, devices are
-refused a channel token, and an admin has to confirm it by hand.
+hostname: the fleet shows **"this machine's identity changed"**, the new install
+gets nothing (no token, no channel) and waits, and an admin has to approve or
+reject the new key by hand. Devices keep reaching the key on file meanwhile.
 
 So it lives at `~/.farhelm/runner.key`, mode 0600, and it belongs in whatever
 you back up. Running the daemon from a scratch directory works right up until

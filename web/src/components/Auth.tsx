@@ -325,7 +325,7 @@ export function MachinePicker({
             <button
               className="machine-row"
               onClick={() => onPick(runner.id)}
-              disabled={busy || runner.needs_key_approval}
+              disabled={busy}
             >
               <span
                 className={runner.online ? "machine-dot is-online" : "machine-dot is-offline"}
@@ -334,7 +334,7 @@ export function MachinePicker({
               <span className="machine-name">{runner.name}</span>
               <span className="machine-meta">
                 {runner.needs_key_approval
-                  ? "identity changed, needs confirming"
+                  ? "new key waiting to be confirmed"
                   : runner.online
                     ? `v${runner.version}`
                     : "offline"}

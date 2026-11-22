@@ -724,8 +724,8 @@ async fn serve_async(flags: Flags) -> Fallible {
                     );
                     if session.key_change_pending {
                         eprintln!(
-                            "  cloud      this machine's identity does not match the one on \
-                             file; an admin has to confirm it before devices can connect"
+                            "  cloud      another install offered a new key under this \
+                             machine's name; an admin can approve or reject it in the web app"
                         );
                     }
                     let shared = Arc::new(std::sync::RwLock::new(session));
@@ -739,6 +739,16 @@ async fn serve_async(flags: Flags) -> Fallible {
                     if matches!(err, farhelm_runner::cloud::CloudError::Unreachable(_)) {
                         eprintln!(
                             "  cloud      serving loopback, still trying to reach the control plane"
+                        );
+                        rejoin = Some(config);
+                    } else if matches!(err, farhelm_runner::cloud::CloudError::AwaitingApproval(_))
+                    {
+                        // Asked again until it is approved, then connects.
+                        let key = identity.public_key().as_str();
+                        eprintln!(
+                            "  cloud      this machine's key starts {}; approve it under \
+                             Machines in the web app. Serving loopback until then",
+                            key.get(..12).unwrap_or(key)
                         );
                         rejoin = Some(config);
                     } else {

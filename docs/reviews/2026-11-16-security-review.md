@@ -373,7 +373,7 @@ Ranking: critical means control of the Mac or of accounts by an attacker who nee
 
 ## 8. Status, 2026-11-20
 
-Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift changes are not yet built or tried on a device. Next by severity: H5 (enrolment under an existing machine's name), then H1.
+Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift changes are not yet built or tried on a device. Next by severity: H1, then M7 and enrolment keys' end dates.
 
 | ID | Status | Where |
 |---|---|---|
@@ -386,6 +386,7 @@ Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift cha
 | H1 | Open: the code still crosses the local network in clear. The listener now refuses connections from outside this Mac's own networks | `RemoteServer.isNearby` |
 | H3 | Fixed: ten failed sign-ins for an account, or a hundred from one address (a /64 for IPv6), in fifteen minutes, then a wait, a correct password included; twenty sign-ups an hour from one address. Argon2 runs off the async workers, four at a time, after the database lock is released. `CF-Connecting-IP` is believed only from a loopback peer. Still worth adding: a Cloudflare rate rule for `/v1/auth/*` | `crates/farhelm-cloud/src/throttle.rs`, `api.rs` (`login`, `signup`, `client_address`), `store.rs` (`authenticate`) |
 | H4 | Fixed: push endpoints must be https, on the standard port, on Google's, Apple's, Mozilla's or Microsoft's push service; at most 1,024 characters and 20 devices a channel; no redirects; the other end's answer is not logged | `crates/farhelm-relay/src/push.rs` (`acceptable_endpoint`), `lib.rs`, `webpush.rs` |
+| H5 | Fixed: a new key under a name on file is parked and answered 409, with no token and no sign of life on the machine on file; devices keep reaching the pinned key; an admin can approve or reject it (`/v1/runners/{id}/reject-key`), and the web app shows the new key's start; the runner asks again until approved. Still open: enrolment keys have no end date or use count (and M7) | `crates/farhelm-cloud/src/api.rs` (`enroll_runner`, `channel_token`, `reject_key`), `crates/farhelm-runner/src/cloud.rs`, `web/src/components/Account.tsx` |
 | M2 | Fixed: the stats address asks for the channel's token, as a wake-up does | `crates/farhelm-relay/src/lib.rs` (`channel_stats`) |
 | M8 | Fixed: the relay binds loopback unless told otherwise | `crates/farhelm-relay/src/cli.rs` |
 
