@@ -24,7 +24,9 @@ public enum PairingLink {
         let away = relay != nil && key != nil
         // Somewhere to reach it: on the network, or through the relay.
         guard !hosts.isEmpty || away else { return nil }
+        // The key is kept with or without a relay: on the Mac's network the
+        // app seals what it sends with it too (`/link`).
         return PairedMac(id: id, name: values["name"] ?? "Mac", port: port, hosts: hosts, token: token,
-                         relay: away ? relay : nil, key: away ? key : nil)
+                         relay: away ? relay : nil, key: key)
     }
 }

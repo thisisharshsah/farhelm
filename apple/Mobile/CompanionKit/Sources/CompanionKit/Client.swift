@@ -40,8 +40,11 @@ public struct CompanionClient: Sendable {
     /// How the Mac is reached.
     public enum Route: Sendable, Equatable {
         /// Straight to this address: its name or address on the network, or
-        /// its Tailscale address.
+        /// its Tailscale address, in plain HTTP (a Mac from before `local`).
         case direct(String)
+        /// Straight to this address, sealed as through the relay: the Mac
+        /// serves the relay's protocol on its network (`/link`).
+        case local(String)
         /// Through the relay, sealed end to end.
         case relay
     }
@@ -52,8 +55,10 @@ public struct CompanionClient: Sendable {
 
     /// The address in use, when the Mac is reached directly.
     public var host: String? {
-        if case .direct(let host) = route { return host }
-        return nil
+        switch route {
+        case .direct(let host), .local(let host): return host
+        case .relay: return nil
+        }
     }
 
     public init(mac: PairedMac, host: String) {
@@ -67,6 +72,21 @@ public struct CompanionClient: Sendable {
         route = .relay
         self.link = link
     }
+
+    init(mac: PairedMac, host: String, link: LinkEndpoint) {
+        self.mac = mac
+        route = .local(host)
+        self.link = link
+    }
+
+    /// For asking where the sealed way in is: brief, since a Mac that is not
+    /// on this network must not hold up the rest.
+    private static let probe: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 1.5
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
 
     private static let quick: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -110,6 +130,28 @@ public struct CompanionClient: Sendable {
             }
         }
 
+        // Sealed on this network first: the relay's protocol, served by the
+        // Mac itself (security review, H1). A Mac from before it, or a
+        // pairing without the key, is asked the plain way below.
+        if let key = mac.key.flatMap({ LinkKey(text: $0) }) {
+            let ports = await withTaskGroup(of: (Int, Int?).self) { group in
+                for (index, host) in hosts.enumerated() {
+                    group.addTask { (index, await linkPort(of: mac, at: host)) }
+                }
+                var all: [(Int, Int?)] = []
+                for await answer in group { all.append(answer) }
+                return all.sorted { $0.0 < $1.0 }
+            }
+            for (index, port) in ports {
+                guard let port else { continue }
+                if let reached = await viaLocalLink(mac, host: hosts[index], port: port, key: key) {
+                    away?.cancel()
+                    await RelayLinks.shared.stopAll()
+                    return reached
+                }
+            }
+        }
+
         let answers = await withTaskGroup(of: (Int, MacInfo?, Bool).self) { group in
             for (index, host) in hosts.enumerated() {
                 group.addTask {
@@ -147,6 +189,42 @@ public struct CompanionClient: Sendable {
             if let error = error as? CompanionError { throw error }
             let why = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             throw CompanionError.away(mac.name, why)
+        }
+    }
+
+    /// The port of the Mac's sealed way in at `host`, or nil when it has
+    /// none (a Mac from before it) or does not answer there.
+    private static func linkPort(of mac: PairedMac, at host: String) async -> Int? {
+        var parts = URLComponents()
+        parts.scheme = "http"
+        parts.host = host
+        parts.port = mac.port
+        parts.path = "/link"
+        guard let url = parts.url,
+              let (data, response) = try? await probe.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let port = object["port"] as? Int, (1...65_535).contains(port) else { return nil }
+        return port
+    }
+
+    /// The Mac at `host` through its sealed way in: connected, and answering.
+    private static func viaLocalLink(_ mac: PairedMac, host: String, port: Int,
+                                     key: LinkKey) async -> (CompanionClient, MacInfo)? {
+        var parts = URLComponents()
+        parts.scheme = "ws"
+        parts.host = host
+        parts.port = port
+        guard let url = parts.url else { return nil }
+        let link = await LocalLinks.shared.endpoint(for: mac, at: url, key: key)
+        do {
+            try await link.waitUntilConnected(timeout: 5)
+            let client = CompanionClient(mac: mac, host: host, link: link)
+            let info: MacInfo = try await client.get("/info", timeout: 8)
+            return (client, info)
+        } catch {
+            await LocalLinks.shared.stopAll()
+            return nil
         }
     }
 
@@ -204,7 +282,7 @@ public struct CompanionClient: Sendable {
             if timeout > 20 { request.timeoutInterval = timeout }
             let (data, response) = try await session.upload(for: request, from: body)
             return (data, (response as? HTTPURLResponse)?.statusCode ?? 200)
-        case .relay:
+        case .relay, .local:
             guard let link else { throw CompanionError.unreachable(mac.name) }
             var query: [String: String] = [:]
             for item in extra { query[item.name] = item.value ?? "" }
@@ -303,7 +381,7 @@ public struct CompanionClient: Sendable {
     public func updates() -> AsyncThrowingStream<FeedUpdate, Error> {
         switch route {
         case .direct: return directUpdates()
-        case .relay: return relayUpdates()
+        case .relay, .local: return relayUpdates()
         }
     }
 

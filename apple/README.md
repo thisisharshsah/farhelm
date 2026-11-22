@@ -198,6 +198,8 @@ Away from your Wi-Fi, through a relay (`Shared/CompanionLink`, `Support/RemoteRe
 - The relay is Farhelm's (`crates/farhelm-relay` in the Farhelm repository), which takes seat channels (`c1-…`, opened by the `X-Relay-Seat` header) without a Farhelm account; after updating it, `./deploy/redeploy.sh relay` in the Farhelm checkout puts it live. Any relay that forwards `{channel, sender_id, nonce, ciphertext}` text frames on `/v1/channel/{channel}` to the channel's other members and checks the seat works.
 - Long messages (a photo, a big chat) go in 160 KiB frames; past 48 unacknowledged frames the sender waits for acks, so the relay never has to drop any.
 
+On your Wi-Fi the apps use the same sealed link (`Support/LocalLink.swift`): the Mac serves the relay's protocol itself, a small WebSocket hub (port 7346, or the one `/link` names) that the apps and the Mac's own link end both join, so nothing the apps send on the network carries the pairing code, and the hub passes frames it cannot read. The pairing code now carries the key whether or not the relay is on; an app paired before this, or a Mac from before it, falls back to plain HTTP. The browser and glasses pages keep plain HTTP with the pairing code for now.
+
 Tailscale still works as before: its address is one the app tries directly.
 
 With a free Apple ID, apps installed from Xcode stop opening after 7 days; run them from Xcode again to renew. `cd Mobile/CompanionKit && swift test` runs the shared code's tests, and `cd Shared/CompanionLink && swift test` the link's (its fixture is the one farhelm-relay's tests check too). `cd Shared/CompanionBoard && swift test` runs the board's rules (Advanced).

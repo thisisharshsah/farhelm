@@ -103,6 +103,8 @@ final class RemoteServer: ObservableObject {
         token = Self.storedToken()
         // The way in from away, whatever becomes of the local listener.
         RemoteRelay.shared.start()
+        // The apps' sealed way in on this network.
+        LocalLink.shared.start()
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
         let chosen = NWEndpoint.Port(rawValue: preferredPort)
@@ -147,6 +149,7 @@ final class RemoteServer: ObservableObject {
 
     func stop() {
         RemoteRelay.shared.stop()
+        LocalLink.shared.stop()
         pump?.cancel()
         pump = nil
         for connection in feeds.values { connection.cancel() }
@@ -216,8 +219,10 @@ final class RemoteServer: ObservableObject {
         ]
         if let away {
             items.append(URLQueryItem(name: "relay", value: away.relay))
-            items.append(URLQueryItem(name: "key", value: away.key))
         }
+        // The pairing's key, relay or not: on this network too the apps seal
+        // what they send with it (`LocalLink`).
+        items.append(URLQueryItem(name: "key", value: RemoteRelay.shared.key.text))
         parts.queryItems = items
         return parts.url?.absoluteString
     }
@@ -327,6 +332,7 @@ final class RemoteServer: ObservableObject {
         feeds = [:]
         // The relay's key goes with it: a device cut off here is cut off there.
         RemoteRelay.shared.newKey()
+        LocalLink.shared.restart()
         objectWillChange.send()
     }
 
@@ -495,7 +501,7 @@ final class RemoteServer: ObservableObject {
     /// What answers without the pairing code: the pages, and what iOS needs
     /// to add them to the Home Screen. What they show is asked for with it.
     private static func isPublic(_ path: String) -> Bool {
-        ["/", "/index.html", "/web", "/glass", "/manifest.json", "/icon.png"].contains(path)
+        ["/", "/index.html", "/web", "/glass", "/manifest.json", "/icon.png", "/link"].contains(path)
     }
 
     /// The pairing code compared in the same time whatever it holds.
@@ -609,6 +615,12 @@ final class RemoteServer: ObservableObject {
         if request.path == "/web" || request.path == "/glass" {
             let glass = request.path == "/glass" || request.query["glass"] == "1"
             send(html: glass ? Self.glassPage : Self.webPage, on: connection)
+            return
+        }
+        // Where the apps' sealed way in listens (`LocalLink`). They ask
+        // before anything else, so nothing they send here carries the code.
+        if request.path == "/link" {
+            send(json: Self.json(["port": Int(LocalLink.shared.port), "v": 1]), on: connection)
             return
         }
         // What iOS needs to add the page to the Home Screen as an app.
@@ -873,7 +885,8 @@ final class RemoteServer: ObservableObject {
 
     private func broadcastIfChanged() {
         let relay = RemoteRelay.shared
-        guard !feeds.isEmpty || relay.listening else { return }
+        let local = LocalLink.shared
+        guard !feeds.isEmpty || relay.listening || local.listening else { return }
         // A comment line now and then keeps idle connections open, and a
         // phone that has gone away is found out when the send fails.
         if Date().timeIntervalSince(lastPing) > 15 {
@@ -896,6 +909,7 @@ final class RemoteServer: ObservableObject {
         let event = message(meta: meta, order: order, changed: changed.map { $0.json }, full: false)
         for connection in feeds.values { pushToFeed(connection, event: event) }
         relay.publish(event)
+        local.publish(event)
     }
 
     private func pushToFeed(_ connection: NWConnection, event json: String) {

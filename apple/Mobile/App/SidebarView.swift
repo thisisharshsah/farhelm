@@ -195,7 +195,8 @@ struct SidebarView: View {
     private var linkText: String {
         switch session.link {
         case .live(.relay): return "Through your relay"
-        case .live(.direct(let host)): return host.hasPrefix("100.") ? "Over Tailscale" : "On this network"
+        case .live(.direct(let host)), .live(.local(let host)):
+            return host.hasPrefix("100.") ? "Over Tailscale" : "On this network"
         case .connecting: return "Connecting…"
         case .failed(let why): return why
         case .idle: return "Paused"

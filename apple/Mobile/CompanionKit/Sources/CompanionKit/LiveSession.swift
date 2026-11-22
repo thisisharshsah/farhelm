@@ -58,8 +58,12 @@ public final class LiveSession {
         listTicker?.cancel()
         listTicker = nil
         if case .live = link { link = .idle }
-        // A relay connection is not kept open while nothing follows it.
-        closing = Task { await RelayLinks.shared.stopAll() }
+        // A relay or sealed connection is not kept open while nothing
+        // follows it.
+        closing = Task {
+            await RelayLinks.shared.stopAll()
+            await LocalLinks.shared.stopAll()
+        }
     }
 
     /// Starts again, for another Mac or after pairing anew.

@@ -32,6 +32,14 @@ final class PairingTests: XCTestCase {
         XCTAssertEqual(PairingLink.parse(away)?.relay, "wss://relay.example.com")
     }
 
+    func testTheKeyIsKeptWithoutARelay() throws {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        let mac = try XCTUnwrap(PairingLink.parse("companion://pair?id=A&port=1&hosts=a&token=t&key=\(key)"))
+        XCTAssertEqual(mac.key, key)
+        XCTAssertNil(mac.relay)
+        XCTAssertFalse(mac.reachableAway)
+    }
+
     func testARelayNeedsAKeyThatIsOne() throws {
         let noKey = try XCTUnwrap(PairingLink.parse("companion://pair?id=A&port=1&hosts=a&token=t&relay=wss://relay.example.com"))
         XCTAssertNil(noKey.relay)

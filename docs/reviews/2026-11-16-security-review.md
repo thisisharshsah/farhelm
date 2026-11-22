@@ -373,7 +373,7 @@ Ranking: critical means control of the Mac or of accounts by an attacker who nee
 
 ## 8. Status, 2026-11-20
 
-Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift changes are not yet built or tried on a device. Next by severity: H1, then M7 and enrolment keys' end dates.
+Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift changes are not yet built or tried on a device. Next by severity: M7 and enrolment keys' end dates, then the browser and glasses pages' part of H1.
 
 | ID | Status | Where |
 |---|---|---|
@@ -383,7 +383,7 @@ Fixed on the `security-fixes` branch. The Rust changes are tested; the Swift cha
 | L6 | Fixed: compared in constant time; past 1,000 wrong codes in ten minutes an address is refused | `RemoteServer.swift` |
 | M10 | Partly: agent commands get a short list of variables (`AgentProcess.plainEnvironment`). CLI tools still get the app's environment, since they may need their own settings | `AgentProcess.swift`, `AgentShell.swift` |
 | M11 | Partly: the runner refuses `/v1` through any tunnel or proxy. The live tunnel file is still outside the repository; the path rule to use is in `deploy/README.md` | `crates/farhelm-runner/src/api.rs` |
-| H1 | Open: the code still crosses the local network in clear. The listener now refuses connections from outside this Mac's own networks | `RemoteServer.isNearby` |
+| H1 | Partly: the iPhone, iPad and Watch apps now reach the Mac on its network through the relay's sealed protocol, served by the Mac itself (`LocalLink`, found through `/link`), with the key in every pairing code. Still open: the browser and glasses pages send the code in clear (left as they are for now, by the owner's choice), and an app paired before this falls back to plain HTTP until paired again. The listener refuses connections from outside this Mac's own networks | `Support/LocalLink.swift`, `RemoteServer.isNearby`, `CompanionKit/Client.swift` |
 | H3 | Fixed: ten failed sign-ins for an account, or a hundred from one address (a /64 for IPv6), in fifteen minutes, then a wait, a correct password included; twenty sign-ups an hour from one address. Argon2 runs off the async workers, four at a time, after the database lock is released. `CF-Connecting-IP` is believed only from a loopback peer. Still worth adding: a Cloudflare rate rule for `/v1/auth/*` | `crates/farhelm-cloud/src/throttle.rs`, `api.rs` (`login`, `signup`, `client_address`), `store.rs` (`authenticate`) |
 | H4 | Fixed: push endpoints must be https, on the standard port, on Google's, Apple's, Mozilla's or Microsoft's push service; at most 1,024 characters and 20 devices a channel; no redirects; the other end's answer is not logged | `crates/farhelm-relay/src/push.rs` (`acceptable_endpoint`), `lib.rs`, `webpush.rs` |
 | H5 | Fixed: a new key under a name on file is parked and answered 409, with no token and no sign of life on the machine on file; devices keep reaching the pinned key; an admin can approve or reject it (`/v1/runners/{id}/reject-key`), and the web app shows the new key's start; the runner asks again until approved. Still open: enrolment keys have no end date or use count (and M7) | `crates/farhelm-cloud/src/api.rs` (`enroll_runner`, `channel_token`, `reject_key`), `crates/farhelm-runner/src/cloud.rs`, `web/src/components/Account.tsx` |

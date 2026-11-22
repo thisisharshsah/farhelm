@@ -37,6 +37,38 @@ actor RelayLinks {
     }
 }
 
+/// Sealed connections to Macs on this device's network (`LocalLink` on the
+/// Mac): at most one per Mac, kept while the app follows it there.
+actor LocalLinks {
+    static let shared = LocalLinks()
+
+    private var endpoints: [String: LinkEndpoint] = [:]
+
+    /// The connection to `mac` at `url`, started.
+    func endpoint(for mac: PairedMac, at url: URL, key: LinkKey) async -> LinkEndpoint {
+        let name = mac.id + "|" + key.channel + "|" + url.absoluteString
+        if let kept = endpoints[name] {
+            await kept.start()
+            return kept
+        }
+        // The same Mac at another address or with an older pairing: that
+        // connection goes.
+        for old in endpoints.keys where old.hasPrefix(mac.id + "|") {
+            await endpoints.removeValue(forKey: old)?.stop()
+        }
+        let endpoint = LinkEndpoint(relay: url, key: key, role: .device(DeviceIdentity.id))
+        endpoints[name] = endpoint
+        await endpoint.start()
+        return endpoint
+    }
+
+    func stopAll() async {
+        let all = Array(endpoints.values)
+        endpoints = [:]
+        for endpoint in all { await endpoint.stop() }
+    }
+}
+
 /// This install's lasting id on the relay link, so the Mac can tell its
 /// devices apart (answers go to the device that asked). Not a secret.
 enum DeviceIdentity {
