@@ -36,6 +36,27 @@ esac
 
 wants() { [[ "$what" == "all" || "$what" == "$1" ]]; }
 
+# ------------------------------------------------------------- toolchain
+
+# rustup installs cargo in ~/.cargo/bin and leaves PATH to the shell's startup
+# files, which a new or trimmed shell may not read. Find it here rather than
+# stop halfway with a bare "command not found".
+if ! command -v cargo >/dev/null 2>&1 && [[ -f "$HOME/.cargo/env" ]]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.cargo/env"
+fi
+need() {
+  command -v "$1" >/dev/null 2>&1 && return
+  bad "$1 not found: $2"
+  exit 1
+}
+if wants cloud || wants relay || wants runner; then
+  need cargo "install Rust with rustup (README, Requirements), then open a new terminal"
+fi
+if wants web; then
+  need pnpm "install Node 20+ and pnpm (README, Requirements)"
+fi
+
 # ---------------------------------------------------------------- build
 
 # One binary now serves all three jobs, so `cloud`, `relay` and `runner` select
