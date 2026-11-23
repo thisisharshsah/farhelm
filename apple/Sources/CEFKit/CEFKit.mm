@@ -467,8 +467,8 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   /// Where the pane wants it, in screen points; it is put back there if
   /// anything else moves or resizes it.
   NSRect _target;
-  /// Where that is from the corner of the window it rides above, so it
-  /// goes with that window when the window is moved.
+  /// Where that is from the top-left corner of the window it rides above
+  /// (x across, y down), so it goes with that window when it moves.
   NSPoint _offset;
   /// The bounds Chromium was told last, so it is told again only when
   /// they change.
@@ -583,7 +583,13 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   if (!_visible || NSIsEmptyRect(_target)) return;
   NSRect target = _target;
   if (NSWindow *parent = window.parentWindow) {
-    target.origin = NSMakePoint(NSMinX(parent.frame) + _offset.x, NSMinY(parent.frame) + _offset.y);
+    target.origin = NSMakePoint(NSMinX(parent.frame) + _offset.x, NSMaxY(parent.frame) - _offset.y - NSHeight(target));
+    // Never beyond that window, should it have become smaller.
+    target = NSIntersectionRect(target, parent.frame);
+    if (NSIsEmptyRect(target)) {
+      [self hide];
+      return;
+    }
   }
   [self moveTo:target];
 }
@@ -610,6 +616,14 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
 - (void)showAbove:(NSWindow *)parent frame:(NSRect)screenFrame {
 #if COMPANION_CEF
   if (!_window) return;
+  // Never beyond the window it is part of: a page reaching past that
+  // window would sit over whatever is next to it. With nothing of it
+  // inside, it is hidden.
+  NSRect target = NSIntersectionRect(NSIntegralRect(screenFrame), parent.frame);
+  if (NSIsEmptyRect(target)) {
+    [self hide];
+    return;
+  }
   if (!_visible) {
     _window->Show();
     _visible = YES;
@@ -625,15 +639,23 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   window.movable = NO;
   window.movableByWindowBackground = NO;
   window.hasShadow = NO;
-  window.collectionBehavior |= NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorIgnoresCycle;
+  // On the same desktops and at the same level as the window it is part
+  // of, which passes later changes on to it (`FloatingPanel`).
+  NSWindowCollectionBehavior desktops = NSWindowCollectionBehaviorCanJoinAllSpaces
+      | NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary
+      | NSWindowCollectionBehaviorFullScreenNone;
+  window.collectionBehavior = (parent.collectionBehavior & desktops) | NSWindowCollectionBehaviorTransient
+      | NSWindowCollectionBehaviorIgnoresCycle;
+  if (window.level != parent.level) window.level = parent.level;
   if (window.parentWindow != parent) {
     [window.parentWindow removeChildWindow:window];
     [parent addChildWindow:window ordered:NSWindowAbove];
   }
   RoundCorners(window, _cornerRadius);
-  NSRect target = NSIntegralRect(screenFrame);
   _target = target;
-  _offset = NSMakePoint(NSMinX(target) - NSMinX(parent.frame), NSMinY(target) - NSMinY(parent.frame));
+  // From the window's top-left corner, as the pane is laid out, so a
+  // window that changes size from below leaves the page where it was.
+  _offset = NSMakePoint(NSMinX(target) - NSMinX(parent.frame), NSMaxY(parent.frame) - NSMaxY(target));
   if (!_moveObserver) {
     __weak ChromiumBrowser *weakSelf = self;
     __weak NSWindow *weakWindow = window;

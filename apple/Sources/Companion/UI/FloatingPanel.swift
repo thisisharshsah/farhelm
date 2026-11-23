@@ -31,6 +31,44 @@ final class FloatingPanel: NSPanel {
     /// Companion's own input box.
     var refusesKeyboard = false
 
+    // MARK: What is attached to the panel
+
+    // Windows attached to the panel are part of it: Chromium's pages, each
+    // drawn in a window of its own laid over the browser pane (CEFKit's
+    // `showAbove`), and what sits over a page (`OverPage`). AppKit moves,
+    // hides and minimizes them with the panel; the panel also gives them its
+    // level, its desktops and its fading, when they are attached and
+    // whenever these change. So none is left above other apps once the panel
+    // is not, behind on another desktop, or showing while the panel fades.
+
+    override func addChildWindow(_ child: NSWindow, ordered place: NSWindow.OrderingMode) {
+        Self.attach(child, to: self)
+        super.addChildWindow(child, ordered: place)
+    }
+
+    override var level: NSWindow.Level {
+        didSet { childWindows?.forEach { Self.attach($0, to: self) } }
+    }
+
+    override var collectionBehavior: NSWindow.CollectionBehavior {
+        didSet { childWindows?.forEach { Self.attach($0, to: self) } }
+    }
+
+    override var alphaValue: CGFloat {
+        didSet { childWindows?.forEach { Self.attach($0, to: self) } }
+    }
+
+    /// Gives a window attached to the panel the panel's level, desktops and
+    /// fading. It is never a window of its own in Mission Control or the
+    /// window cycle.
+    static func attach(_ child: NSWindow, to panel: NSWindow) {
+        let desktops: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .moveToActiveSpace, .fullScreenAuxiliary, .fullScreenNone]
+        let behavior = panel.collectionBehavior.intersection(desktops).union([.transient, .ignoresCycle])
+        if child.collectionBehavior != behavior { child.collectionBehavior = behavior }
+        if child.level != panel.level { child.level = panel.level }
+        if child.alphaValue != panel.alphaValue { child.alphaValue = panel.alphaValue }
+    }
+
     override var canBecomeKey: Bool { !refusesKeyboard }
     override var canBecomeMain: Bool { false }
 
@@ -955,10 +993,17 @@ final class OverlayController {
         main.orderFrontRegardless()
         app.panelVisible = true
         keepIndicatorClear()
-        NSAnimationContext.runAnimationGroup { context in
+        NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.22
             main.animator().alphaValue = 1
-        }
+        }, completionHandler: { [weak self] in
+            // What is attached to the panel ends where the panel does,
+            // however the fade went.
+            Task { @MainActor in
+                guard let self else { return }
+                self.main.childWindows?.forEach { FloatingPanel.attach($0, to: self.main) }
+            }
+        })
     }
 
     /// Hides the panel: the content settles back and the window fades out.
