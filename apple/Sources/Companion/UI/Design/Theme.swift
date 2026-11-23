@@ -90,7 +90,7 @@ enum Theme {
 
     // Shape and spacing. Nothing casts a drop shadow, the panel included:
     // depth comes from the glass and its hairline edge.
-    static let panelRadius: CGFloat = 20
+    static var panelRadius: CGFloat { Design.Radius.panel }
     /// The one corner scale (continuous iOS curve), shared with the mobile apps.
     static var chipRadius: CGFloat { Design.chipRadius }
     static var controlRadius: CGFloat { Design.controlRadius }

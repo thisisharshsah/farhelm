@@ -12,6 +12,11 @@ enum Launch {
     @MainActor static func main() {
         _ = CEFApplication.shared
         SharedDesign.install()
+        // `--design-gallery` opens the Design Gallery alone (UI/Design/DesignGallery.swift).
+        if DesignGallery.launchesAlone {
+            DesignGalleryApp.main()
+            return
+        }
         CompanionApp.main()
     }
 }
@@ -91,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.showPanel()
         Shortcuts.shared.registerAll()
         CommandRegistry.shared.registerBuiltIns()
+        DesignGallery.installMenu()
         RemoteServer.shared.startIfEnabled()
         // Listens for Companion's Chrome extension, when it is set up.
         if BrowserBridge.shared.installed { BrowserBridge.shared.start() }
