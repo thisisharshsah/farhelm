@@ -48,7 +48,7 @@ struct BoardHeader: View {
                 viewSwitcher
                 ToolbarGroup {
                     IconButton("plus", help: "Add a task") {
-                        advanced.selectedItem = advanced.addTask("New task", status: .todo, in: project.id)
+                        advanced.selectedItem = advanced.addTask(BoardRules.newTaskTitle, status: .todo, in: project.id)
                     }
                     moreMenu
                 }

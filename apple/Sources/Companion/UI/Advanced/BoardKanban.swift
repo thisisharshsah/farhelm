@@ -61,7 +61,7 @@ private struct BoardColumn: View {
                 Spacer(minLength: 2)
                 if status == .backlog || status == .todo {
                     IconButton("plus", help: "Add a task to \(status.title)") {
-                        advanced.selectedItem = advanced.addTask("New task", status: status, in: project.id)
+                        advanced.selectedItem = advanced.addTask(BoardRules.newTaskTitle, status: status, in: project.id)
                     }
                 }
             }

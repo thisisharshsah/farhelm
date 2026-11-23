@@ -161,6 +161,28 @@ final class ChatShelfTests: XCTestCase {
         XCTAssertTrue(board.autopilotMayStart(board.item(item.id)!))
     }
 
+    func testABlankNewTaskIsNotStartedUntilItIsWritten() {
+        var board = Board(project: project, now: t0)
+        board.settings.autopilot = true
+        let item = board.add(title: BoardRules.newTaskTitle, status: .todo, by: .person, now: t0)
+        XCTAssertTrue(BoardRules.isBlank(board.item(item.id)!))
+        XCTAssertFalse(board.autopilotMayStart(board.item(item.id)!))
+        XCTAssertFalse(board.movesOnByItself(board.item(item.id)!))
+        // An empty title is no better.
+        let untitled = board.add(title: "  ", status: .todo, by: .person, now: t0)
+        XCTAssertTrue(BoardRules.isBlank(board.item(untitled.id)!))
+        // Named, or given details or what done means, it is work.
+        var named = board.item(item.id)!
+        named.title = "Fix the login timeout"
+        XCTAssertFalse(BoardRules.isBlank(named))
+        var detailed = board.item(item.id)!
+        detailed.details = "The session expires after a minute; it should last a day."
+        XCTAssertFalse(BoardRules.isBlank(detailed))
+        var accepted = board.item(item.id)!
+        accepted.acceptance = ["Sign-in lasts a day"]
+        XCTAssertFalse(BoardRules.isBlank(accepted))
+    }
+
     func testOneRunsUseIsWhatItsChatUsedWhileItRan() {
         let shared = UUID()
         func use(_ tokens: Int, at minute: Double) -> UsageEntry {

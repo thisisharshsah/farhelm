@@ -281,7 +281,7 @@ private struct EmptyBoard: View {
                     .opacity(ready ? 1 : 0.45)
                     .disabled(!ready)
                 BoardButton("Add a task by hand", icon: "plus") {
-                    Advanced.shared.selectedItem = Advanced.shared.addTask("New task", status: .todo, in: project.id)
+                    Advanced.shared.selectedItem = Advanced.shared.addTask(BoardRules.newTaskTitle, status: .todo, in: project.id)
                 }
             }
         }

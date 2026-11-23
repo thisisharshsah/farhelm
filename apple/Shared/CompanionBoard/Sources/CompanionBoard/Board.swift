@@ -406,6 +406,7 @@ extension Board {
     /// it back more than `BoardRules.redoLimit` times in a row (it waits
     /// for a person), and not when someone stopped or refused its last run.
     public func autopilotMayStart(_ item: WorkItem) -> Bool {
+        if BoardRules.isBlank(item) { return false }
         if let ending = item.runs.last?.ending, ending == .person || ending == .supervisor { return false }
         return failuresInARow(of: item) < 2 && sentBackInARow(of: item) <= BoardRules.redoLimit
     }
@@ -789,6 +790,23 @@ public enum BoardRules {
     /// A person's own request for changes is theirs and is not counted.
     public static let redoLimit = 2
 
+    /// The title a task added by a person starts with, before they name it.
+    public static let newTaskTitle = "New task"
+    /// The title of a task whose title was left empty.
+    public static let untitled = "Untitled task"
+
+    /// A task as it was added, before anyone said what it is: its title
+    /// is still a placeholder and it has no details and no "done means".
+    /// It is never started by itself, nor by hand, since an agent given
+    /// it would have nothing to do (a new task in To do was started on
+    /// the next pulse, before it could be written).
+    public static func isBlank(_ item: WorkItem) -> Bool {
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let placeholder = [newTaskTitle, untitled].contains { title.caseInsensitiveCompare($0) == .orderedSame }
+        return placeholder && item.details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && item.acceptance.isEmpty
+    }
+
     /// Where a task goes when a run on it ends: finished work is looked
     /// at before it is done; work that failed or was stopped is to do
     /// again. (The same rule as Farhelm's `work_items::status_after`.)
@@ -804,7 +822,7 @@ public enum BoardRules {
     static func title(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? "Untitled task" : String(trimmed.prefix(140))
+        return trimmed.isEmpty ? untitled : String(trimmed.prefix(140))
     }
 
     /// A goal's words, of a length that can be read at a glance.

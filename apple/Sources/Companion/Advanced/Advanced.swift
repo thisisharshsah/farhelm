@@ -793,6 +793,9 @@ final class Advanced: ObservableObject {
         guard let project = self.project(projectID) else { return "This project is no longer on the list." }
         let board = load(projectID)
         guard let item = board.item(itemID) else { return "That task is no longer on the board." }
+        guard !BoardRules.isBlank(item) else {
+            return "\(item.key) is still blank. Give it a title, or say what it should do, then start it."
+        }
         guard item.activeRun == nil, !preparing.contains(itemID) else { return "\(item.key) already has a run going on." }
         guard !merging.contains(itemID), !discarding.contains(itemID) else {
             return "\(item.key)'s copy is being merged or thrown away. Start it again in a moment."
@@ -1188,6 +1191,9 @@ final class Advanced: ObservableObject {
     /// Why Autopilot leaves a ready task for the person
     /// (`Board.autopilotMayStart`).
     private static func heldWords(_ item: WorkItem, on board: Board) -> String {
+        if BoardRules.isBlank(item) {
+            return "\(item.key) is still blank: give it a title or details and it starts by itself."
+        }
         let sentBack = board.sentBackInARow(of: item)
         if sentBack > BoardRules.redoLimit {
             return "\(item.key) waits for you: the review sent it back \(sentBack) times in a row. Read what it asked for on the task, then change the task or start it again yourself."
