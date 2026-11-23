@@ -283,7 +283,9 @@ final class TaskCopies {
     }
 
     /// Merges a task's approved work into the branch its copy came from,
-    /// then takes the copy and its branch down. What was left uncommitted
+    /// as one commit named after the task (`squashMessage`), not the
+    /// commits its agent made along the way, then takes the copy and its
+    /// branch down. What was left uncommitted
     /// in the copy is committed on its branch first, unless a merge in it
     /// was left unsettled (`unsettled`): then nothing is committed or
     /// merged, and the task goes back to settle it. `wanted` is asked
@@ -349,8 +351,17 @@ final class TaskCopies {
             return .conflicts(files)
         }
         guard worked.ok else { return .held("git could not work the merge out: \(Self.said(worked.output))") }
-        let subject = CommitHygiene.clean("Merge \(key): \(title)")
-        let made = await git("commit-tree \(said[treeAt]) -p \(baseTip) -p \(tip) -m \(Shell.quote(subject))",
+        let tree = said[treeAt]
+        // Nothing it holds is new there: its work came in another way.
+        let baseTree = await git("rev-parse --verify --quiet \(Shell.quote(baseTip + "^{tree}"))", in: repository,
+                                 timeout: 15)
+        if baseTree.ok, Self.last(baseTree.output) == tree { return .nothing }
+        // One commit on top of that branch, with the merged files and the
+        // task's name; the commits its agent made stay out of its history.
+        let counted = await git("rev-list --count \(baseTip)..\(tip)", in: repository, timeout: 30)
+        let message = Self.squashMessage(key: key, title: title, branch: copy.branch,
+                                         commits: Int(Self.last(counted.output)) ?? 0)
+        let made = await git("commit-tree \(tree) -p \(baseTip) -m \(Shell.quote(message))",
                              in: repository, timeout: 60)
         let commit = Self.last(made.output)
         guard made.ok, Self.isObject(commit) else {
@@ -372,10 +383,20 @@ final class TaskCopies {
         return .held("\(copy.base) could not be moved up to the merge: \(Self.said(moved.output))")
     }
 
+    /// The work of a task as one commit, the message's subject its key and
+    /// title, and how many commits on which branch it was made from.
+    /// Credit lines are taken out (`CommitHygiene`).
+    static func squashMessage(key: String, title: String, branch: String, commits: Int) -> String {
+        let made = commits == 1 ? "1 commit" : "\(commits) commits"
+        let body = commits > 0 ? "\n\nBoard task \(key), squashed from \(made) on \(branch)." : ""
+        return CommitHygiene.clean("\(key): \(title)" + body)
+    }
+
     /// The merge done in the folder where the branch it goes into is
-    /// checked out, for a git too old to work it out on its own. Only a
-    /// folder with nothing uncommitted is used, so a merge that conflicts
-    /// can be taken back whole.
+    /// checked out, for a git too old to work it out on its own, as one
+    /// commit, the same as `mergeOnce` makes. Only a folder with nothing
+    /// uncommitted is used, so a merge that conflicts can be taken back
+    /// whole.
     private func mergeInCheckout(_ copy: WorkingCopy, key: String, title: String, repository: String,
                                  wanted: @MainActor () -> Bool) async -> Landed? {
         guard let checkout = await checkout(of: copy.base, in: repository) else {
@@ -385,19 +406,28 @@ final class TaskCopies {
             return .held("This git can only merge in your folder, which has changes that are not committed. Commit them or put them aside, then merge \(key) again.")
         }
         guard wanted() else { return .dropped }
-        let subject = CommitHygiene.clean("Merge \(key): \(title)")
-        let merged = await git("merge --no-ff --no-edit -m \(Shell.quote(subject)) \(Shell.quote(copy.branch))",
-                               in: checkout, timeout: 300)
+        let counted = await git("rev-list --count HEAD..\(Shell.quote(copy.branch))", in: checkout, timeout: 30)
+        let message = Self.squashMessage(key: key, title: title, branch: copy.branch,
+                                         commits: Int(Self.last(counted.output)) ?? 0)
+        let merged = await git("merge --squash \(Shell.quote(copy.branch))", in: checkout, timeout: 300)
         if merged.ok {
-            let head = await revision("HEAD", in: checkout) ?? ""
-            return .merged(String(head.prefix(7)))
+            // Nothing new staged: its work was in already.
+            if await git("diff --cached --quiet", in: checkout, timeout: 30).ok { return .nothing }
+            let committed = await git("commit -q -m \(Shell.quote(message))", in: checkout, timeout: 120)
+            if committed.ok {
+                let head = await revision("HEAD", in: checkout) ?? ""
+                return .merged(String(head.prefix(7)))
+            }
+            _ = await git("reset -q --merge", in: checkout, timeout: 60)
+            return .held("\(key)'s work could not be committed in your folder: \(Self.said(committed.output))")
         }
         // Stopped halfway: what conflicts is noted, and the folder is put
-        // back as it was.
-        if await git("rev-parse -q --verify MERGE_HEAD", in: checkout, timeout: 15).ok {
-            let listed = await git("diff --name-only --diff-filter=U", in: checkout, timeout: 30)
-            _ = await git("merge --abort", in: checkout, timeout: 60)
-            return .conflicts(Self.lines(listed.output).filter { !$0.isEmpty && !Self.isRemark($0) })
+        // back as it was (a squash leaves no merge to abort).
+        let listed = await git("diff --name-only --diff-filter=U", in: checkout, timeout: 30)
+        let conflicted = Self.lines(listed.output).filter { !$0.isEmpty && !Self.isRemark($0) }
+        if !conflicted.isEmpty {
+            _ = await git("reset -q --merge", in: checkout, timeout: 60)
+            return .conflicts(conflicted)
         }
         return .held(Self.inTheWay(merged.output, base: copy.base, key: key))
     }

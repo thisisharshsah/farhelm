@@ -141,8 +141,10 @@ the board's menu, `BoardSettings.copyPerTask`).
   (`Advanced.settle`). What was left uncommitted in the copy is committed on
   its branch first, unless a merge in it was left unsettled. git works the
   merge out without touching any folder (`git merge-tree`, git 2.38 or
-  later), and it is made a commit on top of that branch, "Merge T-n: its
-  title". Where that branch is checked out, its folder is moved up to it the
+  later), and it goes on top of that branch as one commit, "T-n: its title",
+  with how many commits it was squashed from (user direction, 2026-11-23:
+  an agent's own commits, such as one named "I'm stopping here", reached
+  the person's branch as they were). Where that branch is checked out, its folder is moved up to it the
   way `git merge --ff-only` does, which changes nothing at all when changes
   in that folder are in the way; anywhere else only the branch moves, and
   only from where it was. The copy and its branch are then taken down.
