@@ -369,8 +369,11 @@ final class Advanced: ObservableObject {
             self.ledgers[project.id] = nil
             self.strays = []
             self.lookForLostProjects()
-            SidebarProjects.open(project.id)
-            if self.app.advancedMode { self.open(project) }
+            if self.app.advancedMode {
+                self.open(project)
+            } else {
+                ProjectHome.shared.show(project.id)
+            }
         }
     }
 

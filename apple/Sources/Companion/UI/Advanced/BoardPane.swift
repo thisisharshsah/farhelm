@@ -14,6 +14,10 @@ enum BoardViewKind: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Where the view in use is kept, so another part of the app (a
+    /// project's page) can open the board on a given view.
+    static let storageKey = "boardView"
+
     var title: String {
         switch self {
         case .board: return "Board"
@@ -43,7 +47,7 @@ struct BoardPane: View {
     @ObservedObject private var store = BoardStore.shared
     /// Watched so the numbers follow the requests as they are made.
     @ObservedObject private var usage = UsageStore.shared
-    @AppStorage("boardView") private var viewName = BoardViewKind.board.rawValue
+    @AppStorage(BoardViewKind.storageKey) private var viewName = BoardViewKind.board.rawValue
 
     /// The board's project: the open chat's, or the last one shown while
     /// a chat outside any project is open.

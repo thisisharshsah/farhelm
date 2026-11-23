@@ -19,6 +19,8 @@ struct OverlayView: View {
     @FocusState private var inputFocused: Bool
     /// The files of the repository, for @mentions in the chat box.
     @ObservedObject private var fileIndex = FileIndex.shared
+    /// A project's page, opened from the sidebar, shows in the chat's panel.
+    @ObservedObject private var projectHome = ProjectHome.shared
     /// Which file of the @mention list is picked, and the text the list
     /// was closed on (Esc), so it stays closed until something is typed.
     @State private var mentionSelection = 0
@@ -82,6 +84,8 @@ struct OverlayView: View {
                 .onChange(of: geometry.size.width) { _, width in
                     if abs(width - panelWidth) > 0.5 { panelWidth = width }
                 }
+                // Opening or starting a chat leaves a project's page.
+                .onChange(of: app.conversation.id) { _, _ in projectHome.close() }
         }
     }
 
@@ -126,6 +130,19 @@ struct OverlayView: View {
                 VStack(spacing: 0) {
                 if app.showSettings {
                     SettingsView()
+                        .transition(.opacity)
+                } else if let project = homeProject {
+                    // A project's page, in place of the chat until a chat
+                    // is opened or started. The sidebar's toggle sits at
+                    // its top left while the sidebar is closed, as on a chat.
+                    ProjectHomeView(project: project, topInset: 10 + (toggleInChat ? 38 : 0))
+                        .overlay(alignment: .topLeading) {
+                            if toggleInChat {
+                                sidebarToggle
+                                    .padding(.leading, Theme.gutter)
+                                    .padding(.top, 8)
+                            }
+                        }
                         .transition(.opacity)
                 } else {
                     // Notes, a warning or the setup guide sit at the top of
@@ -231,8 +248,8 @@ struct OverlayView: View {
                 }
                 }
                 // The floating bottom: the agent's card, attached files and
-                // the chat box.
-                if !app.showSettings {
+                // the chat box. A project's page has a box of its own.
+                if !app.showSettings, homeProject == nil {
                     VStack(spacing: 0) {
                     // What the agent is doing, and the plan's progress.
                     // It hangs from a line of no height at the top of this
@@ -554,6 +571,7 @@ struct OverlayView: View {
         // soft motion, not a jump.
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.showSettings)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.showHistory)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: projectHome.projectID)
     }
 
     /// Compact mode, with the pointer away: just the pill.
@@ -754,14 +772,15 @@ struct OverlayView: View {
                             if !focused { renaming = false }
                         }
                 } else {
-                    Text(app.showSettings ? "Settings" : app.conversation.title)
+                    Text(app.showSettings ? "Settings" : (homeProject?.name ?? app.conversation.title))
                         .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.ink.opacity(0.96))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .help(app.showSettings ? "Settings" : "\(app.conversation.title). Double-click to rename.")
+                        .help(app.showSettings ? "Settings"
+                              : (homeProject.map { "\($0.name), a project" } ?? "\(app.conversation.title). Double-click to rename."))
                         .onTapGesture(count: 2) {
-                            guard !app.showSettings else { return }
+                            guard !app.showSettings, homeProject == nil else { return }
                             newName = app.conversation.title == Conversation.defaultTitle ? "" : app.conversation.title
                             renaming = true
                             renameFocused = true
@@ -928,6 +947,13 @@ struct OverlayView: View {
     /// The toggle sits at the chat's top left (the sidebar is closed).
     private var toggleInChat: Bool {
         !isPill && !sidebarToggleInSidebar && !app.showSettings
+    }
+
+    /// The project whose page shows in the chat's panel (`ProjectHome`),
+    /// while it is still on the list and Settings are not open.
+    private var homeProject: Project? {
+        guard !app.showSettings, let id = projectHome.projectID else { return nil }
+        return app.projects.first { $0.id == id }
     }
 
     private var sidebarToggleInSidebar: Bool {

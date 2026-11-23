@@ -427,15 +427,19 @@ an hourglass, and its help says which model is out of its limit and until
 when. In the supervisor's chat, an answer from a stand-in starts with a line
 saying the same.
 
-### A project's chats are placed by how its work stands (added, reworked 2026-11-17)
+### A project's chats are placed by how its work stands (added, reworked 2026-11-17 and 2026-11-22)
 
-In the sidebar a project is a row that opens and closes. Its chats (the
-supervisor's, its tasks', any other started in it) are listed inside it and
-not in the list below, which holds the chats that are in no project. Which
-projects are open is kept between launches, and the open chat's project opens
-itself. A closed project says how many of its tasks need the person.
+A project has a page of its own (user direction, 2026-11-22, replacing a
+sidebar row that opened to list its chats inside it). In the sidebar a project
+is one line, with how many of its chats need the person, or a mark while one
+is running; a click opens its page in the chat's panel (`ProjectHomeView`):
+its name and folder, a box that starts a chat in it, its chats, and its board,
+timeline and usage a click away. Opening or starting any chat closes the page.
+Under the projects, Recents lists the chats in no project and the person's
+own chats in every project, tagged with the project's name; a task's chat and
+the supervisor's are on the project's page and the board.
 
-Inside it, chats are placed by a rule in the board's package
+On the page, chats are placed by a rule in the board's package
 (`ChatShelf.spot`, with tests), not by recency alone:
 
 - the supervisor's chat, pinned on top and called Supervisor;
@@ -456,9 +460,9 @@ stands at the end, and is reached from the board as well. Once the task is
 done, shelved in the backlog, under an earlier goal or off the board, its chat
 is put away (Archived), still found by search and from the task; so are the
 older chats of a task that had one per run, before runs shared one. The person
-archives their own chats by hand. A filter shows one group at a time (All,
-Needs you, Running, Mine, Archived), and a search finds a chat in the project
-by its name or its task's.
+archives their own chats by hand. Older and Archived are folded at the end of
+the page, and a search finds any chat in the project by its name or its
+task's.
 
 A chat says what it is to the board (`Conversation.kind`, `taskID`): new ones
 from the start, and chats from before, once, from their board's run records
