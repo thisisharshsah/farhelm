@@ -33,6 +33,7 @@ enum Supervisor {
     - Give every task a model from "Models you may assign", by its id (m1, m2, ...), with a one-line reason the user can read.
     - Choose the least costly model that is strong enough. Local and light models for small, well-specified work (docs, tests, renames, a fix in one file). Balanced models for everyday features and bugs. The strongest only for work that is ambiguous, wide or risky (architecture, security, data migrations, hard debugging).
     - A model without native tool calls is slower at agent work: prefer one with them when the cost is close.
+    - When several models fit a task equally (the same cost and strength), spread the tasks across them instead of giving them all to one: each subscription has its own limits, and tasks on different models can run side by side. Each model's line says how many open tasks it has already. Never favor a model for its maker, yours included.
     - Mind the budget. When the plan will not fit what is left, say so and offer what to cut or which tasks to move to cheaper models.
 
     What you may not do:
@@ -88,8 +89,10 @@ enum Supervisor {
             }
         }
         parts.append("## How work moves\n" + flowText(board))
+        let busy = ModelRouting.busy(of: roster.map(\.profile), items: board.items)
         parts.append("## Models you may assign\n"
-                     + (roster.isEmpty ? "(none are set up: tell the user to add an engine in Settings)" : ModelRoster.lines(roster)))
+                     + (roster.isEmpty ? "(none are set up: tell the user to add an engine in Settings)"
+                        : ModelRoster.lines(roster, busy: busy)))
         parts.append("## Spend so far\n" + spendText(board: board, ledger: ledger))
         return parts.joined(separator: "\n\n")
     }

@@ -51,9 +51,13 @@ enum ModelRoster {
         let tier = engine.kind == .subscription && engine.model.isEmpty
             ? ModelProfile.Tier.strong
             : ModelRouting.tier(ofModelNamed: engine.model.isEmpty ? engine.label : engine.model)
+        // A subscription's tool is an agent of its own, with its own tools
+        // (`CLIAgent`), and all its models share one plan's limits.
+        let subscription = engine.kind == .subscription
         return ModelProfile(id: id, choice: engine.choice, name: engine.label, place: place,
                             inputPrice: price.input, outputPrice: price.output, window: engine.window,
-                            tier: tier, tools: engine.callsTools)
+                            tier: tier, tools: engine.callsTools || subscription,
+                            group: subscription ? "\(engine.kind.rawValue)|\(engine.tool ?? "")" : nil)
     }
 
     /// The entry for a saved choice, when that model can still be asked.
@@ -61,8 +65,12 @@ enum ModelRoster {
         entries.first { $0.profile.choice == choice }
     }
 
-    /// The list as the supervisor reads it, one model a line.
-    static func lines(_ entries: [Entry]) -> String {
-        entries.map(\.profile.line).joined(separator: "\n")
+    /// The list as the supervisor reads it, one model a line, each with
+    /// how many open tasks its group already has (`ModelRouting.busy`).
+    static func lines(_ entries: [Entry], busy: [String: Int] = [:]) -> String {
+        entries.map { entry -> String in
+            let open = busy[entry.profile.group] ?? 0
+            return entry.profile.line + " | " + (open == 1 ? "1 open task" : "\(open) open tasks")
+        }.joined(separator: "\n")
     }
 }

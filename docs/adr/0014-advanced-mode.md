@@ -80,6 +80,13 @@ a rule, or a person) and why. The supervisor chooses from the engines that are
 set up (`ModelRoster`), told where each runs, what it costs, how much it
 holds and how capable it is. `ModelRouting` gives the same answer by rule
 (the least costly model that is strong enough) when no model is asked.
+Among models equally good for a task, work is spread: the one whose group
+has the fewest open tasks is chosen, a subscription's models counting as
+one group since they share its plan (`ModelRouting.busy`), and the
+supervisor sees each model's open tasks and is told to spread the same way
+(fixed 2026-11-23: ties went to the first model by name, so every task went
+to Claude). A subscription's tool counts as calling tools, being an agent
+with its own.
 `EngineChoice` is now the one place that turns an engine and model into a
 request's configuration, for the engine in use and for any other.
 

@@ -104,6 +104,49 @@ final class ModelRoutingTests: XCTestCase {
         XCTAssertEqual(ModelRouting.suggest(for: task(.docs, estimate: 100_000), among: all)?.profile.id, "m2")
     }
 
+    /// Three subscriptions, each free and as strong as the others.
+    private func account(_ id: String, _ tool: String) -> ModelProfile {
+        ModelProfile(id: id, choice: ModelChoice(engine: "subscription", tool: tool, model: ""), name: tool,
+                     place: .account, window: 200_000, tier: .strong, tools: true, group: "subscription|" + tool)
+    }
+
+    func testWorkIsSpreadAcrossModelsThatAreEquallyGoodForIt() {
+        let claude = account("m1", "claude"), codex = account("m2", "codex"), gemini = account("m3", "gemini")
+        let all = [claude, codex, gemini]
+        // Nothing given out yet: the first, by name.
+        XCTAssertEqual(ModelRouting.suggest(for: task(.design), among: all)?.profile.id, "m1")
+        // Then the one with the least work.
+        XCTAssertEqual(ModelRouting.suggest(for: task(.design), among: all,
+                                            busy: [claude.group: 2, codex.group: 1])?.profile.id, "m3")
+        XCTAssertEqual(ModelRouting.suggest(for: task(.design), among: all,
+                                            busy: [claude.group: 1, gemini.group: 1])?.profile.id, "m2")
+        // Spreading never outweighs cost: a cheaper model takes small work however busy it is.
+        XCTAssertEqual(ModelRouting.suggest(for: task(.docs, estimate: 8_000), among: [local, haiku],
+                                            busy: [local.group: 9])?.profile.id, "m1")
+    }
+
+    func testOpenTasksAreCountedByWhatSharesALimit() {
+        let sonnet = ModelProfile(id: "m1", choice: ModelChoice(engine: "subscription", tool: "claude", model: "sonnet"),
+                                  name: "Claude Code · Sonnet", place: .account, window: 200_000, tier: .balanced,
+                                  tools: true, group: "subscription|claude")
+        let opusCode = ModelProfile(id: "m2", choice: ModelChoice(engine: "subscription", tool: "claude", model: "opus"),
+                                    name: "Claude Code · Opus", place: .account, window: 200_000, tier: .strong,
+                                    tools: true, group: "subscription|claude")
+        let start = Date(timeIntervalSince1970: 0)
+        func given(_ number: Int, _ model: ModelChoice, _ status: WorkStatus) -> WorkItem {
+            WorkItem(number: number, title: "Work", status: status,
+                     assignment: Assignment(model: model, label: "", reason: "", source: .rule, accepted: false,
+                                            date: start),
+                     createdAt: start)
+        }
+        let items = [given(1, sonnet.choice, .todo), given(2, opusCode.choice, .inProgress),
+                     given(3, sonnet.choice, .done), given(4, ModelChoice(engine: "gone", model: "x"), .todo)]
+        // Two open tasks on one plan; done work and models no longer set up are not counted.
+        XCTAssertEqual(ModelRouting.busy(of: [sonnet, opusCode], items: items), ["subscription|claude": 2])
+        // A model with no group of its own named is a group by itself.
+        XCTAssertEqual(local.group, local.choice.key)
+    }
+
     func testWithNothingStrongEnoughTheStrongestIsChosenAndSaid() {
         let found = ModelRouting.suggest(for: task(.research), among: [local, haiku])
         XCTAssertEqual(found?.profile.id, "m1")

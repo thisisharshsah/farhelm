@@ -763,12 +763,16 @@ final class Advanced: ObservableObject {
     // MARK: Runs
 
     /// The model a task runs with: the one it was given, while that can
-    /// still be asked; otherwise a rule's pick; otherwise the engine in use.
-    private func engine(for item: WorkItem, roster: [ModelRoster.Entry]) -> (engine: EngineChoice, assignment: Assignment?) {
+    /// still be asked; otherwise a rule's pick, spreading work across
+    /// models that are equally good for it; otherwise the engine in use.
+    private func engine(for item: WorkItem, roster: [ModelRoster.Entry], on board: Board)
+        -> (engine: EngineChoice, assignment: Assignment?) {
         if let assigned = item.assignment, let entry = ModelRoster.entry(for: assigned.model, in: roster) {
             return (entry.engine, nil)
         }
-        if let found = ModelRouting.suggest(for: item, among: roster.map(\.profile)),
+        let profiles = roster.map(\.profile)
+        if let found = ModelRouting.suggest(for: item, among: profiles,
+                                            busy: ModelRouting.busy(of: profiles, items: board.items)),
            let entry = roster.first(where: { $0.id == found.profile.id }) {
             let assignment = Assignment(model: entry.engine.choice, label: entry.profile.name, reason: found.reason,
                                         source: .rule, accepted: false, date: Date())
@@ -806,7 +810,7 @@ final class Advanced: ObservableObject {
             return "As many tasks as fit are running already (Settings > Agent sets how many). Start this one when another is done."
         }
         refreshRoster()
-        var chosen = engine(for: item, roster: roster)
+        var chosen = engine(for: item, roster: roster, on: board)
         // Found out now, not after a chat has been made for it.
         do {
             _ = try chosen.engine.config()
@@ -1271,7 +1275,7 @@ final class Advanced: ObservableObject {
             return start(itemID, in: projectID, by: .supervisor)
         }
         refreshRoster()
-        var chosen = engine(for: item, roster: roster)
+        var chosen = engine(for: item, roster: roster, on: board)
         do {
             _ = try chosen.engine.config()
         } catch {
@@ -1744,7 +1748,9 @@ final class Advanced: ObservableObject {
         change(project) { board in
             let item = board.add(title: title, status: status, by: .person, now: Date())
             made = item.id
-            if let found = ModelRouting.suggest(for: item, among: profiles.map(\.profile)) {
+            let models = profiles.map(\.profile)
+            if let found = ModelRouting.suggest(for: item, among: models,
+                                                busy: ModelRouting.busy(of: models, items: board.items)) {
                 board.assign(item.id, Assignment(model: found.profile.choice, label: found.profile.name,
                                                  reason: found.reason, source: .rule, accepted: false, date: Date()),
                              by: .person, now: Date())
@@ -1775,8 +1781,11 @@ final class Advanced: ObservableObject {
         refreshRoster()
         let profiles = roster.map(\.profile)
         change(project) { board in
+            // Its own model does not count toward its group's work.
+            let others = board.items.filter { $0.id != itemID }
             guard let item = board.item(itemID),
-                  let found = ModelRouting.suggest(for: item, among: profiles) else { return }
+                  let found = ModelRouting.suggest(for: item, among: profiles,
+                                                   busy: ModelRouting.busy(of: profiles, items: others)) else { return }
             board.assign(itemID, Assignment(model: found.profile.choice, label: found.profile.name,
                                             reason: found.reason, source: .rule, accepted: false, date: Date()),
                          by: .person, now: Date())

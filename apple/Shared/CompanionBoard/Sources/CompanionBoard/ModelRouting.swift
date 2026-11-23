@@ -47,9 +47,13 @@ public struct ModelProfile: Equatable, Identifiable, Sendable {
     public var tier: Tier
     /// It calls tools natively, which agent work goes better with.
     public var tools: Bool
+    /// What shares its limits: the models of one subscription share its
+    /// plan. Work is spread across groups (`ModelRouting.busy`). By
+    /// default each model is a group of its own.
+    public var group: String
 
     public init(id: String, choice: ModelChoice, name: String, place: Place, inputPrice: Double = 0,
-                outputPrice: Double = 0, window: Int, tier: Tier, tools: Bool) {
+                outputPrice: Double = 0, window: Int, tier: Tier, tools: Bool, group: String? = nil) {
         self.id = id
         self.choice = choice
         self.name = name
@@ -59,6 +63,7 @@ public struct ModelProfile: Equatable, Identifiable, Sendable {
         self.window = window
         self.tier = tier
         self.tools = tools
+        self.group = group ?? choice.key
     }
 
     /// What a task of this many tokens would cost here, in dollars, taking
@@ -91,8 +96,25 @@ public struct ModelProfile: Equatable, Identifiable, Sendable {
 /// Choosing a model for a task by rule, with no model asked: what is used
 /// when the supervisor names none, and what a suggestion is checked
 /// against. The rule is the one a careful lead follows: the least costly
-/// model that is strong enough for the work.
+/// model that is strong enough for the work, and among models that are
+/// equally good for it, the one with the least work already given to it.
 public enum ModelRouting {
+    /// How many open tasks (not done) are given to each group of models
+    /// (`ModelProfile.group`), among the models that can be asked. Tasks
+    /// given to a model that is no longer set up are not counted.
+    public static func busy(of profiles: [ModelProfile], items: [WorkItem]) -> [String: Int] {
+        var groups: [ModelChoice: String] = [:]
+        for profile in profiles where groups[profile.choice] == nil {
+            groups[profile.choice] = profile.group
+        }
+        var counts: [String: Int] = [:]
+        for item in items where item.status != .done {
+            guard let model = item.assignment?.model, let group = groups[model] else { continue }
+            counts[group, default: 0] += 1
+        }
+        return counts
+    }
+
     /// How capable a model is, judged from its name. Makers name their
     /// models by size, so the name is a fair first guess; anything not
     /// recognised counts as balanced.
@@ -133,8 +155,11 @@ public enum ModelRouting {
     }
 
     /// The model for a task, and why, in a line a person can read. nil
-    /// only when there are no models to choose from.
-    public static func suggest(for item: WorkItem, among profiles: [ModelProfile])
+    /// only when there are no models to choose from. `busy` is how many
+    /// open tasks each group of models has already (`busy(of:items:)`):
+    /// among models equally good for the task, the least busy is chosen,
+    /// so the work is spread rather than all given to the first by name.
+    public static func suggest(for item: WorkItem, among profiles: [ModelProfile], busy: [String: Int] = [:])
         -> (profile: ModelProfile, reason: String)? {
         guard !profiles.isEmpty else { return nil }
         let wanted = demand(of: item)
@@ -149,12 +174,15 @@ public enum ModelRouting {
             return (best, "\(wanted.title) work, and \(best.name) is the strongest model set up.")
         }
         // Among those strong enough: the least cost, then tools, then
-        // the closest fit (no stronger than needed), then by name.
+        // the closest fit (no stronger than needed), then the least work
+        // already given to it, then on this Mac, then by name.
         let chosen = able.min { left, right in
             let costs = (left.cost(ofTokens: estimate), right.cost(ofTokens: estimate))
             if costs.0 != costs.1 { return costs.0 < costs.1 }
             if left.tools != right.tools { return left.tools }
             if left.tier != right.tier { return left.tier < right.tier }
+            let loads = (busy[left.group] ?? 0, busy[right.group] ?? 0)
+            if loads.0 != loads.1 { return loads.0 < loads.1 }
             if left.place != right.place { return left.place == .local }
             return left.name < right.name
         }
