@@ -18,10 +18,11 @@ public struct Budget: Codable, Equatable, Sendable {
 public struct BoardSettings: Codable, Equatable, Sendable {
     /// The supervisor starts tasks that are ready, without being asked.
     public var autopilot: Bool
-    /// How many runs it keeps going at once. One, unless raised. With a
-    /// copy per task (`copyPerTask`) runs work apart, each in its task's
-    /// copy; without, they share the project's folder, and two that touch
-    /// the same files get in each other's way.
+    /// How many runs it keeps going at once (`defaultParallel` on a new
+    /// board). With a copy per task (`copyPerTask`) runs work apart, each
+    /// in its task's copy; without, they share the project's folder, and
+    /// two that touch the same files get in each other's way. Either way
+    /// the leases keep tasks whose paths overlap apart (`Leases`).
     public var parallel: Int
     /// A finished run is checked against the task before it can be done.
     public var reviewGate: Bool
@@ -46,7 +47,12 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     /// repository with a commit on a branch, runs work in the folder.
     public var copyPerTask: Bool
 
-    public init(autopilot: Bool = false, parallel: Int = 1, reviewGate: Bool = true, wipLimit: Int? = nil,
+    /// Runs at once on a new board: as many as the app runs at once by
+    /// default, so work spread across models goes on side by side.
+    public static let defaultParallel = 3
+
+    public init(autopilot: Bool = false, parallel: Int = BoardSettings.defaultParallel, reviewGate: Bool = true,
+                wipLimit: Int? = nil,
                 runAccess: String? = nil, advice: Bool = true, followsAdvice: Bool = false,
                 copyPerTask: Bool = true) {
         self.autopilot = autopilot
@@ -75,7 +81,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         autopilot = try values.decodeIfPresent(Bool.self, forKey: .autopilot) ?? false
-        parallel = try values.decodeIfPresent(Int.self, forKey: .parallel) ?? 1
+        parallel = try values.decodeIfPresent(Int.self, forKey: .parallel) ?? Self.defaultParallel
         reviewGate = try values.decodeIfPresent(Bool.self, forKey: .reviewGate) ?? true
         wipLimit = try values.decodeIfPresent(Int.self, forKey: .wipLimit)
         runAccess = try values.decodeIfPresent(String.self, forKey: .runAccess)

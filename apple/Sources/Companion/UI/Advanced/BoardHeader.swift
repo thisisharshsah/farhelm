@@ -57,7 +57,7 @@ struct BoardHeader: View {
                 progress
                 spend
                 if board.budget.isSet { budget }
-                if board.running.isEmpty, let waiting = advanced.waiting[project.id] { waitingLabel(waiting) }
+                if let waiting = advanced.waiting[project.id] { waitingLabel(waiting) }
                 Spacer(minLength: 4)
                 supervisorMenu
                 autopilot

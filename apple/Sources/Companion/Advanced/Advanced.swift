@@ -63,9 +63,11 @@ final class Advanced: ObservableObject {
     /// Something to tell the person about a project's board: why a run
     /// could not start, why Autopilot stopped.
     @Published var notices: [UUID: String] = [:]
-    /// Why nothing runs on a board where work starts by itself while work
-    /// is left (`tick`): what the next task waits on. nil while work runs,
-    /// and on a board where work starts when the person starts it.
+    /// Why ready work does not start on a board where work starts by
+    /// itself (`tick`): what the next task waits on, whether or not other
+    /// runs go on (the board's limit on runs at once, the Mac's, or a task
+    /// it would collide with). nil when nothing ready waits, and on a board
+    /// where work starts when the person starts it.
     @Published private(set) var waiting: [UUID: String] = [:]
     /// Tasks whose finished run is being checked right now.
     @Published private(set) var reviewing: Set<UUID> = []
@@ -1088,8 +1090,8 @@ final class Advanced: ObservableObject {
     /// It never starts a task twice over: one whose last two runs did not
     /// finish waits for a person, and so does one whose estimate no
     /// longer fits the budget, and one whose last run a person stopped or
-    /// that was refused a step. When nothing runs while work is left, why
-    /// is kept in `waiting`, for the board to show.
+    /// that was refused a step. When ready work does not start, why is
+    /// kept in `waiting`, for the board to show.
     func tick(_ projectID: UUID) {
         guard armed.contains(projectID), let board = store.boards[projectID], board.settings.startsWorkByItself,
               project(projectID) != nil else {
@@ -1118,8 +1120,13 @@ final class Advanced: ObservableObject {
         var reason: String?
         var running = board.running.count + readying(on: board)
         let most = max(1, board.settings.parallel)
+        // The board's own limit on runs at once was reached.
+        var full = false
         for item in board.ready {
-            guard running < most else { break }
+            guard running < most else {
+                full = true
+                break
+            }
             guard app.hasRoomForRun else {
                 reason = reason ?? "There is no room for another run on this Mac right now."
                 break
@@ -1157,8 +1164,25 @@ final class Advanced: ObservableObject {
             starting.insert(item.id)
             running += 1
         }
-        let idle = running == 0 ? (reason ?? idleReason(on: board)) : nil
+        // Said beside runs going on too, so one task at a time is never a
+        // mystery: the tasks Autopilot could start that are left waiting.
+        let left = board.ready.filter { !starting.contains($0.id) && board.autopilotMayStart($0) }.count
+        let idle: String?
+        if running == 0 {
+            idle = reason ?? idleReason(on: board)
+        } else if full, left > 0 {
+            idle = Self.limitWords(most: most, left: left)
+        } else {
+            idle = left > 0 ? reason : nil
+        }
         if waiting[projectID] != idle { waiting[projectID] = idle }
+    }
+
+    /// Why ready tasks wait while the board runs as many as it may.
+    private static func limitWords(most: Int, left: Int) -> String {
+        (most == 1 ? "One task runs" : "\(most) tasks run") + " at a time on this board, and "
+            + (left == 1 ? "1 more is" : "\(left) more are")
+            + " ready. Raise Runs at Once in the board's menu to start more."
     }
 
     /// Why Autopilot leaves a ready task for the person

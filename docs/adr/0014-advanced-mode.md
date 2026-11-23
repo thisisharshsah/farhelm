@@ -247,13 +247,18 @@ not the one on screen. `UsageRecord` gains optional `workItem` and `project`.
   (`BoardRules.redoLimit`) is not started again by itself (fixed 2026-11-22:
   a reviewer that kept asking for changes sent a task round without end).
 - **Autopilot** (off by default, per project): starts ready tasks, most
-  pressing first, up to the board's "runs at once" (one, unless raised),
+  pressing first, up to the board's "runs at once" (three on a new board),
   never two whose paths overlap. It acts only for projects whose board was
   opened since launch, stops when the budget is used up, and leaves a task
   whose last two runs did not finish for a person. Supervisor mode starts
   ready tasks the same way, with Autopilot on or off.
 - **Budgets**: a limit in tokens, dollars or both. No run starts past it,
   by hand or by Autopilot.
+- **Why work waits** (added 2026-11-23): when ready tasks do not start, the
+  board says why, also while other runs go on: the board's runs at once,
+  the Mac's limit on runs, or a task whose paths the next one would meet.
+  New boards run three at once (`BoardSettings.defaultParallel`), as the
+  app does; a board made before keeps the number it had.
 
 ### Goals, one at a time, with the ones before kept (added)
 
