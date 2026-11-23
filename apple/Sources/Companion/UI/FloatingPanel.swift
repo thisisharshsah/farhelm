@@ -37,24 +37,28 @@ final class FloatingPanel: NSPanel {
     // drawn in a window of its own laid over the browser pane (CEFKit's
     // `showAbove`), and what sits over a page (`OverPage`). AppKit moves,
     // hides and minimizes them with the panel; the panel also gives them its
-    // level, its desktops and its fading, when they are attached and
-    // whenever these change. So none is left above other apps once the panel
-    // is not, behind on another desktop, or showing while the panel fades.
+    // level and its desktops, when they are attached and whenever these
+    // change, and `OverlayController.fade` fades them with it. So none is
+    // left above other apps once the panel is not, behind on another
+    // desktop, or showing while the panel fades.
+    //
+    // The overrides of properties below are `dynamic`, and the panel's
+    // fading is not overridden at all. In a final class Swift calls an
+    // override directly instead of sending the message, so a property set
+    // through the panel's `animator()` proxy would run the override on the
+    // proxy, which crashed Companion at launch, and observers of the
+    // property would never hear of the change.
 
     override func addChildWindow(_ child: NSWindow, ordered place: NSWindow.OrderingMode) {
         Self.attach(child, to: self)
         super.addChildWindow(child, ordered: place)
     }
 
-    override var level: NSWindow.Level {
+    override dynamic var level: NSWindow.Level {
         didSet { childWindows?.forEach { Self.attach($0, to: self) } }
     }
 
-    override var collectionBehavior: NSWindow.CollectionBehavior {
-        didSet { childWindows?.forEach { Self.attach($0, to: self) } }
-    }
-
-    override var alphaValue: CGFloat {
+    override dynamic var collectionBehavior: NSWindow.CollectionBehavior {
         didSet { childWindows?.forEach { Self.attach($0, to: self) } }
     }
 
@@ -982,7 +986,7 @@ final class OverlayController {
         guard !main.isVisible else {
             // Already up, or caught half-way through fading out.
             main.orderFrontRegardless()
-            main.animator().alphaValue = 1
+            fade(to: 1)
             app.panelVisible = true
             return
         }
@@ -990,12 +994,13 @@ final class OverlayController {
         // never has to move (once the panel was dragged, it stays put).
         if !panelDetached { snapPanelToIndicator() }
         main.alphaValue = 0
+        main.childWindows?.forEach { $0.alphaValue = 0 }
         main.orderFrontRegardless()
         app.panelVisible = true
         keepIndicatorClear()
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.22
-            main.animator().alphaValue = 1
+            fade(to: 1)
         }, completionHandler: { [weak self] in
             // What is attached to the panel ends where the panel does,
             // however the fade went.
@@ -1016,14 +1021,23 @@ final class OverlayController {
         keepIndicatorClear()
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.18
-            main.animator().alphaValue = 0
+            fade(to: 0)
         }, completionHandler: { [weak self] in
             Task { @MainActor in
                 guard let self, !self.app.panelVisible else { return }
                 self.main.orderOut(nil)
                 self.main.alphaValue = 1
+                self.main.childWindows?.forEach { FloatingPanel.attach($0, to: self.main) }
             }
         })
+    }
+
+    /// Fades the panel, and the windows attached to it with it, in the
+    /// animation under way. Always through `animator()`: setting a window's
+    /// `alphaValue` on its own jumps there at once.
+    private func fade(to alpha: CGFloat) {
+        main.animator().alphaValue = alpha
+        main.childWindows?.forEach { $0.animator().alphaValue = alpha }
     }
 
     func togglePanel() {
