@@ -238,6 +238,7 @@ struct SpecimenContent: View {
             GallerySection(title: "Glass") { GlassComponents() }
             GallerySection(title: "Size rules") { SizeRulesDemo() }
             GallerySection(title: "Morph") { MorphDemo() }
+            GallerySection(title: "Selection controls") { SelectionControlsDemo() }
         }
     }
 }
