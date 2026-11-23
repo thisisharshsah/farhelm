@@ -9,6 +9,8 @@ supervised agent that buzzes your phone.
 **Developing Farhelm:** read [AGENTS.md](AGENTS.md) for project instructions and
 [the engineering guide](docs/engineering-stack.md) for stack choices and architecture conventions.
 
+To run the same checks as CI locally, run `bash scripts/check.sh` from the repository root.
+
 The [local Projects flow](docs/local-projects.md) creates projects, attaches registered
 repositories and starts project-owned agent tasks through review/apply/revert.
 Project content stays on a directly connected runner; shared hosted access remains pending.
