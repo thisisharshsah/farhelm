@@ -467,6 +467,12 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   /// Where the pane wants it, in screen points; it is put back there if
   /// anything else moves or resizes it.
   NSRect _target;
+  /// Where that is from the corner of the window it rides above, so it
+  /// goes with that window when the window is moved.
+  NSPoint _offset;
+  /// The bounds Chromium was told last, so it is told again only when
+  /// they change.
+  NSRect _told;
   id _moveObserver;
   id _resizeObserver;
 #endif
@@ -568,6 +574,37 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   [_pending removeObjectForKey:@(messageID)];
   ok ? done(json, nil) : done(nil, json.length ? json : @"The page did not run that.");
 }
+
+/// Keeps the page where the pane wants it. When the panel is moved, AppKit
+/// carries the page's window along, and the place it is kept at goes with
+/// the panel, instead of pulling the page back to where the panel was.
+/// When anything else moves or resizes it, it is put back.
+- (void)follow:(NSWindow *)window {
+  if (!_visible || NSIsEmptyRect(_target)) return;
+  NSRect target = _target;
+  if (NSWindow *parent = window.parentWindow) {
+    target.origin = NSMakePoint(NSMinX(parent.frame) + _offset.x, NSMinY(parent.frame) + _offset.y);
+  }
+  [self moveTo:target];
+}
+
+/// Puts the page's window at `target`, in screen points. Chromium keeps its
+/// own idea of where its window is and puts it back there, so it is told
+/// (screen points, top-left origin on the primary display) as well as
+/// moved, and AppKit finishes the move where Chromium did not take it all
+/// the way.
+- (void)moveTo:(NSRect)target {
+  NSWindow *window = [self nativeWindow];
+  if (!_window || !window) return;
+  _target = target;
+  if (!NSEqualRects(_told, target)) {
+    _told = target;
+    NSScreen *primary = NSScreen.screens.firstObject;
+    CGFloat top = primary ? NSMaxY(primary.frame) - NSMaxY(target) : NSMinY(target);
+    _window->SetBounds(CefRect((int)NSMinX(target), (int)top, (int)NSWidth(target), (int)NSHeight(target)));
+  }
+  if (!NSEqualRects(window.frame, target)) [window setFrame:target display:YES];
+}
 #endif
 
 - (void)showAbove:(NSWindow *)parent frame:(NSRect)screenFrame {
@@ -596,30 +633,25 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   RoundCorners(window, _cornerRadius);
   NSRect target = NSIntegralRect(screenFrame);
   _target = target;
+  _offset = NSMakePoint(NSMinX(target) - NSMinX(parent.frame), NSMinY(target) - NSMinY(parent.frame));
   if (!_moveObserver) {
     __weak ChromiumBrowser *weakSelf = self;
     __weak NSWindow *weakWindow = window;
-    void (^snap)(NSNotification *) = ^(NSNotification *note) {
+    void (^follow)(NSNotification *) = ^(NSNotification *note) {
       ChromiumBrowser *strongSelf = weakSelf;
       NSWindow *strongWindow = weakWindow;
-      if (!strongSelf || !strongWindow || !strongSelf->_visible || NSIsEmptyRect(strongSelf->_target)) return;
-      if (!NSEqualRects(strongWindow.frame, strongSelf->_target)) {
-        [strongWindow setFrame:strongSelf->_target display:YES];
-      }
+      if (!strongSelf || !strongWindow) return;
+      if (note.object != strongWindow && note.object != strongWindow.parentWindow) return;
+      [strongSelf follow:strongWindow];
     };
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
-    _moveObserver = [center addObserverForName:NSWindowDidMoveNotification object:window queue:NSOperationQueue.mainQueue usingBlock:snap];
-    _resizeObserver = [center addObserverForName:NSWindowDidResizeNotification object:window queue:NSOperationQueue.mainQueue usingBlock:snap];
+    // Any window's moves are heard, and those of the page's own window and
+    // of the window it rides above are followed (which window that is can
+    // change, so it is not named here).
+    _moveObserver = [center addObserverForName:NSWindowDidMoveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:follow];
+    _resizeObserver = [center addObserverForName:NSWindowDidResizeNotification object:window queue:NSOperationQueue.mainQueue usingBlock:follow];
   }
-  if (NSEqualRects(window.frame, target)) return;
-  // Chromium keeps its own idea of where its window is and puts it back
-  // there, so it is told (screen points, top-left origin on the primary
-  // display), not only moved.
-  NSScreen *primary = NSScreen.screens.firstObject;
-  CGFloat top = primary ? NSMaxY(primary.frame) - NSMaxY(target) : NSMinY(target);
-  _window->SetBounds(CefRect((int)NSMinX(target), (int)top, (int)NSWidth(target), (int)NSHeight(target)));
-  // Where Chromium did not take it all the way, AppKit finishes the move.
-  if (!NSEqualRects(window.frame, target)) [window setFrame:target display:YES];
+  [self moveTo:target];
 #endif
 }
 
@@ -630,6 +662,7 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   [window.parentWindow removeChildWindow:window];
   _window->Hide();
   _visible = NO;
+  _told = NSZeroRect;
 #endif
 }
 
