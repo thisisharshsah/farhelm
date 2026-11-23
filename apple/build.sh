@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build, bundle and launch Companion.app
-# Usage: bash build.sh [build|app|run|dmg|clean]   (default: run)
+# Usage: bash build.sh [build|app|run|dmg|check|clean]   (default: run)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -28,10 +28,15 @@ chromium() {
   if [[ -f "$CEF_DIR/build/libcef_dll_wrapper.a" && -d "$CEF_FRAMEWORK" ]]; then
     cp "$CEF_DIR/build/libcef_dll_wrapper.a" "$CEF_LIB"
   else
-    # An empty library, so linking works without CEF.
-    echo "" | clang -c -x c - -o .build/cef/empty.o
-    libtool -static -o "$CEF_LIB" .build/cef/empty.o 2>/dev/null
+    cef_stub
   fi
+}
+
+# An empty library in place of CEF's wrapper, so linking works without CEF.
+cef_stub() {
+  mkdir -p .build/cef
+  echo "" | clang -c -x c - -o .build/cef/empty.o
+  libtool -static -o "$CEF_LIB" .build/cef/empty.o 2>/dev/null
 }
 
 # The Metal compiler, for SwiftTerm's shader, is not inside Xcode. It is a
@@ -85,6 +90,17 @@ build() {
   # the metal compiler only finds the downloaded Metal Toolchain when it is
   # started with an SDK set. A plain `swift build` fails on Shaders.metal.
   xcrun --sdk macosx swift build -c release
+}
+
+# Does it compile: a debug build with nothing fetched, quicker than a
+# release build, for the checks a task's work goes through before its
+# review (.companion/checks.json at the top of the repository). CEF's
+# wrapper is used when an earlier build left it, and the empty one stands
+# in for it otherwise.
+check() {
+  [[ -f "$CEF_LIB" ]] || cef_stub
+  metal_toolchain
+  xcrun --sdk macosx swift build
 }
 
 # Sign with a stable identity so macOS permission grants (mic, screen
@@ -218,6 +234,7 @@ case "${1:-run}" in
   app)   build; bundle ;;
   run)   build; bundle; open "$BUNDLE_DIR" ;;
   dmg)   build; bundle; dmg ;;
+  check) check ;;
   clean) rm -rf .build dist ;;
-  *) echo "usage: bash build.sh [build|app|run|dmg|clean]"; exit 1 ;;
+  *) echo "usage: bash build.sh [build|app|run|dmg|check|clean]"; exit 1 ;;
 esac

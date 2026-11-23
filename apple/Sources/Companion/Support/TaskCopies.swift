@@ -717,25 +717,45 @@ final class TaskCopies {
     }
 
     /// A task's work as a reviewer reads it: the files it changed and the
-    /// diff itself, cut to `limit` characters.
+    /// diff itself, new files in full, fitted to `limit` characters
+    /// (`ReviewDiff`: every file named, small ones whole first).
     struct BranchDiff: Sendable {
         var branch: String
         var base: String
         var files: [Changes.File]
         var diff: String
-        /// The diff was longer than what is given.
-        var cut: Bool
+        /// The files whose changes are not shown in full.
+        var cut: [String]
     }
 
-    func branchDiff(of copy: WorkingCopy, limit: Int = 14_000) async -> BranchDiff? {
+    /// How much of a task's diff its review is given, in characters.
+    static let reviewDiffLimit = 30_000
+
+    func branchDiff(of copy: WorkingCopy, limit: Int = TaskCopies.reviewDiffLimit) async -> BranchDiff? {
         guard let changes = await changes(of: copy) else { return nil }
-        let shown = await git("diff --no-color --no-ext-diff --no-renames \(changes.since)", in: copy.folder, timeout: 60)
+        // Against where the branch began, with the files git does not know
+        // of yet added on a throwaway index, so a new file shows in full.
+        // The copy's own index is left as it was.
+        let script = """
+        scratch=$(mktemp -d) || exit 1
+        cp "$(git rev-parse --git-path index)" "$scratch/index" 2>/dev/null
+        export GIT_INDEX_FILE="$scratch/index" GIT_TERMINAL_PROMPT=0
+        git add -A && git -c core.quotePath=false diff --cached --no-color --no-ext-diff --no-renames \(changes.since)
+        code=$?
+        rm -rf "$scratch"
+        exit $code
+        """
+        var shown = Shell.Result(output: "", code: -1)
+        if Self.isFolder(copy.folder) { shown = await Shell.run(script, in: copy.folder, timeout: 90) }
+        if !shown.ok {
+            // Then as git has it, without what it does not know of.
+            shown = await git("diff --no-color --no-ext-diff --no-renames \(changes.since)", in: copy.folder, timeout: 60)
+        }
         var text = shown.ok ? shown.output : ""
         // Anything the shell printed before git's own output is passed over.
         if let start = text.range(of: "diff --git ") { text = String(text[start.lowerBound...]) }
-        let cut = text.count > limit
-        if cut { text = String(text.prefix(limit)) }
-        return BranchDiff(branch: copy.branch, base: copy.base, files: changes.files, diff: text, cut: cut)
+        let fitted = ReviewDiff.fit(text, limit: limit)
+        return BranchDiff(branch: copy.branch, base: copy.base, files: changes.files, diff: fitted.text, cut: fitted.cut)
     }
 
     /// A file as it was at a commit, or "" when it was not there.

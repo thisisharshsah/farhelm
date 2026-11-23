@@ -493,7 +493,8 @@ struct SidebarRow: View {
         } else if let task, Advanced.shared.reviewing.contains(task.id) {
             LoadingMark(state: .thinking, size: 12)
                 .frame(width: 20, height: 20)
-                .help("The supervisor is reviewing its run")
+                .help(Advanced.shared.checkingWork.contains(task.id) ? "Its checks are running on its work"
+                      : "The supervisor is reviewing its run")
         } else if spot?.place == .running {
             Image(systemName: "clock")
                 .font(.system(size: 10.5, weight: .medium))

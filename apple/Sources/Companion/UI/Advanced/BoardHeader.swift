@@ -164,6 +164,21 @@ struct BoardHeader: View {
 
     private func check(_ on: Bool) -> String { on ? "  ✓" : "" }
 
+    /// Opens the project's checks in the editor. Where there are none yet,
+    /// a first file is written to make them from, with the build the app
+    /// finds in the folder as its one check.
+    private func openChecks() {
+        guard let folder = project.folder else { return }
+        let path = (folder as NSString).appendingPathComponent(Checks.file)
+        if !FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                                     withIntermediateDirectories: true)
+            try? Checks.starter(build: ProblemsModel.buildCommand(in: folder))
+                .write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        app.openInWorkspace(path)
+    }
+
     /// What the supervisor running the board comes to, for the help on
     /// the ways to switch it.
     private static let answersHelp = "Supervisor mode: the supervisor runs the board for you. It starts tasks that are ready, never two that change the same files at once, answers for you (a step that needs a yes, an agent's question, a task in Review), and merges approved work one task at a time, with conflicts settled by the task's own agent. Where work stopped halfway it says \"continue\" in that chat. Steps that name keys, act on the system, send work off this Mac, work other apps or reach outside the project's folder still wait for you."
@@ -216,6 +231,13 @@ struct BoardHeader: View {
             } label: {
                 Label("Review Finished Runs" + check(board.settings.reviewGate), systemImage: "checkmark.seal")
             }
+            Button {
+                openChecks()
+            } label: {
+                Label("Checks Before Review…", systemImage: "checklist")
+            }
+            .disabled(project.folder == nil)
+            .help("The commands run on each task's work before it is reviewed (its build, its tests), written in \(Checks.file) in the project's folder. Work whose checks fail is never approved without you.")
             Button {
                 advanced.setCopyPerTask(!board.settings.copyPerTask, in: project.id)
             } label: {

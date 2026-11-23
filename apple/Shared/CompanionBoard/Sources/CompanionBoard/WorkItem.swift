@@ -217,10 +217,14 @@ public struct WorkRun: Codable, Identifiable, Equatable, Sendable {
     /// It carries on from the run before it at the supervisor's word:
     /// the same task, taken up where that run stopped. (nil is no.)
     public var carriesOn: Bool?
+    /// What the project's checks found on its work, once it finished
+    /// (`Checks`): empty when none of them cover what it changed; nil
+    /// when none were run (the project has none, or it did not finish).
+    public var checks: [CheckResult]?
 
     public init(id: UUID = UUID(), conversation: UUID, model: ModelChoice, modelLabel: String, startedAt: Date,
                 endedAt: Date? = nil, outcome: Outcome = .running, report: String? = nil, review: Review? = nil,
-                advice: Review? = nil, ending: Ending? = nil, carriesOn: Bool? = nil) {
+                advice: Review? = nil, ending: Ending? = nil, carriesOn: Bool? = nil, checks: [CheckResult]? = nil) {
         self.id = id
         self.conversation = conversation
         self.model = model
@@ -233,6 +237,7 @@ public struct WorkRun: Codable, Identifiable, Equatable, Sendable {
         self.advice = advice
         self.ending = ending
         self.carriesOn = carriesOn
+        self.checks = checks
     }
 
     public var isRunning: Bool { outcome == .running }

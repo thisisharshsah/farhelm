@@ -246,8 +246,9 @@ not the one on screen. `UsageRecord` gains optional `workItem` and `project`.
 ### Review gate, Autopilot, budgets
 
 - **Review gate** (on by default): when a run finishes, the supervisor checks
-  its report, changed files and command outcomes against the task's "done
-  means", with the task's earlier reviews beside them. Approved, the task is
+  its report, what the project's own checks found (next section), its
+  branch's diff and command outcomes against the task's "done means", with
+  the task's earlier reviews beside them. Approved, the task is
   done; with changes asked for, it goes back with notes the next run is
   given. When what stops it approving is not something another run would
   change (a line only a person can check, evidence it cannot be shown), it
@@ -268,6 +269,55 @@ not the one on screen. `UsageRecord` gains optional `workItem` and `project`.
   the Mac's limit on runs, or a task whose paths the next one would meet.
   New boards run three at once (`BoardSettings.defaultParallel`), as the
   app does; a board made before keeps the number it had.
+
+### A run's work goes through the project's own checks before it is reviewed (added 2026-11-23)
+
+The review read the agent's report and the commands it said it ran: its own
+account of its work. Now the app runs the project's checks on the work
+itself, once a run has finished and before anyone reviews it (owner's go,
+2026-11-23).
+
+- **Where they come from.** The person writes them in the project's folder
+  as `.companion/checks.json`, beside `.companion/build` and
+  `.companion/tasks.json`: for each, a command (`run`), a name, the paths
+  whose changes call for it (`when`, written as a task's paths are, so a
+  folder covers what is in it), and a time limit in seconds (`timeout`, 15
+  minutes when left out). "Checks Before Review…" in the board's menu opens
+  the file, and writes a first one when there is none, with the build the
+  Problems list finds in the folder as its one check. The file is read from
+  the person's own checkout, never from the task's copy, so a task cannot
+  change how its own work is checked. A file that cannot be read counts as a
+  check that could not be run, so a typo holds work back instead of letting
+  it through unchecked. This repository has its own, mirroring CI for the
+  parts each change touches, with `bash apple/build.sh check` (a debug build
+  with nothing fetched) for Companion.
+- **Where and how they run.** In the project's folder inside the task's
+  copy, the ones whose paths the work touched, one at a time across the Mac
+  (`TaskChecks`). Checks only run on work in a copy of its own. They run the
+  code the task wrote, so they start the way the agent's own commands do
+  (`AgentProcess`: none of Companion's privacy permissions, no provider keys,
+  the person's login shell, no input, a process group of their own so the
+  time limit stops what they started), with `CI=1` and `NO_COLOR=1`. What each
+  found (passed, failed, ran out of time or could not be run; how long it
+  took; the errors it named at places in files; the end of what it printed)
+  is kept with the run (`WorkRun.checks`, `Board.recordChecks`) and shows on
+  the task and its card. The checks run on a board without reviews too.
+- **What the review does with it.** The review is given what the checks
+  found as evidence the agent cannot change, and is told: a failure the work
+  caused is CHANGES; one with nothing to do with it (a tool missing on this
+  Mac, the network) is ASK; a change that makes the project check less is
+  CHANGES unless the task asks for it. Whatever the review answers, work
+  whose checks did not all pass is never approved without the person
+  (`Checks.letThrough`): such an approval becomes a note, and the task waits
+  in Review. A task sent back carries what the checks found in their own
+  words, and every run's brief lists the checks its work will go through, so
+  it runs them first.
+- **The diff the review reads** now holds the files the agent did not commit,
+  new ones in full (added on a throwaway index, so the copy's own is left as
+  it was), and is cut fairly when it is long (`ReviewDiff`): every file
+  named with how much changed in it, small files whole first, then the start
+  of the rest, with lock files last. It was 14,000 characters cut at one
+  place; it is 30,000 now (`TaskCopies.reviewDiffLimit`).
 
 ### Goals, one at a time, with the ones before kept (added)
 
@@ -633,3 +683,12 @@ one goal with every task under it, and written as version 2 from then on.
   on a chat that is no board's run after the app was quit under it.
 - Moving a chat into or out of a project from the sidebar
   (`AppState.moveConversation` is there; nothing calls it).
+- Building the checks before a review and using them end to end. Their rules
+  have tests that have not run yet; the diff's throwaway index was tried with
+  git 2.43 in a scratch repository.
+- A sandbox for the checks. They run the task's code with the person's own
+  reach over their files and the network, as the task's runs do:
+  `AgentProcess` keeps out Companion's permissions and keys, nothing more.
+  Running a check that failed on the branch the task came from too, to tell
+  a failure the work caused from one that was there before. Checks for work
+  done in the project's folder, on a board without copies.

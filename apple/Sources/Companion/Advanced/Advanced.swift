@@ -69,8 +69,12 @@ final class Advanced: ObservableObject {
     /// it would collide with). nil when nothing ready waits, and on a board
     /// where work starts when the person starts it.
     @Published private(set) var waiting: [UUID: String] = [:]
-    /// Tasks whose finished run is being checked right now.
+    /// Tasks whose finished run is being checked right now: the project's
+    /// checks running on its work, then the supervisor's review.
     @Published private(set) var reviewing: Set<UUID> = []
+    /// Of those, the tasks whose project checks are running on their copy
+    /// now (`checkThenReview`).
+    @Published private(set) var checkingWork: Set<UUID> = []
     /// The models tasks can be given to, as last looked up. Looking them
     /// up reads the Keychain, so it is done when a board opens and before
     /// they are chosen from, not every time the board is drawn.
@@ -915,9 +919,10 @@ final class Advanced: ObservableObject {
 
     /// An agent task ended in a chat. When a board's run was going on
     /// there, the run is closed and its task moves as the rules say. A
-    /// run that finished is checked when the review gate is on; with the
-    /// gate off, the same check is made as a recommendation for the
-    /// person who reviews it, when the board asks for those. Where the
+    /// run that finished has the project's checks run on its work, and is
+    /// then checked when the review gate is on; with the gate off, the
+    /// same check is made as a recommendation for the person who reviews
+    /// it, when the board asks for those (`checkThenReview`). Where the
     /// supervisor answers in the person's place, its verdict decides
     /// either way. `ending` says how the task came to an end: a board
     /// keeps it, so a run that a person stopped is never taken up again
@@ -953,24 +958,64 @@ final class Advanced: ObservableObject {
                 rests[ended.run.model.key] = Rest(trouble: found.trouble, until: found.until)
             }
         }
-        let settings = store.boards[projectID]?.settings
-        let gate = settings?.reviewGate ?? false
-        let advises = settings?.advice ?? false
-        let answers = settings?.supervisorAnswers ?? false
         // The rest happens after the agent has finished putting its own
         // task away, not in the middle of it. A run that failed by
         // itself is looked at a little later (`carryOnStopped`), not at
         // once: what stopped it may have passed by then.
         Task { @MainActor in
-            if outcome == .succeeded, gate || advises, ended.item.status == .review {
-                self.review(ended.item.id, in: projectID, chat: chat, report: report, decides: gate || answers,
-                            carriesOn: answers)
+            if outcome == .succeeded, ended.item.status == .review {
+                self.checkThenReview(ended.item.id, run: ended.run.id, in: projectID, chat: chat, report: report)
             }
             self.tick(projectID)
         }
     }
 
     // MARK: The review gate
+
+    /// A finished run's work is checked: first the project's own checks
+    /// run on the task's copy (`TaskChecks`), then, where the board asks
+    /// for it, the supervisor reviews the run with what they found. The
+    /// checks run on a board without reviews too, so what they found is on
+    /// the task when the person looks. While they run, the task counts as
+    /// being reviewed. Work they checked already (a review asked again) is
+    /// not checked twice.
+    private func checkThenReview(_ itemID: UUID, run runID: UUID, in projectID: UUID, chat: UUID, report: String) {
+        guard let item = store.boards[projectID]?.item(itemID), !reviewing.contains(itemID),
+              let run = item.runs.last, run.id == runID else { return }
+        guard run.checks == nil, let copy = item.workingCopy, copy.isOpen, let folder = project(projectID)?.folder,
+              TaskChecks.setUp(in: folder) != nil else {
+            reviewAfterChecks(itemID, in: projectID, chat: chat, report: report)
+            return
+        }
+        reviewing.insert(itemID)
+        checkingWork.insert(itemID)
+        Task { @MainActor in
+            let results = await TaskChecks.shared.run(on: copy, project: folder)
+            self.checkingWork.remove(itemID)
+            self.reviewing.remove(itemID)
+            if let results {
+                self.store.update(projectID) { board in
+                    board.recordChecks(itemID, run: runID, results, now: Date())
+                }
+            }
+            // A task a person has moved on since, or that a run has taken
+            // up again, is theirs.
+            guard let current = self.store.boards[projectID]?.item(itemID), current.status == .review,
+                  current.runs.last?.id == runID else { return }
+            self.reviewAfterChecks(itemID, in: projectID, chat: chat, report: report)
+            self.tick(projectID)
+        }
+    }
+
+    /// The supervisor's part, where the board asks for one: a review that
+    /// decides (the review gate, or the supervisor answering for the
+    /// person), or one that recommends.
+    private func reviewAfterChecks(_ itemID: UUID, in projectID: UUID, chat: UUID, report: String) {
+        guard let settings = store.boards[projectID]?.settings, settings.reviewGate || settings.advice else { return }
+        let answers = settings.supervisorAnswers
+        review(itemID, in: projectID, chat: chat, report: report, decides: settings.reviewGate || answers,
+               carriesOn: answers)
+    }
 
     /// Has the supervisor check a finished run against what its task says
     /// done means. With `decides` (the review gate): approved, the task
@@ -1040,12 +1085,35 @@ final class Advanced: ObservableObject {
                         // Asked once is enough: it is not checked again by itself.
                         if let run = item.runs.last?.id { self.reviewTries[run] = Advanced.reviewTryLimit }
                     } else if let found = Supervisor.verdict(in: answer) {
-                        let verdict = Review(verdict: found.verdict, notes: found.notes, by: reviewer, date: Date())
-                        self.store.update(projectID) { board in
-                            if decides {
-                                _ = board.review(itemID, verdict, now: Date())
-                            } else {
-                                _ = board.recommend(itemID, verdict, now: Date())
+                        let checks = self.store.boards[projectID]?.item(itemID)?.runs.last?.checks
+                        var verdict = Review(verdict: found.verdict, notes: found.notes, by: reviewer, date: Date())
+                        if found.verdict == .approved, !Checks.letThrough(checks) {
+                            // Work whose checks did not all pass is never
+                            // approved without a person, whatever the review
+                            // makes of them: it waits in Review for them.
+                            let failed = (checks ?? []).filter { !$0.passed }.map(\.name).joined(separator: ", ")
+                            var words = "The review would approve it, but \(failed) did not pass, so this waits for you."
+                            if !found.notes.isEmpty { words += " The review said: " + found.notes }
+                            self.store.update(projectID) { board in
+                                board.note(itemID, words, author: reviewer, now: Date())
+                            }
+                            if let run = item.runs.last?.id { self.reviewTries[run] = Advanced.reviewTryLimit }
+                        } else {
+                            // Sent back, the next run is told what the checks
+                            // found, in their own words as well as the review's.
+                            if found.verdict == .changesRequested, let checks {
+                                let digest = Checks.digest(checks)
+                                if !digest.isEmpty {
+                                    if !verdict.notes.isEmpty { verdict.notes += "\n" }
+                                    verdict.notes += "What the checks found:\n" + digest
+                                }
+                            }
+                            self.store.update(projectID) { board in
+                                if decides {
+                                    _ = board.review(itemID, verdict, now: Date())
+                                } else {
+                                    _ = board.recommend(itemID, verdict, now: Date())
+                                }
                             }
                         }
                     } else if decides {
@@ -1277,7 +1345,7 @@ final class Advanced: ObservableObject {
             guard let last = item.runs.last, last.outcome == .succeeded, last.review == nil, let chat = item.chat,
                   (reviewTries[last.id] ?? 0) < Self.reviewTryLimit,
                   now.timeIntervalSince(reviewTried[last.id] ?? .distantPast) >= Self.reviewRetry else { continue }
-            review(item.id, in: projectID, chat: chat, report: last.report ?? "", decides: true, carriesOn: true)
+            checkThenReview(item.id, run: last.id, in: projectID, chat: chat, report: last.report ?? "")
         }
     }
 

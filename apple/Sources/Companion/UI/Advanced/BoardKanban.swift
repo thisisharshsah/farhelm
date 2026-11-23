@@ -164,6 +164,8 @@ struct TaskCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if item.activeRun != nil {
                 runLine
+            } else if advanced.checkingWork.contains(item.id) {
+                statusLine("Running its checks", mark: .working)
             } else if advanced.reviewing.contains(item.id) {
                 statusLine("The supervisor is reviewing it", mark: .thinking)
             } else if advanced.preparing.contains(item.id) {
@@ -181,6 +183,18 @@ struct TaskCard: View {
                         .lineLimit(1)
                 }
                 .help(item.workingCopy?.problem ?? "Nobody approved its work to be merged")
+            } else if item.status == .review, let checks = item.runs.last?.checks, !Checks.letThrough(checks) {
+                let failed = checks.filter { !$0.passed }
+                HStack(spacing: 5) {
+                    Image(systemName: "xmark.octagon.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.rose)
+                    Text(failed.count == 1 ? "\(failed[0].name) did not pass" : "\(failed.count) checks did not pass")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Theme.rose)
+                        .lineLimit(1)
+                }
+                .help(failed.map { "\($0.name) \(Checks.status($0))" }.joined(separator: "\n"))
             }
             HStack(spacing: 6) {
                 ModelChip(assignment: item.assignment, limit: 18)

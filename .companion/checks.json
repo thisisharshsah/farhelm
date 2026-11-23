@@ -1,0 +1,43 @@
+{
+  "about": "Commands Companion runs in a board task's own copy after a run of it finishes, before the work is reviewed. run: the command, run from the top of the repository in the copy. when: paths from there; a check runs only for work that changed something under one of them. timeout: seconds (900 when left out). Work whose checks fail is never approved without you. They mirror .github/workflows/ci.yml, for the parts each change touches.",
+  "checks": [
+    {
+      "name": "Board rules",
+      "run": "swift test --package-path apple/Shared/CompanionBoard",
+      "when": ["apple/Shared/CompanionBoard"]
+    },
+    {
+      "name": "Link",
+      "run": "swift test --package-path apple/Shared/CompanionLink",
+      "when": ["apple/Shared/CompanionLink"]
+    },
+    {
+      "name": "Shared by the mobile apps",
+      "run": "swift test --package-path apple/Mobile/CompanionKit",
+      "when": ["apple/Mobile/CompanionKit", "apple/Shared/CompanionLink"]
+    },
+    {
+      "name": "Watch crypto",
+      "run": "swift test --package-path mobile/watch",
+      "when": ["mobile/watch"]
+    },
+    {
+      "name": "Companion compiles",
+      "run": "bash apple/build.sh check",
+      "when": ["apple/Sources", "apple/Shared", "apple/Package.swift", "apple/Package.resolved", "apple/build.sh"],
+      "timeout": 1800
+    },
+    {
+      "name": "Rust format, lint and tests",
+      "run": "export CARGO_TARGET_DIR=\"$HOME/.companion/cache/farhelm-target\" && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+      "when": ["crates", "Cargo.toml", "Cargo.lock"],
+      "timeout": 3600
+    },
+    {
+      "name": "Web and client tests",
+      "run": "pnpm install --frozen-lockfile && pnpm -r typecheck && pnpm -r test",
+      "when": ["web", "packages", "mobile/src", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"],
+      "timeout": 1800
+    }
+  ]
+}

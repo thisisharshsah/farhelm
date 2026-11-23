@@ -103,9 +103,10 @@ struct TaskInspector: View {
         } else if item.status == .review {
             VStack(alignment: .leading, spacing: 6) {
                 if advanced.reviewing.contains(item.id) {
+                    let checking = advanced.checkingWork.contains(item.id)
                     HStack(spacing: 6) {
-                        LoadingMark(state: .thinking, size: 13)
-                        Text("The supervisor is reviewing the run")
+                        LoadingMark(state: checking ? .working : .thinking, size: 13)
+                        Text(checking ? "Running the project's checks on its work" : "The supervisor is reviewing the run")
                             .font(.system(size: 11.5))
                             .foregroundStyle(Theme.ink.opacity(0.75))
                     }
@@ -597,6 +598,13 @@ struct TaskInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .help(report)
             }
+            if let checks = run.checks, !checks.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
+                        checkLine(check)
+                    }
+                }
+            }
             if let review = run.review {
                 HStack(alignment: .top, spacing: 5) {
                     Image(systemName: review.verdict == .approved ? "checkmark.seal.fill" : "arrow.uturn.backward.circle.fill")
@@ -615,6 +623,40 @@ struct TaskInspector: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.ink.opacity(0.05)))
+    }
+
+    /// One of the project's checks on a run's work: how it went, and for
+    /// one that did not pass, what it said, to read or copy.
+    private func checkLine(_ check: CheckResult) -> some View {
+        let said = check.problems.isEmpty
+            ? check.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n")
+            : check.problems.joined(separator: "\n")
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .top, spacing: 5) {
+                Image(systemName: check.passed ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(check.passed ? Theme.mint : Theme.rose)
+                    .padding(.top, 1)
+                Text("\(check.name) \(Checks.status(check))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.ink.opacity(0.75))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(check.command.isEmpty ? check.name : check.command)
+            }
+            if !check.passed, !said.isEmpty {
+                ScrollView {
+                    Text(said)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(Theme.ink.opacity(0.7))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.05)))
+            }
+        }
     }
 
     /// When a run began, how long it took, and what it used.
