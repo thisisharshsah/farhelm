@@ -728,10 +728,7 @@ final class TaskCopies {
         var cut: [String]
     }
 
-    /// How much of a task's diff its review is given, in characters.
-    static let reviewDiffLimit = 30_000
-
-    func branchDiff(of copy: WorkingCopy, limit: Int = TaskCopies.reviewDiffLimit) async -> BranchDiff? {
+    func branchDiff(of copy: WorkingCopy, limit: Int = ReviewDiff.defaultLimit) async -> BranchDiff? {
         guard let changes = await changes(of: copy) else { return nil }
         // Against where the branch began, with the files git does not know
         // of yet added on a throwaway index, so a new file shows in full.

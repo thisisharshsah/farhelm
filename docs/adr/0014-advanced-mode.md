@@ -317,7 +317,7 @@ itself, once a run has finished and before anyone reviews it (owner's go,
   it was), and is cut fairly when it is long (`ReviewDiff`): every file
   named with how much changed in it, small files whole first, then the start
   of the rest, with lock files last. It was 14,000 characters cut at one
-  place; it is 30,000 now (`TaskCopies.reviewDiffLimit`).
+  place; it is 30,000 now (`ReviewDiff.defaultLimit`).
 
 ### Goals, one at a time, with the ones before kept (added)
 

@@ -17,6 +17,8 @@ public enum ReviewDiff {
     public static let lowSignalEndings = [".min.js", ".min.css", ".map", ".snap"]
     /// Below this much room left, a file that did not fit is only named.
     public static let smallestShare = 400
+    /// How much of a task's diff its review is given, in characters.
+    public static let defaultLimit = 30_000
 
     public struct Fitted: Equatable, Sendable {
         public var text: String
