@@ -774,7 +774,8 @@ final class Advanced: ObservableObject {
         }
         let profiles = roster.map(\.profile)
         if let found = ModelRouting.suggest(for: item, among: profiles,
-                                            busy: ModelRouting.busy(of: profiles, items: board.items)),
+                                            busy: ModelRouting.busy(of: profiles, items: board.items),
+                                            records: ModelRouting.records(of: board.allItems)),
            let entry = roster.first(where: { $0.id == found.profile.id }) {
             let assignment = Assignment(model: entry.engine.choice, label: entry.profile.name, reason: found.reason,
                                         source: .rule, accepted: false, date: Date())
@@ -1780,7 +1781,8 @@ final class Advanced: ObservableObject {
             made = item.id
             let models = profiles.map(\.profile)
             if let found = ModelRouting.suggest(for: item, among: models,
-                                                busy: ModelRouting.busy(of: models, items: board.items)) {
+                                                busy: ModelRouting.busy(of: models, items: board.items),
+                                                records: ModelRouting.records(of: board.allItems)) {
                 board.assign(item.id, Assignment(model: found.profile.choice, label: found.profile.name,
                                                  reason: found.reason, source: .rule, accepted: false, date: Date()),
                              by: .person, now: Date())
@@ -1815,7 +1817,8 @@ final class Advanced: ObservableObject {
             let others = board.items.filter { $0.id != itemID }
             guard let item = board.item(itemID),
                   let found = ModelRouting.suggest(for: item, among: profiles,
-                                                   busy: ModelRouting.busy(of: profiles, items: others)) else { return }
+                                                   busy: ModelRouting.busy(of: profiles, items: others),
+                                                   records: ModelRouting.records(of: board.allItems)) else { return }
             board.assign(itemID, Assignment(model: found.profile.choice, label: found.profile.name,
                                             reason: found.reason, source: .rule, accepted: false, date: Date()),
                          by: .person, now: Date())

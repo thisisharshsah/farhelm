@@ -73,11 +73,20 @@ public struct ModelProfile: Equatable, Identifiable, Sendable {
         return ((Double(tokens) - out) * inputPrice + out * outputPrice) / 1_000_000
     }
 
+    /// Whether what it costs is known: for a model billed per token, only
+    /// once its price is set; on this Mac or a subscription, always.
+    public var priceKnown: Bool { place != .api || inputPrice > 0 || outputPrice > 0 }
+
     /// One line for the supervisor: "m2 | Claude · Sonnet 5.5 | api | balanced | $2 in, $10 out per 1M | 200k window".
     public var line: String {
         let price: String
         switch place {
-        case .local: price = "free (runs on this Mac)"
+        case .local:
+            // An engine on this Mac can pass requests on to a model that
+            // is billed (Farhelm to a cloud model): its price says so.
+            price = inputPrice == 0 && outputPrice == 0
+                ? "free (runs on this Mac)"
+                : "$\(Self.short(inputPrice)) in, $\(Self.short(outputPrice)) out per 1M tokens (through this Mac)"
         case .account: price = "subscription (no charge per token, plan limits apply)"
         case .api:
             price = inputPrice == 0 && outputPrice == 0
@@ -90,6 +99,47 @@ public struct ModelProfile: Equatable, Identifiable, Sendable {
 
     private static func short(_ value: Double) -> String {
         value == value.rounded() ? String(Int(value)) : String(format: "%.2f", value)
+    }
+}
+
+/// How a model has done on a board's work: its finished runs, and how
+/// the reviews of them went. Runs that failed because the model could not
+/// answer (its limit, say: `Board.modelFailed`) and runs a person or the
+/// supervisor stopped say nothing about the model, and are left out.
+public struct TrackRecord: Equatable, Sendable {
+    public var runs: Int
+    public var approved: Int
+    public var sentBack: Int
+    public var failed: Int
+
+    public init(runs: Int = 0, approved: Int = 0, sentBack: Int = 0, failed: Int = 0) {
+        self.runs = runs
+        self.approved = approved
+        self.sentBack = sentBack
+        self.failed = failed
+    }
+
+    /// How many judged runs (approved, sent back or failed) it takes
+    /// before a record counts.
+    public static let enough = 3
+
+    /// The share of its judged runs that were approved, once there are
+    /// `enough` of them; nil before.
+    public var approvalRate: Double? {
+        let judged = approved + sentBack + failed
+        return judged >= Self.enough ? Double(approved) / Double(judged) : nil
+    }
+
+    /// The record in five steps, 0 (none approved) to 4 (all), for
+    /// comparing models; a model with too few runs to tell is in the
+    /// middle, so it is neither favored nor held back.
+    public var standing: Int {
+        approvalRate.map { min(4, Int($0 * 4)) } ?? 2
+    }
+
+    /// For the supervisor: "6 runs: 4 approved, 1 sent back, 1 failed".
+    public var line: String {
+        "\(runs) run\(runs == 1 ? "" : "s"): \(approved) approved, \(sentBack) sent back, \(failed) failed"
     }
 }
 
@@ -154,12 +204,37 @@ public enum ModelRouting {
         return ModelProfile.Tier(rawValue: min(max(score, 1), 3)) ?? .balanced
     }
 
+    /// Each model's record on these tasks (`TrackRecord`), by
+    /// `ModelChoice.key`.
+    public static func records(of items: [WorkItem]) -> [String: TrackRecord] {
+        var found: [String: TrackRecord] = [:]
+        for item in items {
+            for run in item.runs where !run.isRunning {
+                // Stopped by a person or the supervisor, or failed for want
+                // of an answer: nothing about how the model works.
+                if run.ending == .person || run.ending == .supervisor || Board.modelFailed(run) { continue }
+                var record = found[run.model.key] ?? TrackRecord()
+                record.runs += 1
+                if run.outcome == .failed { record.failed += 1 }
+                if let review = run.review {
+                    if review.verdict == .approved { record.approved += 1 } else { record.sentBack += 1 }
+                }
+                found[run.model.key] = record
+            }
+        }
+        return found
+    }
+
     /// The model for a task, and why, in a line a person can read. nil
     /// only when there are no models to choose from. `busy` is how many
     /// open tasks each group of models has already (`busy(of:items:)`):
     /// among models equally good for the task, the least busy is chosen,
     /// so the work is spread rather than all given to the first by name.
-    public static func suggest(for item: WorkItem, among profiles: [ModelProfile], busy: [String: Int] = [:])
+    /// `records` is how each model has done on the board's work
+    /// (`records(of:)`): between models equally fit and costly, the one
+    /// whose work was approved more often comes first.
+    public static func suggest(for item: WorkItem, among profiles: [ModelProfile], busy: [String: Int] = [:],
+                               records: [String: TrackRecord] = [:])
         -> (profile: ModelProfile, reason: String)? {
         guard !profiles.isEmpty else { return nil }
         let wanted = demand(of: item)
@@ -173,14 +248,19 @@ public enum ModelRouting {
             guard let best = pool.max(by: { ($0.tier, -$0.outputPrice) < ($1.tier, -$1.outputPrice) }) else { return nil }
             return (best, "\(wanted.title) work, and \(best.name) is the strongest model set up.")
         }
-        // Among those strong enough: the least cost, then tools, then
-        // the closest fit (no stronger than needed), then the least work
-        // already given to it, then on this Mac, then by name.
+        // Among those strong enough: one whose cost is known before one
+        // billed at a price not set (never taken for free), the least
+        // cost, then tools, then the closest fit (no stronger than
+        // needed), then the better record on this board, then the least
+        // work already given to it, then on this Mac, then by name.
         let chosen = able.min { left, right in
+            if left.priceKnown != right.priceKnown { return left.priceKnown }
             let costs = (left.cost(ofTokens: estimate), right.cost(ofTokens: estimate))
             if costs.0 != costs.1 { return costs.0 < costs.1 }
             if left.tools != right.tools { return left.tools }
             if left.tier != right.tier { return left.tier < right.tier }
+            let standings = (records[left.choice.key]?.standing ?? 2, records[right.choice.key]?.standing ?? 2)
+            if standings.0 != standings.1 { return standings.0 > standings.1 }
             let loads = (busy[left.group] ?? 0, busy[right.group] ?? 0)
             if loads.0 != loads.1 { return loads.0 < loads.1 }
             if left.place != right.place { return left.place == .local }

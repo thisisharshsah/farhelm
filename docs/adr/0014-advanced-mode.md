@@ -86,7 +86,14 @@ one group since they share its plan (`ModelRouting.busy`), and the
 supervisor sees each model's open tasks and is told to spread the same way
 (fixed 2026-11-23: ties went to the first model by name, so every task went
 to Claude). A subscription's tool counts as calling tools, being an agent
-with its own.
+with its own. A model billed per token whose price is not set is never
+taken for free: models whose cost is known come first, and the supervisor is
+told so; one reached through an engine on this Mac shows its price when it
+has one. How each model's runs on the board went (`TrackRecord`: approved,
+sent back, failed, leaving out runs it could not answer and runs a person
+stopped) is shown to the supervisor, and between models equally fit and
+costly the rule takes the one approved more often, once there are three
+judged runs to tell (added 2026-11-23).
 `EngineChoice` is now the one place that turns an engine and model into a
 request's configuration, for the engine in use and for any other.
 

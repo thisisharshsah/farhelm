@@ -125,6 +125,66 @@ final class ModelRoutingTests: XCTestCase {
                                             busy: [local.group: 9])?.profile.id, "m1")
     }
 
+    func testAModelWhosePriceIsNotSetIsNotTakenForFree() {
+        let unpriced = ModelProfile(id: "m9", choice: ModelChoice(engine: "openai", model: "a-model"), name: "A model",
+                                    place: .api, window: 200_000, tier: .strong, tools: true)
+        XCTAssertFalse(unpriced.priceKnown)
+        // A subscription, as strong and known to cost nothing per token, comes first.
+        XCTAssertEqual(ModelRouting.suggest(for: task(.design), among: [unpriced, account("m1", "claude")])?.profile.id,
+                       "m1")
+        // Between two billed models, the one with a price comes first.
+        XCTAssertEqual(ModelRouting.suggest(for: task(.design), among: [unpriced, opus])?.profile.id, "m3")
+        // On this Mac with a price set (an engine passing requests on), its price is said.
+        let passed = ModelProfile(id: "m8", choice: ModelChoice(engine: "farhelm", model: "claude-sonnet-5-5"),
+                                  name: "Farhelm · Claude Sonnet", place: .local, inputPrice: 2, outputPrice: 10,
+                                  window: 200_000, tier: .balanced, tools: true)
+        XCTAssertTrue(passed.line.contains("$2 in, $10 out"))
+        XCTAssertTrue(local.line.contains("free"))
+    }
+
+    func testTheModelThatDidBetterOnTheBoardComesFirst() {
+        let claude = account("m1", "claude"), codex = account("m2", "codex")
+        let poor = TrackRecord(runs: 4, approved: 1, sentBack: 3)
+        let good = TrackRecord(runs: 3, approved: 3)
+        XCTAssertEqual(poor.standing, 1)
+        XCTAssertEqual(good.standing, 4)
+        XCTAssertEqual(TrackRecord(runs: 2, approved: 2).standing, 2)
+        // A better record beats the name order, and comes before spreading the work.
+        XCTAssertEqual(ModelRouting.suggest(for: task(.design), among: [claude, codex],
+                                            busy: [codex.group: 2],
+                                            records: [claude.choice.key: poor, codex.choice.key: good])?.profile.id,
+                       "m2")
+        // Too few runs to tell: neither favored nor held back.
+        XCTAssertEqual(ModelRouting.suggest(for: task(.design), among: [claude, codex],
+                                            records: [codex.choice.key: TrackRecord(runs: 1, approved: 1)])?.profile.id,
+                       "m1")
+    }
+
+    func testRecordsAreKeptFromFinishedRunsThatSaySomethingAboutTheModel() {
+        let start = Date(timeIntervalSince1970: 0)
+        let a = ModelChoice(engine: "subscription", tool: "claude", model: "")
+        let b = ModelChoice(engine: "subscription", tool: "codex", model: "")
+        func ran(_ model: ModelChoice, _ outcome: WorkRun.Outcome, _ verdict: Review.Verdict? = nil,
+                 ending: WorkRun.Ending? = .itself, report: String? = nil) -> WorkRun {
+            WorkRun(conversation: UUID(), model: model, modelLabel: "", startedAt: start, endedAt: start,
+                    outcome: outcome, report: report,
+                    review: verdict.map { Review(verdict: $0, notes: "", by: "M", date: start) }, ending: ending)
+        }
+        let item = WorkItem(number: 1, title: "Work", runs: [
+            ran(a, .succeeded, .approved),
+            ran(a, .succeeded, .changesRequested),
+            ran(b, .failed),
+            // Out of its limit: nothing about the work.
+            ran(b, .failed, report: "Claude Code: You've hit your limit · resets 3pm"),
+            // Stopped by a person, and one still running: not counted.
+            ran(b, .stopped, ending: .person),
+            ran(a, .running, ending: nil),
+        ], createdAt: start)
+        let records = ModelRouting.records(of: [item])
+        XCTAssertEqual(records[a.key], TrackRecord(runs: 2, approved: 1, sentBack: 1, failed: 0))
+        XCTAssertEqual(records[b.key], TrackRecord(runs: 1, approved: 0, sentBack: 0, failed: 1))
+    }
+
     func testOpenTasksAreCountedByWhatSharesALimit() {
         let sonnet = ModelProfile(id: "m1", choice: ModelChoice(engine: "subscription", tool: "claude", model: "sonnet"),
                                   name: "Claude Code · Sonnet", place: .account, window: 200_000, tier: .balanced,

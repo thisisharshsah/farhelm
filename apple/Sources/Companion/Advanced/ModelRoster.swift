@@ -66,11 +66,16 @@ enum ModelRoster {
     }
 
     /// The list as the supervisor reads it, one model a line, each with
-    /// how many open tasks its group already has (`ModelRouting.busy`).
-    static func lines(_ entries: [Entry], busy: [String: Int] = [:]) -> String {
+    /// how many open tasks its group already has (`ModelRouting.busy`) and
+    /// how it has done on the board's work (`ModelRouting.records`).
+    static func lines(_ entries: [Entry], busy: [String: Int] = [:], records: [String: TrackRecord] = [:]) -> String {
         entries.map { entry -> String in
             let open = busy[entry.profile.group] ?? 0
-            return entry.profile.line + " | " + (open == 1 ? "1 open task" : "\(open) open tasks")
+            var line = entry.profile.line + " | " + (open == 1 ? "1 open task" : "\(open) open tasks")
+            if let record = records[entry.profile.choice.key], record.runs > 0 {
+                line += " | on this board: " + record.line
+            }
+            return line
         }.joined(separator: "\n")
     }
 }
