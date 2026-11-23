@@ -1019,6 +1019,16 @@ final class Advanced: ObservableObject {
                                                                 date: Date()), now: Date())
                             }
                         }
+                    } else if let check = Supervisor.askNotes(in: answer) {
+                        // What only a person can check, or what the review
+                        // cannot be shown: another run would not change it,
+                        // so the task waits in Review for the person.
+                        self.store.update(projectID) { board in
+                            board.note(itemID, "The review needs you" + (check.isEmpty ? "." : ": " + check),
+                                       author: reviewer, now: Date())
+                        }
+                        // Asked once is enough: it is not checked again by itself.
+                        if let run = item.runs.last?.id { self.reviewTries[run] = Advanced.reviewTryLimit }
                     } else if let found = Supervisor.verdict(in: answer) {
                         let verdict = Review(verdict: found.verdict, notes: found.notes, by: reviewer, date: Date())
                         self.store.update(projectID) { board in
@@ -1120,7 +1130,7 @@ final class Advanced: ObservableObject {
             // theirs to start again; so is a task whose last two runs did
             // not finish (`Board.autopilotMayStart`).
             if !board.autopilotMayStart(item) {
-                reason = reason ?? "\(item.key) waits for you: its last run was stopped, or its last two did not finish."
+                reason = reason ?? Self.heldWords(item, on: board)
                 continue
             }
             if !board.budget.fits(estimate: item.estimateTokens ?? 0, spent: spent) {
@@ -1145,6 +1155,16 @@ final class Advanced: ObservableObject {
         }
         let idle = running == 0 ? (reason ?? idleReason(on: board)) : nil
         if waiting[projectID] != idle { waiting[projectID] = idle }
+    }
+
+    /// Why Autopilot leaves a ready task for the person
+    /// (`Board.autopilotMayStart`).
+    private static func heldWords(_ item: WorkItem, on board: Board) -> String {
+        let sentBack = board.sentBackInARow(of: item)
+        if sentBack > BoardRules.redoLimit {
+            return "\(item.key) waits for you: the review sent it back \(sentBack) times in a row. Read what it asked for on the task, then change the task or start it again yourself."
+        }
+        return "\(item.key) waits for you: its last run was stopped, or its last two did not finish."
     }
 
     /// Why a ready task waits for another (`Board.leaseHolder`), for the person.

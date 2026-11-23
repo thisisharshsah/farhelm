@@ -160,6 +160,12 @@ public struct Review: Codable, Equatable, Sendable {
     public var by: String
     public var date: Date
 
+    /// What `by` says when a person checked it.
+    public static let person = "You"
+
+    /// A person checked it, not a model.
+    public var byPerson: Bool { by == Self.person }
+
     public init(verdict: Verdict, notes: String, by: String, date: Date) {
         self.verdict = verdict
         self.notes = notes

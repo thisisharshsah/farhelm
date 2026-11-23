@@ -231,8 +231,14 @@ not the one on screen. `UsageRecord` gains optional `workItem` and `project`.
 
 - **Review gate** (on by default): when a run finishes, the supervisor checks
   its report, changed files and command outcomes against the task's "done
-  means". Approved, the task is done; otherwise it goes back with notes the
-  next run is given. With no clear verdict it waits for a person.
+  means", with the task's earlier reviews beside them. Approved, the task is
+  done; with changes asked for, it goes back with notes the next run is
+  given. When what stops it approving is not something another run would
+  change (a line only a person can check, evidence it cannot be shown), it
+  answers ASK and the task waits in Review for a person, as it does with no
+  clear verdict. A task the review sent back more than twice in a row
+  (`BoardRules.redoLimit`) is not started again by itself (fixed 2026-11-22:
+  a reviewer that kept asking for changes sent a task round without end).
 - **Autopilot** (off by default, per project): starts ready tasks, most
   pressing first, up to the board's "runs at once" (one, unless raised),
   never two whose paths overlap. It acts only for projects whose board was

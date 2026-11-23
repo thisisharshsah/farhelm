@@ -383,12 +383,25 @@ extension Board {
         return count
     }
 
+    /// How many of a task's latest runs in a row a model's review sent
+    /// back with changes asked for. A person's request for changes, or a
+    /// run without such a review, ends the count.
+    public func sentBackInARow(of item: WorkItem) -> Int {
+        var count = 0
+        for run in item.runs.reversed() where !run.isRunning {
+            guard let review = run.review, review.verdict == .changesRequested, !review.byPerson else { break }
+            count += 1
+        }
+        return count
+    }
+
     /// Whether Autopilot may start a task again, after its earlier runs:
-    /// not once its last two runs did not finish (it waits for a person),
-    /// and not when someone stopped or refused its last run.
+    /// not once its last two runs did not finish, not once the review sent
+    /// it back more than `BoardRules.redoLimit` times in a row (it waits
+    /// for a person), and not when someone stopped or refused its last run.
     public func autopilotMayStart(_ item: WorkItem) -> Bool {
         if let ending = item.runs.last?.ending, ending == .person || ending == .supervisor { return false }
-        return failuresInARow(of: item) < 2
+        return failuresInARow(of: item) < 2 && sentBackInARow(of: item) <= BoardRules.redoLimit
     }
 
     /// Whether a task that is not running will be started without a
@@ -687,7 +700,7 @@ extension Board {
         }
         let key = allItems[index].key
         let number = allItems[index].number
-        let actor: BoardActor = review.by == "You" ? .person : .supervisor
+        let actor: BoardActor = review.byPerson ? .person : .supervisor
         switch review.verdict {
         case .approved:
             log("\(review.by) approved \(key)", by: actor, item: number, now: now)
@@ -701,6 +714,13 @@ extension Board {
                 note(id, "Review: " + review.notes, author: review.by, now: now)
             }
             if allItems[index].status != .todo { move(id, to: .todo, by: actor, now: now) }
+            // Sent back too often in a row, it is not started again by itself.
+            if settings.startsWorkByItself, let task = allItems.first(where: { $0.id == id }) {
+                let times = sentBackInARow(of: task)
+                if times > BoardRules.redoLimit {
+                    log("\(key) was sent back \(times) times in a row, so it waits for you", by: actor, item: number, now: now)
+                }
+            }
         }
         return true
     }
@@ -755,6 +775,13 @@ public enum BoardRules {
     /// How many times a task's work is sent back to settle conflicts with
     /// the branch it goes into before it waits for the person instead.
     public static let settleLimit = 2
+
+    /// How many times in a row a task that a model's review sent back is
+    /// started again by itself (by Autopilot, or the supervisor on a board
+    /// it runs). Past that, the task waits for a person: a reviewer that
+    /// keeps asking for changes would otherwise send it round for ever.
+    /// A person's own request for changes is theirs and is not counted.
+    public static let redoLimit = 2
 
     /// Where a task goes when a run on it ends: finished work is looked
     /// at before it is done; work that failed or was stopped is to do

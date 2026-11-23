@@ -131,6 +131,36 @@ final class ChatShelfTests: XCTestCase {
         XCTAssertFalse(board.movesOnByItself(board.item(item.id)!))
     }
 
+    func testAutopilotLeavesATaskForAPersonOnceTheReviewKeepsSendingItBack() {
+        var board = Board(project: project, now: t0)
+        board.settings.autopilot = true
+        let item = board.add(title: "Work", by: .person, now: t0)
+        func sentBack(at minute: Double, by reviewer: String = "M") {
+            board.beginRun(item.id, attempt(in: chat, at: minute), by: .autopilot, now: minutes(minute))
+            board.endRun(in: chat, outcome: .succeeded, report: "Done.", ending: .itself, now: minutes(minute + 1))
+            board.review(item.id, Review(verdict: .changesRequested, notes: "Add tests.", by: reviewer,
+                                         date: minutes(minute + 2)), now: minutes(minute + 2))
+        }
+        // Sent back up to the limit, it is started again by itself.
+        for (round, minute) in [0.0, 3.0].enumerated() {
+            sentBack(at: minute)
+            XCTAssertEqual(board.sentBackInARow(of: board.item(item.id)!), round + 1)
+            XCTAssertTrue(board.autopilotMayStart(board.item(item.id)!))
+            XCTAssertEqual(spot(board).place, .running)
+        }
+        // Once more, and it waits for the person, as a redo.
+        sentBack(at: 6)
+        let held = board.item(item.id)!
+        XCTAssertEqual(board.sentBackInARow(of: held), BoardRules.redoLimit + 1)
+        XCTAssertFalse(board.autopilotMayStart(held))
+        XCTAssertFalse(board.movesOnByItself(held))
+        XCTAssertEqual(spot(board), ChatShelf.Spot(place: .needsYou, task: item.id, need: .redo))
+        // A person's own request for changes is theirs: the count starts again.
+        sentBack(at: 9, by: Review.person)
+        XCTAssertEqual(board.sentBackInARow(of: board.item(item.id)!), 0)
+        XCTAssertTrue(board.autopilotMayStart(board.item(item.id)!))
+    }
+
     func testOneRunsUseIsWhatItsChatUsedWhileItRan() {
         let shared = UUID()
         func use(_ tokens: Int, at minute: Double) -> UsageEntry {
