@@ -67,7 +67,7 @@ struct SelectionControlsDemo: View {
                     .clipShape(Design.Radius.shape(Design.Radius.card))
                 HStack(spacing: Design.Space.s) {
                     SearchablePickerButton(title: "Model", sections: Self.models, selection: $model)
-                    SearchablePicker(title: "Nothing here", sections: [], autoFocus: false, onSelect: { _ in })
+                    SearchablePicker<String>(title: "Nothing here", sections: [], autoFocus: false, onSelect: { _ in })
                         .frame(maxWidth: 260)
                 }
             }

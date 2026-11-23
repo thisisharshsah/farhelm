@@ -696,234 +696,51 @@ private struct BarTrack: NSViewRepresentable {
     }
 }
 
-/// The model picker: opens in place, just above the chat box.
-///
-/// Each engine is a row that opens to show its models; the engine in use
-/// starts open. Tapping a model switches engine and model together and
-/// closes the list. Engines that are not set up yet are not
-/// listed: the last row leads to where they are added.
+/// The model picker: opens in place, just above the chat box, as the
+/// searchable picker. Models are grouped by where they run (this Mac, an
+/// API, an account) and carry badges for source and cost; the recent
+/// choices come first. Choosing one switches engine and model together and
+/// closes the list. Engines that are not set up yet are not listed: the
+/// last row leads to where they are added.
 struct ModelPicker: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var settings: AppSettings
     @Binding var isOpen: Bool
-    /// Engines whose models are showing.
-    @State private var expanded: Set<String> = []
     /// The subscription tools on this Mac, listed once they are found.
     @ObservedObject private var agents = CLIAgents.shared
 
-    /// A model's name as shown.
-    private func title(_ group: EngineGroup, _ model: String) -> String { EngineCatalog.title(group, model) }
-
-    /// One row of the list with the models under it: an engine, or, for
-    /// subscriptions, each tool as an engine of its own.
-    private typealias EngineGroup = EngineCatalog.Engine
-
-    /// Whether this is the engine (and, for a subscription, the tool)
-    /// that answers now.
-    private func inUse(_ group: EngineGroup) -> Bool { EngineCatalog.inUse(group) }
-
-    /// An engine is listed when it is the one in use or has what it needs
-    /// (a key for the hosted ones; the local ones need none here).
-    private func ready(_ kind: LLMProviderKind) -> Bool { EngineCatalog.ready(kind) }
-
-    private var groups: [EngineGroup] { EngineCatalog.engines }
-
-    /// The model this engine would use.
-    private func current(_ group: EngineGroup) -> String { EngineCatalog.current(group) }
-
-    private func choose(_ group: EngineGroup, _ model: String) {
-        EngineCatalog.choose(group, model)
-        close()
-    }
+    private static let recent = RecentChoices(key: "modelPicker.recent")
 
     private func close() {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { isOpen = false }
     }
 
-    private func note(_ group: EngineGroup, _ model: String) -> String? { EngineCatalog.note(group, model) }
-
-    /// What an engine's empty model means, for its tooltip.
-    private func defaultHelp(_ group: EngineGroup) -> String {
-        switch group.kind {
-        case .subscription: return "The tool picks the model"
-        case .compatible: return "Choose its model in Settings"
-        default: return "Farhelm picks the model"
-        }
-    }
-
-    /// As tall as what is open, up to a limit; beyond that it scrolls.
-    private var listHeight: CGFloat {
-        let rows = groups.filter { expanded.contains($0.id) }.reduce(0) { $0 + $1.models.count }
-        let lines = groups.filter { $0.tool.flatMap { agents.limits[$0] }?.isEmpty == false }.count
-        return min(CGFloat(rows) * 29 + CGFloat(groups.count) * 29 + CGFloat(lines) * 17 + 46, 286)
-    }
-
-    private func toggle(_ group: EngineGroup) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-            if expanded.contains(group.id) {
-                expanded.remove(group.id)
-            } else {
-                expanded.insert(group.id)
-            }
-        }
-        if group.kind == .farhelm { app.loadFarhelmModels() }
-        if group.kind == .anthropic { app.loadAnthropicModels() }
-        if group.kind == .subscription { agents.refreshModels() }
-    }
-
-    /// An engine's row: tap to use that engine with the model it last used
-    /// (or its default); the chevron opens its models to pick another.
-    private func engineRow(_ group: EngineGroup) -> some View {
-        let open = expanded.contains(group.id)
-        let inUse = self.inUse(group)
-        let model = current(group)
-        let subscription = group.kind == .subscription
-        let local = EngineCatalog.place(group) == "local"
-        return HStack(spacing: 8) {
-            EngineLogo(kind: group.kind, tool: group.tool, size: 12.5)
-                .foregroundStyle(inUse ? Theme.accent : Theme.ink.opacity(0.65))
-                .frame(width: 18)
-            Text(EngineCatalog.name(group))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(inUse ? Theme.accent : Theme.ink.opacity(0.94))
-            Image(systemName: subscription ? "person.fill" : (local ? "lock.fill" : "cloud"))
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(0.4))
-                .help(subscription ? "On your subscription, through its own tool"
-                      : (local ? "Runs on this Mac" : "Sent to its API"))
-            Spacer(minLength: 6)
-            // Closed, the row still says which model that engine would use.
-            if !open {
-                Text(title(group, model))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 150, alignment: .trailing)
-            }
-            Button { toggle(group) } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundStyle(Theme.ink.opacity(0.55))
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .frame(width: 22, height: 20)
-                    .background(RoundedRectangle(cornerRadius: Theme.chipRadius, style: .continuous)
-                        .fill(Theme.ink.opacity(open ? 0.1 : 0.05)))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(open ? "Hide the models" : "Choose a model")
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
-            .fill(Theme.ink.opacity(open ? 0.06 : 0)))
-        .contentShape(Rectangle())
-        .onTapGesture { choose(group, model) }
-        .help("Use \(EngineCatalog.name(group)) with \(model.isEmpty ? "its default model" : title(group, model))")
-    }
-
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(groups) { group in
-                    engineRow(group)
-                    // What is left of the plan, for a tool that says.
-                    if let tool = group.tool, let left = agents.limitsLine(for: tool) {
-                        Text(left)
-                            .font(.system(size: 10))
-                            .foregroundStyle(Theme.ink.opacity(0.5))
-                            .lineLimit(1)
-                            .padding(.leading, 34)
-                            .padding(.bottom, 3)
-                            .help(agents.limitsDetail(for: tool) ?? left)
-                    }
-                    if expanded.contains(group.id) {
-                        ForEach(group.models, id: \.self) { model in
-                            ModelRow(name: title(group, model),
-                                     note: note(group, model),
-                                     selected: inUse(group) && current(group) == model) {
-                                choose(group, model)
-                            }
-                            .help(model.isEmpty ? defaultHelp(group) : model)
-                            .padding(.leading, 18)
-                            .transition(.opacity)
-                        }
-                    }
-                }
-                Rectangle()
-                    .fill(Theme.ink.opacity(0.08))
-                    .frame(height: 1)
-                    .padding(.vertical, 4)
-                Button {
-                    close()
-                    app.openSettings()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 11.5))
-                        Text("Add or change engines")
-                            .font(.system(size: 11.5))
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundStyle(Theme.ink.opacity(0.6))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+        let listing = ModelChoices.listing()
+        SearchablePicker(
+            title: "Model", sections: listing.sections, selection: listing.current,
+            recents: Self.recent.ids(), prompt: "Search models", maxHeight: 300,
+            footer: SelectionFooter("Add or change engines", symbol: "plus.circle") {
+                close()
+                app.openSettings()
+            },
+            onSelect: { id in
+                guard let choice = listing.choices[id] else { return }
+                Self.recent.record(id)
+                EngineCatalog.choose(choice.engine, choice.model)
+                close()
+            },
+            onClose: close)
+            .environment(\.density, .compact)
+            // It sits over other things, so it needs a solid base under the glass.
+            .background(Design.Radius.shape(Design.Radius.card).fill(Theme.shade.opacity(0.82)))
+            .onAppear {
+                if EngineCatalog.ready(.farhelm) { app.loadFarhelmModels() }
+                if EngineCatalog.ready(.anthropic) { app.loadAnthropicModels() }
+                agents.check()
+                agents.refreshLimits()
+                agents.refreshModels()
             }
-        }
-        .frame(height: listHeight)
-        .padding(6)
-        // It sits over other things, so it needs a solid base under the glass.
-        .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(Theme.shade.opacity(0.82)))
-        .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-        .onAppear {
-            // Every engine opens collapsed, the one in use marked with its
-            // model; a click shows its models.
-            expanded = []
-            if ready(.farhelm) { app.loadFarhelmModels() }
-            if ready(.anthropic) { app.loadAnthropicModels() }
-            agents.check()
-            agents.refreshLimits()
-        }
-        .onExitCommand { close() }
-    }
-}
-
-private struct ModelRow: View {
-    let name: String
-    let note: String?
-    let selected: Bool
-    let action: () -> Void
-    @State private var hover = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 11.5))
-                .foregroundStyle(selected ? Theme.accent : Theme.ink.opacity(0.25))
-            Text(name)
-                .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
-                .foregroundStyle(Theme.ink.opacity(selected ? 0.96 : 0.85))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 4)
-            if let note {
-                Text(note)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
-            .fill(selected ? Theme.accent.opacity(0.14) : Theme.ink.opacity(hover ? 0.07 : 0)))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action)
-        .onHover { hover = $0 }
     }
 }
 
