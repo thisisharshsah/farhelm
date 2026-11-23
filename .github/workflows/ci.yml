@@ -103,6 +103,22 @@ jobs:
       - name: Build the web app and service worker
         run: pnpm --filter @farhelm/web build
 
+  companion:
+    # Companion's shared Swift packages, which hold its rules: the board
+    # (tasks, runs, reviews, which model a task goes to, what may start by
+    # itself), the sealed link to the phone, and what the iPhone, iPad and
+    # Watch apps share. Plain Swift, so no app build and no signing. The
+    # app itself needs the macOS 26 SDK and CEF, and is built locally.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Board rules
+        run: swift test --package-path apple/Shared/CompanionBoard
+      - name: Link
+        run: swift test --package-path apple/Shared/CompanionLink
+      - name: Shared by the mobile apps
+        run: swift test --package-path apple/Mobile/CompanionKit
+
   watch:
     # The watch's crypto is hand-written (Apple ships no Salsa20), so it is
     # checked against Rust's and TweetNaCl's output on every commit. Needs macOS
