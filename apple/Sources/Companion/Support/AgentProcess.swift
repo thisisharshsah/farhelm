@@ -164,7 +164,7 @@ final class AgentProcess: @unchecked Sendable {
     /// and Qt Creator call it; nil where this macOS does not have it.
     private typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
 
-    nonisolated(unsafe) private static let disclaim: Disclaim? = {
+    private static let disclaim: Disclaim? = {
         // RTLD_DEFAULT: every image already loaded.
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
                                  "responsibility_spawnattrs_setdisclaim") else { return nil }
