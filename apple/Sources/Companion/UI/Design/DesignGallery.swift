@@ -24,10 +24,15 @@ enum DesignGallery {
             made.isReleasedWhenClosed = false
             made.contentView = NSHostingView(rootView: DesignGalleryView())
             made.center()
+            // Opens on the Space in use, even beside a full-screen app.
+            made.collectionBehavior.insert(.moveToActiveSpace)
             window = made
         }
-        window?.makeKeyAndOrderFront(nil)
         NSApp.activate()
+        window?.makeKeyAndOrderFront(nil)
+        // macOS may not let the app come forward (a launch from the shell,
+        // another app in use); the window is shown all the same.
+        window?.orderFrontRegardless()
     }
 
     // MARK: Debug menu
@@ -85,10 +90,9 @@ struct DesignGalleryApp: App {
     @NSApplicationDelegateAdaptor(DesignGalleryAppDelegate.self) var delegate
 
     var body: some Scene {
-        Window("Design Gallery", id: "design-gallery") {
-            DesignGalleryView()
-        }
-        .defaultSize(width: 1100, height: 800)
+        // The window is opened by the delegate (`DesignGallery.open`), the
+        // same one Debug > Design Gallery opens.
+        Settings { EmptyView() }
     }
 }
 
@@ -96,7 +100,7 @@ struct DesignGalleryApp: App {
 final class DesignGalleryAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
+        DesignGallery.open()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
