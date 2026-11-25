@@ -180,7 +180,7 @@ final class OverlayController {
         main = FloatingPanel(size: panelSize, movable: false, shadow: false, resizable: true)
         main.activatesOnClick = true
         setFloor(panelMinSize)
-        let content = NSHostingView(
+        let content = FirstClickHostingView(
             rootView: OverlayView()
                 .environmentObject(app)
                 .environmentObject(settings)
@@ -228,7 +228,13 @@ final class OverlayController {
             main.setFrame(NSRect(origin: main.frame.origin, size: panelSize), display: false)
         }
         main.setFrameAutosaveName("CompanionPanel")
-        snapPanelToIndicator()
+        // A panel the person had moved somewhere of its own opens there
+        // again; only one still following the circle is placed beside it.
+        // Read before anything moves the panel: the autosave would write
+        // the new place over the saved one.
+        panelDetached = UserDefaults.standard.bool(forKey: Session.detached)
+            && NSScreen.screens.contains { $0.visibleFrame.intersects(main.frame) }
+        if !panelDetached { snapPanelToIndicator() }
         lastPanelOrigin = main.frame.origin
         applySharing(settings.hideFromScreenShare)
         indicator.orderFrontRegardless()
@@ -252,6 +258,25 @@ final class OverlayController {
                 guard let self else { return }
                 self.applyPlacement(onTop: self.settings.keepOnTop, everywhere: everywhere)
             }
+            .store(in: &bag)
+
+        // The session is saved again when the open chat, the sidebar or the
+        // zoom changes; the frame's own changes are watched below.
+        app.$conversation
+            .map(\.id)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.scheduleSessionSave() }
+            .store(in: &bag)
+        app.$sidebarPinned
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.scheduleSessionSave() }
+            .store(in: &bag)
+        app.$zoomed
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.scheduleSessionSave() }
             .store(in: &bag)
 
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -295,6 +320,7 @@ final class OverlayController {
                 if !self.main.inLiveResize { self.trace("resized frame=\(Self.text(self.main.frame)) content=\(Self.text(content)) live=\(self.main.inLiveResize)") }
                 self.enforceFit()
                 self.keepIndicatorClear()
+                self.scheduleSessionSave()
             }
         }
         // Dragging or edge-moving the panel itself detaches it from the circle.
@@ -303,6 +329,7 @@ final class OverlayController {
                                                queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.scheduleSessionSave()
                 // Frames passed through while the panel animates are not the user's doing.
                 guard !self.animatingFrame else { return }
                 let origin = self.main.frame.origin
@@ -878,6 +905,79 @@ final class OverlayController {
         setPanelFrame(visible, animated: true)
     }
 
+    // MARK: The session kept between launches
+    //
+    // Which chat is open, the sidebar, where the panel sits and whether it
+    // fills the screen are saved a moment after any of them changes, not
+    // only on quitting: a force-quit or a crash never reaches
+    // applicationWillTerminate. AppKit keeps the frame under
+    // "CompanionPanel" as it changes; it is saved again here with the rest.
+
+    private enum Session {
+        static let chat = "sessionOpenChat"
+        static let sidebar = "sessionSidebarPinned"
+        static let detached = "sessionPanelDetached"
+        static let zoomedFrom = "sessionFrameBeforeZoom"
+    }
+    private var sessionSave: Task<Void, Never>?
+
+    /// Puts back the chat, the sidebar and the zoom saved last time. The
+    /// frame and where the panel sits are put back as the panel is made.
+    /// Called once at launch, after AppState is set up, since opening a
+    /// chat goes through AppState.
+    func restoreSession() {
+        let d = UserDefaults.standard
+        if let saved = d.string(forKey: Session.chat), let id = UUID(uuidString: saved) {
+            // A chat deleted since, or one never written because nothing was
+            // said in it, is not found and the new chat stays.
+            app.openConversation(id)
+        }
+        if d.bool(forKey: Session.sidebar), !app.sidebarPinned {
+            app.sidebarPinned = true
+            setSidebar(true)
+        }
+        if frameBeforeZoom == nil, let saved = d.string(forKey: Session.zoomedFrom),
+           let visible = (main.screen ?? targetScreen)?.visibleFrame {
+            let before = NSRectFromString(saved)
+            // The size to go back to must still be usable on a screen
+            // attached now, or leaving the zoom would lose the panel.
+            if before.width >= panelMinSize.width, before.height >= panelMinSize.height,
+               NSScreen.screens.contains(where: { $0.visibleFrame.intersects(before) }) {
+                frameBeforeZoom = before
+                app.zoomed = true
+                // Fitted to this screen, which may not be the one it filled before.
+                setPanelFrame(visible)
+            }
+        }
+    }
+
+    /// Saves the session once things settle, so a drag or a resize writes
+    /// once at its end and not on every frame it passes through.
+    private func scheduleSessionSave() {
+        sessionSave?.cancel()
+        sessionSave = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.saveSession()
+        }
+    }
+
+    /// Saves the session now: when the wait above ends, and on quitting.
+    func saveSession() {
+        sessionSave?.cancel()
+        sessionSave = nil
+        let d = UserDefaults.standard
+        d.set(app.conversation.id.uuidString, forKey: Session.chat)
+        d.set(app.sidebarPinned, forKey: Session.sidebar)
+        d.set(panelDetached, forKey: Session.detached)
+        if let before = frameBeforeZoom {
+            d.set(NSStringFromRect(before), forKey: Session.zoomedFrom)
+        } else {
+            d.removeObject(forKey: Session.zoomedFrom)
+        }
+        main.saveFrame(usingName: "CompanionPanel")
+    }
+
     /// Compact mode: the panel shrinks to a small pill at its top edge, or
     /// comes back to full size. The pill opens while the pointer is on it.
     func setCompact(_ on: Bool) {
@@ -1098,4 +1198,12 @@ final class OverlayController {
             }
         }
     }
+}
+
+
+/// The panel's content takes the first click as a click, also when the
+/// panel was not the window in front: otherwise a click on a chat in the
+/// sidebar only brought the panel forward and a second click was needed.
+final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

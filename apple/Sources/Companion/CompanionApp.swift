@@ -88,11 +88,23 @@ final class MenuBarPresence: ObservableObject {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Commands, paths and code are typed in Companion: macOS never
+        // changes what is typed (no autocorrect, completion, smart quotes,
+        // smart dashes or text replacement), in any of its text fields.
+        for key in ["NSAutomaticSpellingCorrectionEnabled", "NSAutomaticTextCompletionEnabled",
+                    "NSAutomaticQuoteSubstitutionEnabled", "NSAutomaticDashSubstitutionEnabled",
+                    "NSAutomaticTextReplacementEnabled", "NSAutomaticPeriodSubstitutionEnabled",
+                    "NSAutomaticCapitalizationEnabled", "WebAutomaticSpellingCorrectionEnabled"] {
+            UserDefaults.standard.set(false, forKey: key)
+        }
         applyDockPresence(AppSettings.shared.showInDock)
         // Whatever Companion opens goes above its floating panel.
         WindowStacking.start()
         let overlay = OverlayController(app: AppState.shared, settings: AppSettings.shared)
         AppState.shared.overlay = overlay
+        // The chat, sidebar and zoom left open last time, before the panel
+        // first shows so it opens as it was.
+        overlay.restoreSession()
         overlay.showPanel()
         Shortcuts.shared.registerAll()
         CommandRegistry.shared.registerBuiltIns()
@@ -161,7 +173,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // A command's own keys come first: the palette, the sidebar,
             // a new conversation and the rest.
-            if CommandRegistry.shared.handle(event) { return nil }
+            // Keys pressed in VS Code are its own (Cmd+P, Cmd+Shift+P, Cmd+B).
+            let inEditor = CodeServer.shared.showing && !(event.window is FloatingPanel)
+            if !inEditor, CommandRegistry.shared.handle(event) { return nil }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             // Companion has no main menu, so the usual Edit menu shortcuts
             // (Cut, Copy, Paste, Select All, Undo, Redo) are never routed
@@ -203,5 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppState.shared.persist()
+        // A save still waiting for things to settle is written now.
+        AppState.shared.overlay?.saveSession()
+        // Saves still under way finish before Companion goes.
+        AppState.shared.store.flush()
+        CodeServer.shared.stop()
     }
 }
