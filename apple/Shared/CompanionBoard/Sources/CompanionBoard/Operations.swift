@@ -21,11 +21,12 @@ public struct ItemPatch: Equatable, Sendable {
     public var reason: String?
     /// The files and folders it is planned to change (`WorkItem.paths`).
     public var paths: [String]?
+    public var role: String?
 
     public init(title: String? = nil, details: String? = nil, acceptance: [String]? = nil, status: WorkStatus? = nil,
                 priority: WorkPriority? = nil, kind: WorkKind? = nil, milestone: String? = nil,
                 dependsOn: [String]? = nil, estimateTokens: Int? = nil, model: String? = nil, reason: String? = nil,
-                paths: [String]? = nil) {
+                paths: [String]? = nil, role: String? = nil) {
         self.title = title
         self.details = details
         self.acceptance = acceptance
@@ -38,6 +39,7 @@ public struct ItemPatch: Equatable, Sendable {
         self.model = model
         self.reason = reason
         self.paths = paths
+        self.role = role
     }
 }
 
@@ -259,7 +261,7 @@ extension Board {
                 let made = add(title: title, details: patch.details ?? "", acceptance: patch.acceptance ?? [],
                                status: status, priority: patch.priority ?? .medium, kind: patch.kind ?? .feature,
                                milestone: patch.milestone, estimateTokens: patch.estimateTokens,
-                               paths: patch.paths ?? [], by: actor, now: now)
+                               paths: patch.paths ?? [], role: patch.role, by: actor, now: now)
                 summary.added += 1
                 touch(made.id)
                 if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !label.isEmpty {
@@ -294,6 +296,10 @@ extension Board {
                     if let paths = patch.paths {
                         let kept = Leases.list(paths)
                         if kept != item.paths { item.paths = kept; changed = true }
+                    }
+                    if let role = patch.role, role != item.role {
+                        item.role = role
+                        changed = true
                     }
                 }
                 if let refs = patch.dependsOn { waits.append((found.id, refs)) }

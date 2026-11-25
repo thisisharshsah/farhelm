@@ -194,6 +194,8 @@ public struct WorkRun: Codable, Identifiable, Equatable, Sendable {
         case supervisor
         /// The app was quit under it.
         case quit
+        /// Stopped by rule for going far over the task's estimate.
+        case overrun
     }
 
     public var id: UUID
@@ -221,10 +223,13 @@ public struct WorkRun: Codable, Identifiable, Equatable, Sendable {
     /// (`Checks`): empty when none of them cover what it changed; nil
     /// when none were run (the project has none, or it did not finish).
     public var checks: [CheckResult]?
+    public var specialist: UUID?
+    public var tokens: Int?
 
     public init(id: UUID = UUID(), conversation: UUID, model: ModelChoice, modelLabel: String, startedAt: Date,
                 endedAt: Date? = nil, outcome: Outcome = .running, report: String? = nil, review: Review? = nil,
-                advice: Review? = nil, ending: Ending? = nil, carriesOn: Bool? = nil, checks: [CheckResult]? = nil) {
+                advice: Review? = nil, ending: Ending? = nil, carriesOn: Bool? = nil, checks: [CheckResult]? = nil,
+                specialist: UUID? = nil, tokens: Int? = nil) {
         self.id = id
         self.conversation = conversation
         self.model = model
@@ -238,6 +243,8 @@ public struct WorkRun: Codable, Identifiable, Equatable, Sendable {
         self.ending = ending
         self.carriesOn = carriesOn
         self.checks = checks
+        self.specialist = specialist
+        self.tokens = tokens
     }
 
     public var isRunning: Bool { outcome == .running }
@@ -281,6 +288,7 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
     /// folder. No two tasks whose paths overlap run at once (`Leases`);
     /// empty is not known, which keeps it apart from every other task.
     public var paths: [String] = []
+    public var role: String?
     public var assignment: Assignment?
     /// The model the supervisor last picked for it. It stays when a
     /// person chooses another, so the choice still shows what was advised.
@@ -307,9 +315,10 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
     public init(id: UUID = UUID(), number: Int, title: String, details: String = "", acceptance: [String] = [],
                 status: WorkStatus = .todo, priority: WorkPriority = .medium, kind: WorkKind = .feature,
                 milestone: String? = nil, dependsOn: [Int] = [], estimateTokens: Int? = nil,
+                paths: [String] = [],
                 assignment: Assignment? = nil, runs: [WorkRun] = [], notes: [WorkNote] = [],
                 createdAt: Date, updatedAt: Date? = nil, startedAt: Date? = nil, finishedAt: Date? = nil,
-                dueAt: Date? = nil, order: Double = 0, goal: UUID? = nil) {
+                dueAt: Date? = nil, order: Double = 0, goal: UUID? = nil, role: String? = nil) {
         self.id = id
         self.number = number
         self.title = title
@@ -321,6 +330,7 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
         self.milestone = milestone
         self.dependsOn = dependsOn
         self.estimateTokens = estimateTokens
+        self.paths = paths
         self.assignment = assignment
         self.runs = runs
         self.notes = notes
@@ -331,6 +341,7 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
         self.dueAt = dueAt
         self.order = order
         self.goal = goal
+        self.role = role
     }
 
     /// The name it goes by: "T-7".
@@ -350,7 +361,7 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, number, title, details, acceptance, status, priority, kind, milestone, dependsOn, estimateTokens
         case assignment, suggestion, runs, notes, createdAt, updatedAt, startedAt, finishedAt, dueAt, order, goal
-        case workingCopy, paths
+        case workingCopy, paths, role
     }
 
     /// Read field by field, so a board saved before a field existed still
@@ -381,5 +392,6 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
         goal = try values.decodeIfPresent(UUID.self, forKey: .goal)
         workingCopy = try values.decodeIfPresent(WorkingCopy.self, forKey: .workingCopy)
         paths = try values.decodeIfPresent([String].self, forKey: .paths) ?? []
+        role = try values.decodeIfPresent(String.self, forKey: .role)
     }
 }

@@ -274,7 +274,8 @@ public struct SupervisorReply: Equatable, Sendable {
             estimateTokens: Loose.int(fields["estimate_tokens"] ?? fields["estimateTokens"] ?? fields["estimate"]),
             model: Loose.text(fields["model"] ?? fields["assignee"]),
             reason: Loose.text(fields["reason"] ?? fields["why"]),
-            paths: Loose.list(fields["paths"] ?? fields["files"] ?? fields["touches"]))
+            paths: Loose.list(fields["paths"] ?? fields["files"] ?? fields["touches"]),
+            role: Loose.text(fields["role"]))
     }
 }
 
