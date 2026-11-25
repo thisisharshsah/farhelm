@@ -59,6 +59,10 @@ public enum BoardOperation: Equatable, Sendable {
     case assign(ref: String, model: String, reason: String)
     case note(ref: String, String)
     case remove(ref: String)
+    /// Stops the run going on in a task, and says why. The board only
+    /// records it (`ChangeSummary.stopping`): ending the agent is the
+    /// app's, the same way a person's Stop on the card ends it.
+    case stop(ref: String, reason: String)
     case setBudget(Budget)
 
     var startsGoal: Bool {
@@ -84,11 +88,15 @@ public struct ChangeSummary: Equatable, Sendable {
     public var problems: [String] = []
     /// The tasks that were added or changed.
     public var touched: [UUID] = []
+    /// The tasks whose run the supervisor asked to stop. Their runs are
+    /// still going when `apply` returns; the app stops each one.
+    public var stopping: [UUID] = []
 
     public init() {}
 
     public var isEmpty: Bool {
-        added + updated + moved + assigned + noted + removed == 0 && !goalChanged && !goalStarted && !budgetChanged
+        added + updated + moved + assigned + noted + removed + stopping.count == 0
+            && !goalChanged && !goalStarted && !budgetChanged
     }
 
     /// "Added 6 tasks, suggested a model for 6 and moved 1."
@@ -103,6 +111,7 @@ public struct ChangeSummary: Equatable, Sendable {
         if assigned > 0 { parts.append("suggested a model for \(tasks(assigned))") }
         if noted > 0 { parts.append("left \(noted == 1 ? "a note" : "\(noted) notes")") }
         if removed > 0 { parts.append("removed \(tasks(removed))") }
+        if !stopping.isEmpty { parts.append("stopped \(stopping.count == 1 ? "a run" : "\(stopping.count) runs")") }
         if budgetChanged { parts.append("set the budget") }
         guard !parts.isEmpty else { return "" }
         let text = parts.count == 1 ? parts[0]
@@ -317,6 +326,24 @@ extension Board {
                     continue
                 }
                 if remove(found.id, by: actor, now: now) { summary.removed += 1 }
+
+            case .stop(let ref, let reason):
+                guard let found = item(ref: ref, labels: labels) else {
+                    summary.problems.append("There is no task \(ref) to stop.")
+                    continue
+                }
+                guard found.activeRun != nil else {
+                    summary.problems.append("\(found.key) has no run going on, so there was nothing to stop.")
+                    continue
+                }
+                guard !summary.stopping.contains(found.id) else { continue }
+                // The reason stays on the task, so the person (and the
+                // next run) can read why it was cut short.
+                let why = String(reason.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))
+                _ = note(found.id, why.isEmpty ? "Stopped the run." : "Stopped the run: \(why)", author: author, now: now)
+                log("Asked to stop the run on \(found.key)", by: actor, item: found.number, now: now)
+                summary.stopping.append(found.id)
+                touch(found.id)
             }
         }
 

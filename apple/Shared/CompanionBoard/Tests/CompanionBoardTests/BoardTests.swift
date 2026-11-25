@@ -412,4 +412,29 @@ final class OperationTests: XCTestCase {
         XCTAssertEqual(summary.added, Board.operationLimit)
         XCTAssertEqual(summary.problems.count, 1)
     }
+
+    func testTheSupervisorMayStopARunAndTheTaskWaitsForThePerson() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Looping", by: .person, now: t0)
+        let idle = board.add(title: "Idle", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        let summary = board.apply([.stop(ref: "T-1", reason: "It keeps reading the same file."),
+                                   .stop(ref: "T-2", reason: "Nothing to stop."), .stop(ref: "T-9", reason: "")],
+                                  model: models, now: minutes(1))
+        XCTAssertEqual(summary.stopping, [item.id])
+        XCTAssertEqual(summary.problems.count, 2)
+        XCTAssertEqual(summary.sentence, "Stopped a run.")
+        XCTAssertEqual(board.item(item.id)?.notes.last?.text, "Stopped the run: It keeps reading the same file.")
+        XCTAssertTrue(board.item(idle.id)?.notes.isEmpty ?? false)
+        // The board only notes it: the run goes on until the app ends it.
+        XCTAssertNotNil(board.item(item.id)?.activeRun)
+
+        board.endRun(in: chat, outcome: .stopped, report: "", ending: .supervisor, now: minutes(2))
+        XCTAssertEqual(board.item(item.id)?.status, .todo)
+        XCTAssertEqual(board.item(item.id)?.runs.last?.ending, .supervisor)
+        // Stopped by the supervisor, it is not carried on without the person.
+        XCTAssertFalse(board.mayCarryOn(board.item(item.id)!))
+    }
 }

@@ -707,6 +707,9 @@ final class Advanced: ObservableObject {
             lines.append(contentsOf: problems.prefix(6).map { "- " + $0 })
         }
         if !lines.isEmpty { rest += "\n\n" + lines.joined(separator: "\n") }
+        // The board only noted these; the runs end here, the same way the
+        // card's Stop ends them.
+        for item in summary.stopping { stop(item, in: project, bySupervisor: true) }
         if summary.goalStarted { settleSelection(in: project) }
         if !summary.isEmpty {
             // Past the answer's own task, so the board is settled first.
@@ -890,10 +893,12 @@ final class Advanced: ObservableObject {
         notices[project] = start(item, in: project)
     }
 
-    /// Stops the run going on in a task.
-    func stop(_ itemID: UUID, in project: UUID) {
+    /// Stops the run going on in a task: from its card (the person), or
+    /// because the supervisor asked (`bySupervisor`). Either way the task
+    /// goes back to To do and waits for a person to start it again.
+    func stop(_ itemID: UUID, in project: UUID, bySupervisor: Bool = false) {
         guard let chat = store.boards[project]?.item(itemID)?.activeRun?.conversation else { return }
-        app.stopAgent(in: chat)
+        app.stopAgent(in: chat, bySupervisor: bySupervisor)
     }
 
     /// An agent task began in a chat. When the chat is one of a board's

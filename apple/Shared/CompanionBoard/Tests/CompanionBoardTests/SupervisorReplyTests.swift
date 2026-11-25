@@ -150,4 +150,16 @@ final class SupervisorReplyTests: XCTestCase {
         XCTAssertEqual(Loose.double("$25"), 25)
         XCTAssertEqual(Loose.list("- one\n- two; three") ?? [], ["one", "two", "three"])
     }
+
+    func testAStopIsReadUnderItsOtherNamesToo() {
+        let reply = SupervisorReply.parse("""
+        T-3 keeps reading the same file.
+        ```board
+        {"operations":[{"op":"stop","id":"T-3","reason":"Loops on reads."},{"op":"cancel","id":"T-4"},{"op":"halt","task":"5","why":"Over budget."},{"op":"stop"}]}
+        ```
+        """)
+        XCTAssertEqual(reply.prose, "T-3 keeps reading the same file.")
+        XCTAssertEqual(reply.operations, [.stop(ref: "T-3", reason: "Loops on reads."), .stop(ref: "T-4", reason: ""),
+                                          .stop(ref: "5", reason: "Over budget.")])
+    }
 }

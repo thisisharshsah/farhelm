@@ -234,6 +234,10 @@ public struct SupervisorReply: Equatable, Sendable {
         case "remove", "removetask", "delete", "deletetask", "drop":
             guard !ref.isEmpty else { return nil }
             return .remove(ref: ref)
+        case "stop", "stoprun", "cancel", "cancelrun", "halt", "haltrun":
+            guard !ref.isEmpty else { return nil }
+            let reason = Loose.text(fields["reason"] ?? fields["why"] ?? fields["text"] ?? fields["note"]) ?? ""
+            return .stop(ref: ref, reason: reason)
         case "goal", "setgoal":
             guard let goal = Loose.text(fields["goal"] ?? fields["text"]) else { return nil }
             return .setGoal(goal)
