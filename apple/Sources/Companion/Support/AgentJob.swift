@@ -38,6 +38,9 @@ final class AgentJob: ObservableObject, Identifiable {
     let shell = AgentShell()
 
     @Published var status: String?
+    /// When a wait in place ends: the time left is counted down where it
+    /// shows, so the status does not change (and redraw) every second.
+    @Published var statusUntil: Date?
     @Published var pendingApproval: AgentProposal?
     @Published var pendingQuestion: AgentQuestion?
     /// What the project's supervisor recommends for the approval or the
@@ -50,6 +53,13 @@ final class AgentJob: ObservableObject, Identifiable {
     @Published var waitingForScreen = false
 
     var approval: CheckedContinuation<AgentDecision, Never>?
+    /// What the person wrote while it worked, for the agent's next round.
+    /// A wait in progress ends early when something arrives here.
+    var inbox: [String] = []
+    /// Hosts a sign-in terminal was opened for in this task, so it opens once.
+    var signInOpened: Set<String> = []
+    /// A terminal beside the chat was opened in this task for the person.
+    var terminalOpened = false
     var questionAnswer: CheckedContinuation<String?, Never>?
     var run: Task<Void, Never>?
     /// Who answered what it last waited on. It is set with the answer and
@@ -161,6 +171,12 @@ final class AgentJob: ObservableObject, Identifiable {
     /// when it reported; otherwise it was stopped from outside before it
     /// reported, by the person (or by quitting, when every task is
     /// stopped at once).
+    /// The supervisor stopped it in the person's place. A word already
+    /// given on how it ended stands.
+    func stoppedBySupervisor() {
+        if ending == nil { ending = WorkRun.Ending.supervisor }
+    }
+
     func howItEnded(stoppingAll: Bool) -> WorkRun.Ending {
         if let ending { return ending }
         if endedFailed != nil { return WorkRun.Ending.itself }

@@ -9,7 +9,9 @@ BUNDLE_DIR="dist/$APP_NAME.app"
 
 # What the app carries so it runs on its own, with nothing to install on
 # the Mac that runs it: Chromium (CEF) for the browser, the way Arc is
-# built, and a Python with apwlib for iCloud Passwords. Both are fetched
+# built, and a Python with apwlib for iCloud Passwords, with a Chromium to
+# host Apple's extension (COMPANION_NO_PASSWORDS_HOST=1 leaves it out), and
+# code-server, VS Code's core, for code mode (COMPANION_NO_CODE_SERVER=1). All are fetched
 # once into Vendor/ with only what macOS and Xcode already have.
 # COMPANION_NO_CHROMIUM=1 builds without Chromium (the browser is WebKit).
 # Either way a wrapper library is left in .build/cef for the package to
@@ -25,6 +27,12 @@ chromium() {
     bash scripts/fetch-cef.sh || echo "WARNING: Chromium was not fetched; building with WebKit only."
   fi
   bash scripts/fetch-python.sh || echo "WARNING: Python for iCloud Passwords was not fetched; it will be set up on first use instead."
+  if [[ "${COMPANION_NO_CODE_SERVER:-0}" != "1" ]]; then
+    bash scripts/fetch-code-server.sh || echo "WARNING: VS Code (code-server) was not fetched; code mode uses Companion's own editor."
+  fi
+  if [[ "${COMPANION_NO_PASSWORDS_HOST:-0}" != "1" ]]; then
+    bash scripts/fetch-passwords-host.sh || echo "WARNING: Chromium for iCloud Passwords was not fetched; it will need Chrome, Brave or Edge."
+  fi
   if [[ -f "$CEF_DIR/build/libcef_dll_wrapper.a" && -d "$CEF_FRAMEWORK" ]]; then
     cp "$CEF_DIR/build/libcef_dll_wrapper.a" "$CEF_LIB"
   else
@@ -114,18 +122,30 @@ sign() {
   fi
   # What is inside is signed first (Python's binaries, Chromium's
   # framework and helpers), then the app around it.
-  local inner
-  if [[ -d "$BUNDLE_DIR/Contents/Resources/Python" ]]; then
-    find "$BUNDLE_DIR/Contents/Resources/Python" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) -print0 |
+  local inner folder
+  for folder in Python CodeServer; do
+    [[ -d "$BUNDLE_DIR/Contents/Resources/$folder" ]] || continue
+    find "$BUNDLE_DIR/Contents/Resources/$folder" -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.node' -o -perm -u+x \) -print0 |
       while IFS= read -r -d '' inner; do
         file -b "$inner" | grep -q Mach-O && codesign --force --sign "${identity:--}" "$inner" 2>/dev/null || true
       done
-  fi
+  done
+  # The Chromium for iCloud Passwords keeps its own signature: macOS's
+  # iCloud Passwords helper decides by it.
   for inner in "$BUNDLE_DIR/Contents/Frameworks/"*; do
     [[ -e "$inner" ]] || continue
     codesign --force --sign "${identity:--}" "$inner"
   done
-  if [[ -n "$identity" ]]; then
+  # Mac passkeys in Companion's browser: only with a provisioning profile
+  # from Apple that grants the browser passkey entitlement, placed at
+  # Resources/embedded.provisionprofile. Without one, signing with that
+  # entitlement would stop the app from opening, so it is left out.
+  local profile="Resources/embedded.provisionprofile"
+  if [[ -n "$identity" && -f "$profile" ]]; then
+    cp "$profile" "$BUNDLE_DIR/Contents/embedded.provisionprofile"
+    echo "Signing as: $identity (with Mac passkeys)"
+    codesign --force --entitlements Resources/Browser.entitlements --sign "$identity" "$BUNDLE_DIR"
+  elif [[ -n "$identity" ]]; then
     echo "Signing as: $identity"
     codesign --force --sign "$identity" "$BUNDLE_DIR"
   else
@@ -165,6 +185,9 @@ bundle() {
   cp -R Resources/Engines "$BUNDLE_DIR/Contents/Resources/"
   # Companion's Chrome extension, copied out by Settings > Agent > Your Chrome.
   cp -R Resources/ChromeExtension "$BUNDLE_DIR/Contents/Resources/"
+  # Companion's extension for VS Code (code mode): the agent's terminals
+  # and the review of its changes, inside VS Code.
+  cp -R Resources/VSCodeExtension "$BUNDLE_DIR/Contents/Resources/"
   # File and folder icons (Material Icon Theme, MIT), kept as one archive
   # in the repository and unpacked into the app.
   if [[ -f Resources/FileIcons.tar.gz ]]; then
@@ -177,10 +200,19 @@ bundle() {
     cp -R "$b" "$BUNDLE_DIR/Contents/Resources/"
   done
   bundle_chromium
-  # iCloud Passwords' Python, and the module that lets it use Arc.
-  cp Resources/Python/companion_arc.py "$BUNDLE_DIR/Contents/Resources/"
+  # iCloud Passwords' Python, the module that points it at the Chromium
+  # inside, and that Chromium, which hosts Apple's extension headless.
+  cp Resources/Python/companion_host.py "$BUNDLE_DIR/Contents/Resources/"
   if [[ -x Vendor/python/bin/python3 ]]; then
     cp -R Vendor/python "$BUNDLE_DIR/Contents/Resources/Python"
+  fi
+  # VS Code's core for code mode, with its own Node.
+  if [[ -x Vendor/code-server/bin/code-server ]]; then
+    cp -R Vendor/code-server "$BUNDLE_DIR/Contents/Resources/CodeServer"
+  fi
+  if [[ -d Vendor/passwords-host/Chromium.app ]]; then
+    mkdir -p "$BUNDLE_DIR/Contents/Helpers"
+    cp -R Vendor/passwords-host/Chromium.app "$BUNDLE_DIR/Contents/Helpers/"
   fi
   sign
   echo "Built $BUNDLE_DIR"
@@ -229,12 +261,28 @@ dmg() {
   echo "Built $image"
 }
 
+# Rebuild and restart a running Companion from inside itself (its agent's
+# shell). The restart runs in its own session so it outlives the app it
+# quits, and it opens this build by path: "open -a Companion" can pick
+# another copy with the same bundle ID (an archived one).
+restart() {
+  local bundle
+  bundle="$(cd "$BUNDLE_DIR" && pwd)"
+  /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/sh -c "
+    osascript -e 'quit app id \"com.harshsah.companion\"' >/dev/null 2>&1
+    for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f '$bundle/Contents/MacOS/$APP_NAME' >/dev/null || break; sleep 1; done
+    open -n '$bundle'
+  " </dev/null >/dev/null 2>&1 &
+  echo "Restarting $bundle"
+}
+
 case "${1:-run}" in
   build) build ;;
+  restart) build; bundle; restart ;;
   app)   build; bundle ;;
   run)   build; bundle; open "$BUNDLE_DIR" ;;
   dmg)   build; bundle; dmg ;;
   check) check ;;
   clean) rm -rf .build dist ;;
-  *) echo "usage: bash build.sh [build|app|run|dmg|check|clean]"; exit 1 ;;
+  *) echo "usage: bash build.sh [build|app|run|restart|dmg|check|clean]"; exit 1 ;;
 esac

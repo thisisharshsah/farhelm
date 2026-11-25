@@ -28,6 +28,9 @@ final class AgentProcess: @unchecked Sendable {
     var standardInput: Any?
     var standardOutput: Any?
     var standardError: Any?
+    /// Starts as Companion's own, with its access, instead of responsible
+    /// for itself: only for a folder the person allowed (`ShellAccess`).
+    var inheritsAccess = false
 
     /// Called once, on a thread of its own, when the program has ended.
     var terminationHandler: (@Sendable (AgentProcess) -> Void)? {
@@ -67,7 +70,7 @@ final class AgentProcess: @unchecked Sendable {
         var unblocked = sigset_t()
         sigemptyset(&unblocked)
         posix_spawnattr_setsigmask(&attributes, &unblocked)
-        if let disclaim = Self.disclaim { _ = disclaim(&attributes, 1) }
+        if !inheritsAccess, let disclaim = Self.disclaim { _ = disclaim(&attributes, 1) }
 
         var actions: posix_spawn_file_actions_t?
         guard posix_spawn_file_actions_init(&actions) == 0 else { throw POSIXError(.ENOMEM) }

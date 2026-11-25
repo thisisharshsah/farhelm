@@ -412,4 +412,119 @@ final class OperationTests: XCTestCase {
         XCTAssertEqual(summary.added, Board.operationLimit)
         XCTAssertEqual(summary.problems.count, 1)
     }
+
+    func testTheSupervisorMayStopARunAndTheTaskWaitsForThePerson() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Looping", by: .person, now: t0)
+        let idle = board.add(title: "Idle", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        let summary = board.apply([.stop(ref: "T-1", reason: "It keeps reading the same file."),
+                                   .stop(ref: "T-2", reason: "Nothing to stop."), .stop(ref: "T-9", reason: "")],
+                                  model: models, now: minutes(1))
+        XCTAssertEqual(summary.stopping, [item.id])
+        XCTAssertEqual(summary.problems.count, 2)
+        XCTAssertEqual(summary.sentence, "Stopped a run.")
+        XCTAssertEqual(board.item(item.id)?.notes.last?.text, "Stopped the run: It keeps reading the same file.")
+        XCTAssertTrue(board.item(idle.id)?.notes.isEmpty ?? false)
+        // The board only notes it: the run goes on until the app ends it.
+        XCTAssertNotNil(board.item(item.id)?.activeRun)
+
+        board.endRun(in: chat, outcome: .stopped, report: "", ending: .supervisor, now: minutes(2))
+        XCTAssertEqual(board.item(item.id)?.status, .todo)
+        XCTAssertEqual(board.item(item.id)?.runs.last?.ending, .supervisor)
+        // Stopped by the supervisor, it is not carried on without the person.
+        XCTAssertFalse(board.mayCarryOn(board.item(item.id)!))
+    }
+
+    /// A task with one finished run, waiting in Review, whose checks came
+    /// to `checks` (nil: none ran).
+    private func reviewed(_ title: String, on board: inout Board, checks: [CheckResult]?) -> WorkItem {
+        let item = board.add(title: title, by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        board.endRun(in: chat, outcome: .succeeded, report: "Did \(title).", ending: .itself, now: minutes(1))
+        if let checks, let run = board.item(item.id)?.runs.last {
+            board.recordChecks(item.id, run: run.id, checks, now: minutes(1))
+        }
+        return board.item(item.id)!
+    }
+
+    private func check(_ outcome: CheckResult.Outcome) -> CheckResult {
+        CheckResult(name: "Build", command: "bash build.sh check", outcome: outcome,
+                    exitCode: outcome == .failed ? 1 : 0, seconds: 40)
+    }
+
+    func testTheSupervisorApprovesOnlyReviewTasksWhoseChecksPassed() {
+        var board = Board(project: project, now: t0)
+        let passed = reviewed("Passed", on: &board, checks: [check(.passed)])
+        let failed = reviewed("Failed", on: &board, checks: [check(.passed), check(.failed)])
+        let unchecked = reviewed("Unchecked", on: &board, checks: nil)
+        let waiting = board.add(title: "Not started", by: .person, now: t0)
+        XCTAssertEqual(passed.status, .review)
+
+        let summary = board.apply([.approve(ref: "T-1"), .approve(ref: "T-1"), .approve(ref: "T-2"),
+                                   .approve(ref: "T-3"), .approve(ref: "T-4"), .approve(ref: "T-9")],
+                                  model: models, now: minutes(2))
+        XCTAssertEqual(summary.approving, [passed.id])
+        XCTAssertEqual(summary.problems.count, 4)
+        XCTAssertEqual(summary.sentence, "Asked to approve 1 task.")
+        // The board only records it: the approval itself is the app's,
+        // through the card's Approve, once the merge is known not to conflict.
+        XCTAssertEqual(board.item(passed.id)?.status, .review)
+        // Refused, the reason is on the task and it stays in Review.
+        for refused in [failed, unchecked] {
+            XCTAssertEqual(board.item(refused.id)?.status, .review)
+            XCTAssertTrue(board.item(refused.id)?.notes.last?.text.hasPrefix("Not approved: ") ?? false)
+        }
+        XCTAssertTrue(board.item(failed.id)?.notes.last?.text.contains("Build failed (exit 1)") ?? false)
+        XCTAssertEqual(board.item(waiting.id)?.status, .todo)
+
+        // The card's Approve, which the app calls for it, closes it.
+        board.review(passed.id, Review(verdict: .approved, notes: "", by: "Supervisor", date: minutes(3)), now: minutes(3))
+        XCTAssertEqual(board.item(passed.id)?.status, .done)
+    }
+
+    func testTheSupervisorDeletesJunkButNeverUnmergedWorkTheOwnerDidNotName() {
+        var board = Board(project: project, now: t0)
+        let idle = board.add(title: "Idle", by: .person, now: t0)
+        let junk = reviewed("Junk", on: &board, checks: [check(.failed)])
+        let kept = reviewed("Kept", on: &board, checks: [check(.passed)])
+        for item in [junk, kept] {
+            board.setCopy(item.id, WorkingCopy(folder: "/copies/\(item.key.lowercased())",
+                                               branch: "task/\(item.key.lowercased())", base: "companion/main",
+                                               baseCommit: "abc", madeAt: t0), by: .run, now: t0)
+        }
+        let running = board.add(title: "Running", by: .person, now: t0)
+        board.beginRun(running.id, WorkRun(conversation: UUID(), model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+
+        let named = Board.named(in: "T-2 is junk, throw it away.")
+        XCTAssertEqual(named, [2])
+        let summary = board.apply([.delete(ref: "T-1", reason: "Not needed."), .delete(ref: "T-2", reason: "Junk."),
+                                   .delete(ref: "T-3", reason: ""), .delete(ref: "T-4", reason: "")],
+                                  named: named, model: models, now: minutes(2))
+        // Nothing unmerged on T-1, and the owner named T-2; T-3's branch and
+        // T-4's run are not merged, and nobody named them.
+        XCTAssertEqual(summary.deleting, [idle.id, junk.id])
+        XCTAssertEqual(summary.problems.count, 2)
+        XCTAssertTrue(board.item(kept.id)?.notes.last?.text.hasPrefix("Not deleted: its work on task/t-3") ?? false)
+        XCTAssertTrue(board.item(running.id)?.notes.last?.text.hasPrefix("Not deleted: a run is going on") ?? false)
+
+        // The app takes it off; what its run did stays in the history.
+        board.remove(junk.id, by: .supervisor, now: minutes(3))
+        XCTAssertNil(board.item(junk.id))
+        let history = board.activity.map(\.text)
+        XCTAssertTrue(history.contains("T-2's run 1 of 1, with M: finished. Did Junk."), "\(history)")
+        XCTAssertTrue(history.contains("Asked to delete T-2: Junk."))
+        XCTAssertTrue(history.contains { $0.hasPrefix("Removed T-2: Junk. Its work is kept on branch task/t-2") })
+    }
+
+    func testTheTasksAPersonNamesAreReadFromTheirWords() {
+        XCTAssertEqual(Board.named(in: "Delete T-3, t4, #5 and task 6 as junk; keep the 2 others at T-12."),
+                       [3, 4, 5, 6, 12])
+        XCTAssertEqual(Board.named(in: "Throw the last one away, it costs 30 dollars."), [])
+    }
 }

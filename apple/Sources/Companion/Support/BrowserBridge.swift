@@ -281,12 +281,21 @@ final class BrowserBridge: ObservableObject {
                 "tab \($0["tab"] as? Int ?? 0)\(($0["active"] as? Bool) == true ? " (active)" : ""): \($0["title"] as? String ?? "") <\($0["url"] as? String ?? "")>"
             }
             return (true, tabs.isEmpty ? "No tabs open." : tabs.joined(separator: "\n"))
+        case "look":
+            let place = "\(result["title"] as? String ?? "") <\(result["url"] as? String ?? "")>"
+            guard let picture = result["picture"] as? String else { return (true, "Looked at " + place) }
+            return (true, "A picture of the page as it shows now: " + place + "\n" + AgentSession.pictureMarker + picture)
         default:
             var text = "Done. Now on: \(result["title"] as? String ?? "") <\(result["url"] as? String ?? "")>"
             if let clicked = result["clicked"] as? String { text = "Clicked \"\(clicked)\". " + text }
             if let typed = result["typed"] as? String { text = "Typed into \(typed). " + text }
             if let files = result["uploaded"] as? [String] { text = "Chose \(files.joined(separator: ", ")) for the file field; submit the form to send them. " + text }
             if let saved = result["downloaded"] as? [String] { text += "\nSaved to this Mac: " + saved.joined(separator: ", ") }
+            if let answered = result["answered"] as? String { text = "Answered the page's dialog: \(answered). " + text }
+            if let dialog = result["dialog"] as? String {
+                text += "\nThe page now asks (\(dialog)). Nothing on the page works until it is answered: "
+                    + "use dialog with accept true for OK or false for Cancel. Answer OK only if it is what the user asked for."
+            }
             return (true, text)
         }
     }

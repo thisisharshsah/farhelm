@@ -134,7 +134,7 @@ struct ProjectHomeView: View {
                 .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
                 if renaming {
-                    TextField("Name", text: $newName)
+                    TextField("", text: $newName, prompt: Text("Name").foregroundStyle(Theme.ink.opacity(0.42)))
                         .textFieldStyle(.plain)
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.ink.opacity(0.97))
@@ -229,7 +229,7 @@ struct ProjectHomeView: View {
 
     private var composer: some View {
         HStack(spacing: 8) {
-            TextField("Start a chat in \(project.name)…", text: $draft)
+            TextField("", text: $draft, prompt: Text("Start a chat in \(project.name)…").foregroundStyle(Theme.ink.opacity(0.42)))
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.ink.opacity(0.96))
@@ -272,7 +272,7 @@ struct ProjectHomeView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(Theme.ink.opacity(0.45))
-            TextField("Find a chat in \(project.name)", text: $query)
+            TextField("", text: $query, prompt: Text("Find a chat in \(project.name)").foregroundStyle(Theme.ink.opacity(0.42)))
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.ink.opacity(0.95))

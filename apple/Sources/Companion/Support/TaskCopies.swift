@@ -326,6 +326,49 @@ final class TaskCopies {
         }
     }
 
+    /// Whether a task's work would merge into the branch its copy came
+    /// from, worked out by git without touching any folder, as
+    /// `mergeOnce` does: nil when it would, or the reason it would not.
+    /// The supervisor's approve asks this first, so work that conflicts
+    /// stays in Review with the reason, instead of being approved and
+    /// then sent back to To do by the merge. What the copy has not
+    /// committed yet is not on its branch and is not looked at here;
+    /// `land` still finds a conflict there and sends the task back.
+    func wouldNotMerge(_ copy: WorkingCopy, folder: String) async -> String? {
+        await inTurn(folder) {
+            guard let repository = await self.top(of: folder) else {
+                return "the project's folder is no longer in a git repository"
+            }
+            if Self.isFolder(copy.folder) {
+                let unsettled = await self.unsettled(copy)
+                if !unsettled.isEmpty {
+                    return "a merge in its copy is left unsettled in " + unsettled.prefix(6).joined(separator: ", ")
+                }
+            }
+            // No branch: nothing to merge, which `land` settles by itself.
+            guard let tip = await self.revision("refs/heads/" + copy.branch, in: repository) else { return nil }
+            guard let baseTip = await self.revision("refs/heads/" + copy.base, in: repository) else {
+                return "the branch it came from, \(copy.base), is no longer in the repository"
+            }
+            if await self.git("merge-base --is-ancestor \(tip) \(baseTip)", in: repository, timeout: 30).ok { return nil }
+            let worked = await self.git("merge-tree --write-tree --name-only --no-messages \(baseTip) \(tip)",
+                                        in: repository, timeout: 180)
+            let said = Self.lines(worked.output)
+            // A git before 2.38 cannot work it out without a folder; the
+            // merge itself finds out then.
+            guard let treeAt = said.firstIndex(where: { Self.isObject($0) }) else { return nil }
+            if worked.code == 1 {
+                var files: [String] = []
+                for line in said[(treeAt + 1)...] where !line.isEmpty && !Self.isRemark(line) && !files.contains(line) {
+                    files.append(line)
+                }
+                let list = files.prefix(6).joined(separator: ", ") + (files.count > 6 ? " and \(files.count - 6) more" : "")
+                return "its work conflicts with \(copy.base) in \(list.isEmpty ? "some files" : list)"
+            }
+            return worked.ok ? nil : "git could not work the merge out: \(Self.said(worked.output))"
+        }
+    }
+
     /// One try at the merge. nil when the branch it goes into moved on
     /// while it was worked out.
     private func mergeOnce(_ copy: WorkingCopy, key: String, title: String, repository: String,

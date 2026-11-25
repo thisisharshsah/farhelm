@@ -29,3 +29,4 @@ Vendor/
 Mobile/CompanionMobile.xcodeproj/xcuserdata/
 Mobile/CompanionMobile.xcodeproj/project.xcworkspace/xcuserdata/
 Mobile/CompanionKit/.build/
+*.provisionprofile

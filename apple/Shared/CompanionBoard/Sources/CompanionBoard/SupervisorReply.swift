@@ -231,9 +231,22 @@ public struct SupervisorReply: Equatable, Sendable {
         case "note", "comment", "addnote":
             guard !ref.isEmpty, let text = Loose.text(fields["text"] ?? fields["note"] ?? fields["comment"]) else { return nil }
             return .note(ref: ref, text)
-        case "remove", "removetask", "delete", "deletetask", "drop":
+        case "remove", "removetask", "drop":
             guard !ref.isEmpty else { return nil }
             return .remove(ref: ref)
+        // Its own op, not another name for remove: delete may take a task
+        // with runs, so it carries a reason for the history.
+        case "delete", "deletetask", "trash", "trashtask":
+            guard !ref.isEmpty else { return nil }
+            let reason = Loose.text(fields["reason"] ?? fields["why"] ?? fields["text"] ?? fields["note"]) ?? ""
+            return .delete(ref: ref, reason: reason)
+        case "approve", "approvetask", "accept", "pass":
+            guard !ref.isEmpty else { return nil }
+            return .approve(ref: ref)
+        case "stop", "stoprun", "cancel", "cancelrun", "halt", "haltrun":
+            guard !ref.isEmpty else { return nil }
+            let reason = Loose.text(fields["reason"] ?? fields["why"] ?? fields["text"] ?? fields["note"]) ?? ""
+            return .stop(ref: ref, reason: reason)
         case "goal", "setgoal":
             guard let goal = Loose.text(fields["goal"] ?? fields["text"]) else { return nil }
             return .setGoal(goal)

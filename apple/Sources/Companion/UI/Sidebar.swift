@@ -85,8 +85,15 @@ struct SidebarView: View {
                 Bucket(title: "Earlier", items: earlier)].filter { !$0.items.isEmpty }
     }
 
+    /// Chats whose forks are shown under them.
+    @State private var opened: Set<UUID> = []
+
     var body: some View {
         let buckets = sections
+        let parents = ChatFamilies.parents(in: app.history)
+        let children = Dictionary(grouping: app.history.filter { parents[$0.id] != nil }) { parents[$0.id]! }
+        // A fork is folded under its chat only where that chat is listed too.
+        let listed = Set(buckets.flatMap { $0.items.map(\.id) })
         VStack(alignment: .leading, spacing: 8) {
             // Search, always at hand, with the main action beside it.
             HStack(spacing: 6) {
@@ -97,7 +104,7 @@ struct SidebarView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(searchFocused ? Theme.accent : Theme.ink.opacity(0.45))
-                    TextField("Search", text: $app.historyQuery)
+                    TextField("", text: $app.historyQuery, prompt: Text("Search").foregroundStyle(Theme.ink.opacity(0.42)))
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.ink.opacity(0.95))
@@ -169,10 +176,31 @@ struct SidebarView: View {
                         }
                     }
                     ForEach(buckets) { section in
-                        ForEach(section.items) { item in
+                        // Forks sit under the chat they came from, not as
+                        // chats of their own.
+                        ForEach(section.items.filter { item in
+                            guard app.historyQuery.isEmpty, let parent = parents[item.id] else { return true }
+                            return !listed.contains(parent)
+                        }) { item in
+                            let forks = app.historyQuery.isEmpty ? (children[item.id] ?? []) : []
                             // While a project's page shows, no chat is the open one.
                             SidebarRow(item: item, isCurrent: item.id == app.conversation.id && home.projectID == nil,
-                                       projectName: projectName(of: item))
+                                       projectName: projectName(of: item),
+                                       forks: forks.count,
+                                       forksOpen: opened.contains(item.id) || forks.contains { $0.id == app.conversation.id },
+                                       toggleForks: {
+                                           withAnimation(.easeOut(duration: 0.15)) {
+                                               if opened.contains(item.id) { opened.remove(item.id) } else { opened.insert(item.id) }
+                                           }
+                                       })
+                            if opened.contains(item.id) || forks.contains(where: { $0.id == app.conversation.id }) {
+                                ForEach(forks.sorted { $0.updatedAt > $1.updatedAt }) { fork in
+                                    SidebarRow(item: fork, isCurrent: fork.id == app.conversation.id && home.projectID == nil,
+                                               forkOf: item.id)
+                                        .padding(.leading, 14)
+                                        .transition(.opacity)
+                                }
+                            }
                         }
                     }
                     // Nothing at all, or nothing found: when every chat is a
@@ -333,7 +361,7 @@ private struct ProjectLine: View {
                 .foregroundStyle(showing ? Theme.accent : Theme.ink.opacity(0.55))
                 .frame(width: 14)
             if renaming {
-                TextField("Name", text: $newName)
+                TextField("", text: $newName, prompt: Text("Name").foregroundStyle(Theme.ink.opacity(0.42)))
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.ink.opacity(0.97))
@@ -424,6 +452,14 @@ struct SidebarRow: View {
     var showsTime = false
     /// The project it is in, as a tag, among the recent chats.
     var projectName: String? = nil
+    /// How many forks sit under it, whether they show, and the arrow that
+    /// shows or hides them.
+    var forks = 0
+    var forksOpen = false
+    var toggleForks: () -> Void = {}
+    /// The chat it is a fork of, when it is listed under it.
+    var forkOf: UUID? = nil
+    @ObservedObject private var checkIns = CheckIns.shared
     @State private var hover = false
     @State private var renaming = false
     @State private var newName = ""
@@ -452,7 +488,9 @@ struct SidebarRow: View {
     /// What it is called: a task's chat by its task, as the task is called now.
     private var name: String {
         if let task { return task.title }
-        return isSupervisor ? "Supervisor" : item.title
+        if isSupervisor { return "Supervisor" }
+        // A fork shows its mark, not "(fork)" cut off at the end.
+        return item.title.hasSuffix(" (fork)") ? String(item.title.dropLast(7)) : item.title
     }
 
     /// Opens it. A task's chat beside the board also opens its task.
@@ -526,7 +564,7 @@ struct SidebarRow: View {
                     .foregroundStyle(Theme.accent)
             }
             if renaming {
-                TextField("Name", text: $newName)
+                TextField("", text: $newName, prompt: Text("Name").foregroundStyle(Theme.ink.opacity(0.42)))
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.ink.opacity(0.97))
@@ -540,6 +578,24 @@ struct SidebarRow: View {
                         if !focused { renaming = false }
                     }
             } else {
+                if forks > 0 {
+                    Button(action: toggleForks) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(Theme.ink.opacity(0.55))
+                            .rotationEffect(.degrees(forksOpen ? 90 : 0))
+                            .frame(width: 12, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(forksOpen ? "Hide its forks" : "Show its \(forks) fork\(forks == 1 ? "" : "s")")
+                }
+                if item.isFork {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Theme.ink.opacity(0.5))
+                        .help("A fork of another chat, from a checkpoint")
+                }
                 Text(name)
                     .font(.system(size: 12.5, weight: isSupervisor ? .medium : .regular))
                     .foregroundStyle(Theme.ink.opacity(isCurrent ? 0.97 : 0.86))
@@ -547,7 +603,13 @@ struct SidebarRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 2)
-            if let projectName, !hover, !renaming {
+            // The row keeps the same pieces under the pointer and away from
+            // it, only their opacity changes: putting buttons in and taking
+            // the tags out as the pointer arrived rebuilt the row under the
+            // click, and the first click on a chat was lost.
+            ZStack(alignment: .trailing) {
+                HStack(spacing: 6) {
+            if let projectName, !renaming {
                 Text(projectName)
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(Theme.ink.opacity(0.55))
@@ -559,17 +621,29 @@ struct SidebarRow: View {
                     .frame(maxWidth: 90, alignment: .trailing)
                     .help("In \(projectName)")
             }
-            if hover, !renaming {
-                // A chat the board names follows its task, or is the supervisor's.
-                if !named { rowButton("pencil", help: "Rename") { startRenaming() } }
-                rowButton("trash", help: "Delete this conversation…") { deleting = true }
-            } else if app.chatsWaiting.contains(item.id) {
+            if forks > 0, !renaming {
+                Text("\(forks)")
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.ink.opacity(0.55))
+                    .padding(.horizontal, 5)
+                    .frame(height: 15)
+                    .background(Capsule().fill(Theme.ink.opacity(0.08)))
+                    .help("\(forks) fork\(forks == 1 ? "" : "s") of this chat")
+            }
+                    if app.chatsWaiting.contains(item.id) {
                 // This chat's task waits on you: a question or an OK.
                 Image(systemName: "exclamationmark.bubble.fill")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Theme.amber)
                     .frame(width: 20, height: 20)
                     .help("The task in this chat is waiting for you")
+            } else if app.jobs[item.id] == nil, let checkIn = checkIns.pending(in: item.id).first {
+                // The agent comes back to this chat at a set time.
+                Image(systemName: "alarm")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.amber)
+                    .frame(width: 20, height: 20)
+                    .help("Checking again at \(CheckIns.time(checkIn.due)): \(checkIn.note)")
             } else if app.jobs[item.id] != nil {
                 // A task is running in this chat.
                 LoadingMark(state: .working, size: 12)
@@ -589,6 +663,31 @@ struct SidebarRow: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(Theme.ink.opacity(0.42))
                     .lineLimit(1)
+            }
+                }
+                .opacity(hover && !renaming ? 0 : 1)
+                // Away from the pointer the buttons take no room, under it
+                // the tags take none: sizes change, the pieces stay.
+                .frame(width: hover && !renaming ? 0 : nil, alignment: .trailing)
+                .clipped()
+                HStack(spacing: 2) {
+                if forks > 0 {
+                    rowButton("arrow.triangle.merge", help: "Merge its \(forks) fork\(forks == 1 ? "" : "s") into this chat") {
+                        app.mergeForks(into: item.id)
+                    }
+                } else if let forkOf {
+                    rowButton("arrow.triangle.merge", help: "Merge this fork into the chat it came from") {
+                        app.mergeForks(into: forkOf, only: item.id)
+                    }
+                }
+                // A chat the board names follows its task, or is the supervisor's.
+                if !named { rowButton("pencil", help: "Rename") { startRenaming() } }
+                rowButton("trash", help: "Delete this conversation…") { deleting = true }
+                }
+                .opacity(hover && !renaming ? 1 : 0)
+                .frame(width: hover && !renaming ? nil : 0, alignment: .trailing)
+                .clipped()
+                .allowsHitTesting(hover && !renaming)
             }
         }
         .padding(.leading, 9)
@@ -614,6 +713,11 @@ struct SidebarRow: View {
                 Button(item.archivedAt == nil ? "Archive" : "Put Back on the List") {
                     app.setArchived(item.id, item.archivedAt == nil)
                 }
+            }
+            if forks > 0 {
+                Button("Merge \(forks) Fork\(forks == 1 ? "" : "s") Into This Chat") { app.mergeForks(into: item.id) }
+            } else if let forkOf {
+                Button("Merge Into the Original Chat") { app.mergeForks(into: forkOf, only: item.id) }
             }
             Button("Delete…", role: .destructive) { deleting = true }
         }

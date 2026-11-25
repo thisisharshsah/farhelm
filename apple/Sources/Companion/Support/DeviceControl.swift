@@ -44,6 +44,15 @@ struct ActionStep: Identifiable, Equatable {
         /// A terminal beside the chat, running a command the user works
         /// in with the agent (an ssh session to a server or a cluster).
         case terminal
+        /// Look through the person's saved chats: "search: words", or
+        /// "read: chat-number | what to look for".
+        case chats
+        /// One of the Mac's own services (Spotlight, the clipboard,
+        /// Calendar, Reminders, Mail, Notes): `body` holds the service,
+        /// the action and its values as JSON.
+        case mac
+        /// The agent's notes on where the chat's work stands (`workNotes`).
+        case notes
 
         /// Works an app through the keyboard or the pointer.
         var usesKeyboard: Bool {
@@ -84,6 +93,9 @@ struct ActionStep: Identifiable, Equatable {
         case .delegate: return "Delegate: \(value)"
         case .browser: return "Browser: \(value)"
         case .terminal: return "Terminal: \(value)"
+        case .chats: return "Chats: \(value)"
+        case .notes: return "Task notes: \(value)"
+        case .mac: return "\(macCommand.flatMap { MacServices.service($0.service)?.title } ?? "Mac"): \(value)"
         }
     }
 }
@@ -96,6 +108,9 @@ struct AgentProposal: Identifiable {
     let directory: String
     /// What "always allow" would remember; empty when it cannot apply.
     let remember: [String]
+    /// The sites the browser steps act on, which "Allow on this site"
+    /// stops asking about for the rest of the task.
+    var sites: [String] = []
 }
 
 enum AgentDecision {
@@ -296,6 +311,10 @@ final class DeviceControl {
         for step in steps {
             try check()
             focusAtStart = step.kind == .type ? focusIdentity() : nil
+            // The agent's pointer sits on the field it types or presses into.
+            if step.kind == .type || step.kind == .key, let point = focusedPoint() {
+                await AgentCursor.shared.move(to: point, note: step.kind == .type ? "Typing" : "Pressing \(step.value)", press: false)
+            }
             switch step.kind {
             case .type:
                 try check(typing: true)
@@ -485,7 +504,7 @@ final class DeviceControl {
     /// first, then one that starts with it, then one that contains it. A
     /// path such as "File > Export…" walks the menu bar. Returns whether
     /// something was pressed and what, or why not.
-    func click(_ wanted: String) -> (ok: Bool, detail: String) {
+    func click(_ wanted: String) async -> (ok: Bool, detail: String) {
         guard allowed else {
             requestAccess()
             return (false, DeviceControlError.notAllowed.localizedDescription)
@@ -523,6 +542,11 @@ final class DeviceControl {
         // Where it is on screen, noted before the press in case the press
         // takes it away (a menu item, a dialog's button).
         lastClickPoint = frame(of: match.element).map(Self.cocoaCenter)
+        // The agent's pointer goes there first, so the person sees what is
+        // about to be pressed.
+        if let point = lastClickPoint {
+            await AgentCursor.shared.move(to: point, note: "Clicking \(match.label)", press: true)
+        }
         guard AXUIElementPerformAction(match.element, kAXPressAction as CFString) == .success else {
             return (false, "found the \(kind) \"\(match.label)\" but it did not respond to a press")
         }
@@ -556,6 +580,15 @@ final class DeviceControl {
 
     private static func cocoaCenter(_ rect: CGRect) -> CGPoint {
         cocoa(CGPoint(x: rect.midX, y: rect.midY))
+    }
+
+    /// Where the keys go now: the middle of the focused control (its left
+    /// part for a wide field), in Cocoa screen coordinates.
+    func focusedPoint() -> CGPoint? {
+        guard allowed, let front = frontApp(),
+              let focused = element(front.app, kAXFocusedUIElementAttribute),
+              let box = frame(of: focused), box.width > 0 else { return focusPoint() }
+        return Self.cocoa(CGPoint(x: box.minX + min(box.width / 2, 40), y: box.midY))
     }
 
     /// The middle of the window in front, in Cocoa screen coordinates.
@@ -727,6 +760,8 @@ final class DeviceControl {
             case "PLAN", "TODO": steps.append(ActionStep(kind: .plan, value: value))
             case "DELEGATE", "RESEARCH", "EXPLORE": steps.append(ActionStep(kind: .delegate, value: value))
             case "TERMINAL", "SSH": steps.append(ActionStep(kind: .terminal, value: value))
+            case "CHATS", "HISTORY": steps.append(ActionStep(kind: .chats, value: value))
+            case "MAC": if let step = ActionStep.mac(line: value) { steps.append(step) }
             case "BROWSER", "CHROME":
                 // BROWSER: in Companion's own browser; CHROME: in the user's Chrome.
                 if let step = ActionStep.browser(line: value) {
@@ -768,30 +803,35 @@ final class DeviceControl {
 
 extension ActionStep {
     /// The commands that only look, and change nothing.
-    static let browserLooks: Set<String> = ["read", "tabs", "scroll", "focus", "downloads", "history", "extensions"]
+    static let browserLooks: Set<String> = ["read", "look", "tabs", "scroll", "focus", "downloads", "history", "extensions"]
 
     /// A Chrome step from a command and its arguments.
     static func browser(_ command: String, _ args: [String: Any]) -> ActionStep? {
-        let known = ["open", "read", "tabs", "click", "type", "scroll", "back", "key", "focus", "upload", "downloads", "history",
-                     "extensions", "add_extension"]
+        let known = ["open", "read", "look", "tabs", "click", "type", "scroll", "back", "key", "focus", "upload", "downloads", "history",
+                     "extensions", "add_extension", "dialog"]
         guard known.contains(command) else { return nil }
         let words: String
         switch command {
         case "open": words = "open \(args["url"] as? String ?? "")"
-        case "click": words = "click [\(args["target"] ?? "?")]"
+        case "click": words = "click \(PageLabels.named(args["target"]))"
         case "type":
-            words = "type into [\(args["target"] ?? "?")]: \(args["text"] as? String ?? "")" + ((args["submit"] as? Bool) == true ? " (and submit)" : "")
+            words = ((args["target"].map { "\($0)" } ?? "").isEmpty ? "type where the cursor is" : "type into \(PageLabels.named(args["target"]))") + ": \(args["text"] as? String ?? "")" + ((args["submit"] as? Bool) == true ? " (and submit)" : "")
         case "scroll": words = "scroll \(args["direction"] as? String ?? "down")"
         case "key": words = "press \(args["key"] as? String ?? "Enter")"
         case "focus": words = "switch to tab \(args["tab"] ?? "?")"
         case "upload":
             let files = (args["paths"] as? [Any])?.compactMap { $0 as? String } ?? []
-            words = "upload \(files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")) into [\(args["target"] ?? "?")]"
+            words = "upload \(files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")) into \(PageLabels.named(args["target"]))"
         case "downloads": words = "list the downloads"
         case "extensions": words = "list the browser's extensions"
         case "add_extension": words = "add the extension \(args["url"] as? String ?? "")"
         case "history": words = "look in the browser's history for \(args["query"] as? String ?? "")"
         case "read": words = "read the page"
+        case "dialog":
+            let accept = (args["accept"] as? Bool) ?? ((args["accept"] as? String) == "true")
+            let message = PageLabels.dialog.count > 90 ? String(PageLabels.dialog.prefix(89)) + "\u{2026}" : PageLabels.dialog
+            words = "answer the page's question \u{201C}\(message)\u{201D} with " + (accept ? "OK" : "Cancel")
+        case "look": words = "look at the page"
         case "tabs": words = "list the tabs"
         default: words = command
         }
@@ -817,9 +857,16 @@ extension ActionStep {
         case "scroll": return browser("scroll", ["direction": rest.lowercased().hasPrefix("up") ? "up" : "down"])
         case "key": return browser("key", ["key": rest.isEmpty ? "Enter" : rest])
         case "focus": return number(rest).flatMap { browser("focus", ["tab": $0]) }
-        case "read", "tabs", "back", "downloads", "extensions": return browser(command, [:])
+        case "read", "look", "tabs", "back", "downloads", "extensions": return browser(command, [:])
         case "extension": return browser("add_extension", ["url": rest])
         case "history": return browser("history", ["query": rest])
+        // "dialog ok", "dialog cancel", "dialog ok | text for a prompt".
+        case "dialog":
+            let parts = rest.split(separator: "|", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            let accept = ["ok", "accept", "yes", "true"].contains((parts.first ?? "").lowercased())
+            var args: [String: Any] = ["accept": accept]
+            if parts.count > 1 { args["text"] = parts[1] }
+            return browser("dialog", args)
         case "upload":
             // "upload 7 | ~/a.csv, ~/b.csv"
             let parts = rest.split(separator: "|", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
@@ -831,6 +878,39 @@ extension ActionStep {
     }
 
     /// The command and arguments of a Chrome step.
+    /// A Mac service step: which service, which action, and its values.
+    var macCommand: (service: String, action: String, args: [String: Any])? {
+        guard kind == .mac,
+              let object = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any],
+              let service = object["service"] as? String, let action = object["action"] as? String else { return nil }
+        return (service, action, object["args"] as? [String: Any] ?? [:])
+    }
+
+    /// A step on one of the Mac's services, or nil for one it does not have.
+    static func mac(_ service: String, _ action: String, _ args: [String: Any]) -> ActionStep? {
+        let service = service.lowercased(), action = action.lowercased()
+        guard let known = MacServices.service(service),
+              known.looks.contains(action) || known.changes.contains(action) else { return nil }
+        let payload: [String: Any] = ["service": service, "action": action, "args": args]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        return ActionStep(kind: .mac, value: MacServices.words(service, action, args), body: String(decoding: data, as: UTF8.self))
+    }
+
+    /// "calendar events {"days": 3}": a service, an action, and its values
+    /// as JSON when it needs any.
+    static func mac(line: String) -> ActionStep? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let parts = trimmed.split(separator: " ", maxSplits: 2).map(String.init)
+        guard parts.count >= 2 else { return nil }
+        var args: [String: Any] = [:]
+        if parts.count == 3, let object = (try? JSONSerialization.jsonObject(with: Data(parts[2].utf8))) as? [String: Any] {
+            args = object
+        } else if parts.count == 3 {
+            args = ["query": parts[2]]
+        }
+        return mac(parts[0], parts[1], args)
+    }
+
     var browserCommand: (command: String, args: [String: Any])? {
         guard kind == .browser,
               let object = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any],

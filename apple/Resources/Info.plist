@@ -30,14 +30,20 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Companion's browser signs you in with a passkey on your phone, which reaches this Mac over Bluetooth.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Companion transcribes your side of the conversation from the microphone.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Companion asks your browser for the address of the page you are on, so it knows what you are looking at.</string>
+	<string>Companion asks your browser for the address of the page you are on, and works in Mail and Notes when you ask it to.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Companion uses your location to answer questions that depend on where you are, such as the weather.</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Companion uses your location to answer questions that depend on where you are, such as the weather.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Companion reads your calendar when you ask about your schedule, and adds events you agree to.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Companion reads your reminders when you ask, and adds the ones you agree to.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Companion transcribes the other side of calls from system audio.</string>
 	<key>NSLocalNetworkUsageDescription</key>

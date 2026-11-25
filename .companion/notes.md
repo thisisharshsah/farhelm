@@ -1,60 +1,41 @@
 ## Goal
-- Project goal: every Companion screen and component looks and behaves like Apple's native Liquid Glass, with polished enterprise-grade controls in place of basic option pickers, and layouts that stay aligned and readable at every size from compact to full screen.
-- T-44: build the board team design (docs/adr/0016-board-team.md, from T-43) in apple/Shared/CompanionBoard/. It covers roles, assigning tasks to roles, one task at a time per specialist, and a scorecard per role and model. Views are out of scope.
+- Show Companion's work as a Claude-style timeline.
+- The board supervisor can stop a run, approve a Review task whose checks passed, and delete junk tasks (all done Nov 25, 2026, on main).
 
 ## Where things are (hosts, user names, accounts, folders, files, pages, job or session numbers)
-- Person's own checkout: /Users/harshsah/Project/farhelm. Leave it untouched.
-- T-44 worktree: /Users/harshsah/.companion/worktrees/farhelm-879947/t-44, branch task/t-44-board-rules-roles-role-assignment-and, made from companion/main.
-- companion/main is now at 0392957, which is newer than the branch's base. The agent expects it to contain `CodeServer`, but nobody has checked that yet.
-- Board package: apple/Shared/CompanionBoard. Test it with `swift test --package-path apple/Shared/CompanionBoard`.
-- Full app check: `bash apple/build.sh check`, run from the worktree root.
-- New files: Sources/CompanionBoard/Team.swift, Sources/CompanionBoard/Scorecard.swift, Tests/CompanionBoardTests/TeamTests.swift, Tests/CompanionBoardTests/ScorecardTests.swift.
-- Changed files: WorkItem.swift, Board.swift, Operations.swift, SupervisorReply.swift.
-- All 8 files are still in the worktree and have not been committed.
-- Stash entry "t44-wip" is sha 6e50e03709173f9cb4a9483a486254a1abee4475. It has been applied to the worktree but is still in the shared stash.
-- A stray untracked file named `]` sits in the worktree root. It is not part of T-44, so do not commit it. Remove it.
-- AGENTS.md already lists ADR 0016 as docs/adr/0016-lens-platform.md, and the board-team design also uses number 0016.
+- Project notes: `~/Project/farhelm/.companion/notes.md`, at the repository root beside `checks.json`, not under `apple/` (created Nov 24, 2026).
+- Companion builds from `~/Project/farhelm/apple`. `bash build.sh restart` builds and relaunches. `bash build.sh check` only compiles.
+- Board tests: `swift test --package-path Shared/CompanionBoard`, run from `apple/`.
+- Branches: work is committed on `main`, then main is merged into `companion/main` with `--no-ff`, then you switch back to main.
+- Reply voice: `Prompts.voice`.
+- Launch restore and state saving: `Sources/Companion/CompanionApp.swift` (`restoreSession`, `scheduleSessionSave`, `saveSession`) and `Sources/Companion/UI/FloatingPanel.swift` (panel moves and resizes, the circle's move handler).
+- Work timeline: `WorkTimeline` splits the work into stretches between the agent's notes, and `WorkTrail` is the row for one stretch. Both are in `Sources/Companion/UI/OverlayView.swift` (around lines 2640-3420), along with the page preview card. Work steps are in `Sources/Companion/Conversation/Conversation.swift`.
+- Supervisor board ops: the op list and prompt rules are in `Sources/Companion/Advanced/Supervisor.swift`. Replies are decoded in `Shared/CompanionBoard/Sources/CompanionBoard/SupervisorReply.swift` into `BoardOperation` in `Operations.swift`. `Board.apply` applies the ops and returns a `ChangeSummary`.
+- Advanced applies the supervisor's reply in `Sources/Companion/Advanced/Advanced.swift` (`Advanced.finish`, around lines 660-730). Stopping goes through `Advanced.stop(_:in:bySupervisor:)` (around lines 870-960), then `AppState.stopAgent(in:bySupervisor:)` (`AppState.swift` around line 4141), then `AgentJob.stoppedBySupervisor()` in `Sources/Companion/Support/AgentJob.swift`.
+- Autopilot and carry-on skip runs that ended as `.supervisor`: `Board.autopilotMayStart` (`Board.swift:410`) and `mayCarryOn`.
+- Design parts: `Sources/Companion/UI/Design/Theme.swift`, `Sources/Companion/UI/Design/GlassSurfaces.swift`, `Shared/CompanionDesign/Sources/CompanionDesign/OrbitMark.swift`.
+- Untracked files that stay out of commits: `apple/sample.txt`, `apple/sample2.txt`.
 
 ## What works and what does not (ways that failed, with the error, and the way that works instead)
-- Board package tests pass with the recovered work in the worktree: 170 tests, 0 failures.
-- In "don't ask" permission mode, only read-only git (`git status`, `git log`) works. It blocks `rm`, `git merge`, `git add`, `git commit`, `swift test` and `bash`. Eight attempts in a row failed. Retrying does not help: the person must allow these commands or run them.
-- `bash apple/build.sh check` fails in apple/Sources/Companion/CompanionApp.swift. That file uses `CodeServer` and `ConversationStore.flush`, which do not exist on this branch. These errors existed before T-44 and are unrelated to the board package.
-- Calls to WorkItem's init failed until a `paths` parameter was added to it.
-- Restore stashed work with `git stash apply <sha>`, never a bare `git stash pop`, because other worktrees share the stash.
+- `ls`/`wc` on `.companion/` fails (exit 1) if the folder doesn't exist yet. Create the folder and file first, then append.
+- The supervisor (Claude · Opus 5.5) allowed read-only checks and creating files inside the project for the person.
+- Companion froze in a layout loop and had to be force-quit. The loop is fixed.
+- A force-quit or crash skips `applicationWillTerminate`, so saving only there loses state. State is now also saved about 0.5 s after any change (debounced).
+- After a force-quit, check `git log` before redoing work. The restore edits had already been committed (bd95506) even though the working tree was clean.
+- code-server's window title contains an em dash. The code matches it with `\u{2014}`, so comments must describe the title without quoting it literally.
+- Before committing, scan the added lines for em dashes (`grep $'\u2014'`) and for keys and tokens.
+- Update the notes before staging so the work stays one commit. If a second commit happens anyway, fold it back in with `git reset --soft HEAD~1` and `git commit --amend --no-edit`, and only before pushing.
+- If file edits are turned off in a session, stop rather than editing through the shell. Turn edits on first.
+- The board package only records changes and can't end a process, so the app (`Advanced`) does the actual stop.
+- `AppState.swift` does not import CompanionBoard, so it can't name `WorkRun` (the build fails). Pass plain flags there and let `AgentJob`, which imports it, set the ending.
+- `bash build.sh check` shows one warning, in `AgentSession.swift`. It was there before the stop op.
 
 ## Done (results, with numbers)
-- Team.swift:
-  - Types: `TeamRole`, `Specialist`, `TeamRules`.
-  - `TeamRouting.role(for:among:items:)` picks a role by path coverage first, then by matching kind, then by fewest open tasks.
-  - Board functions: `addRole`, `retireRole`, `addSpecialist`, `retireSpecialist`, `freeSpecialist(for:)`, `idleSpecialists(now:)`.
-- Scorecard.swift scores each role and model pair over its latest 20 judged runs:
-  - rates: approved at first review, changes asked, checks passing
-  - token fit: 1 up to 1.2x the estimate, falling to 0 at 3x
-  - blended with a neutral prior, and flags poor pairs
-- New fields: `WorkItem.role`, `WorkRun.specialist`, `WorkRun.tokens`, and `WorkRun.Ending.overrun`.
-- Board.swift:
-  - New: `roles`, `specialists`, `BoardSettings.teamLimit`.
-  - Board version 3. Moving a v2 board to v3 adds one Generalist role that can run many tasks at once and assigns it every existing task.
-  - `mayCarryOn` refuses runs that ended in overrun.
-- `ItemPatch.role` passes the role through add and update. SupervisorReply reads `role` from the supervisor's reply.
-- Tests:
-  - TeamTests: 12 tests (one task at a time, parallel specialists, routing, limits, retiring, idle, v2 move, overrun).
-  - ScorecardTests: 11 tests (approve, send back and fail counting, exclusions, scoring, blending, token fit).
-
-## Next
-- From the worktree, in this order:
-  1. Run `rm ']'`.
-  2. Run `git merge companion/main --no-edit`. If `.companion/notes.md` conflicts, take companion/main's version.
-  3. `git add` the 8 board files.
-  4. Commit them with the message "T-44: Board rules: roles, role assignment and per-role model scorecard".
-  5. Run `bash apple/build.sh check`.
-  6. Run `swift test --package-path apple/Shared/CompanionBoard` again.
-- All of these steps need write permission from the person, or the person runs them.
-- If companion/main does not supply `CodeServer` and `ConversationStore.flush`, find where they come from. Do not rebase or switch branches yourself.
-- After the commit, drop the "t44-wip" stash entry. Find its current `stash@{n}` by its tag first.
-- Check whether the board-team ADR needs a number other than 0016.
-
-## User decisions
-- Never commit to main without the owner's approval. Never switch branches, rebase, push or merge this branch into another yourself.
-- Do not change views in T-44.
-- Comments explain why, not what. No em dashes anywhere. No AI attribution lines in commits.
+- Nov 24, 2026: created `.companion/notes.md` with 2 sections and overwrote nothing.
+  - "Standing rule (Nov 24, 2026)": Companion does the work itself. Claude in the desktop app only guides and helps remember.
+  - "Changes made Nov 24, 2026", 8 bullets: notes kept and written after every task; notes and work logs read before acting; project files read without asking; clicks that open a new tab stay in the same tab; scroll follows the newest message unless the user scrolls by hand; the held message is cut to 2 lines on glass; Companion learns from the Claude app (Settings > Skills); replies use a serif font and the Claude-style voice.
+- Nov 24, 2026, launch restore (commit bd95506): at launch, before the panel first shows, Companion restores the open chat, sidebar, zoom, panel position and frame. It saves them about 0.5 s after any change and on quit. Reported to the user.
+- Nov 24, 2026, commit 4d5b3cc: dragging the circle while the panel is hidden now saves too.
+- Nov 25, 2026, commit 6653988 on main: 77 files of Companion work (speed and memory, project notes, learning from the Claude app, scroll and restore fixes, VS Code bridge, passkeys, browser, ADR 0020). Merged into companion/main (32bbfb2).
+- Nov 25, 2026, supervisor stop op, commit 5f2d44a on main, merged into companion/main as bf09c46. The supervisor sends `{"op":"stop","id":"T-3","reason":"..."}`, and `cancel` and `halt` also work. `Board.apply` refuses it for a task with no run, leaves the note "Stopped the run: <reason>" and lists the task in `ChangeSummary.stopping`. The run ends as `.supervisor`, the task goes back to To do, and it waits for the person. Prompt rule: stop a run that has used more than 3x its estimate, keeps repeating the same reads or failing edits, or loops after falling back to a weaker model, and re-plan the task in the same reply. All 147 board tests pass (2 new) and `bash build.sh check` passes.
+- Nov 25, 2026, supervisor approve and delete ops on main. `{"op":"approve","id":"T-3"}` (also `accept`, `pass`): `Board.apply` takes it only for a task in Review with no run going whose last run's checks ran and all passed; otherwise it leaves "Not approved: <why>. It stays in Review for you." and the task stays in Review. Allowed ones go in `ChangeSummary.approving`; `Advanced.approveForSupervisor` first asks `TaskCopies.wouldNotMerge` (git merge-tree, as `land` does), and on a conflict leaves the reason as a note and keeps the task in Review, else calls the card's own `Advanced.approve(_:in:by: "Supervisor")`, which merges and moves it to Done. `{"op":"delete","id":"T-3","reason":"..."}` (also `trash`; "delete" is no longer another name for `remove`): refused with a "Not deleted: ..." note for a task with unmerged work (a run going on or an open copy, `Board.unmergedWork`) unless the owner named it in their own message (`Board.named(in:)` reads T-3, t3, #3, task 3 from the person's message, never the model's). Before it goes, each of its runs is written to the board log. Allowed ones go in `ChangeSummary.deleting` and the app removes them through the card's `Advanced.remove(_:in:bySupervisor: true)`. Prompt: both op lines, plus rules under the standing review rule. 151 board tests pass (4 new) and `bash build.sh check` passes. 

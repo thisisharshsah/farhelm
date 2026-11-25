@@ -262,7 +262,17 @@ struct OrbitDockView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Theme.ink.opacity(0.95))
                             .lineLimit(1)
-                        Text(subtitle)
+                        Group {
+                            if app.anyAgentRunning, app.leadJob?.waitsOnPerson != true,
+                               let until = app.leadJob?.statusUntil {
+                                // A wait in place counts down here alone.
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    Text(subtitle + " in " + WorkTrail.duration(until.timeIntervalSince(context.date)))
+                                }
+                            } else {
+                                Text(subtitle)
+                            }
+                        }
                             .font(.system(size: 12))
                             .foregroundStyle(tint ?? Theme.ink.opacity(0.6))
                             .lineLimit(1)

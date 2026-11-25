@@ -150,4 +150,28 @@ final class SupervisorReplyTests: XCTestCase {
         XCTAssertEqual(Loose.double("$25"), 25)
         XCTAssertEqual(Loose.list("- one\n- two; three") ?? [], ["one", "two", "three"])
     }
+
+    func testAStopIsReadUnderItsOtherNamesToo() {
+        let reply = SupervisorReply.parse("""
+        T-3 keeps reading the same file.
+        ```board
+        {"operations":[{"op":"stop","id":"T-3","reason":"Loops on reads."},{"op":"cancel","id":"T-4"},{"op":"halt","task":"5","why":"Over budget."},{"op":"stop"}]}
+        ```
+        """)
+        XCTAssertEqual(reply.prose, "T-3 keeps reading the same file.")
+        XCTAssertEqual(reply.operations, [.stop(ref: "T-3", reason: "Loops on reads."), .stop(ref: "T-4", reason: ""),
+                                          .stop(ref: "5", reason: "Over budget.")])
+    }
+
+    func testApproveAndDeleteAreTheirOwnOps() {
+        let reply = SupervisorReply.parse("""
+        T-3 passed its checks; T-5 is the junk you named.
+        ```board
+        {"operations":[{"op":"approve","id":"T-3"},{"op":"accept","task":"4"},{"op":"approve"},{"op":"delete","id":"T-5","reason":"Junk, as you said."},{"op":"trash","id":"T-6"},{"op":"delete"},{"op":"remove","id":"T-7"}]}
+        ```
+        """)
+        XCTAssertEqual(reply.operations, [.approve(ref: "T-3"), .approve(ref: "4"),
+                                          .delete(ref: "T-5", reason: "Junk, as you said."),
+                                          .delete(ref: "T-6", reason: ""), .remove(ref: "T-7")])
+    }
 }

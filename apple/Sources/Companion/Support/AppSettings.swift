@@ -136,6 +136,9 @@ final class AppSettings: ObservableObject {
     /// the messages, the replies and the agent's work list. A little larger
     /// than the rest of the app by default, since it is what is read most.
     @Published var chatTextScale: Double { didSet { d.set(chatTextScale, forKey: "chatTextScale") } }
+    /// Replies in a serif, as the Claude app sets them (the Mac's own New
+    /// York): easier on long reading. Your messages and code keep theirs.
+    @Published var replySerif: Bool { didSet { d.set(replySerif, forKey: "replySerif") } }
 
     static let chatTextRange: ClosedRange<Double> = 0.85...1.6
     static let chatTextDefault = 1.12
@@ -265,6 +268,7 @@ final class AppSettings: ObservableObject {
         d.removeObject(forKey: "contentZoom")
         let chatText = d.double(forKey: "chatTextScale")
         chatTextScale = Self.chatTextRange.contains(chatText) ? chatText : Self.chatTextDefault
+        replySerif = d.object(forKey: "replySerif") as? Bool ?? true
         showInMenuBar = d.bool(forKey: "showInMenuBar")
         keepOnTop = d.object(forKey: "keepOnTop") as? Bool ?? true
         onAllDesktops = d.object(forKey: "onAllDesktops") as? Bool ?? true

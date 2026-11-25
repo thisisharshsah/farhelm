@@ -1,0 +1,16 @@
+{
+  "name": "companion-bridge",
+  "displayName": "Companion",
+  "description": "Companion's agent inside VS Code: its terminals and the review of its changes.",
+  "publisher": "companion",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "companion.keepChange", "title": "Companion: Keep the Agent's Change" },
+      { "command": "companion.undoChange", "title": "Companion: Undo the Agent's Change" }
+    ]
+  }
+}
