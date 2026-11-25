@@ -164,6 +164,8 @@ struct OverlayView: View {
                         errorBanner(error)
                             .padding(.top, 8)
                     }
+                    // After a crash, one line that offers it to the board.
+                    CrashNotice()
                     // What is still missing, with the button that fixes it.
                     if setupShown {
                         SetupGuide()

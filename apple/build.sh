@@ -159,19 +159,59 @@ sign() {
   fi
 }
 
-# A Companion still running from dist/ keeps the old build (and its
+# A Companion still running from this dist/ keeps the old build (and its
 # Chromium windows) on screen, and replacing its files under it breaks its
 # signature. It is asked to quit first, then stopped if it has not.
+#
+# Only the Companion started from this folder's dist/ is touched. A board
+# task builds in a copy of the repository of its own, and a build there
+# used to quit whichever Companion was running, by name: the person's app
+# went away under them with no crash report (2026-11-25, twice, from a
+# task's "build.sh app"). A Companion from another folder is left alone:
+# its files are not the ones replaced here.
+own_app() {
+  local binary
+  binary="$(pwd -P)/$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
+  ps -axo pid=,command= | awk -v binary="$binary" '
+    { pid = $1; $1 = ""; sub(/^ +/, "") }
+    $0 == binary || index($0, binary " ") == 1 { print pid }'
+}
+
+# Every running Companion, whichever folder it was started from.
+any_app() {
+  pgrep -x "$APP_NAME" 2>/dev/null || true
+}
+
 quit_running() {
-  pgrep -x "$APP_NAME" >/dev/null 2>&1 || return 0
-  echo "Quitting the running ${APP_NAME}…"
-  osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+  local mine others
+  mine="$(own_app)"
+  [[ -n "$mine" ]] || return 0
+  echo "Quitting the ${APP_NAME} running from this build…"
+  others="$(any_app | grep -v -x -F "$mine" || true)"
+  if [[ -z "$others" ]]; then
+    # Asked by name, the app saves and closes as it does for Cmd+Q. With
+    # another Companion running too the name could reach that one, so
+    # then this build is only signalled.
+    osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+  else
+    kill $mine 2>/dev/null || true
+  fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    pgrep -x "$APP_NAME" >/dev/null 2>&1 || return 0
+    [[ -n "$(own_app)" ]] || return 0
     sleep 0.5
   done
-  pkill -x "$APP_NAME" 2>/dev/null || true
+  mine="$(own_app)"
+  [[ -z "$mine" ]] || kill $mine 2>/dev/null || true
   sleep 0.5
+}
+
+# Is this folder a copy of the repository made for a board task (a linked
+# git worktree), not the person's own checkout?
+in_task_copy() {
+  local dir common
+  dir="$(git rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  common="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" || return 1
+  [[ "$dir" != "$common" ]]
 }
 
 bundle() {
@@ -270,15 +310,27 @@ restart() {
   bundle="$(cd "$BUNDLE_DIR" && pwd)"
   /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/sh -c "
     osascript -e 'quit app id \"com.harshsah.companion\"' >/dev/null 2>&1
-    for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f '$bundle/Contents/MacOS/$APP_NAME' >/dev/null || break; sleep 1; done
+    for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -x '$APP_NAME' >/dev/null || break; sleep 1; done
     open -n '$bundle'
   " </dev/null >/dev/null 2>&1 &
   echo "Restarting $bundle"
 }
 
+# Restarting replaces the Companion the person is using with this build.
+# From a task's copy that is never wanted by accident: the app would be
+# swapped for unreviewed work in the middle of whatever it was doing.
+restart_allowed() {
+  if in_task_copy && [[ "${COMPANION_RESTART_FROM_COPY:-0}" != "1" ]]; then
+    echo "This folder is a board task's copy of the repository, so its build does not replace the running ${APP_NAME}."
+    echo "Use \"bash build.sh app\" to build here, or restart from the project's own folder."
+    echo "(COMPANION_RESTART_FROM_COPY=1 restarts from here anyway.)"
+    return 1
+  fi
+}
+
 case "${1:-run}" in
   build) build ;;
-  restart) build; bundle; restart ;;
+  restart) restart_allowed || exit 1; build; bundle; restart ;;
   app)   build; bundle ;;
   run)   build; bundle; open "$BUNDLE_DIR" ;;
   dmg)   build; bundle; dmg ;;

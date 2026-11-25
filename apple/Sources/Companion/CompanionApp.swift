@@ -17,6 +17,10 @@ enum Launch {
             DesignGalleryApp.main()
             return
         }
+        // Before anything else of the app's runs, so a crash while it
+        // starts is kept too. (Not for the gallery alone: it would take
+        // the last crash's note without ever showing it.)
+        CrashRecorder.shared.start()
         CompanionApp.main()
     }
 }

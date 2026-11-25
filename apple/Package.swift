@@ -40,9 +40,16 @@ let package = Package(
                 .product(name: "CompanionDesign", package: "CompanionDesign"),
                 .product(name: "CompanionLink", package: "CompanionLink"),
                 .product(name: "CompanionBoard", package: "CompanionBoard"),
-                "CEFKit"
+                "CEFKit",
+                "CrashKit"
             ],
             path: "Sources/Companion"
+        ),
+        // What runs inside a fatal signal, for crash recording: C, because
+        // a signal handler may not allocate memory or take a lock.
+        .target(
+            name: "CrashKit",
+            path: "Sources/CrashKit"
         ),
         .target(
             name: "CEFKit",

@@ -37,13 +37,16 @@ final class RelaySocket: @unchecked Sendable {
     func ping(timeout: TimeInterval) async throws {
         let task = task
         try await LinkTimeout.run(seconds: timeout) {
+            // URLSession can call a ping's handler more than once: with
+            // the pong, and again with an error when the socket is
+            // cancelled or the network goes. Resuming a continuation
+            // twice stops the app (it did, four times by 2026-11-25), so
+            // only the first answer counts.
+            let gate = Gate<Void>()
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                gate.hold(continuation)
                 task.sendPing { error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume()
-                    }
+                    gate.finish(error.map { .failure($0) } ?? .success(()))
                 }
             }
         }
@@ -97,7 +100,7 @@ enum LinkTimeout {
 }
 
 /// A continuation resumed once, by whichever finishes first.
-private final class Gate<T>: @unchecked Sendable {
+final class Gate<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Error>?
 
