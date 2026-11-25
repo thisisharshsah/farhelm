@@ -144,6 +144,21 @@ class CompanionApp : public CefApp, public CefBrowserProcessHandler {
       value->SetInt(5);
       CefString error;
       context->SetPreference("session.restore_on_startup", value, error);
+
+      // Companion offers its own iCloud Passwords, so Chromium's Save password
+      // and autofill bubbles would only cover the page (VS Code in the Code
+      // view). Pages share this global context, so one place covers them all.
+      for (const char *name : {"credentials_enable_service",
+                               "profile.password_manager_enabled",
+                               "autofill.profile_enabled",
+                               "autofill.credit_card_enabled"}) {
+        CefRefPtr<CefValue> off = CefValue::Create();
+        off->SetBool(false);
+        CefString why;
+        if (!context->SetPreference(name, off, why)) {
+          NSLog(@"CEFKit: could not turn off %s: %s", name, why.ToString().c_str());
+        }
+      }
     }
     NSArray<void (^)(void)> *waiting = [gWaiting copy];
     [gWaiting removeAllObjects];
