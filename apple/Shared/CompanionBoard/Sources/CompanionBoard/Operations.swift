@@ -63,6 +63,17 @@ public enum BoardOperation: Equatable, Sendable {
     /// records it (`ChangeSummary.stopping`): ending the agent is the
     /// app's, the same way a person's Stop on the card ends it.
     case stop(ref: String, reason: String)
+    /// Approves a task waiting in Review, as a person's Approve on its
+    /// card does. The board only checks that its checks passed and
+    /// records it (`ChangeSummary.approving`): whether its work merges
+    /// without a conflict is found out in the repository, by the app,
+    /// before the approval is given.
+    case approve(ref: String)
+    /// Takes a task off the board, and says why. Unlike `remove`, a task
+    /// with runs may go: what its runs did stays in the board's history.
+    /// The board records it (`ChangeSummary.deleting`); the app takes it
+    /// off the same way a person's Delete does, so its copy is put away.
+    case delete(ref: String, reason: String)
     case setBudget(Budget)
 
     var startsGoal: Bool {
@@ -91,11 +102,19 @@ public struct ChangeSummary: Equatable, Sendable {
     /// The tasks whose run the supervisor asked to stop. Their runs are
     /// still going when `apply` returns; the app stops each one.
     public var stopping: [UUID] = []
+    /// The tasks the supervisor asked to approve, whose checks passed.
+    /// They are still in Review when `apply` returns: the app tries their
+    /// merge first, and approves each only when it has no conflict.
+    public var approving: [UUID] = []
+    /// The tasks the supervisor asked to delete, under the board's rules.
+    /// They are still on the board when `apply` returns; the app takes
+    /// each one off.
+    public var deleting: [UUID] = []
 
     public init() {}
 
     public var isEmpty: Bool {
-        added + updated + moved + assigned + noted + removed + stopping.count == 0
+        added + updated + moved + assigned + noted + removed + stopping.count + approving.count + deleting.count == 0
             && !goalChanged && !goalStarted && !budgetChanged
     }
 
@@ -112,6 +131,9 @@ public struct ChangeSummary: Equatable, Sendable {
         if noted > 0 { parts.append("left \(noted == 1 ? "a note" : "\(noted) notes")") }
         if removed > 0 { parts.append("removed \(tasks(removed))") }
         if !stopping.isEmpty { parts.append("stopped \(stopping.count == 1 ? "a run" : "\(stopping.count) runs")") }
+        // Not "approved": a merge that conflicts can still refuse it.
+        if !approving.isEmpty { parts.append("asked to approve \(tasks(approving.count))") }
+        if !deleting.isEmpty { parts.append("deleted \(tasks(deleting.count))") }
         if budgetChanged { parts.append("set the budget") }
         guard !parts.isEmpty else { return "" }
         let text = parts.count == 1 ? parts[0]
@@ -154,10 +176,13 @@ extension Board {
     /// models are skipped and reported, limits are kept, a task with a
     /// run going on is not removed, waits that would make a circle are
     /// left out, and only the tasks of the goal being worked toward can
-    /// be changed.
+    /// be changed. `named` is the numbers of the tasks the person named
+    /// in the message being answered (`Board.named(in:)`): the model's
+    /// word that the person asked for something is not taken, so only
+    /// those may be deleted with work that is not merged yet.
     @discardableResult
     public mutating func apply(_ operations: [BoardOperation], by actor: BoardActor = .supervisor,
-                               author: String = "Supervisor",
+                               author: String = "Supervisor", named: Set<Int> = [],
                                model: (String) -> (choice: ModelChoice, label: String)?,
                                now: Date) -> ChangeSummary {
         var summary = ChangeSummary()
@@ -344,6 +369,61 @@ extension Board {
                 log("Asked to stop the run on \(found.key)", by: actor, item: found.number, now: now)
                 summary.stopping.append(found.id)
                 touch(found.id)
+
+            case .approve(let ref):
+                guard let found = item(ref: ref, labels: labels) else {
+                    summary.problems.append("There is no task \(ref) to approve.")
+                    continue
+                }
+                guard !summary.approving.contains(found.id) else { continue }
+                guard found.status == .review, found.activeRun == nil, let last = found.runs.last else {
+                    summary.problems.append("\(found.key) is not waiting in Review, so there was nothing to approve.")
+                    continue
+                }
+                // The checks are evidence the agent cannot change. Without
+                // a run of them that passed, nothing shows the work builds,
+                // and approving it stays the person's (`Checks.letThrough`).
+                let results = last.checks ?? []
+                let failed = results.filter { !$0.passed }
+                guard !results.isEmpty, failed.isEmpty else {
+                    let why = results.isEmpty
+                        ? "no check ran on its work, so nothing shows that it builds"
+                        : "its checks did not pass ("
+                            + failed.prefix(3).map { "\($0.name) \(Checks.status($0))" }.joined(separator: "; ") + ")"
+                    _ = note(found.id, "Not approved: \(why). It stays in Review for you.", author: author, now: now)
+                    summary.problems.append("\(found.key) was not approved: \(why).")
+                    touch(found.id)
+                    continue
+                }
+                log("Asked to approve \(found.key)", by: actor, item: found.number, now: now)
+                summary.approving.append(found.id)
+                touch(found.id)
+
+            case .delete(let ref, let reason):
+                guard let found = item(ref: ref, labels: labels) else {
+                    summary.problems.append("There is no task \(ref) to delete.")
+                    continue
+                }
+                guard !summary.deleting.contains(found.id) else { continue }
+                // Work that is not merged yet is the person's to throw
+                // away: a task holding some goes only when they named it.
+                if let held = unmergedWork(found), !named.contains(found.number) {
+                    _ = note(found.id, "Not deleted: \(held). It is deleted only if you name \(found.key) yourself.",
+                             author: author, now: now)
+                    summary.problems.append("\(found.key) was not deleted: \(held), and you did not name it.")
+                    touch(found.id)
+                    continue
+                }
+                // Its runs leave the board with it. The history outlives
+                // the task, so what each of them did is kept there.
+                for (place, run) in found.runs.enumerated().suffix(10) {
+                    log(Self.record(of: run, number: place + 1, of: found.runs.count, in: found), by: actor,
+                        item: found.number, now: now)
+                }
+                let why = String(reason.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))
+                log("Asked to delete \(found.key)" + (why.isEmpty ? "" : ": \(why)"), by: actor, item: found.number,
+                    now: now)
+                summary.deleting.append(found.id)
             }
         }
 
@@ -363,6 +443,49 @@ extension Board {
             }
         }
         return summary
+    }
+
+    /// What a task holds that is not merged yet, in plain words, or nil.
+    /// An open copy counts whether or not its branch has commits yet: the
+    /// board cannot see into the repository, so it errs on keeping work.
+    public func unmergedWork(_ item: WorkItem) -> String? {
+        if item.activeRun != nil { return "a run is going on in it" }
+        if let copy = item.workingCopy, copy.isOpen { return "its work on \(copy.branch) is not merged yet" }
+        return nil
+    }
+
+    /// One run of a task as the history keeps it once the task is gone:
+    /// "T-3's run 1 of 2, with M: finished, approved by You. Added the form."
+    static func record(of run: WorkRun, number: Int, of count: Int, in item: WorkItem) -> String {
+        let outcome: String
+        switch run.outcome {
+        case .succeeded: outcome = "finished"
+        case .failed: outcome = "failed"
+        case .stopped: outcome = "was stopped"
+        case .running: outcome = "was running"
+        }
+        var text = "\(item.key)'s run \(number) of \(count), with \(run.modelLabel): \(outcome)"
+        if let review = run.review {
+            text += review.verdict == .approved ? ", approved by \(review.by)" : ", sent back by \(review.by)"
+        }
+        if let report = run.report?.trimmingCharacters(in: .whitespacesAndNewlines), !report.isEmpty {
+            text += ". " + String(report.prefix(160))
+        }
+        return text
+    }
+
+    /// The tasks a person's message names, by number: "T-3", "t3", "#3",
+    /// "task 3". Only the person's own words go in, never a model's.
+    public static func named(in message: String) -> Set<Int> {
+        guard let pattern = try? NSRegularExpression(
+            pattern: "(?i)(?<![A-Za-z0-9])(?:t-?|task[ -]?#?|#)([0-9]{1,6})(?![0-9])") else { return [] }
+        let whole = NSRange(message.startIndex..., in: message)
+        var numbers: Set<Int> = []
+        for match in pattern.matches(in: message, range: whole) {
+            guard let range = Range(match.range(at: 1), in: message), let number = Int(message[range]) else { continue }
+            numbers.insert(number)
+        }
+        return numbers
     }
 
     /// A move a supervisor asked for. It may plan and re-plan, send work

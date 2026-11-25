@@ -656,7 +656,8 @@ final class Advanced: ObservableObject {
                             return
                         }
                         self.answered(by: engine, for: projectID)
-                        let more = self.finish(reply: full, shown: shown, project: projectID, roster: roster)
+                        let more = self.finish(reply: full, shown: shown, message: message, project: projectID,
+                                               roster: roster)
                         if !more.isEmpty { continuation.yield(more) }
                         continuation.finish()
                         return
@@ -680,12 +681,16 @@ final class Advanced: ObservableObject {
     /// Carries out what a finished reply asks for on the board. Returns
     /// what is still to be added to the answer on screen: any words that
     /// were held back, then what changed and what could not be done.
-    private func finish(reply text: String, shown: String, project: UUID, roster: [ModelRoster.Entry]) -> String {
+    /// `message` is what the person wrote: the tasks it names are the only
+    /// ones the board lets the supervisor delete with unmerged work.
+    private func finish(reply text: String, shown: String, message: String, project: UUID,
+                        roster: [ModelRoster.Entry]) -> String {
         let reply = SupervisorReply.parse(text)
         var summary = ChangeSummary()
+        let named = Board.named(in: message)
         if !reply.operations.isEmpty {
             change(project) { board in
-                summary = board.apply(reply.operations, model: { name in
+                summary = board.apply(reply.operations, named: named, model: { name in
                     let wanted = name.trimmingCharacters(in: .whitespaces).lowercased()
                     return roster.first { $0.id == wanted }.map { (choice: $0.engine.choice, label: $0.profile.name) }
                 }, now: Date())
@@ -710,6 +715,10 @@ final class Advanced: ObservableObject {
         // The board only noted these; the runs end here, the same way the
         // card's Stop ends them.
         for item in summary.stopping { stop(item, in: project, bySupervisor: true) }
+        // The same ways a person's Approve and Delete on the card go; an
+        // approval waits until its merge is known not to conflict.
+        for item in summary.approving { approveForSupervisor(item, in: project) }
+        for item in summary.deleting { remove(item, in: project, bySupervisor: true) }
         if summary.goalStarted { settleSelection(in: project) }
         if !summary.isEmpty {
             // Past the answer's own task, so the board is settled first.
@@ -1143,10 +1152,38 @@ final class Advanced: ObservableObject {
     }
 
     /// A person passes a task in Review, or sends it back with a note.
-    func approve(_ item: UUID, in project: UUID) {
-        change(project) { $0.review(item, Review(verdict: .approved, notes: "", by: "You", date: Date()), now: Date()) }
+    /// The supervisor's approve comes through here too, as `who`, so its
+    /// work is merged exactly as a person's Approve merges it.
+    func approve(_ item: UUID, in project: UUID, by who: String = Review.person) {
+        change(project) { $0.review(item, Review(verdict: .approved, notes: "", by: who, date: Date()), now: Date()) }
         settle(project)
         tick(project)
+    }
+
+    /// The supervisor's approve (`ChangeSummary.approving`), whose checks
+    /// the board found passed. Its merge is worked out first: an approval
+    /// that would conflict is not given, so the task stays in Review with
+    /// the reason on it rather than going back to To do.
+    private func approveForSupervisor(_ item: UUID, in project: UUID) {
+        guard let task = store.boards[project]?.item(item) else { return }
+        // A task working in the project's folder has nothing to merge.
+        guard let copy = task.workingCopy, copy.isOpen, let folder = self.project(project)?.folder else {
+            approve(item, in: project, by: "Supervisor")
+            return
+        }
+        Task { @MainActor in
+            if let why = await TaskCopies.shared.wouldNotMerge(copy, folder: folder) {
+                self.change(project) {
+                    $0.note(item, "Not approved: \(why). It stays in Review for you.", author: "Supervisor", now: Date())
+                }
+                self.notices[project] = "\(task.key) was not approved: \(why)."
+                return
+            }
+            // A person may have moved it, or started a run, meanwhile.
+            guard let still = self.store.boards[project]?.item(item), still.status == .review,
+                  still.activeRun == nil else { return }
+            self.approve(item, in: project, by: "Supervisor")
+        }
     }
 
     func requestChanges(_ item: UUID, notes: String, in project: UUID) {
@@ -1898,12 +1935,14 @@ final class Advanced: ObservableObject {
         }
     }
 
-    func remove(_ item: UUID, in project: UUID) {
+    /// Takes a task off the board: a person's Delete on the card, or the
+    /// supervisor's delete once the board allowed it (`bySupervisor`).
+    func remove(_ item: UUID, in project: UUID, bySupervisor: Bool = false) {
         if selectedItem == item { selectedItem = nil }
         let task = store.boards[project]?.item(item)
         // A run going on is stopped first: its chat stays, with its work.
-        stop(item, in: project)
-        change(project) { $0.remove(item, by: .person, now: Date()) }
+        stop(item, in: project, bySupervisor: bySupervisor)
+        change(project) { $0.remove(item, by: bySupervisor ? .supervisor : .person, now: Date()) }
         copyChanges[item] = nil
         // Its copy is put away, and its branch, with its work, stays.
         guard let task, let copy = task.workingCopy, copy.isOpen, let folder = self.project(project)?.folder else { return }
