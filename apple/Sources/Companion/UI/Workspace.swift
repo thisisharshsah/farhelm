@@ -298,6 +298,9 @@ final class WorkspaceModel: ObservableObject {
     // Terminals: live shells in this folder, kept running while the
     // workspace stays on it. Several can be open; one shows at a time.
     @Published private(set) var terminals: [TerminalSession] = []
+    /// The agent's terminals show under VS Code (a sign-in, an ssh
+    /// session); the person can put them away without ending them.
+    @Published var agentTerminalsOpen = false
     @Published var currentTerminal = 0
 
     var dirty: Bool { openPath != nil && text != saved }
@@ -960,13 +963,60 @@ final class WorkspaceModel: ObservableObject {
 
 // MARK: - Views
 
+/// VS Code, with the agent's terminals in a drawer under it when there are
+/// any (the page is a window of its own over the pane, so nothing can be
+/// drawn over it: the drawer takes room below instead).
+private struct VSCodeWithTerminals: View {
+    @ObservedObject var model: WorkspaceModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VSCodePane()
+            if model.agentTerminalsOpen, !model.terminals.isEmpty {
+                VStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "terminal")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Agent terminal")
+                            .font(.system(size: 11.5, weight: .medium))
+                        Spacer(minLength: 0)
+                        Button { model.agentTerminalsOpen = false } label: {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Hide the agent's terminal (it keeps running)")
+                    }
+                    .foregroundStyle(Theme.ink.opacity(0.7))
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    TerminalPane(model: model)
+                        .frame(height: 200)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: model.agentTerminalsOpen)
+    }
+}
+
 /// The workspace column: tabs along the top, and the tab's content below.
 struct WorkspacePane: View {
     @EnvironmentObject var app: AppState
 
     var body: some View {
+        // VS Code, when it is the editor and there is a folder. A review of
+        // the agent's changes and the agent's own terminals (an ssh session)
+        // keep Companion's workspace, where they live.
+        // VS Code stays the code view when the agent opens a terminal: the
+        // terminal shows in a drawer under it rather than switching the whole
+        // column to Companion's own workspace.
+        if CodeServer.chosen, app.hasWorkFolder, app.workspace.diff == nil {
+            VSCodeWithTerminals(model: app.workspace)
         // A terminal the agent opened (an ssh session) shows with or without a folder.
-        if app.hasWorkFolder || app.workspace.diff != nil || app.workspace.openPath != nil
+        } else if app.hasWorkFolder || app.workspace.diff != nil || app.workspace.openPath != nil
             || !app.workspace.terminals.isEmpty {
             WorkspaceBody(model: app.workspace, history: ChangeStore.shared)
                 .onAppear {
@@ -2765,7 +2815,7 @@ private struct SearchTab: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Theme.ink.opacity(0.5))
-                TextField("Search in files", text: $model.query)
+                TextField("", text: $model.query, prompt: Text("Search in files").foregroundStyle(Theme.ink.opacity(0.42)))
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.ink.opacity(0.95))
@@ -2792,7 +2842,7 @@ private struct SearchTab: View {
                     Image(systemName: "arrow.2.squarepath")
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(Theme.ink.opacity(0.5))
-                    TextField("Replace with", text: $model.replacement)
+                    TextField("", text: $model.replacement, prompt: Text("Replace with").foregroundStyle(Theme.ink.opacity(0.42)))
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.ink.opacity(0.95))

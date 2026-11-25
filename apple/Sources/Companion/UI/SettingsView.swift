@@ -142,6 +142,7 @@ struct SettingsView: View {
                         case .screen: ScreenSettings()
                         case .agent:
                             AgentSettings()
+                            CodeEditorSettings()
                             ChromeSettings()
                         case .skills: SkillsSettings()
                         case .browser:
@@ -175,7 +176,7 @@ struct SettingsView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(searchFocused ? Theme.accent : Theme.ink.opacity(0.45))
-                TextField("Search", text: $search)
+                TextField("", text: $search, prompt: Text("Search").foregroundStyle(Theme.ink.opacity(0.42)))
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.ink.opacity(0.95))
@@ -1796,6 +1797,10 @@ private struct LookSettings: View {
                 }
             }
             RowLine()
+            ToggleRow("Replies in a serif",
+                      detail: "Set like the Claude app, in the Mac's New York. Your messages and code stay as they are.",
+                      isOn: $settings.replySerif)
+            RowLine()
             ToggleRow("Keep the agent's work open",
                       detail: "Each step on a rail with what went in and came out, in every reply. Off, the work folds to one line once the agent is done; a click opens it.",
                       isOn: $workAlwaysOpen)
@@ -2033,7 +2038,7 @@ private struct SavedLooksCard: View {
         SettingsCard("Saved looks", icon: "square.stack", tint: Theme.mint) {
             SettingRow("Keep this look", detail: "Colors and glass together, under a name.") {
                 HStack(spacing: 6) {
-                    TextField("Name", text: $name)
+                    TextField("", text: $name, prompt: Text("Name").foregroundStyle(Theme.ink.opacity(0.42)))
                         .textFieldStyle(.plain)
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.ink.opacity(0.92))
@@ -2294,6 +2299,47 @@ private struct RemoteSettings: View {
 
 /// Settings > Skills: the skills the agent has (the repository's, yours,
 /// Claude Code's), which chats used each, and more from GitHub.
+private struct LearnedRow: View {
+    let item: LearnedItem
+    let accept: () -> Void
+    let dismiss: () -> Void
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(item.kind.label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.accent.opacity(0.12)))
+                Text(item.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.ink.opacity(0.9))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                PillButton("Keep", icon: "checkmark", prominent: true, action: accept)
+                PillButton("Dismiss", icon: "xmark", action: dismiss)
+            }
+            Text(item.body)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.ink.opacity(0.7))
+                .lineLimit(open ? nil : 3)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .onTapGesture { open.toggle() }
+            if !item.evidence.isEmpty {
+                Text("Seen: " + item.evidence)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.ink.opacity(0.45))
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 private struct SkillsSettings: View {
     @ObservedObject private var app = AppState.shared
     @ObservedObject private var library = SkillLibrary.shared
@@ -2302,8 +2348,29 @@ private struct SkillsSettings: View {
     @State private var openUses: Set<String> = []
 
     private var installed: [Skill] { ProjectContext.skills(in: app.agentStartDirectory) }
+    @ObservedObject private var learning = LearningWatcher.shared
 
     var body: some View {
+        SettingsCard("Learn from the Claude app", icon: "eye",
+                     status: learning.watching || !learning.proposals.isEmpty ? learning.status : nil) {
+            ToggleRow("Watch the Claude app",
+                      detail: "Reads only the Claude desktop app's window, on this Mac, while this is on. When the work there pauses, Companion proposes skills, rules and preferences to keep. Nothing changes until you accept it.",
+                      isOn: Binding(get: { learning.watching }, set: { $0 ? learning.start() : learning.stop() }))
+            ForEach(learning.proposals) { item in
+                RowLine()
+                learnedRow(item)
+            }
+            if FileManager.default.fileExists(atPath: LearningWatcher.rulesFile.path) {
+                RowLine()
+                HStack(spacing: 8) {
+                    PillButton("Open accepted rules", icon: "doc.text") {
+                        NSWorkspace.shared.open(LearningWatcher.rulesFile)
+                    }
+                    Spacer()
+                }
+            }
+        }
+
         SettingsCard("Skills on hand", icon: "book.closed",
                      status: installed.isEmpty ? "None" : "\(installed.count)") {
             Text("Each skill is a SKILL.md that says how to do one kind of work well. The agent sees their names with every task and reads one when the task calls for it. They come from the repository (.companion/skills, .claude/skills), Companion's skills folder, and Claude Code's (~/.claude/skills).")
@@ -2333,7 +2400,7 @@ private struct SkillsSettings: View {
         SettingsCard("Get skills from GitHub", icon: "arrow.down.circle",
                      status: library.loading ? "Looking" : nil) {
             HStack(spacing: 8) {
-                TextField("owner/repository, or a link", text: $repo)
+                TextField("", text: $repo, prompt: Text("owner/repository, or a link").foregroundStyle(Theme.ink.opacity(0.42)))
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, design: .monospaced))
                     .padding(.horizontal, 9)
@@ -2617,7 +2684,7 @@ private struct PasswordsSettings: View {
             case .awaitingCode:
                 SettingRow("Code from macOS", detail: passwords.detail) {
                     HStack(spacing: 6) {
-                        TextField("123456", text: $code)
+                        TextField("", text: $code, prompt: Text("123456").foregroundStyle(Theme.ink.opacity(0.42)))
                             .textFieldStyle(.plain)
                             .font(.system(size: 13, design: .monospaced))
                             .frame(width: 80)
@@ -2678,7 +2745,7 @@ private struct ExtensionsSettings: View {
                 RowLine()
                 SettingRow("Chrome Web Store", detail: "Paste a store link or an extension ID, or open the store in the browser and press Add to Companion there.") {
                     HStack(spacing: 6) {
-                        TextField("Link or ID", text: $address)
+                        TextField("", text: $address, prompt: Text("Link or ID").foregroundStyle(Theme.ink.opacity(0.42)))
                             .textFieldStyle(.plain)
                             .font(.system(size: 12))
                             .frame(width: 150)
@@ -2819,6 +2886,33 @@ private struct ExtensionsSettings: View {
 }
 
 
+/// Code mode's editor: VS Code (code-server inside Companion, with VS
+/// Code's extensions from Open VSX), or Companion's own.
+private struct CodeEditorSettings: View {
+    @AppStorage(CodeServer.editorKey) private var vscode = true
+
+    var body: some View {
+        SettingsCard("Code editor", icon: "chevron.left.forwardslash.chevron.right",
+                     status: CodeServer.isAvailable ? (vscode ? "VS Code" : "Companion") : "Companion",
+                     statusTint: nil) {
+            if CodeServer.isAvailable {
+                ToggleRow("VS Code",
+                          detail: "Code mode opens the repository in VS Code (its open-source core, inside Companion), so VS Code's extensions work: install them from its Extensions view, from Open VSX. A few of Microsoft's own (Pylance, C# Dev Kit, Remote SSH) are only in Microsoft's marketplace, which is for Microsoft's products. Off: Companion's own editor.",
+                          isOn: Binding(get: { vscode }, set: { on in
+                              vscode = on
+                              if !on { CodeServer.shared.stop() }
+                              AppState.shared.objectWillChange.send()
+                          }))
+            } else {
+                Text("This build has Companion's own editor only. bash build.sh fetches VS Code's core (code-server, about 100 MB) and builds it into the app; it needs the Chromium build too.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.ink.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 /// The browser's engine: Chromium, the way Arc and Chrome are built (Chrome
 /// extensions, the Web Store, Chrome's toolbar and one kept profile), or
 /// WebKit with its own extension support.
@@ -2858,5 +2952,13 @@ private struct ChromiumSettings: View {
         let app = AppState.shared
         app.showSide(.browser)
         app.web.chromium.newTab(address)
+    }
+}
+
+private extension SkillsSettings {
+    func learnedRow(_ item: LearnedItem) -> some View {
+        LearnedRow(item: item,
+                   accept: { LearningWatcher.shared.accept(item) },
+                   dismiss: { LearningWatcher.shared.dismiss(item) })
     }
 }

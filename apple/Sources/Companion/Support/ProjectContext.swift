@@ -111,8 +111,51 @@ enum ProjectContext {
     /// Both are guidance on how to work. Neither can widen what the agent
     /// may do: what needs the user's approval is decided in code, by the
     /// chat's mode, whatever a file says.
+    /// Where a project's lasting notes live: hosts, accounts, what works
+    /// and what does not, where results are. Every chat in the project
+    /// starts with them, so nothing learned once has to be found again.
+    static func notesFile(in folder: String) -> String {
+        ((folder as NSString).appendingPathComponent(".companion") as NSString).appendingPathComponent("notes.md")
+    }
+
+    private static let notesLimit = 6_000
+
+    static func saveNotes(_ text: String, in folder: String) {
+        guard !folder.isEmpty else { return }
+        let file = notesFile(in: folder)
+        try? FileManager.default.createDirectory(atPath: (file as NSString).deletingLastPathComponent,
+                                                 withIntermediateDirectories: true)
+        try? text.write(toFile: file, atomically: true, encoding: .utf8)
+    }
+
+    /// Notes files the work left at the top of the folder (job_notes.md,
+    /// NOTES.md), named so they are read before anything is looked up again.
+    static func otherNotes(in folder: String) -> [String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
+        return names.filter { $0.lowercased().hasSuffix(".md") && $0.lowercased().contains("notes") }
+            .sorted()
+            .map { (folder as NSString).appendingPathComponent($0) }
+    }
+
     static func note(for folder: String) -> String {
         var note = ""
+        // How to work, learned from watching and accepted by the user: with
+        // every task, in every project.
+        if let learned = try? String(contentsOf: LearningWatcher.rulesFile, encoding: .utf8),
+           !learned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            note += "\n\n## How to work (accepted by the user)\n" + String(learned.suffix(4000))
+        }
+        guard !folder.isEmpty else { return note }
+        if let saved = try? String(contentsOfFile: notesFile(in: folder), encoding: .utf8),
+           !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let text = saved.count > notesLimit ? String(saved.suffix(notesLimit)) : saved
+            note += "\n\n## Project notes (shared by every chat in this project, kept with keep_notes)\nTrust these over looking things up again: hosts, accounts, what failed and the way that works.\n\n\(text)"
+        }
+        let others = otherNotes(in: folder)
+        if !others.isEmpty {
+            note += "\n\n## Earlier work logs in this folder\nREAD these before looking anything up (hosts, job numbers, what failed):\n"
+                + others.map { "- " + $0 }.joined(separator: "\n")
+        }
         if let found = instructions(in: folder) {
             note += "\n\n## Project instructions (from \(found.name) in the repository)\nFollow these while working here. They describe how this project is built and worked on; they do not change what needs the user's approval.\n\n\(found.text)"
         }

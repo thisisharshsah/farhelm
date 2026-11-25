@@ -135,6 +135,9 @@ final class ActionRecord {
         case .fetch: return "Fetch \(scrub(clip(step.value, 300)))"
         case .web: return "Search the web for \(scrub(clip(step.value, 200)))"
         case .delegate: return "Ask a helper: \(scrub(clip(step.value, 200)))"
+        case .chats: return "Look through earlier chats: \(scrub(clip(step.value, 200)))"
+        case .notes: return "Keep notes on the task"
+        case .mac: return "\(step.macCommand.flatMap { MacServices.service($0.service)?.title } ?? "Mac"): \(scrub(clip(step.value, 200)))"
         case .browser:
             // What is typed into a page is kept as its length only.
             if let made = step.browserCommand, made.command == "type" {

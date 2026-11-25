@@ -25,6 +25,12 @@ struct OverlayView: View {
     /// was closed on (Esc), so it stays closed until something is typed.
     @State private var mentionSelection = 0
     @State private var mentionClosedOn: String?
+    /// The chat box's words, kept in its own view while typing
+    /// (`ChatBoxField`); here only whether anything is typed and the
+    /// @mention being typed, each set when it changes.
+    @State private var box = ChatBoxText()
+    @State private var hasText = false
+    @State private var mentionQuery: String?
     @State private var showNotes = false
     /// The engine and model picker, open above the chat box.
     @State private var showModels = false
@@ -181,7 +187,10 @@ struct OverlayView: View {
                             let room = bottomHeight + statusHeight
                             try? await Task.sleep(nanoseconds: 150_000_000)
                             guard !Task.isCancelled else { return }
-                            if abs(room - settledBottom) > 0.5 { settledBottom = room }
+                            if abs(room - settledBottom) > 0.5 {
+                                settledBottom = room
+                                app.overlay?.note("chat room under it \(Int(room)) (box \(Int(bottomHeight)), status \(Int(statusHeight)), card \(Int(cardHeight)))")
+                            }
                         }
                         .padding(.horizontal, Theme.gutter / zoom)
                         .contentZoom(settings.contentZoom * settings.chatTextScale)
@@ -213,12 +222,23 @@ struct OverlayView: View {
                                     .padding(.top, 8)
                             }
                         }
+                        // The agent acting in the browser or on the Mac: a
+                        // strip with Stop across the top, beside the toggle.
+                        .overlay(alignment: .top) {
+                            AgentUseBanner()
+                                .padding(.leading, toggleInChat ? Theme.gutter + 38 : Theme.gutter)
+                                .padding(.trailing, Theme.gutter)
+                                .padding(.top, 7)
+                                .animation(.spring(response: 0.3, dampingFraction: 0.86), value: app.agentHere)
+                        }
                         // The conversation's tools and its context ring
                         // appear at the top right while the pointer is on
                         // the conversation, and stay out of the way
                         // otherwise. A recheck in progress keeps them up.
                         .overlay(alignment: .topTrailing) {
-                            if chatHover || app.isRescanning || textSizeOpen {
+                            // Kept out of the way of the banner (and its Stop)
+                            // while the agent is at work.
+                            if (chatHover || app.isRescanning || textSizeOpen) && !app.agentHere {
                                 HStack(spacing: 6) {
                                     ContextMeter(use: app.contextUse, window: ContextBudget.current.window,
                                                  spent: usage.cost(of: usage.records(for: app.conversation.id)))
@@ -681,7 +701,9 @@ struct OverlayView: View {
         // and shrinks with the panel. Until the divider is dragged the
         // share is a little over a third.
         let room = codeRoom
-        let wanted = codeChatShare > 0 ? room * CGFloat(codeChatShare) : max(380, room * 0.36)
+        // VS Code wants more of the room than Companion's own editor.
+        let share: CGFloat = CodeServer.shared.showing ? 0.3 : 0.36
+        let wanted = codeChatShare > 0 ? room * CGFloat(codeChatShare) : max(340, room * share)
         // Narrow panels give the chat less (down to 240) before anything
         // can run past the edge.
         let most = max(240, room - codeLeftLeast)
@@ -753,7 +775,7 @@ struct OverlayView: View {
             VStack(alignment: .leading, spacing: 1) {
                 // The name of this conversation. Double-click to rename it.
                 if renaming, !app.showSettings {
-                    TextField("Name", text: $newName)
+                    TextField("", text: $newName, prompt: Text("Name").foregroundStyle(Theme.ink.opacity(0.42)))
                         .textFieldStyle(.plain)
                         .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.ink.opacity(0.96))
@@ -814,7 +836,9 @@ struct OverlayView: View {
                 IconButton(AppMode.code.icon,
                            help: AppMode.code.help,
                            tint: app.codeMode ? Theme.accent : nil) {
-                    app.setCode(true)
+                    // In a chat outside a project it says how to get code,
+                    // rather than doing nothing.
+                    app.chooseCode()
                 }
                 // Advanced: a project's board, planned and kept by its
                 // supervisor, with the supervisor's chat beside it.
@@ -1229,8 +1253,11 @@ struct OverlayView: View {
 
     // MARK: Input bar
 
-    private var canSend: Bool {
-        !app.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var canSend: Bool { hasText }
+
+    /// The chat box's words into the app now.
+    private func syncTyped() {
+        if app.draft != box.text { app.draft = box.text }
     }
 
 
@@ -1238,7 +1265,10 @@ struct OverlayView: View {
     /// the next message. (Return ends editing in a macOS text field, and the
     /// chat redrawing around a new message can take the focus with it.)
     private func sendAndKeepTyping() {
+        syncTyped()
         app.sendDraft()
+        // What was sent leaves the field (see `ChatBoxText.set`).
+        if app.draft != box.text { box.set(app.draft) }
         inputFocused = true
         for delay in [0.05, 0.3] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { inputFocused = true }
@@ -1271,6 +1301,9 @@ struct OverlayView: View {
                 // The file open in the editor goes with the message, as in an
                 // editor's chat; the cross keeps it out.
                 OpenFileChip(model: app.workspace)
+                // So does the page showing in the browser beside the chat,
+                // with any tabs added to it.
+                BrowserPageChips()
                 // Typing "@" lists the repository's files; one chosen is attached.
                 if !mentionFiles.isEmpty {
                     MentionList(files: mentionFiles, selection: min(mentionSelection, mentionFiles.count - 1)) { file in
@@ -1278,30 +1311,28 @@ struct OverlayView: View {
                     }
                 }
                 HStack(alignment: .bottom, spacing: 8) {
-                    TextField(app.pendingQuestion != nil ? "Your answer" : (app.attachScreen ? "Ask about your screen" : (app.hasWorkFolder ? "Ask anything, @ to attach a file" : "Ask anything")),
-                              text: $app.draft,
-                              axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13.5 * settings.chatTextScale / AppSettings.chatTextDefault))
-                        .foregroundStyle(Theme.ink.opacity(0.95))
-                        .lineLimit(1...6)
-                        .focused($inputFocused)
-                        .onKeyPress(keys: [.upArrow, .downArrow, .return, .tab, .escape]) { press in
-                            let files = mentionFiles
-                            guard !files.isEmpty else { return .ignored }
-                            switch press.key {
-                            case .upArrow: mentionSelection = (mentionSelection - 1 + files.count) % files.count
-                            case .downArrow: mentionSelection = (mentionSelection + 1) % files.count
-                            case .escape: mentionClosedOn = app.draft
-                            default: chooseMention(files[min(mentionSelection, files.count - 1)])
-                            }
-                            return .handled
-                        }
-                        .onChange(of: Mention.query(in: app.draft)) { _, query in
+                    ChatBoxField(placeholder: app.pendingQuestion != nil ? "Your answer" : (app.attachScreen ? "Ask about your screen" : (app.hasWorkFolder ? "Ask anything, @ to attach a file" : "Ask anything")),
+                                 fontSize: 13.5 * settings.chatTextScale / AppSettings.chatTextDefault,
+                                 box: box,
+                                 focus: $inputFocused,
+                                 hasText: $hasText,
+                                 mentionQuery: $mentionQuery,
+                                 onKey: { key in
+                                     let files = mentionFiles
+                                     guard !files.isEmpty else { return false }
+                                     switch key {
+                                     case .upArrow: mentionSelection = (mentionSelection - 1 + files.count) % files.count
+                                     case .downArrow: mentionSelection = (mentionSelection + 1) % files.count
+                                     case .escape: mentionClosedOn = box.text
+                                     default: chooseMention(files[min(mentionSelection, files.count - 1)])
+                                     }
+                                     return true
+                                 },
+                                 onSubmit: sendAndKeepTyping)
+                        .onChange(of: mentionQuery) { _, query in
                             mentionSelection = 0
                             if query != nil, app.hasWorkFolder { fileIndex.use(root: app.workspaceRoot) }
                         }
-                        .onSubmit(sendAndKeepTyping)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 3)
@@ -1476,14 +1507,14 @@ struct OverlayView: View {
     /// One "+" for everything that can be handed to Companion.
     /// The files that fit the @mention being typed, if one is.
     private var mentionFiles: [String] {
-        guard app.hasWorkFolder, mentionClosedOn != app.draft,
-              let query = Mention.query(in: app.draft) else { return [] }
+        guard app.hasWorkFolder, let query = mentionQuery, mentionClosedOn != box.text else { return [] }
         return fileIndex.matches(query, limit: 6)
     }
 
     /// Puts the chosen file in the text and attaches it to the message.
     private func chooseMention(_ file: String) {
-        app.draft = Mention.complete(app.draft, with: file)
+        // The field takes the completed text back from the draft.
+        app.draft = Mention.complete(box.text, with: file)
         mentionSelection = 0
         fileIndex.noteOpened(file)
         let root = app.workspaceRoot
@@ -1569,7 +1600,11 @@ struct ChatThread: View {
     /// never causes a redraw by itself.
     @State private var scrollState = ThreadScrollState()
 
-    static let pageSize = 120
+    /// How many entries a chat shows at first; earlier ones load as you
+    /// scroll up. Every one shown is laid out on every change (the thread
+    /// is a plain stack, for exact scrolling), so a long first page made
+    /// switching chats and resizing the panel slow.
+    static let pageSize = 30
     static let endID = "thread-end"
 
     private var allTurns: [ChatTurn] { app.conversation.turns }
@@ -1693,8 +1728,8 @@ struct ChatThread: View {
     /// to start.
     private var emptyState: some View {
         VStack(spacing: 12) {
-            OrbitMark(speed: app.isListening ? 1.0 : 0.3, dots: app.isListening ? 4 : 3, lines: 7,
-                      trail: app.isListening, pulse: true)
+            IsolatedAnimation(OrbitMark(speed: app.isListening ? 1.0 : 0.3, dots: app.isListening ? 4 : 3, lines: 7,
+                                        trail: app.isListening, pulse: true))
                 // Just the mark: no tile or border behind it.
                 .frame(width: 56, height: 56)
             VStack(spacing: 4) {
@@ -1711,10 +1746,15 @@ struct ChatThread: View {
             if !app.isListening {
                 // The ways to start, as bubbles: one click starts listening,
                 // puts the cursor in the chat box or opens the files to attach.
-                let ways = starts
-                ChoiceBubbles(ways.map { $0.bubble }) { ways[$0].start() }
-                    .frame(maxWidth: 440)
-                    .padding(.top, 4)
+                // Three rows of one width, each on one line, so the choices
+                // read as a set at any panel width.
+                VStack(spacing: 4) {
+                    ForEach(Array(starts.enumerated()), id: \.offset) { _, way in
+                        StartRow(title: way.title, detail: way.detail, icon: way.icon, shortcut: way.shortcut, action: way.start)
+                    }
+                }
+                .frame(width: 290)
+                .padding(.top, 6)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1722,10 +1762,10 @@ struct ChatThread: View {
     }
 
     /// The three ways to start a conversation, and what each does.
-    private var starts: [(bubble: Bubble, start: () -> Void)] {
-        [(Bubble("Listen", icon: "mic.fill", detail: "and get replies as it goes"), { app.toggleListening() }),
-         (Bubble("Type", icon: "keyboard", detail: "a question or a task"), { app.focusInputRequest += 1 }),
-         (Bubble("Attach", icon: "plus", detail: "files, images or a folder"), { app.pickAttachments() })]
+    private var starts: [(title: String, detail: String, icon: String, shortcut: String?, start: () -> Void)] {
+        [("Listen", "Replies as the conversation goes", "mic.fill", Shortcuts.shared.label(.listen), { app.toggleListening() }),
+         ("Ask", "A question or a task", "text.cursor", nil, { app.focusInputRequest += 1 }),
+         ("Attach", "Files, images or a folder", "paperclip", nil, { app.pickAttachments() })]
     }
 
     private var emptyHint: String {
@@ -1741,7 +1781,11 @@ struct ChatThread: View {
         }
     }
 
-    private var hasFilters: Bool { count(.reply) > 0 && count(.screen) > 0 }
+    /// Filters help sort a conversation that was listened to, where
+    /// replies and screen answers pile up; a typed chat reads in order.
+    private var hasFilters: Bool {
+        count(.reply) > 0 && count(.screen) > 0 && (!app.segments.isEmpty || app.isListening)
+    }
 
     /// Top of the conversation: the filters, once there are both kinds to
     /// tell apart, and a note while an answer is being written.
@@ -1798,7 +1842,9 @@ struct ChatThread: View {
     /// The same gap below whatever is lowest up there (the tools at the
     /// right, or the filters at the left), for every message alike.
     private var pinLine: CGFloat {
-        max(topInset + (hasFilters ? 30 : 0), toolsBottom) + 12
+        // Never above the row of the sidebar's button and the agent's
+        // banner (8 down, 32 tall), so a held message sits clear of both.
+        max(topInset + (hasFilters ? 30 : 0), toolsBottom, 40) + 12
     }
 
     /// Works out which message sticks, from where the messages are now.
@@ -1850,12 +1896,19 @@ struct ChatThread: View {
     /// real and the view never jumps as it would with estimated heights.
     /// To keep that cheap, only the newest entries are laid out; older ones
     /// are a click away at the top.
+    /// The widest the conversation's text runs, however wide the panel.
+    static let readingWidth: CGFloat = 780
+
     private var timeline: some View {
         GeometryReader { outer in
             ScrollViewReader { proxy in
                 // No scroll bar: with the system set to always show them it
                 // is a wide grey strip down the side of the conversation.
                 ScrollView(.vertical, showsIndicators: false) {
+                    // A plain stack, not a lazy one: rows that are only
+                    // estimated until scrolled to moved the view off the
+                    // newest message whenever the panel resized. The number
+                    // shown at first is kept small instead (`pageSize`).
                     VStack(alignment: .leading, spacing: 4) {
                         // Room for the bar floating over the top (and the
                         // filters, when they show), so the first entry can
@@ -1960,6 +2013,10 @@ struct ChatThread: View {
                                                        value: geometry.frame(in: .named("thread")).maxY)
                             })
                     }
+                    // A wide panel keeps lines to a comfortable reading
+                    // length, centered, as in a document.
+                    .frame(maxWidth: Self.readingWidth)
+                    .frame(maxWidth: .infinity)
                     .background(GeometryReader { inner in
                         Color.clear.preference(key: ThreadMetricsKey.self,
                                                value: ThreadMetrics(content: inner.size.height,
@@ -1971,9 +2028,31 @@ struct ChatThread: View {
                 // Where the scroll is, from the scroll view itself: on the
                 // Mac, scrolling does not always lay the content out again,
                 // so measuring the content alone can miss it.
-                .modifier(ScrolledToEnd(room: 0) { atEnd in
+                .modifier(ScrolledToEnd(room: 0, changed: { atEnd in
                     if atEnd != followNewest { followNewest = atEnd }
-                })
+                }, drifted: {
+                    // The layout settled away from the end on its own (rows
+                    // measured after a jump, a picture loading): while the
+                    // newest is followed, the view goes back to it.
+                    guard followNewest, !scrollState.scrollQueued, Date() > scrollState.glidingUntil else { return }
+                    if Date().timeIntervalSince(scrollState.lastDrift) < 0.12 {
+                        // Too soon: once more when the moves stop.
+                        guard !scrollState.driftTrailing else { return }
+                        scrollState.driftTrailing = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            scrollState.driftTrailing = false
+                            if followNewest { proxy.scrollTo(Self.endID, anchor: .bottom) }
+                        }
+                        return
+                    }
+                    scrollState.lastDrift = Date()
+                    app.overlay?.note("chat drifted, back to newest content=\(Int(scrollState.content)) viewport=\(Int(scrollState.viewport)) inset=\(Int(bottomInset))")
+                    scrollState.scrollQueued = true
+                    DispatchQueue.main.async {
+                        scrollState.scrollQueued = false
+                        proxy.scrollTo(Self.endID, anchor: .bottom)
+                    }
+                }))
                 // Following, the end stays in place as the content grows, in
                 // the same layout, with no scroll a moment later.
                 .modifier(KeepsEnd(active: followNewest))
@@ -2001,7 +2080,13 @@ struct ChatThread: View {
                     let grew = scrollState.content > 0 && metrics.content > scrollState.content + 0.5
                     scrollState.content = metrics.content
                     scrollState.viewport = metrics.viewport
-                    if resized || grew, followNewest {
+                    // Where the scroll view keeps its end itself as content
+                    // grows (macOS 15 and later, `KeepsEnd`), only a resize
+                    // needs a scroll from here: two ways of following at
+                    // once fight each other and stutter.
+                    let keepsItself: Bool
+                    if #available(macOS 15.0, *) { keepsItself = true } else { keepsItself = false }
+                    if resized || (grew && !keepsItself), followNewest {
                         // Once this layout is in: scrolled from in here, the
                         // view went to where the end was before it grew,
                         // always a step behind (and a last line of speech was
@@ -2031,13 +2116,23 @@ struct ChatThread: View {
                     }
                 }
                 .onAppear {
-                    DispatchQueue.main.async { proxy.scrollTo(Self.endID, anchor: .bottom) }
+                    for delay in [0.0, 0.15, 0.4, 0.8] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            if followNewest { proxy.scrollTo(Self.endID, anchor: .bottom) }
+                        }
+                    }
                 }
                 .onChange(of: app.conversation.id) { _, _ in
                     // Another conversation opens at its newest entry.
                     shownLimit = Self.pageSize
                     followNewest = true
-                    DispatchQueue.main.async { proxy.scrollTo(Self.endID, anchor: .bottom) }
+                    // Again as its rows are measured: the first jump lands
+                    // by estimated heights, short of the end of a long chat.
+                    for delay in [0.0, 0.15, 0.4, 0.8] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            if followNewest { proxy.scrollTo(Self.endID, anchor: .bottom) }
+                        }
+                    }
                 }
                 .onChange(of: sendMark) { old, new in
                     // A message was just sent: bring the end of the
@@ -2046,6 +2141,7 @@ struct ChatThread: View {
                     guard old.first == new.first, old.last != new.last,
                           new.last.flatMap(UUID.init(uuidString:)) != nil else { return }
                     followNewest = true
+                    scrollState.glidingUntil = Date().addingTimeInterval(0.35)
                     DispatchQueue.main.async {
                         withAnimation(.easeOut(duration: 0.25)) {
                             proxy.scrollTo(Self.endID, anchor: .bottom)
@@ -2057,10 +2153,21 @@ struct ChatThread: View {
                 // so nothing hides it); its click comes back here.
                 .onChange(of: followNewest) { _, following in
                     app.chatScrolledUp = !following
-                    app.overlay?.note("chat \(following ? "at the newest" : "scrolled up")")
+                    app.overlay?.note("chat \(following ? "at the newest" : "scrolled up") content=\(Int(scrollState.content)) viewport=\(Int(scrollState.viewport)) end=\(Int(scrollState.endY)) inset=\(Int(bottomInset))")
+                }
+                .onChange(of: app.panelVisible) { _, visible in
+                    // Shown again after being hidden: laid out while out of
+                    // sight, the thread may sit short of its newest entry.
+                    guard visible, followNewest else { return }
+                    for delay in [0.05, 0.3, 0.7] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            if followNewest { proxy.scrollTo(Self.endID, anchor: .bottom) }
+                        }
+                    }
                 }
                 .onChange(of: app.jumpToNewest) { _, _ in
                     followNewest = true
+                    scrollState.glidingUntil = Date().addingTimeInterval(0.35)
                     withAnimation(.easeOut(duration: 0.25)) {
                         proxy.scrollTo(Self.endID, anchor: .bottom)
                     }
@@ -2233,6 +2340,19 @@ struct AttachmentThumb: View {
 
     private var radius: CGFloat { large ? 12 : 9 }
 
+    /// "PDF · 2.4 MB", "Folder", or the page's kind.
+    private var kind: String {
+        if file.isFolder == true { return "Folder" }
+        if file.path == nil, file.text.hasPrefix(PageSnapshot.heading) { return "Web page" }
+        let ext = (file.name as NSString).pathExtension.uppercased()
+        var parts = [ext.isEmpty ? "File" : ext]
+        if let path = file.path,
+           let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber {
+            parts.append(ByteCountFormatter.string(fromByteCount: size.int64Value, countStyle: .file))
+        }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
     var body: some View {
         Group {
             if let picture {
@@ -2241,6 +2361,38 @@ struct AttachmentThumb: View {
                     .scaledToFill()
                     .frame(width: large ? 176 : 64, height: large ? 112 : 64)
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            } else if !large {
+                // In the chat box: a file card on one line, its type's mark,
+                // its name kept whole at both ends, and what kind it is.
+                HStack(spacing: 8) {
+                    Group {
+                        if file.isFolder == true {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                        } else {
+                            FileIcon(name: file.name, size: 20)
+                        }
+                    }
+                    .frame(width: 30, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.ink.opacity(0.07)))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(file.name)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Theme.ink.opacity(0.92))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(kind)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Theme.ink.opacity(0.5))
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.leading, 5)
+                .padding(.trailing, 10)
+                .frame(maxWidth: 200, alignment: .leading)
+                .frame(height: 42)
+                .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Theme.ink.opacity(0.06)))
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     Image(systemName: file.isFolder == true ? "folder.fill" : "doc.text.fill")
@@ -2414,6 +2566,13 @@ final class ThreadScrollState {
     var endY: CGFloat = 0
     /// A scroll to the end waits for the layout in progress to finish.
     var scrollQueued = false
+    /// When the view last went back to the end on its own, so a resize
+    /// (many layouts a second) sends it there a few times, not every frame.
+    var lastDrift = Date.distantPast
+    var driftTrailing = false
+    /// Until when an animated scroll to the end is under way: its own
+    /// frames are not drift, and jumping there would cut it short.
+    var glidingUntil = Date.distantPast
     /// How far the held request is moved down, watched by the bubbles
     /// themselves and not by the chat.
     let pin = PinTracker()
@@ -2433,7 +2592,27 @@ private struct HeldAtTop: ViewModifier {
     let held: Bool
 
     func body(content: Content) -> some View {
-        content.offset(y: held ? pin.offset : 0)
+        content
+            // Held, it sits on a strip of glass across the whole column
+            // that fades out below, so the reply scrolling under it blurs
+            // away instead of showing beside and through it.
+            .background(alignment: .trailing) {
+                if held {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .mask(LinearGradient(stops: [.init(color: .black, location: 0),
+                                                     .init(color: .black, location: 0.7),
+                                                     .init(color: .clear, location: 1)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .padding(.top, -60)
+                        .padding(.bottom, -14)
+                        .frame(width: 4000)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .offset(y: held ? pin.offset : 0)
+            .animation(.easeOut(duration: 0.15), value: held)
     }
 }
 
@@ -2481,6 +2660,7 @@ struct TurnView: View {
             if kinds.contains(.edit) { return ("pencil", "Edited files") }
             if kinds.contains(.run) { return ("terminal", "Ran commands") }
             if !kinds.isDisjoint(with: [.open, .click, .type, .key]) { return ("macwindow", "Worked in other apps") }
+            if steps.contains(where: \.inBrowser) { return ("safari", "Used the browser") }
             if kinds.contains(.web) { return ("globe", "Looked on the web") }
             if kinds.contains(.read) || kinds.contains(.search) { return ("doc.text.magnifyingglass", "Read files") }
         }
@@ -2527,7 +2707,9 @@ struct TurnView: View {
                 // chat box (WorkStatusBar), so the conversation keeps only
                 // what was said and done.
                 if let steps = turn.steps, !steps.isEmpty {
-                    WorkTimeline(steps: steps, working: streaming && turn.answer.isEmpty, tint: tint)
+                    WorkTimeline(steps: steps, working: streaming && turn.answer.isEmpty, tint: tint,
+                                 waiting: streaming && (app.pendingApproval != nil || app.pendingQuestion != nil),
+                                 pausing: streaming && (app.agentStatus?.hasPrefix("Waiting") ?? false))
                 }
 
                 if !turn.answer.isEmpty {
@@ -2541,6 +2723,10 @@ struct TurnView: View {
                             ReadAlongText(text: turn.answer, spokenWords: spokenWords, tint: tint, cursorID: cursorID)
                         }
                     }
+                    // Set as the Claude app sets replies: a serif with room
+                    // between the lines (code keeps its monospace).
+                    .fontDesign(AppSettings.shared.replySerif ? .serif : .default)
+                    .lineSpacing(AppSettings.shared.replySerif ? 2 : 0)
                     .contentTransition(.opacity)
                     .animation(.easeOut(duration: 0.22), value: turn.answer)
                 }
@@ -2721,55 +2907,283 @@ struct WorkTimeline: View {
     let steps: [WorkStep]
     let working: Bool
     let tint: Color
+    /// Stopped for the person's OK or answer.
+    var waiting = false
+    /// Waiting in place before checking again: the countdown over the chat
+    /// box says so, and a "Thinking" line counting up beside it would not.
+    var pausing = false
 
     private enum Part: Identifiable {
         case note(Int, String)
         case work(Int, [WorkStep])
+        /// A picture the agent took of a page, after the work that took it.
+        case picture(Int, String, String)
         var id: Int {
             switch self {
-            case .note(let index, _), .work(let index, _): return index
+            case .note(let index, _), .work(let index, _), .picture(let index, _, _): return index
             }
         }
     }
 
+    /// The work in the order it happened, as an assistant shows it: what
+    /// the agent said along the way as plain reply text; each stretch of
+    /// steps between those words folded to its own line; and each picture
+    /// it took of a page as a card right after the steps that took it.
     private var parts: [Part] {
         var parts: [Part] = []
         var run: [WorkStep] = []
         var start = 0
+        func close() {
+            if !run.isEmpty { parts.append(.work(start, run)); run = [] }
+        }
         for (index, step) in steps.enumerated() {
             if step.kind == .note {
-                if !run.isEmpty { parts.append(.work(start, run)); run = [] }
+                close()
                 parts.append(.note(index, step.title))
             } else {
                 if run.isEmpty { start = index }
                 run.append(step)
             }
         }
-        if !run.isEmpty { parts.append(.work(start, run)) }
+        close()
         return parts
     }
 
+    private func endsInWork(_ parts: [Part]) -> Bool {
+        if case .work? = parts.last { return true }
+        return false
+    }
+
     var body: some View {
-        // As a chat app shows it: the whole task's work is one line with
-        // what is happening and the time it has taken, which opens into one
-        // card holding what was said along the way and every step.
-        if steps.contains(where: { $0.kind != .note }) || working {
-            WorkTrail(steps: steps, working: working, tint: tint)
-        } else {
-            // Only words so far: they read as the reply.
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(parts) { part in
-                    if case .note(_, let text) = part {
-                        Text(text)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.ink.opacity(0.9))
-                            .lineSpacing(3.9)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+        let parts = parts
+        let lastWork = parts.last.flatMap { part -> Int? in
+            if case .work(let index, _) = part { return index }
+            return nil
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(parts) { part in
+                switch part {
+                case .note(_, let text):
+                    Text(text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.ink.opacity(0.9))
+                        .lineSpacing(3.9)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .work(let index, let run):
+                    // Only the newest stretch is still going.
+                    WorkTrail(steps: run, working: working && index == lastWork, tint: tint,
+                              waiting: waiting && index == lastWork)
+                case .picture(_, let path, let name):
+                    PageShotCard(path: path, name: name)
                 }
             }
+            // Between stretches (just said something), the agent is still
+            // at work: say so under the last part.
+            if working, !pausing, !endsInWork(parts) {
+                WorkTrail(steps: [], working: true, tint: tint, waiting: waiting)
+            }
+            // Work in the browser: one small view of it, live while the
+            // agent works, a click away from the browser itself.
+            if steps.contains(where: \.inBrowser) {
+                BrowserPreview(live: working, still: steps.last(where: { $0.picture != nil })?.picture,
+                               name: steps.last(where: { $0.picture != nil })?.pageName)
+            }
         }
+    }
+}
+
+/// The browser the agent works in, small, in the reply: live while it
+/// works (a fresh picture of the page every moment), and the last picture
+/// once it is done. A click opens the browser beside the chat.
+struct BrowserPreview: View {
+    @EnvironmentObject var app: AppState
+    let live: Bool
+    /// The last picture the agent took, for a finished task.
+    let still: String?
+    let name: String?
+    @State private var picture: NSImage?
+    @State private var title = ""
+    @State private var host = ""
+    @State private var hover = false
+    /// It was live while this view watched: once the work ends, the page
+    /// is pictured one last time, as it was left.
+    @State private var watched = false
+
+    var body: some View {
+        // An older answer with no picture to show has no card, and while
+        // the browser itself shows beside the chat it is not doubled here.
+        if !(live && app.sidePanel == .browser), live || picture != nil || still != nil {
+            card
+                .task(id: live) {
+                    if live {
+                        watched = true
+                        while live, !Task.isCancelled {
+                            // Only while it is worth it: not while the browser
+                            // itself is showing beside the chat (it is live
+                            // there), and not while the panel is hidden.
+                            if app.sidePanel != .browser, app.panelVisible { await refresh() }
+                            try? await Task.sleep(nanoseconds: 4_000_000_000)
+                        }
+                    } else if watched {
+                        await refresh()
+                    } else if let still, picture == nil {
+                        picture = NSImage(contentsOfFile: still)
+                    }
+                }
+        }
+    }
+
+    private var card: some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+        return HStack(spacing: 12) {
+            ZStack(alignment: .topLeading) {
+                Group {
+                    if let picture {
+                        Image(nsImage: picture)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Image(systemName: "safari")
+                            .font(.system(size: 18, weight: .light))
+                            .foregroundStyle(Theme.ink.opacity(0.35))
+                    }
+                }
+                .frame(width: 150, height: 94)
+                .background(Theme.ink.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                if live {
+                    HStack(spacing: 4) {
+                        Circle().fill(Theme.rose).frame(width: 6, height: 6)
+                        Text("Live")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(height: 16)
+                    .background(Capsule().fill(Color.black.opacity(0.55)))
+                    .padding(5)
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title.isEmpty ? (name ?? "The browser") : title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.ink.opacity(0.92))
+                    .lineLimit(2)
+                if !host.isEmpty {
+                    Text(host)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink.opacity(0.5))
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.ink.opacity(hover ? 0.8 : 0.4))
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.top, 2)
+        }
+        .padding(8)
+        .frame(maxWidth: 440, alignment: .leading)
+        .background(shape.fill(Theme.ink.opacity(hover ? 0.07 : 0.045)))
+        .overlay(shape.strokeBorder(Theme.ink.opacity(0.08), lineWidth: 0.5))
+        .contentShape(shape)
+        .onHover { hover = $0 }
+        .onTapGesture { app.showSide(.browser) }
+        .help("Open the browser beside the chat")
+    }
+
+    /// A fresh, small picture of the page showing in this chat's browser:
+    /// taken at a fraction of the page's size and made small off the main
+    /// thread, so a heavy page (JupyterLab, an editor) never stalls the app.
+    @State private var busy = false
+
+    private func refresh() async {
+        guard !busy, let tab = app.web.chromium.current, !tab.asleep, !tab.isBlank else { return }
+        busy = true
+        defer { busy = false }
+        title = tab.label
+        host = URL(string: tab.address)?.host.map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 } ?? ""
+        let metrics = await tab.devTools("Page.getLayoutMetrics", [:])
+        let view = metrics.result?["cssLayoutViewport"] as? [String: Any]
+        let width = (view?["clientWidth"] as? NSNumber)?.doubleValue ?? 1280
+        let height = (view?["clientHeight"] as? NSNumber)?.doubleValue ?? 800
+        let scale = min(1, 360 / max(width, 1))
+        let shot = await tab.devTools("Page.captureScreenshot", [
+            "format": "jpeg", "quality": 40, "captureBeyondViewport": false,
+            "clip": ["x": 0, "y": 0, "width": width, "height": height, "scale": scale],
+        ])
+        guard let encoded = shot.result?["data"] as? String else { return }
+        let small = await Task.detached(priority: .utility) { () -> CGImage? in
+            guard let data = Data(base64Encoded: encoded),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+            return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        }.value
+        if let small { picture = NSImage(cgImage: small, size: NSSize(width: small.width, height: small.height)) }
+    }
+}
+
+/// A picture the agent took of a page while it worked, as a card in the
+/// reply: the picture small, and what it is of. A click opens it large.
+struct PageShotCard: View {
+    let path: String
+    let name: String
+    @State private var hover = false
+    private static let cache = NSCache<NSString, NSImage>()
+
+    private var picture: NSImage? {
+        if let kept = Self.cache.object(forKey: path as NSString) { return kept }
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                       kCGImageSourceCreateThumbnailWithTransform: true,
+                       kCGImageSourceThumbnailMaxPixelSize: 360] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let small = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        let image = NSImage(cgImage: small, size: NSSize(width: small.width, height: small.height))
+        Self.cache.setObject(image, forKey: path as NSString)
+        return image
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+        HStack(spacing: 12) {
+            Group {
+                if let picture {
+                    Image(nsImage: picture)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Image(systemName: "photo")
+                        .foregroundStyle(Theme.ink.opacity(0.4))
+                }
+            }
+            .frame(width: 112, height: 70)
+            .background(Theme.ink.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            HStack(spacing: 6) {
+                Image(systemName: "safari")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.ink.opacity(0.55))
+                Text(name)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.ink.opacity(0.9))
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.ink.opacity(hover ? 0.75 : 0.4))
+                .padding(.top, 2)
+                .frame(maxHeight: .infinity, alignment: .top)
+        }
+        .padding(8)
+        .frame(maxWidth: 420, alignment: .leading)
+        .background(shape.fill(Theme.ink.opacity(hover ? 0.07 : 0.045)))
+        .overlay(shape.strokeBorder(Theme.ink.opacity(0.08), lineWidth: 0.5))
+        .contentShape(shape)
+        .onHover { hover = $0 }
+        .onTapGesture { Previewer.shared.open(Attachment(name: name, text: "", path: path)) }
+        .help("Open the picture")
     }
 }
 
@@ -2778,6 +3192,8 @@ struct WorkTrail: View {
     /// Still going: the line shows the latest step.
     let working: Bool
     let tint: Color
+    /// Stopped for the person's OK or answer (its card is under the chat).
+    var waiting = false
     @State private var open = false
     @State private var shown: Set<Int> = []
 
@@ -2808,7 +3224,10 @@ struct WorkTrail: View {
 
     /// What the agent is doing, in a few words, from its latest step.
     static func doing(_ steps: [WorkStep]) -> String {
-        switch steps.last(where: { $0.kind != .note })?.kind ?? .think {
+        let last = steps.last(where: { $0.kind != .note })
+        // Browser steps are filed with the web's, but are not a search.
+        if last?.inBrowser == true { return "Using the browser" }
+        switch last?.kind ?? .think {
         case .run: return "Running a command on your computer"
         case .read: return "Reading files"
         case .search: return "Searching"
@@ -2816,7 +3235,7 @@ struct WorkTrail: View {
         case .web: return "Searching the web"
         case .skill: return "Reading a skill"
         case .ask: return "Waiting for your answer"
-        case .open, .click, .type, .key: return "Working in an app"
+        case .open, .click, .type, .key: return "Using your computer"
         default: return "Thinking"
         }
     }
@@ -2833,7 +3252,7 @@ struct WorkTrail: View {
     /// Opened or folded by hand; nil follows the default: open while the
     /// agent works (or always, by the setting), folded once it is done.
     @State private var chosen: Bool?
-    private var showing: Bool { chosen ?? (working || alwaysOpen) }
+    private var showing: Bool { !steps.isEmpty && (chosen ?? (working || alwaysOpen)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2844,14 +3263,16 @@ struct WorkTrail: View {
                 if working {
                     LoadingMark(state: .working, size: 12)
                 }
-                Text(working ? Self.doing(steps) : WorkStep.summary(of: steps))
+                Text(working ? (waiting ? "Waiting for you" : Self.doing(steps)) : WorkStep.summary(of: steps))
                     .font(.system(size: WorkType.size))
                     .foregroundStyle(Theme.ink.opacity(working ? 0.7 : 0.6))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if let started {
+                // The time runs while the work goes on, as a live count;
+                // once done, the line says only what was done.
+                if let started, working {
                     TimelineView(.periodic(from: started, by: 1)) { context in
-                        Text(Self.duration((finished ?? context.date).timeIntervalSince(started)))
+                        Text(Self.duration(context.date.timeIntervalSince(started)))
                             .font(.system(size: WorkType.size))
                             .monospacedDigit()
                             .foregroundStyle(Theme.ink.opacity(0.45))
@@ -2862,10 +3283,12 @@ struct WorkTrail: View {
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.amber)
                 }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
-                    .rotationEffect(.degrees(showing ? 90 : 0))
+                if !steps.isEmpty {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.ink.opacity(0.45))
+                        .rotationEffect(.degrees(showing ? 90 : 0))
+                }
                 Spacer(minLength: 0)
                 // What the steps read or made, as small thumbnails.
                 ThumbStrip(paths: WorkStep.files(in: steps), size: 22)
@@ -3113,7 +3536,7 @@ struct TurnInputBubble: View {
     /// put the files back, or both.
     private var editor: some View {
         VStack(alignment: .trailing, spacing: 6) {
-            TextField("Message", text: $editText, axis: .vertical)
+            TextField("", text: $editText, prompt: Text("Message").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .lineLimit(1...12)
@@ -3171,6 +3594,9 @@ struct TurnInputBubble: View {
             .font(.system(size: 12.5))
             .lineSpacing(2.5)
             .foregroundStyle(Theme.ink.opacity(0.93))
+            // Held at the top it keeps its height: a message that shrank
+            // while held moved everything under it, which moved the hold
+            // again, a loop that froze the app.
             .lineLimit(expanded ? nil : foldLines)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -3981,13 +4407,50 @@ struct SentAttachments: View {
                         .fixedSize()
                 }
                 ForEach(files.suffix(3)) { file in
-                    SentAttachmentThumb(file: file, among: files)
+                    if file.path == nil, file.text.hasPrefix(PageSnapshot.heading) {
+                        SentPageChip(file: file, history: app.web.history, among: files)
+                    } else {
+                        SentAttachmentThumb(file: file, among: files)
+                    }
                 }
             }
             .frame(height: 28)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.bottom, 4)
         }
+    }
+}
+
+/// A web page sent with a message: the site's icon and the page's title,
+/// as on the chip in the chat box, so it reads as the page and not as a
+/// file. A click shows what was sent.
+private struct SentPageChip: View {
+    let file: Attachment
+    @ObservedObject var history: BrowserHistory
+    let among: [Attachment]
+
+    private var address: String? {
+        file.text.split(separator: "\n").first { $0.hasPrefix("Address: ") }.map { String($0.dropFirst(9)) }
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        HStack(spacing: 5) {
+            SiteIcon(icon: address.flatMap { history.icon(for: $0) }, blank: false, bright: true)
+            Text(file.name)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.ink.opacity(0.85))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 24)
+        .frame(maxWidth: 200)
+        .background(shape.fill(Theme.ink.opacity(0.08)))
+        .overlay(shape.strokeBorder(Theme.ink.opacity(0.16), lineWidth: 0.5))
+        .contentShape(shape)
+        .onTapGesture { Previewer.shared.open(file, among: among) }
+        .help(address ?? file.name)
     }
 }
 
@@ -4085,13 +4548,16 @@ struct GoBackChoices: View {
     let choose: (AppState.GoBack) -> Void
 
     var body: some View {
-        Button("Fork conversation from here") { choose(.fork) }
-        Button(files > 0 ? "Rewind code to here (\(files) file\(files == 1 ? "" : "s"))" : "Rewind code to here") {
-            choose(.rewindCode)
+        let count = files == 1 ? "1 file" : "\(files) files"
+        Button("Restore conversation") { choose(.conversation) }
+        Button(files > 0 ? "Restore conversation and code (\(count))" : "Restore conversation and code") {
+            choose(.conversationAndCode)
         }
         .disabled(files == 0)
-        Button("Fork conversation and rewind code") { choose(.forkAndRewind) }
+        Button(files > 0 ? "Restore code only (\(count))" : "Restore code only") { choose(.rewindCode) }
             .disabled(files == 0)
+        Divider()
+        Button("Fork into a new chat from here") { choose(.fork) }
     }
 }
 
@@ -4186,26 +4652,83 @@ private struct LinkAction: View {
 private struct ScrolledToEnd: ViewModifier {
     let room: CGFloat
     let changed: (Bool) -> Void
+    /// The view left the end without the person scrolling.
+    var drifted: () -> Void = {}
+    /// Whether the person is scrolling (a trackpad, a wheel, the bar):
+    /// only that lets go of the newest. A lazily laid out conversation
+    /// moves its offset by itself as rows are measured after a jump, and
+    /// that was taken for scrolling away, so the view stopped following.
+    @State private var byHand = false
+    /// When the content or the view last changed size: the offset the
+    /// system sets to keep the end in place can come a frame after the
+    /// size change, and that late move is not the person scrolling.
+    @State private var lastLayout = Date.distantPast
 
     /// Where the view is scrolled to, and how much there is to scroll.
     private struct Spot: Equatable {
         var offset: CGFloat
         var content: CGFloat
         var container: CGFloat
+        var width: CGFloat
     }
 
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) {
             content.onScrollGeometryChange(for: Spot.self) { geometry in
                 Spot(offset: geometry.contentOffset.y, content: geometry.contentSize.height,
-                     container: geometry.containerSize.height)
+                     container: geometry.containerSize.height, width: geometry.containerSize.width)
             } action: { old, new in
                 let atEnd = new.offset + new.container >= new.content - room - 40
+                // Only the person scrolling away stops the following: the
+                // panel being resized (the view taller or narrower) moves
+                // the offset too, and must not. Content growing does not
+                // count here, or scrolling up while an answer streams in
+                // would never be let go.
+                let resized = abs(new.container - old.container) > 0.5 || abs(new.width - old.width) > 0.5
+                // Rows measured as they come in, or the text reflowing in a
+                // narrower column (the browser opening beside the chat),
+                // change the content's height; a scroll by hand (a wheel
+                // reports no phase on some mice) leaves it as it was. Either
+                // way the end moved, not the person: it is gone back to.
+                let measured = abs(new.content - old.content) > 0.5
+                if measured || resized { lastLayout = Date() }
+                // Only the person's own input lets go of the newest: a
+                // wheel or trackpad scroll, just now. Every other
+                // move (a chat opening, a size change and the system's late
+                // correction of it, a jump landing short) is the layout's,
+                // and the view goes back to the end.
+                if !atEnd, !byHand, !ScrollIntent.recent { drifted(); return }
                 if !atEnd, abs(new.offset - old.offset) < 0.5 { return }
                 changed(atEnd)
             }
+            .onScrollPhaseChange { _, phase in
+                byHand = phase == .interacting || phase == .decelerating || phase == .tracking
+            }
         } else {
             content
+        }
+    }
+}
+
+/// When the person last scrolled in Companion (keys typed into the chat box
+/// do not count: a reply growing while you type is still followed). A mouse
+/// wheel reports no scroll phase, so this is how a scroll by hand is told
+/// from one the layout made.
+@MainActor
+enum ScrollIntent {
+    private static var last = Date.distantPast
+    private static var monitor: Any?
+
+    static var recent: Bool {
+        install()
+        return Date().timeIntervalSince(last) < 0.4
+    }
+
+    private static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { event in
+            last = Date()
+            return event
         }
     }
 }
@@ -4223,5 +4746,52 @@ private struct KeepsEnd: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+
+/// One way to start a fresh conversation: an icon in a tinted tile, what
+/// it is and a word on what it does, on one line; a hover fill shows it
+/// can be clicked.
+private struct StartRow: View {
+    let title: String
+    let detail: String
+    let icon: String
+    let shortcut: String?
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 26, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.accent.opacity(0.14)))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.ink.opacity(0.95))
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink.opacity(0.5))
+                }
+                .lineLimit(1)
+                Spacer(minLength: 6)
+                if let shortcut, !shortcut.isEmpty {
+                    Text(shortcut)
+                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(Theme.ink.opacity(0.4))
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 40)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.ink.opacity(hover ? 0.08 : 0.035)))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
     }
 }

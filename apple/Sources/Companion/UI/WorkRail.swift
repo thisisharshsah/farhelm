@@ -125,6 +125,7 @@ private struct RailRow: View {
 
     /// A tool step's mark when it has no file to show.
     private var symbol: String {
+        if let mark = step.mark { return mark.icon }
         switch step.kind {
         case .run: return "terminal"
         case .search: return "magnifyingglass"
@@ -176,6 +177,7 @@ private struct RailRow: View {
 
     /// The tool, in a word.
     private var tool: String {
+        if let mark = step.mark { return mark.name }
         switch step.kind {
         case .run: return "Shell"
         case .read: return "Read"
@@ -196,6 +198,7 @@ private struct RailRow: View {
 
     /// What the step worked on, without the words around it.
     private var subject: String {
+        if step.mark != nil { return step.markSubject }
         var text = step.title
         for verb in ["Chrome: ", "Browser: ", "Searched the web for ", "Fetched ", "Read ", "Searched ", "Wrote ", "Edited ", "Delegated ",
                      "Opened ", "Typed ", "Pressed "] where text.hasPrefix(verb) {
@@ -485,6 +488,7 @@ private struct CardRow: View {
 
     /// What the step worked on, without the words around it.
     private var subject: String {
+        if step.mark != nil { return step.markSubject }
         var text = step.title
         for verb in ["Chrome: ", "Browser: ", "Searched the web for ", "Fetched ", "Read ", "Searched ", "Wrote ", "Edited ", "Delegated ",
                      "Opened ", "Typed ", "Pressed "] where text.hasPrefix(verb) {
@@ -510,6 +514,7 @@ private struct CardRow: View {
     /// The line, in plain words: what it was for when the agent said, else what it was.
     private var title: String {
         if let why = step.why, !why.isEmpty, step.kind != .edit { return why }
+        if let mark = step.mark { return "\(mark.verb) \(step.markSubject)" }
         switch step.kind {
         case .run: return "Ran a command"
         case .read: return "Read \(file)"

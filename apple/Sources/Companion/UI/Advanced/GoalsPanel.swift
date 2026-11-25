@@ -75,7 +75,7 @@ struct GoalsPanel: View {
                     .help("Turn the board to a new goal. This one is kept, with its tasks, and can be gone back to.")
                 }
             }
-            TextField("What should this project achieve?", text: $words, axis: .vertical)
+            TextField("", text: $words, prompt: Text("What should this project achieve?").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
                 .lineLimit(2...8)
                 .boardField()
             HStack(spacing: 6) {
@@ -111,7 +111,7 @@ struct GoalsPanel: View {
         let said = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
             BoardHeading("New goal")
-            TextField("What should this project achieve next?", text: $draft, axis: .vertical)
+            TextField("", text: $draft, prompt: Text("What should this project achieve next?").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
                 .lineLimit(2...8)
                 .boardField()
                 .focused($typing)

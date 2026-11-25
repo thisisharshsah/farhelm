@@ -142,7 +142,7 @@ struct TaskInspector: View {
                     .help("From \(advised.by), this project's supervisor. It is advice: you decide.")
                 }
                 if askingForChanges {
-                    TextField("What should change? The next run is given this.", text: $changeNote, axis: .vertical)
+                    TextField("", text: $changeNote, prompt: Text("What should change? The next run is given this.").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
                         .lineLimit(2...6)
                         .boardField()
                     BoardButton("Send Back to To do", icon: "arrow.uturn.backward", tint: Theme.amber) {
@@ -740,7 +740,7 @@ private struct NoteField: View {
     @State private var text = ""
 
     var body: some View {
-        TextField("Add a note", text: $text, axis: .vertical)
+        TextField("", text: $text, prompt: Text("Add a note").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
             .lineLimit(1...5)
             .boardField()
             .onSubmit {

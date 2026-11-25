@@ -139,6 +139,12 @@ final class ICloudPasswords: ObservableObject {
             request = json.loads(line)
             command = request.get("cmd")
             if command == "status":
+                # A daemon left running on Arc (as Companion used to start
+                # it) keeps Arc's windows coming: it is stopped, and the
+                # next one starts on a browser that stays hidden.
+                current = daemon.status()
+                if current.get("running") and str(current.get("browser", "")).lower().startswith("arc"):
+                    daemon.stop()
                 daemon.start()
                 result = daemon.status()
             elif command == "challenge":
@@ -181,27 +187,19 @@ final class ICloudPasswords: ObservableObject {
             return
         }
         missingBrowser = false
-        addArc()
+        addHost()
         if process?.isRunning != true {
             guard startProcess() else { state = .failed("The bridge could not be started."); return }
         }
         state = .starting
         detail = "Starting iCloud Passwords…"
         guard let answer = await request("status", timeout: 90) else {
-            if Self.onlyArc {
-                missingBrowser = true
-                state = .failed(Self.arcNote)
-            } else {
-                state = .failed("iCloud Passwords did not answer. It needs Chrome, Brave or Edge installed.")
-            }
+            state = .failed("iCloud Passwords did not answer. It needs Chrome, Brave or Edge installed.")
             return
         }
         guard answer["ok"] as? Bool == true else {
             let text = message(answer)
-            if Self.onlyArc {
-                missingBrowser = true
-                state = .failed(Self.arcNote)
-            } else if text.contains("supported browser") {
+            if text.contains("supported browser") {
                 missingBrowser = true
                 state = .failed(Self.browserNote)
             } else {
@@ -224,6 +222,12 @@ final class ICloudPasswords: ObservableObject {
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = FileHandle.nullDevice
+        // The Chromium inside, for apwlib to fall back on (companion_host).
+        if let host = Self.hostBrowser {
+            var environment = ProcessInfo.processInfo.environment
+            environment["COMPANION_PASSWORDS_HOST"] = host.path
+            process.environment = environment
+        }
         stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
@@ -311,41 +315,39 @@ final class ICloudPasswords: ObservableObject {
         "/Applications/Chromium.app",
         "/Applications/Brave Browser.app",
         "/Applications/Microsoft Edge.app",
-        // Arc is Chromium and runs Apple's extension too (as Arc's own
-        // help says); apwlib does not list it, so Companion adds it.
-        "/Applications/Arc.app",
+        // Not Arc or Dia: they open their own windows instead of running
+        // hidden, so iCloud Passwords would bring Arc up each time.
     ]
 
-    /// Arc is the only one there: if it cannot host the extension
-    /// hidden, Chrome is the way.
-    static var onlyArc: Bool {
-        approvedBrowsers.filter { FileManager.default.fileExists(atPath: $0) } == ["/Applications/Arc.app"]
+    /// The Chromium inside Companion that hosts Apple's extension, when
+    /// this build carries one.
+    static var hostBrowser: URL? {
+        let binary = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/Chromium.app/Contents/MacOS/Chromium")
+        return FileManager.default.isExecutableFile(atPath: binary.path) ? binary : nil
     }
 
-    static let arcNote = "Arc could not run iCloud Passwords hidden for Companion. Install Chrome for this; it stays hidden and you keep browsing in Companion and Arc."
-
-    /// Teaches apwlib about Arc: a small module in Companion's own Python
-    /// that adds Arc to the browsers it may use (after Chrome, Chromium,
-    /// Brave and Edge). The daemon's Python loads it too.
-    private func addArc() {
-        // The bundled Python has it already.
+    /// Points a Python set up on first use (not the bundled one, which has
+    /// it already) at the Chromium inside, and takes Arc out of its list.
+    private func addHost() {
         guard bundledPython == nil,
-              let source = Bundle.main.url(forResource: "companion_arc", withExtension: "py") else { return }
+              let source = Bundle.main.url(forResource: "companion_host", withExtension: "py") else { return }
         let fm = FileManager.default
         let lib = home.appendingPathComponent(".venv/lib")
         guard let python = (try? fm.contentsOfDirectory(atPath: lib.path))?.first(where: { $0.hasPrefix("python") }) else { return }
         let site = lib.appendingPathComponent(python).appendingPathComponent("site-packages")
         guard fm.fileExists(atPath: site.path) else { return }
-        try? fm.removeItem(at: site.appendingPathComponent("companion_arc.py"))
-        try? fm.copyItem(at: source, to: site.appendingPathComponent("companion_arc.py"))
-        try? "import companion_arc\n".write(to: site.appendingPathComponent("companion_arc.pth"), atomically: true, encoding: .utf8)
+        for old in ["companion_arc.py", "companion_arc.pth", "companion_host.py"] {
+            try? fm.removeItem(at: site.appendingPathComponent(old))
+        }
+        try? fm.copyItem(at: source, to: site.appendingPathComponent("companion_host.py"))
+        try? "import companion_host\n".write(to: site.appendingPathComponent("companion_host.pth"), atomically: true, encoding: .utf8)
     }
 
     static var hasApprovedBrowser: Bool {
-        approvedBrowsers.contains { FileManager.default.fileExists(atPath: $0) }
+        hostBrowser != nil || approvedBrowsers.contains { FileManager.default.fileExists(atPath: $0) }
     }
 
-    static let browserNote = "iCloud Passwords needs Chrome, Arc, Brave or Edge in Applications: macOS lets only those talk to it (Safari's is built in). Companion can install Chrome for you; it stays hidden and is used only for this."
+    static let browserNote = "iCloud Passwords needs Chrome, Brave or Edge in Applications: macOS lets only those talk to it, and they can run hidden (Arc and Dia open their own windows). Companion can install Chrome for you; it stays hidden, you never see it, and you keep browsing in Companion and Arc."
 
     /// Installs Google Chrome (with Homebrew when it is there, else
     /// Google's own disk image), then starts iCloud Passwords.

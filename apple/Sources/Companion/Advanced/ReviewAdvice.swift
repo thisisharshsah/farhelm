@@ -276,8 +276,13 @@ extension Advanced {
             return Delegation.Step(.file(target), namesKeys: AgentTools.isSensitive(target))
         case .read:
             return Delegation.Step(.look, namesKeys: AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory)))
-        case .search, .fetch, .web, .delegate, .wait, .done, .ask, .plan:
+        case .search, .fetch, .web, .delegate, .wait, .done, .ask, .plan, .chats, .notes:
             return Delegation.Step(.look)
+        case .mac:
+            // A change in Mail, Notes, Calendar or Reminders is the
+            // person's to make, not a supervisor's.
+            if let made = step.macCommand, !MacServices.changes(made.service, made.action) { return Delegation.Step(.look) }
+            return Delegation.Step(.terminal)
         case .browser:
             if let command = step.browserCommand?.command, ActionStep.browserLooks.contains(command) {
                 return Delegation.Step(.look)

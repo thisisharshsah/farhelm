@@ -340,13 +340,13 @@ struct GitHubTab: View {
 
     private var createForm: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Title", text: $title)
+            TextField("", text: $title, prompt: Text("Title").foregroundStyle(Theme.ink.opacity(0.42)))
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
                 .padding(.horizontal, 8)
                 .frame(height: 26)
                 .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.ink.opacity(0.07)))
-            TextField("What it changes and why", text: $bodyText, axis: .vertical)
+            TextField("", text: $bodyText, prompt: Text("What it changes and why").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11.5))
                 .lineLimit(3...8)

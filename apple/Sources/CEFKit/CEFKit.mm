@@ -16,6 +16,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_values.h"
 #include "include/cef_version.h"
@@ -38,6 +39,9 @@ static NSString *const kHelperPath = @"Companion Helper.app/Contents/MacOS/Compa
 - (void)cefClosed;
 - (void)cefResult:(int)messageID ok:(BOOL)ok json:(NSString *)json;
 - (void)cefEvent:(NSString *)method json:(NSString *)json;
+- (BOOL)cefDialog:(NSString *)kind message:(NSString *)message prompt:(NSString *)prompt
+         callback:(CefRefPtr<CefJSDialogCallback>)callback;
+- (void)cefDialogClosed;
 @end
 
 namespace {
@@ -112,6 +116,11 @@ class CompanionApp : public CefApp, public CefBrowserProcessHandler {
  public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
 
+  // No command-line switches are set here: CEF sets its own
+  // --disable-features, and replacing that list crashed Chromium as soon as
+  // a browser window was made. Passkeys are refused in the pages instead
+  // (`ChromiumTab.passkeyGuard`).
+
   // Windows Chromium opens itself come to Companion's client, so they are
   // seen and turned into tabs.
   CefRefPtr<CefClient> GetDefaultClient() override { return DefaultClient(); }
@@ -149,8 +158,33 @@ class Client : public CefClient,
                public CefDisplayHandler,
                public CefLifeSpanHandler,
                public CefLoadHandler,
+               public CefJSDialogHandler,
                public CefDevToolsMessageObserver {
  public:
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+
+  // A page's own alert, confirm and prompt, and the "leave this page?"
+  // question: Companion shows them over the page and answers them, so
+  // they never sit unseen and block the page (and every step after).
+  bool OnJSDialog(CefRefPtr<CefBrowser> browser, const CefString &origin_url, JSDialogType dialog_type,
+                  const CefString &message_text, const CefString &default_prompt_text,
+                  CefRefPtr<CefJSDialogCallback> callback, bool &suppress_message) override {
+    ChromiumBrowser *owner = Owner(browser);
+    if (!owner) return false;
+    NSString *kind = dialog_type == JSDIALOGTYPE_ALERT ? @"alert" : (dialog_type == JSDIALOGTYPE_CONFIRM ? @"confirm" : @"prompt");
+    return [owner cefDialog:kind message:Str(message_text) prompt:Str(default_prompt_text) callback:callback];
+  }
+
+  bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser, const CefString &message_text, bool is_reload,
+                            CefRefPtr<CefJSDialogCallback> callback) override {
+    ChromiumBrowser *owner = Owner(browser);
+    if (!owner) return false;
+    return [owner cefDialog:@"leave" message:Str(message_text) prompt:@"" callback:callback];
+  }
+
+  void OnResetDialogState(CefRefPtr<CefBrowser> browser) override { [Owner(browser) cefDialogClosed]; }
+  void OnDialogClosed(CefRefPtr<CefBrowser> browser) override { [Owner(browser) cefDialogClosed]; }
+
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -475,6 +509,8 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   NSRect _told;
   id _moveObserver;
   id _resizeObserver;
+  /// The page's open dialog, waiting for an answer.
+  CefRefPtr<CefJSDialogCallback> _dialog;
 #endif
 }
 
@@ -548,6 +584,22 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   [gBrowsers removeObject:self];
 }
 
+- (BOOL)cefDialog:(NSString *)kind message:(NSString *)message prompt:(NSString *)prompt
+         callback:(CefRefPtr<CefJSDialogCallback>)callback {
+  id<ChromiumBrowserDelegate> delegate = _delegate;
+  if (![delegate respondsToSelector:@selector(chromiumBrowser:opensDialog:message:defaultText:)]) return NO;
+  _dialog = callback;
+  [delegate chromiumBrowser:self opensDialog:kind message:message defaultText:prompt];
+  return YES;
+}
+
+- (void)cefDialogClosed {
+  if (!_dialog) return;
+  _dialog = nullptr;
+  id<ChromiumBrowserDelegate> delegate = _delegate;
+  if ([delegate respondsToSelector:@selector(chromiumBrowserDialogClosed:)]) [delegate chromiumBrowserDialogClosed:self];
+}
+
 - (void)cefEvent:(NSString *)method json:(NSString *)json {
   if (![method isEqualToString:@"Runtime.bindingCalled"]) return;
   NSDictionary *params = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
@@ -603,7 +655,11 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   NSWindow *window = [self nativeWindow];
   if (!_window || !window) return;
   _target = target;
-  if (!NSEqualRects(_told, target)) {
+  // Told again whenever its window is not where it should be: AppKit moves
+  // a child window with its parent without Chromium hearing of it, and
+  // Chromium then puts the page back at its old place and size (a sliver
+  // at the pane's edge) when only the change since the last telling is sent.
+  if (!NSEqualRects(_told, target) || !NSEqualRects(window.frame, target)) {
     _told = target;
     NSScreen *primary = NSScreen.screens.firstObject;
     CGFloat top = primary ? NSMaxY(primary.frame) - NSMaxY(target) : NSMinY(target);
@@ -647,6 +703,8 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   window.collectionBehavior = (parent.collectionBehavior & desktops) | NSWindowCollectionBehaviorTransient
       | NSWindowCollectionBehaviorIgnoresCycle;
   if (window.level != parent.level) window.level = parent.level;
+  // Kept out of screen shares and recordings whenever the panel is.
+  window.sharingType = parent.sharingType;
   if (window.parentWindow != parent) {
     [window.parentWindow removeChildWindow:window];
     [parent addChildWindow:window ordered:NSWindowAbove];
@@ -688,6 +746,17 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
 #endif
 }
 
+- (void)answerDialog:(BOOL)accept text:(NSString *)text {
+#if COMPANION_CEF
+  if (!_dialog) return;
+  CefRefPtr<CefJSDialogCallback> callback = _dialog;
+  _dialog = nullptr;
+  callback->Continue(accept, (text ?: @"").UTF8String);
+  id<ChromiumBrowserDelegate> delegate = _delegate;
+  if ([delegate respondsToSelector:@selector(chromiumBrowserDialogClosed:)]) [delegate chromiumBrowserDialogClosed:self];
+#endif
+}
+
 - (void)load:(NSString *)url {
 #if COMPANION_CEF
   CefRefPtr<CefBrowser> browser = [self cefBrowser];
@@ -710,6 +779,13 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
 - (void)reload {
 #if COMPANION_CEF
   if (CefRefPtr<CefBrowser> browser = [self cefBrowser]) browser->Reload();
+#endif
+}
+
+- (void)setMuted:(BOOL)muted {
+  _muted = muted;
+#if COMPANION_CEF
+  if (CefRefPtr<CefBrowser> browser = [self cefBrowser]) browser->GetHost()->SetAudioMuted(muted);
 #endif
 }
 
@@ -756,6 +832,41 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
   params->SetString("name", name.UTF8String);
   [self send:"Runtime.addBinding" params:params];
+#endif
+}
+
+- (void)devTools:(NSString *)method
+      parameters:(NSString *)parametersJSON
+      completion:(void (^)(NSString *_Nullable, NSString *_Nullable))completion {
+#if COMPANION_CEF
+  CefRefPtr<CefBrowser> browser = [self cefBrowser];
+  if (!browser) {
+    completion(nil, @"The page is not ready yet.");
+    return;
+  }
+  if (!_observer) _observer = browser->GetHost()->AddDevToolsMessageObserver(gClient);
+  int messageID = gNextMessage++;
+  NSData *methodData = [NSJSONSerialization dataWithJSONObject:@[method] options:0 error:nil];
+  NSString *quoted = [[NSString alloc] initWithData:methodData encoding:NSUTF8StringEncoding];
+  // ["Method"] -> "Method": the method name, quoted as JSON.
+  quoted = [quoted substringWithRange:NSMakeRange(1, quoted.length - 2)];
+  NSString *message = [NSString stringWithFormat:@"{\"id\":%d,\"method\":%@,\"params\":%@}",
+                       messageID, quoted, parametersJSON.length ? parametersJSON : @"{}"];
+  _pending[@(messageID)] = [completion copy];
+  std::string text = message.UTF8String;
+  if (!browser->GetHost()->SendDevToolsMessage(text.data(), text.size())) {
+    [_pending removeObjectForKey:@(messageID)];
+    completion(nil, @"Chromium did not take the request.");
+    return;
+  }
+  __weak ChromiumBrowser *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    ChromiumBrowser *strongSelf = weakSelf;
+    if (!strongSelf) return;
+    [strongSelf cefResult:messageID ok:NO json:@"The page did not answer in 30 seconds."];
+  });
+#else
+  completion(nil, @"Chromium is not part of this build.");
 #endif
 }
 

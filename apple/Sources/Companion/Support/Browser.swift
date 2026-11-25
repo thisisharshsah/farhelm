@@ -12,6 +12,18 @@ struct VisitedPage: Codable, Identifiable, Equatable {
     var visits: Int
 
     var id: String { url }
+
+    /// A sign-in or account step (a login portal, an OAuth hop): a step
+    /// on the way somewhere, not a page to come back to.
+    var isSignIn: Bool {
+        let address = url.lowercased()
+        let name = host.lowercased()
+        if ["login.", "auth.", "sso.", "signin.", "accounts.", "idp.", "shibboleth."].contains(where: name.hasPrefix) { return true }
+        if ["/login", "/signin", "/sign-in", "/oauth", "/sso/", "/saml", "/auth/", "/cas/login", "/idp/"].contains(where: address.contains) { return true }
+        let words = title.lowercased()
+        return ["sign in", "log in", "login", "signing in", "redirecting"].contains(where: words.hasPrefix)
+    }
+
     var host: String {
         let host = URL(string: url)?.host ?? url
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
@@ -127,22 +139,60 @@ final class BrowserHistory: ObservableObject {
         try? FileManager.default.removeItem(at: file)
     }
 
-    /// Fetches a site's icon once and keeps it.
+    /// Fetches a site's icon once and keeps it: the icon the page names
+    /// (largest first), then the touch icon, then /favicon.ico. Many
+    /// sites (sign-in portals, intranets) only name theirs in the page.
     private func fetchIcon(for url: URL) {
         guard let host = url.host, iconsAsked.insert(host).inserted else { return }
         let file = iconFile(host)
-        guard !FileManager.default.fileExists(atPath: file.path),
-              let source = URL(string: "https://\(host)/favicon.ico") else { return }
+        guard !FileManager.default.fileExists(atPath: file.path) else { return }
         Task { [weak self] in
-            var request = URLRequest(url: source)
-            request.timeoutInterval = 8
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  (response as? HTTPURLResponse)?.statusCode == 200,
-                  data.count < 400_000,
-                  NSImage(data: data)?.isValid == true else { return }
-            try? data.write(to: file, options: .atomic)
-            self?.pictureTick += 1
+            var sources = await Self.namedIcons(on: url)
+            for path in ["/apple-touch-icon.png", "/favicon.ico"] {
+                if let source = URL(string: "https://\(host)\(path)") { sources.append(source) }
+            }
+            for source in sources {
+                var request = URLRequest(url: source)
+                request.timeoutInterval = 8
+                guard let (data, response) = try? await URLSession.shared.data(for: request),
+                      (response as? HTTPURLResponse)?.statusCode == 200,
+                      data.count < 400_000,
+                      NSImage(data: data)?.isValid == true else { continue }
+                try? data.write(to: file, options: .atomic)
+                self?.pictureTick += 1
+                return
+            }
         }
+    }
+
+    /// The icons a page names in its <link rel="icon"> tags, largest first.
+    private static func namedIcons(on url: URL) async -> [URL] {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let html = String(data: data.prefix(200_000), encoding: .utf8) ?? String(data: data.prefix(200_000), encoding: .isoLatin1),
+              let base = response.url else { return [] }
+        let tag = try? NSRegularExpression(pattern: "<link[^>]+>", options: [.caseInsensitive])
+        let range = NSRange(html.startIndex..., in: html)
+        var found: [(url: URL, size: Int)] = []
+        for match in tag?.matches(in: html, range: range) ?? [] {
+            guard let text = Range(match.range, in: html).map({ String(html[$0]) }) else { continue }
+            let lower = text.lowercased()
+            guard lower.contains("icon"), lower.contains("rel="), !lower.contains("mask-icon"),
+                  let href = attribute("href", in: text), let link = URL(string: href, relativeTo: base)?.absoluteURL,
+                  link.scheme?.hasPrefix("http") == true else { continue }
+            let size = attribute("sizes", in: text).flatMap { Int($0.split(separator: "x").first ?? "") } ?? (lower.contains("apple-touch") ? 180 : 16)
+            found.append((link, size))
+        }
+        return found.sorted { $0.size > $1.size }.map { $0.url }
+    }
+
+    private static func attribute(_ name: String, in tag: String) -> String? {
+        guard let pattern = try? NSRegularExpression(pattern: name + "\\s*=\\s*[\"']([^\"']+)[\"']", options: [.caseInsensitive]),
+              let match = pattern.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)),
+              let range = Range(match.range(at: 1), in: tag) else { return nil }
+        return String(tag[range]).replacingOccurrences(of: "&amp;", with: "&")
     }
 
     /// What a new tab offers: recent pages, at most two from any one site so
@@ -150,7 +200,7 @@ final class BrowserHistory: ObservableObject {
     func suggestions(limit: Int = 12) -> [VisitedPage] {
         var perHost: [String: Int] = [:]
         var picked: [VisitedPage] = []
-        for page in pages {
+        for page in pages where !page.isSignIn {
             let count = perHost[page.host, default: 0]
             guard count < 2 else { continue }
             perHost[page.host] = count + 1
@@ -237,6 +287,20 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func load(_ url: URL) {
         self.url = url
         webView.load(URLRequest(url: url))
+    }
+
+    /// The page's theme color, or else the color its page is painted on.
+    var pageColor: NSColor? { webView.themeColor ?? webView.underPageBackgroundColor }
+
+    /// WebKit's tabs do not sleep: a web view gives back what it can by
+    /// itself.
+    var asleep: Bool { false }
+
+    func snapshot() async -> PageSnapshot? {
+        guard url != nil else { return nil }
+        let found = try? await webView.callAsyncJavaScript(PageSnapshot.script, arguments: [:], in: nil,
+                                                           contentWorld: .defaultClient)
+        return PageSnapshot(found)
     }
 
     // MARK: WKNavigationDelegate
@@ -366,6 +430,10 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
 @MainActor
 final class BrowserModel: ObservableObject {
     @Published private(set) var tabs: [BrowserTab] = []
+    /// The tab shown beside the current one, in split view.
+    @Published var split: UUID?
+    /// Pages of closed tabs, the one closed last last, to open again.
+    @Published private var closedPages: [URL] = []
     @Published var selected: UUID? {
         didSet {
             guard selected != oldValue else { return }
@@ -464,6 +532,8 @@ final class BrowserModel: ObservableObject {
             tabs.append(tab)
         }
         BrowserExtensions.shared.opened(tab, in: self)
+        // A new tab shows on its own; split view, if any, ends.
+        split = nil
         selected = tab.id
         return tab
     }
@@ -471,15 +541,44 @@ final class BrowserModel: ObservableObject {
     func close(_ id: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = tabs.remove(at: index)
+        if let url = tab.url { closedPages = Array((closedPages + [url]).suffix(20)) }
+        if split == id { split = nil }
         tab.webView.stopLoading()
         BrowserExtensions.shared.closed(tab, in: self)
         noteActivity()
         if tabs.isEmpty {
             newTab()
         } else if selected == id {
-            selected = tabs[min(index, tabs.count - 1)].id
+            // In split view the page beside it takes its place.
+            if let side = split, tabs.contains(where: { $0.id == side }) {
+                split = nil
+                selected = side
+            } else {
+                selected = tabs[min(index, tabs.count - 1)].id
+            }
         }
     }
+
+    var canReopen: Bool { !closedPages.isEmpty }
+
+    func reopenClosed() {
+        guard let url = closedPages.popLast() else { return }
+        newTab().load(url)
+    }
+
+    func move(_ id: UUID, before other: UUID?) {
+        guard id != other, let from = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let tab = tabs.remove(at: from)
+        if let other, let to = tabs.firstIndex(where: { $0.id == other }) {
+            tabs.insert(tab, at: to)
+        } else {
+            tabs.append(tab)
+        }
+    }
+
+    /// WebKit's tabs do not sleep.
+    func sleepOthers() {}
+    func sleep(_ id: UUID) {}
 
     /// Shows a page: in the tab that is open if it is still blank, and in a
     /// new one otherwise, so what was being read is not replaced.

@@ -741,6 +741,7 @@ final class RemoteServer: ObservableObject {
                 case "fork": .fork
                 case "rewindCode": .rewindCode
                 case "forkAndRewind": .forkAndRewind
+                case "conversationAndCode": .conversationAndCode
                 default: nil
                 }
                 AppState.shared.editMessage(id, to: text, choice)

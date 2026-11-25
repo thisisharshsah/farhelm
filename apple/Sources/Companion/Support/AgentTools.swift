@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import PDFKit
 
 /// The agent's own tools for files and the web. Each returns what the model
 /// is shown next round: the content it asked for, or a plain reason it
@@ -58,7 +60,14 @@ enum AgentTools {
         guard let data = FileManager.default.contents(atPath: path) else {
             return Outcome(ok: false, text: "\(path) could not be read.")
         }
-        guard !data.prefix(4096).contains(0), let text = String(data: data, encoding: .utf8) else {
+        // A document is read as the text in it: this runs in Companion, so
+        // it reaches folders macOS keeps the agent's shell out of.
+        let text: String
+        if !data.prefix(4096).contains(0), let plain = String(data: data, encoding: .utf8) {
+            text = plain
+        } else if let written = documentText(at: path) {
+            text = written
+        } else {
             return Outcome(ok: false, text: "\(path) is not a text file (\(data.count) bytes).")
         }
         let lines = text.components(separatedBy: "\n")
@@ -79,6 +88,23 @@ enum AgentTools {
             ? "\n(showing lines \(first + 1)-\(reached) of \(lines.count); read \(target):\(reached + 1)-\(min(reached + 300, lines.count)) for more)"
             : (range == nil ? "" : "\n(lines \(first + 1)-\(reached) of \(lines.count))")
         return Outcome(ok: true, text: shown + note)
+    }
+
+    /// The text of a PDF, or of a Word, RTF or web document; nil for
+    /// anything else, or a document with no text in it (a scan).
+    private static func documentText(at path: String) -> String? {
+        let url = URL(fileURLWithPath: path)
+        var text: String?
+        switch url.pathExtension.lowercased() {
+        case "pdf":
+            text = PDFDocument(url: url)?.string
+        case "rtf", "rtfd", "doc", "docx", "odt", "webarchive":
+            text = (try? NSAttributedString(url: url, options: [:], documentAttributes: nil))?.string
+        default:
+            return nil
+        }
+        guard let found = text?.trimmingCharacters(in: .whitespacesAndNewlines), !found.isEmpty else { return nil }
+        return found
     }
 
     /// Creates or replaces a file with the given text.

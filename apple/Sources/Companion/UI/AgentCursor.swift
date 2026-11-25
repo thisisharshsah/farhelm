@@ -42,7 +42,7 @@ final class AgentCursor {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
         }
-        await NSAnimationContext.runAnimationGroup({ context in
+        NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.38
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
             self.panel.animator().setFrame(frame, display: true)
