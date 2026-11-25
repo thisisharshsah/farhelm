@@ -111,43 +111,67 @@ check() {
   xcrun --sdk macosx swift build
 }
 
-# Sign with a stable identity so macOS permission grants (mic, screen
-# recording) survive rebuilds. Ad-hoc signing (-) changes the app's identity
-# every build, which makes TCC re-ask each time.
-sign() {
-  local identity="${COMPANION_SIGN_ID:-}"
-  if [[ -z "$identity" ]]; then
-    identity=$(security find-identity -v -p codesigning 2>/dev/null \
-      | awk -F'"' '/Companion Dev|Apple Development|Developer ID Application/ {print $2; exit}')
+# Sign with a stable identity so macOS permission grants (screen recording,
+# accessibility) survive rebuilds. Ad-hoc signing (-) gives the app a new
+# identity every build, so macOS asks again and the old grant is left behind
+# as a second Companion in System Settings.
+#
+# The kinds of identity that are used, best first. COMPANION_SIGN_ID names
+# one outright, for a keychain that holds several.
+SIGN_KINDS=("Apple Development" "Developer ID Application" "Companion Dev")
+# Mac passkeys in Companion's browser need the browser entitlement, and only
+# a provisioning profile from Apple grants it. Signing with the entitlement
+# and no profile stops the app from opening, so both have to be present.
+BROWSER_ENTITLEMENTS=Resources/Browser.entitlements
+PROFILE=Resources/embedded.provisionprofile
+
+signing_identity() {
+  if [[ -n "${COMPANION_SIGN_ID:-}" ]]; then
+    echo "$COMPANION_SIGN_ID"
+    return 0
   fi
-  # What is inside is signed first (Python's binaries, Chromium's
-  # framework and helpers), then the app around it.
-  local inner folder
-  for folder in Python CodeServer; do
-    [[ -d "$BUNDLE_DIR/Contents/Resources/$folder" ]] || continue
-    find "$BUNDLE_DIR/Contents/Resources/$folder" -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.node' -o -perm -u+x \) -print0 |
-      while IFS= read -r -d '' inner; do
-        file -b "$inner" | grep -q Mach-O && codesign --force --sign "${identity:--}" "$inner" 2>/dev/null || true
-      done
+  local names kind found
+  names=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' 'NF >= 3 {print $2}')
+  [[ -n "$names" ]] || return 0
+  for kind in "${SIGN_KINDS[@]}"; do
+    found=$(printf '%s\n' "$names" | grep -m1 -F "$kind" || true)
+    if [[ -n "$found" ]]; then
+      echo "$found"
+      return 0
+    fi
   done
-  # The Chromium for iCloud Passwords keeps its own signature: macOS's
-  # iCloud Passwords helper decides by it.
-  for inner in "$BUNDLE_DIR/Contents/Frameworks/"*; do
-    [[ -e "$inner" ]] || continue
-    codesign --force --sign "${identity:--}" "$inner"
-  done
-  # Mac passkeys in Companion's browser: only with a provisioning profile
-  # from Apple that grants the browser passkey entitlement, placed at
-  # Resources/embedded.provisionprofile. Without one, signing with that
-  # entitlement would stop the app from opening, so it is left out.
-  local profile="Resources/embedded.provisionprofile"
-  if [[ -n "$identity" && -f "$profile" ]]; then
-    cp "$profile" "$BUNDLE_DIR/Contents/embedded.provisionprofile"
-    echo "Signing as: $identity (with Mac passkeys)"
-    codesign --force --entitlements Resources/Browser.entitlements --sign "$identity" "$BUNDLE_DIR"
-  elif [[ -n "$identity" ]]; then
+  return 0
+}
+
+# A library or a loose binary: entitlements belong to a bundle, not to these.
+# No secure timestamp anywhere: it needs the network, and only distribution
+# (notarization) asks for one.
+sign_file() {
+  codesign --force --timestamp=none --sign "$1" "$2"
+}
+
+# A nested bundle: Chromium's helper apps. The browser entitlement belongs
+# to the app that asks for it, not to these.
+sign_bundle() {
+  codesign --force --timestamp=none --sign "$1" "$2"
+}
+
+# The app itself, last, with the browser entitlement when a profile grants it.
+sign_app() {
+  if [[ "$1" != "-" && -f "$PROFILE" && -f "$BROWSER_ENTITLEMENTS" ]]; then
+    cp "$PROFILE" "$BUNDLE_DIR/Contents/embedded.provisionprofile"
+    echo "Signing with Mac passkeys"
+    codesign --force --timestamp=none --sign "$1" --entitlements "$BROWSER_ENTITLEMENTS" "$BUNDLE_DIR"
+  else
+    codesign --force --timestamp=none --sign "$1" "$BUNDLE_DIR"
+  fi
+}
+
+sign() {
+  local identity
+  identity=$(signing_identity)
+  if [[ -n "$identity" ]]; then
     echo "Signing as: $identity"
-    codesign --force --sign "$identity" "$BUNDLE_DIR"
   else
     echo "WARNING: no code signing identity found; signing ad-hoc."
     echo "macOS will re-ask permissions after every rebuild. To fix, either:"
@@ -155,8 +179,48 @@ sign() {
     echo "  - Keychain Access > Certificate Assistant > Create a Certificate,"
     echo "    name 'Companion Dev', type 'Code Signing', then rebuild, or"
     echo "  - set COMPANION_SIGN_ID to an identity name."
-    codesign --force --sign - "$BUNDLE_DIR"
+    identity=-
   fi
+  # Inside out: everything nested is signed before the bundle around it is
+  # sealed, or the seal names files that change under it afterwards and the
+  # signature is broken.
+  local inner folder
+  for folder in Python CodeServer; do
+    [[ -d "$BUNDLE_DIR/Contents/Resources/$folder" ]] || continue
+    find "$BUNDLE_DIR/Contents/Resources/$folder" -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.node' -o -perm -u+x \) -print0 |
+      while IFS= read -r -d '' inner; do
+        file -b "$inner" | grep -q Mach-O && sign_file "$identity" "$inner" 2>/dev/null || true
+      done
+  done
+  local framework="$BUNDLE_DIR/Contents/Frameworks/Chromium Embedded Framework.framework"
+  if [[ -d "$framework" ]]; then
+    # Chromium's own libraries (its GL and Vulkan loaders) sit beside the
+    # framework's binary, and are signed before the framework is.
+    if [[ -d "$framework/Libraries" ]]; then
+      find "$framework/Libraries" -type f -name '*.dylib' -print0 |
+        while IFS= read -r -d '' inner; do
+          sign_file "$identity" "$inner"
+        done
+    fi
+    sign_file "$identity" "$framework"
+  fi
+  for inner in "$BUNDLE_DIR/Contents/Frameworks/"*; do
+    # The framework is signed above, before its own libraries' turn.
+    [[ -e "$inner" && "$inner" != "$framework" ]] || continue
+    if [[ "$inner" == *.app ]]; then
+      sign_bundle "$identity" "$inner"
+    else
+      sign_file "$identity" "$inner"
+    fi
+  done
+  # The Chromium for iCloud Passwords in Contents/Helpers keeps the
+  # signature it came with: it is signed by another team with library
+  # validation, and re-signing it here would stop macOS's iCloud Passwords
+  # helper from trusting it. The verify below proves its seal is whole.
+  sign_app "$identity"
+  # A broken signature shows itself only when macOS refuses to start the
+  # app, so the build checks it here instead.
+  codesign --verify --deep --strict "$BUNDLE_DIR"
 }
 
 # A Companion still running from dist/ keeps the old build (and its
