@@ -4143,10 +4143,14 @@ final class AppState: ObservableObject {
     }
 
     /// Stops the task of one chat (the open one, or one that was left).
-    func stopAgent(in chatID: UUID) {
+    /// `bySupervisor` when a board's supervisor asked for it, not the
+    /// person: the board keeps who stopped it, and a run its supervisor
+    /// stopped is not taken up again by itself either.
+    func stopAgent(in chatID: UUID, bySupervisor: Bool = false) {
         followUps[chatID]?.cancel()
         followUps[chatID] = nil
         guard let job = jobs[chatID] else { return }
+        if bySupervisor { job.stoppedBySupervisor() }
         // Only the task using the mouse and keyboard has typing to stop.
         if job.holdsScreen { DeviceControl.shared.cancel() }
         job.run?.cancel()

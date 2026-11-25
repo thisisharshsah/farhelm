@@ -171,6 +171,12 @@ final class AgentJob: ObservableObject, Identifiable {
     /// when it reported; otherwise it was stopped from outside before it
     /// reported, by the person (or by quitting, when every task is
     /// stopped at once).
+    /// The supervisor stopped it in the person's place. A word already
+    /// given on how it ended stands.
+    func stoppedBySupervisor() {
+        if ending == nil { ending = WorkRun.Ending.supervisor }
+    }
+
     func howItEnded(stoppingAll: Bool) -> WorkRun.Ending {
         if let ending { return ending }
         if endedFailed != nil { return WorkRun.Ending.itself }
