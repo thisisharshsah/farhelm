@@ -123,7 +123,7 @@ sign() {
     identity=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development/ {print $2; exit}')
     if [[ -z "$identity" ]]; then
       # Fall back to any available identity (Developer ID Application or Companion Dev)
-      identity=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Companion Dev|Developer ID Application/ {print $2; exit}')
+      identity=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application|Companion Dev/ {print $2; exit}')
     fi
   fi
 
