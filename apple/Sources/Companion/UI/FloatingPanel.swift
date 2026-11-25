@@ -300,7 +300,11 @@ final class OverlayController {
                 }
                 // Dragged by the user. The panel stays where it is; while it
                 // is put away, it will open beside the circle's new place.
-                if !self.app.panelVisible { self.panelDetached = false }
+                if !self.app.panelVisible {
+                    self.panelDetached = false
+                    // The panel did not move, so nothing else saves this.
+                    self.scheduleSessionSave()
+                }
             }
         }
         main.delegate = floor
