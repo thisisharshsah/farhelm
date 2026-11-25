@@ -263,7 +263,8 @@ final class AppSettings: ObservableObject {
         hideFromScreenShare = d.object(forKey: "hideFromScreenShare") as? Bool ?? true
         useLocation = d.bool(forKey: "useLocation")
         agentOrbit = d.object(forKey: "agentOrbit") as? Bool ?? true
-        historyGit = d.object(forKey: "historyGit") as? Bool ?? true
+        // Off for new installs; a value the user has saved is kept.
+        historyGit = d.object(forKey: "historyGit") as? Bool ?? false
         apiStepMinutes = d.object(forKey: "apiStepMinutes") as? Int ?? 15
         d.removeObject(forKey: "contentZoom")
         let chatText = d.double(forKey: "chatTextScale")
