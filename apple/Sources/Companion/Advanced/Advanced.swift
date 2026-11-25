@@ -1901,6 +1901,36 @@ final class Advanced: ObservableObject {
         return made
     }
 
+    /// Makes a crash of Companion's a task, when the person asks for it
+    /// from the line shown after the crash. The report goes with it as a
+    /// note, and `file` names where the whole record is kept. It waits in
+    /// the Backlog: with the supervisor starting ready tasks by itself, a
+    /// task in To do would be worked on before the person had read it.
+    /// Returns the task's key ("T-12").
+    @discardableResult
+    func addTask(from crash: CrashRecord, file: String, in project: UUID) -> String? {
+        var key: String?
+        refreshRoster()
+        let profiles = roster
+        change(project) { board in
+            let now = Date()
+            let item = board.add(title: crash.taskTitle, details: crash.taskDetails(file: file),
+                                 acceptance: ["The cause is found and fixed", "A test covers it"],
+                                 status: .backlog, priority: .high, kind: .bug, by: .person, now: now)
+            key = item.key
+            board.note(item.id, crash.report, author: "Companion", now: now)
+            let models = profiles.map(\.profile)
+            if let found = ModelRouting.suggest(for: item, among: models,
+                                                busy: ModelRouting.busy(of: models, items: board.items),
+                                                records: ModelRouting.records(of: board.allItems)) {
+                board.assign(item.id, Assignment(model: found.profile.choice, label: found.profile.name,
+                                                 reason: found.reason, source: .rule, accepted: false, date: now),
+                             by: .person, now: now)
+            }
+        }
+        return key
+    }
+
     func move(_ item: UUID, to status: WorkStatus, above other: UUID? = nil, in project: UUID) {
         change(project) { $0.move(item, to: status, above: other, by: .person, now: Date()) }
         // Called done by a person, its work is merged.

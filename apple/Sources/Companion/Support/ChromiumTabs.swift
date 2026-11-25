@@ -30,7 +30,11 @@ enum BrowserEngine {
             }
         }
         let profile = ContextStore.shared.baseDir.appendingPathComponent("chromium", isDirectory: true)
-        return Chromium.start(withProfileDirectory: profile.path)
+        let started = Chromium.start(withProfileDirectory: profile.path)
+        // Chromium sets signal handlers of its own as it starts; the crash
+        // recorder's are put back so a crash is still written down.
+        CrashRecorder.shared.rearm()
+        return started
     }
 
     /// Started and ready for tabs (it finishes starting a moment later).

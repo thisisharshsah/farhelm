@@ -580,8 +580,18 @@ CefRefPtr<CefClient> DefaultClient() { return gClient; }
   _observer = nullptr;
   _view = nullptr;
   _window = nullptr;
-  [_delegate chromiumBrowserDidClose:self];
   [gBrowsers removeObject:self];
+  // Chromium is still inside its own close of this browser here. The
+  // delegate answers a closed tab by showing the tab beside it, which can
+  // wake that tab and make a browser for it; made from inside this
+  // callback, Chromium crashed in CreateBrowserView (2026-11-24, a page
+  // that closed itself). So the delegate hears on the main queue's next
+  // turn, once Chromium has finished.
+  id<ChromiumBrowserDelegate> delegate = _delegate;
+  ChromiumBrowser *closed = self;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [delegate chromiumBrowserDidClose:closed];
+  });
 }
 
 - (BOOL)cefDialog:(NSString *)kind message:(NSString *)message prompt:(NSString *)prompt

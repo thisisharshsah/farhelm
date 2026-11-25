@@ -165,3 +165,23 @@ final class LinkAssemblerTests: XCTestCase {
         XCTAssertNotNil(assembler.take(frame("I", 0, of: 1, "x"), from: "phone-2")?.message)
     }
 }
+
+final class GateTests: XCTestCase {
+    /// A ping's handler can be called twice (the pong, then an error when
+    /// the socket is cancelled). The second answer must be dropped: a
+    /// continuation resumed twice stops the app.
+    func testOnlyTheFirstAnswerResumesTheWaiter() async throws {
+        let gate = Gate<Int>()
+        let value: Int = try await withCheckedThrowingContinuation { continuation in
+            gate.hold(continuation)
+            XCTAssertTrue(gate.finish(.success(1)))
+            XCTAssertFalse(gate.finish(.failure(LinkError.closed)))
+            XCTAssertFalse(gate.finish(.success(2)))
+        }
+        XCTAssertEqual(value, 1)
+    }
+
+    func testAnAnswerWithNobodyWaitingIsDropped() {
+        XCTAssertFalse(Gate<Void>().finish(.success(())))
+    }
+}
