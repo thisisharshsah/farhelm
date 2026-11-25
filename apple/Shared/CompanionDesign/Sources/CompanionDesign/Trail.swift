@@ -64,9 +64,8 @@ private struct TrailDot: View {
 
     var body: some View {
         if live && !reduceMotion {
-            TimelineView(.animation(minimumInterval: 1.0 / 15)) { context in
-                dot.opacity(Self.breath(at: context.date))
-            }
+            Breathing(low: 0.35, period: 0.8) { dot }
+                .frame(width: 8, height: 8)
         } else {
             dot
         }

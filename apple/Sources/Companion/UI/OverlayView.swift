@@ -2,6 +2,17 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+extension Animation {
+    /// Moving between pages and opening or closing a pane beside the chat.
+    /// Short and without a spring: for as long as such a change animates,
+    /// every frame lays the whole window out again at a new width (the chat's
+    /// text wraps again, the board's cards are measured again), and a spring
+    /// kept that up for most of a second, which is what made switching feel
+    /// heavy. In a tenth of a second it reads as immediate and still not as
+    /// a jump.
+    static let pageSwitch = Animation.easeOut(duration: 0.12)
+}
+
 /// The main glass panel, laid out as a conversation workspace:
 /// header, status chips, a compact live transcript, one chat timeline holding
 /// both reply and screen turns, and an input bar with the model switcher.
@@ -568,8 +579,8 @@ struct OverlayView: View {
         // The floating conversations (on hover) sit over the chat column;
         // see the chat's own overlay above.
         .animation(.spring(response: 0.3, dampingFraction: 0.86), value: sidebarPeek)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.sidebarPinned)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.sidePanel)
+        .animation(.pageSwitch, value: app.sidebarPinned)
+        .animation(.pageSwitch, value: app.sidePanel)
         .onChange(of: app.conversation.id) { _, _ in
             sidebarPeek = false
             if app.sidebarPinned { app.refreshHistory() }
@@ -591,9 +602,9 @@ struct OverlayView: View {
         .preferredColorScheme(Theme.isLight ? .light : .dark)
         // Moving between the conversation, history and settings is one
         // soft motion, not a jump.
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.showSettings)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: app.showHistory)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: projectHome.projectID)
+        .animation(.pageSwitch, value: app.showSettings)
+        .animation(.pageSwitch, value: app.showHistory)
+        .animation(.pageSwitch, value: projectHome.projectID)
     }
 
     /// Compact mode, with the pointer away: just the pill.
@@ -998,7 +1009,7 @@ struct OverlayView: View {
                        tint: app.sidebarPinned ? Theme.accent : nil) {
                 sidebarPeek = false
                 app.refreshHistory()
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                withAnimation(.pageSwitch) {
                     app.sidebarPinned.toggle()
                 }
                 app.overlay?.setSidebar(app.sidebarPinned)

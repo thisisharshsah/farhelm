@@ -206,6 +206,8 @@ struct TaskCard: View {
                         .lineLimit(1)
                 }
                 .help(failed.map { "\($0.name) \(Checks.status($0))" }.joined(separator: "\n"))
+            } else if item.status == .review {
+                reviewState
             }
             HStack(spacing: 6) {
                 ModelChip(assignment: item.assignment, limit: 18)
@@ -249,6 +251,37 @@ struct TaskCard: View {
             } else {
                 statusLine(job?.status ?? "Working", mark: .working)
             }
+        }
+    }
+
+    /// Where a card resting in Review stands: the review handed it to the
+    /// person (and why, on hover), or its review has not come yet. A
+    /// review going on right now has its own line above.
+    @ViewBuilder
+    private var reviewState: some View {
+        let since = item.runs.last?.endedAt ?? item.runs.last?.startedAt ?? .distantPast
+        let handed = item.notes.last { $0.date >= since && $0.text.hasPrefix("The review ") }
+        HStack(spacing: 5) {
+            Image(systemName: handed == nil ? "hourglass" : "person.crop.circle.badge.exclamationmark")
+                .font(.system(size: 10))
+                .foregroundStyle(handed == nil ? Theme.ink.opacity(0.5) : Theme.amber)
+            Text(reviewWords(handed: handed != nil))
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(handed == nil ? Theme.ink.opacity(0.62) : Theme.amber)
+                .lineLimit(1)
+        }
+        .help(handed?.text ?? item.runs.last?.advice?.notes ?? "Open the card to approve it or ask for changes")
+    }
+
+    /// The card's line in Review: whether the work is done as far as the
+    /// supervisor can tell, and what it would do in the person's place.
+    private func reviewWords(handed: Bool) -> String {
+        switch item.runs.last?.advice?.verdict {
+        case .approved?: return "Work done · approve suggested"
+        case .changesRequested?: return "Not done · send back suggested"
+        case nil:
+            if handed { return "Reviewed: needs you" }
+            return item.runs.last?.review == nil ? "Waiting for its review" : "Reviewed, waits for you"
         }
     }
 

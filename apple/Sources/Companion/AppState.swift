@@ -2326,9 +2326,26 @@ final class AppState: ObservableObject {
         // A task changes many times a second (its log, its status, the
         // reply streaming in), and each change redrew every view of the
         // app. Its changes are passed on together, at most every 0.15 s.
+        //
+        // A task in a chat that is not the one on screen (a board's run, a
+        // chat left working) shows only as a mark in the sidebar and on its
+        // card, yet each of its changes still redrew the whole app: with
+        // four board runs going that was some twenty-five full redraws a
+        // second, and the app had no time left for clicks. Those pass
+        // their changes on every two seconds; the chat on screen keeps
+        // its quick updates.
+        var lastFromBackground = Date.distantPast
         jobWatchers[chatID] = job.objectWillChange
             .throttle(for: .milliseconds(150), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if chatID != self.conversation.id {
+                    let now = Date()
+                    guard now.timeIntervalSince(lastFromBackground) >= 2 else { return }
+                    lastFromBackground = now
+                }
+                self.objectWillChange.send()
+            }
         streamingTurns.insert(turnID)
         // What goes with the task: the repository's note and the files
         // attached to this message, from the chat it came from.

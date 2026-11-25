@@ -307,17 +307,37 @@ public struct LoadingMark: View {
                 .padding(size * 0.08)
                 .transition(.scale(scale: 0.6).combined(with: .opacity))
             case .idle, .thinking, .working, .waiting:
-                // A mark the size of a line of text looks just as smooth at
-                // half the frames.
-                IsolatedAnimation(OrbitMark(speed: speed, dots: dots, lines: lines, trail: size >= 20,
-                                            pulse: state != .idle, moving: state != .idle,
-                                            tint: state == .waiting ? Theme.amber : nil,
-                                            frameRate: size < 24 ? 15 : nil))
+                turning
                     .opacity(state == .idle ? 0.55 : 1)
             }
         }
         .frame(width: size, height: size)
         .accessibilityLabel(label)
+    }
+
+    /// The ball itself. Small and moving, Core Animation turns it (see
+    /// `SpinMark`); large or still, it is the drawn one.
+    @ViewBuilder
+    private var turning: some View {
+        #if os(macOS)
+        if state != .idle, size < 24 {
+            SpinMark(lines: lines, dots: dots, speed: speed, pulse: true,
+                     tint: state == .waiting ? Theme.amber : nil)
+        } else {
+            drawn
+        }
+        #else
+        drawn
+        #endif
+    }
+
+    private var drawn: some View {
+        // A mark the size of a line of text looks just as smooth at
+        // half the frames.
+        IsolatedAnimation(OrbitMark(speed: speed, dots: dots, lines: lines, trail: size >= 20,
+                                    pulse: state != .idle, moving: state != .idle,
+                                    tint: state == .waiting ? Theme.amber : nil,
+                                    frameRate: size < 24 ? 15 : nil))
     }
 
     private var label: String {
@@ -371,6 +391,293 @@ private struct IsolatedHost<Content: View>: NSViewRepresentable {
 
     func updateNSView(_ host: NSHostingView<Content>, context: Context) {
         host.rootView = content
+    }
+}
+#endif
+
+// MARK: - Motion that costs the app nothing
+
+/// Makes a view breathe: from full strength down to `low` and back, for as
+/// long as it is on screen. On the Mac the fade is handed to Core Animation,
+/// which runs it outside the app: a SwiftUI `repeatForever` animation
+/// redraws on the main thread at the display's full rate, and a few of them
+/// on screen left no time for typing or clicks.
+public struct Breathing<Content: View>: View {
+    let content: Content
+    var low: Double
+    var period: Double
+
+    public init(low: Double = 0.35, period: Double = 0.9, @ViewBuilder content: () -> Content) {
+        self.content = content()
+        self.low = low
+        self.period = period
+    }
+
+    public var body: some View {
+        #if os(macOS)
+        BreathingHost(content: content, low: low, period: period)
+        #else
+        TimelineView(.animation(minimumInterval: 1.0 / 15)) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: period * 2) / (period * 2)
+            content.opacity(low + (1 - low) * (1 + cos(turn * 2 * .pi)) / 2)
+        }
+        #endif
+    }
+}
+
+#if os(macOS)
+import QuartzCore
+
+private final class BreathingHostView<Content: View>: NSHostingView<Content> {
+    var low: Double = 0.35
+    var period: Double = 0.9
+
+    // Core Animation drops a layer's animations when its view leaves the
+    // window, so the fade starts again each time it comes back.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        breathe()
+    }
+
+    // What breathes is decoration: clicks go to what is under it.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func breathe() {
+        wantsLayer = true
+        guard let layer = self.layer else { return }
+        layer.removeAnimation(forKey: "breath")
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1.0
+        fade.toValue = low
+        fade.duration = period
+        fade.autoreverses = true
+        fade.repeatCount = .infinity
+        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(fade, forKey: "breath")
+    }
+}
+
+private struct BreathingHost<Content: View>: NSViewRepresentable {
+    let content: Content
+    let low: Double
+    let period: Double
+
+    func makeNSView(context: Context) -> BreathingHostView<Content> {
+        let host = BreathingHostView(rootView: content)
+        host.sizingOptions = []
+        host.low = low
+        host.period = period
+        host.breathe()
+        return host
+    }
+
+    func updateNSView(_ host: BreathingHostView<Content>, context: Context) {
+        host.rootView = content
+        if host.low != low || host.period != period {
+            host.low = low
+            host.period = period
+            host.breathe()
+        }
+    }
+}
+
+/// The small mark (the size of a line of text), turned by Core Animation.
+/// The drawn mark works out every line of the ball on the main thread for
+/// each frame; with a mark on every running task, every busy row and the
+/// status line, that was most of what the app did while the agent worked.
+/// Here the ball is built once out of layers and the turning is left to
+/// Core Animation, outside the app. Larger marks keep the drawn ball, with
+/// its depth and trails, which a mark this small cannot show anyway.
+struct SpinMark: NSViewRepresentable {
+    let lines: Int
+    let dots: Int
+    let speed: Double
+    let pulse: Bool
+    let tint: Color?
+
+    func makeNSView(context: Context) -> SpinMarkView {
+        let view = SpinMarkView()
+        view.apply(spec)
+        return view
+    }
+
+    func updateNSView(_ view: SpinMarkView, context: Context) {
+        view.apply(spec)
+    }
+
+    private var spec: SpinMarkView.Spec {
+        let first = tint ?? Theme.accent
+        let second = tint ?? Theme.lilac
+        let third = tint ?? Theme.mint
+        let light = Theme.isLight
+        return SpinMarkView.Spec(
+            key: "\(lines)|\(dots)|\(speed)|\(pulse)|\(light)|\(first)|\(second)|\(third)",
+            lines: max(3, lines), dots: dots, speed: speed, pulse: pulse, light: light,
+            first: NSColor(first).cgColor, second: NSColor(second).cgColor, third: NSColor(third).cgColor)
+    }
+}
+
+final class SpinMarkView: NSView {
+    struct Spec {
+        var key: String
+        var lines: Int
+        var dots: Int
+        var speed: Double
+        var pulse: Bool
+        var light: Bool
+        var first: CGColor
+        var second: CGColor
+        var third: CGColor
+    }
+
+    private var spec: Spec?
+    /// What the layers were last built for: the look and the size.
+    private var built = ""
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func apply(_ new: Spec) {
+        guard new.key != spec?.key else { return }
+        spec = new
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        build()
+    }
+
+    // Animations are dropped when the view leaves its window; they are put
+    // back when it returns.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        built = ""
+        needsLayout = true
+    }
+
+    private func build() {
+        guard let spec, let root = layer, bounds.width > 1, bounds.height > 1 else { return }
+        let stamp = "\(spec.key)|\(bounds.width)x\(bounds.height)"
+        guard stamp != built else { return }
+        built = stamp
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || spec.speed <= 0
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        root.sublayers?.forEach { $0.removeFromSuperlayer() }
+
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let radius = min(bounds.width, bounds.height) / 2 * 0.8
+        let square = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+
+        // Soft light behind the ball.
+        let glow = CAGradientLayer()
+        glow.type = .radial
+        let reach = radius * 1.22
+        glow.frame = CGRect(x: center.x - reach, y: center.y - reach, width: reach * 2, height: reach * 2)
+        glow.colors = [spec.first.copy(alpha: 0.26) ?? spec.first, spec.first.copy(alpha: 0) ?? spec.first]
+        glow.startPoint = CGPoint(x: 0.5, y: 0.5)
+        glow.endPoint = CGPoint(x: 1, y: 1)
+        root.addSublayer(glow)
+
+        // The ball: leaning a little toward the viewer, turning about its
+        // own upright axis.
+        let lean = CATransformLayer()
+        lean.frame = bounds
+        lean.transform = CATransform3DMakeRotation(0.42, 1, 0, 0)
+        let ball = CATransformLayer()
+        ball.frame = bounds
+        lean.addSublayer(ball)
+        root.addSublayer(lean)
+
+        let weight = max(0.7, radius * 0.11)
+        var rings: [CAShapeLayer] = []
+        for line in 0..<spec.lines {
+            let color = line % 3 == 2 ? spec.third : (line % 2 == 0 ? spec.first : spec.second)
+            let ring = CAShapeLayer()
+            ring.frame = square
+            ring.path = CGPath(ellipseIn: CGRect(origin: .zero, size: square.size), transform: nil)
+            ring.fillColor = nil
+            ring.strokeColor = color
+            ring.lineWidth = weight
+            ring.opacity = spec.light ? 0.85 : 0.75
+            ring.isDoubleSided = true
+            // The same planes as the drawn ball: tilted, then faced round
+            // the upright axis by the golden angle.
+            let tilt = Double.pi * (Double(line) + 0.5) / Double(spec.lines)
+            let facing = Double(line) * 2.399963
+            ring.transform = CATransform3DRotate(CATransform3DMakeRotation(facing, 0, 1, 0), tilt, 1, 0, 0)
+            ball.addSublayer(ring)
+            rings.append(ring)
+        }
+
+        // The circles running along the lines.
+        let head = spec.light ? spec.first : CGColor(gray: 1, alpha: 1)
+        let dotSide = max(1.6, radius * 0.34)
+        for index in 0..<max(0, spec.dots) {
+            let ring = rings[index % rings.count]
+            let runner = CALayer()
+            runner.frame = CGRect(origin: .zero, size: square.size)
+            let dot = CALayer()
+            dot.bounds = CGRect(x: 0, y: 0, width: dotSide, height: dotSide)
+            dot.cornerRadius = dotSide / 2
+            dot.backgroundColor = head
+            dot.position = CGPoint(x: square.width, y: square.height / 2)
+            runner.addSublayer(dot)
+            ring.addSublayer(runner)
+            let start = Double.random(in: 0...(2 * Double.pi))
+            runner.setAffineTransform(CGAffineTransform(rotationAngle: start))
+            if !still {
+                let direction: Double = Bool.random() ? 1 : -1
+                let rate = Double.random(in: 0.6...1.5) * max(0.4, spec.speed)
+                let run = CABasicAnimation(keyPath: "transform.rotation.z")
+                run.fromValue = start
+                run.toValue = start + direction * 2 * Double.pi
+                run.duration = 2 * Double.pi / rate
+                run.repeatCount = .infinity
+                runner.add(run, forKey: "run")
+            }
+        }
+
+        // The source of light at the heart of it.
+        let coreSide = max(2, radius * 0.5)
+        let core = CALayer()
+        core.bounds = CGRect(x: 0, y: 0, width: coreSide, height: coreSide)
+        core.position = center
+        core.cornerRadius = coreSide / 2
+        core.backgroundColor = spec.second
+        core.opacity = 0.7
+        root.addSublayer(core)
+
+        if !still {
+            let turn = CABasicAnimation(keyPath: "transform.rotation.y")
+            turn.fromValue = 0
+            turn.toValue = 2 * Double.pi
+            turn.duration = 2 * Double.pi / (0.18 + spec.speed * 0.16)
+            turn.repeatCount = .infinity
+            ball.add(turn, forKey: "turn")
+            if spec.pulse {
+                let beat = CABasicAnimation(keyPath: "opacity")
+                beat.fromValue = 0.45
+                beat.toValue = 0.9
+                beat.duration = Double.pi / (1.6 + spec.speed * 0.5)
+                beat.autoreverses = true
+                beat.repeatCount = .infinity
+                beat.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                core.add(beat, forKey: "beat")
+            }
+        }
+        CATransaction.commit()
     }
 }
 #endif

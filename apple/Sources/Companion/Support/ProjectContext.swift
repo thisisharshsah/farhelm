@@ -121,7 +121,11 @@ enum ProjectContext {
     private static let notesLimit = 6_000
 
     static func saveNotes(_ text: String, in folder: String) {
-        guard !folder.isEmpty else { return }
+        // Never into a board task's copy of the repository: the notes
+        // file then shows up as a change on the task's branch, its review
+        // sends it back for touching a file outside the task, and the run
+        // starts again, round after round.
+        guard !folder.isEmpty, !folder.contains("/.companion/worktrees/") else { return }
         let file = notesFile(in: folder)
         try? FileManager.default.createDirectory(atPath: (file as NSString).deletingLastPathComponent,
                                                  withIntermediateDirectories: true)

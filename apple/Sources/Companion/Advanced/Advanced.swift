@@ -179,9 +179,13 @@ final class Advanced: ObservableObject {
         // (a task in some other chat ends), so Autopilot also looks now
         // and then.
         pulse = Task { @MainActor [weak self] in
+            var beats = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 guard let self else { return }
+                // Once a minute, whether or not Autopilot is on.
+                beats += 1
+                if beats % 3 == 0 { self.stopRunaways() }
                 for project in self.armed {
                     // What each copy changed, for the leases; approved
                     // work merged, and the board's merged work brought
@@ -919,6 +923,40 @@ final class Advanced: ObservableObject {
         "\(BoardText.modelName(engine.label)) is \(rest.trouble.words) until \(BoardText.when(rest.until))."
     }
 
+    /// The most a run may use before the board stops it, whatever its task
+    /// was estimated at: estimates are rough, and a short task can fairly
+    /// need this much.
+    static let runawayFloor = 300_000
+
+    /// Stops runs that have gone far past their task's estimate. A run that
+    /// loops (reading the same files, retrying an edit that fails) never
+    /// ends by itself, and one such run used ten million tokens overnight
+    /// with nobody there to stop it. Reads served from the cache are left
+    /// out of the count: they are most of a long run's tokens and cost
+    /// next to nothing. The task goes back to To do with a note, and waits
+    /// for a person or the supervisor to re-plan it.
+    private func stopRunaways() {
+        let now = Date()
+        for (project, board) in store.boards {
+            let running = board.items.filter { $0.activeRun != nil }
+            guard !running.isEmpty else { continue }
+            let ledger = ledger(for: project)
+            for item in running {
+                guard let run = item.activeRun else { continue }
+                let used = ledger.total(of: run, now: now)
+                let fresh = used.input + used.cacheWrite + used.output
+                let ceiling = max(3 * (item.estimateTokens ?? 0), Self.runawayFloor)
+                guard fresh > ceiling else { continue }
+                change(project) { board in
+                    board.note(item.id,
+                               "Stopped by the board: this run used \(fresh / 1000)k tokens, past its limit of \(ceiling / 1000)k (three times the estimate). Split the task or sharpen it before running it again.",
+                               author: "Board", now: now)
+                }
+                stop(item.id, in: project, bySupervisor: true)
+            }
+        }
+    }
+
     /// Starts a run and says so on the board when it could not.
     func startOrExplain(_ item: UUID, in project: UUID) {
         let problem = start(item, in: project)
@@ -1089,7 +1127,7 @@ final class Advanced: ObservableObject {
                                           user: Supervisor.reviewRequest(item: item, report: report,
                                                                          chat: self.app.anyChat(chat), changes: changes,
                                                                          branch: branch))
-                request.maxOutput = 700
+                request.maxOutput = 1_500
                 let question = request.tagged("Review")
                 do {
                     // The supervisor's model, or the one standing in for it.
@@ -1118,9 +1156,16 @@ final class Advanced: ObservableObject {
                         // What only a person can check, or what the review
                         // cannot be shown: another run would not change it,
                         // so the task waits in Review for the person.
+                        let advised = Supervisor.askAdvice(in: answer)
                         self.store.update(projectID) { board in
                             board.note(itemID, "The review needs you" + (check.isEmpty ? "." : ": " + check),
                                        author: reviewer, now: Date())
+                            // What it would do in the person's place goes
+                            // on the card and on the buttons, as advice.
+                            if let advised {
+                                _ = board.recommend(itemID, Review(verdict: advised, notes: check, by: reviewer,
+                                                                   date: Date()), now: Date())
+                            }
                         }
                         // Asked once is enough: it is not checked again by itself.
                         if let run = item.runs.last?.id { self.reviewTries[run] = Advanced.reviewTryLimit }
