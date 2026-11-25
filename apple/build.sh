@@ -177,9 +177,14 @@ own_app() {
     $0 == binary || index($0, binary " ") == 1 { print pid }'
 }
 
-# Every running Companion, whichever folder it was started from.
+# Every running Companion, whichever folder it was started from. Read from
+# ps, not pgrep: pgrep leaves out its own ancestors, and a build started
+# from Companion's agent shell has the app as one, so pgrep would say no
+# Companion is running while the person's is.
 any_app() {
-  pgrep -x "$APP_NAME" 2>/dev/null || true
+  ps -axo pid=,command= | awk -v name="/Contents/MacOS/$APP_NAME" '
+    { pid = $1; $1 = ""; sub(/^ +/, "") }
+    length($0) >= length(name) && substr($0, length($0) - length(name) + 1) == name { print pid }'
 }
 
 quit_running() {
@@ -310,7 +315,7 @@ restart() {
   bundle="$(cd "$BUNDLE_DIR" && pwd)"
   /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/sh -c "
     osascript -e 'quit app id \"com.harshsah.companion\"' >/dev/null 2>&1
-    for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -x '$APP_NAME' >/dev/null || break; sleep 1; done
+    for i in 1 2 3 4 5 6 7 8 9 10; do ps -axo command= | grep -q '/Contents/MacOS/$APP_NAME\$' || break; sleep 1; done
     open -n '$bundle'
   " </dev/null >/dev/null 2>&1 &
   echo "Restarting $bundle"
