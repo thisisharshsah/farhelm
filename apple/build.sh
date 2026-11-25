@@ -111,67 +111,50 @@ check() {
   xcrun --sdk macosx swift build
 }
 
-# Sign with a stable identity so macOS permission grants (screen recording,
-# accessibility) survive rebuilds. Ad-hoc signing (-) gives the app a new
-# identity every build, so macOS asks again and the old grant is left behind
-# as a second Companion in System Settings.
-#
-# The kinds of identity that are used, best first. COMPANION_SIGN_ID names
-# one outright, for a keychain that holds several.
-SIGN_KINDS=("Apple Development" "Developer ID Application" "Companion Dev")
-# Mac passkeys in Companion's browser need the browser entitlement, and only
-# a provisioning profile from Apple grants it. Signing with the entitlement
-# and no profile stops the app from opening, so both have to be present.
-BROWSER_ENTITLEMENTS=Resources/Browser.entitlements
-PROFILE=Resources/embedded.provisionprofile
-
-signing_identity() {
-  if [[ -n "${COMPANION_SIGN_ID:-}" ]]; then
-    echo "$COMPANION_SIGN_ID"
-    return 0
-  fi
-  local names kind found
-  names=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' 'NF >= 3 {print $2}')
-  [[ -n "$names" ]] || return 0
-  for kind in "${SIGN_KINDS[@]}"; do
-    found=$(printf '%s\n' "$names" | grep -m1 -F "$kind" || true)
-    if [[ -n "$found" ]]; then
-      echo "$found"
-      return 0
-    fi
-  done
-  return 0
-}
-
-# A library or a loose binary: entitlements belong to a bundle, not to these.
-# No secure timestamp anywhere: it needs the network, and only distribution
-# (notarization) asks for one.
-sign_file() {
-  codesign --force --timestamp=none --sign "$1" "$2"
-}
-
-# A nested bundle: Chromium's helper apps. The browser entitlement belongs
-# to the app that asks for it, not to these.
-sign_bundle() {
-  codesign --force --timestamp=none --sign "$1" "$2"
-}
-
-# The app itself, last, with the browser entitlement when a profile grants it.
-sign_app() {
-  if [[ "$1" != "-" && -f "$PROFILE" && -f "$BROWSER_ENTITLEMENTS" ]]; then
-    cp "$PROFILE" "$BUNDLE_DIR/Contents/embedded.provisionprofile"
-    echo "Signing with Mac passkeys"
-    codesign --force --timestamp=none --sign "$1" --entitlements "$BROWSER_ENTITLEMENTS" "$BUNDLE_DIR"
-  else
-    codesign --force --timestamp=none --sign "$1" "$BUNDLE_DIR"
-  fi
-}
-
+# Sign with a stable identity so macOS permission grants (mic, screen
+# recording) survive rebuilds. Ad-hoc signing (-) changes the app's identity
+# every build, which makes TCC re-ask each time.
 sign() {
   local identity
-  identity=$(signing_identity)
-  if [[ -n "$identity" ]]; then
+  if [[ -n "${COMPANION_SIGN_ID:-}" ]]; then
+    identity="$COMPANION_SIGN_ID"
+  else
+    # Check for Apple Development identity first
+    identity=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development/ {print $2; exit}')
+    if [[ -z "$identity" ]]; then
+      # Fall back to any available identity (Developer ID Application or Companion Dev)
+      identity=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Companion Dev|Developer ID Application/ {print $2; exit}')
+    fi
+  fi
+
+  # What is inside is signed first (Python's binaries, Chromium's
+  # framework and helpers), then the app around it.
+  local inner folder
+  for folder in Python CodeServer; do
+    [[ -d "$BUNDLE_DIR/Contents/Resources/$folder" ]] || continue
+    find "$BUNDLE_DIR/Contents/Resources/$folder" -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.node' -o -perm -u+x \) -print0 |
+      while IFS= read -r -d '' inner; do
+        file -b "$inner" | grep -q Mach-O && codesign --force --sign "${identity:--}" "$inner" 2>/dev/null || true
+      done
+  done
+  # The Chromium for iCloud Passwords keeps its own signature: macOS's
+  # iCloud Passwords helper decides by it.
+  for inner in "$BUNDLE_DIR/Contents/Frameworks/"*; do
+    [[ -e "$inner" ]] || continue
+    codesign --force --sign "${identity:--}" "$inner"
+  done
+  # Mac passkeys in Companion's browser: only with a provisioning profile
+  # from Apple that grants the browser passkey entitlement, placed at
+  # Resources/embedded.provisionprofile. Without one, signing with that
+  # entitlement would stop the app from opening, so it is left out.
+  local profile="Resources/embedded.provisionprofile"
+  if [[ -n "$identity" && -f "$profile" ]]; then
+    cp "$profile" "$BUNDLE_DIR/Contents/embedded.provisionprofile"
+    echo "Signing as: $identity (with Mac passkeys)"
+    codesign --force --entitlements Resources/Browser.entitlements --sign "$identity" "$BUNDLE_DIR"
+  elif [[ -n "$identity" ]]; then
     echo "Signing as: $identity"
+    codesign --force --sign "$identity" "$BUNDLE_DIR"
   else
     echo "WARNING: no code signing identity found; signing ad-hoc."
     echo "macOS will re-ask permissions after every rebuild. To fix, either:"
@@ -179,63 +162,68 @@ sign() {
     echo "  - Keychain Access > Certificate Assistant > Create a Certificate,"
     echo "    name 'Companion Dev', type 'Code Signing', then rebuild, or"
     echo "  - set COMPANION_SIGN_ID to an identity name."
-    identity=-
+    codesign --force --sign - "$BUNDLE_DIR"
   fi
-  # Inside out: everything nested is signed before the bundle around it is
-  # sealed, or the seal names files that change under it afterwards and the
-  # signature is broken.
-  local inner folder
-  for folder in Python CodeServer; do
-    [[ -d "$BUNDLE_DIR/Contents/Resources/$folder" ]] || continue
-    find "$BUNDLE_DIR/Contents/Resources/$folder" -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.node' -o -perm -u+x \) -print0 |
-      while IFS= read -r -d '' inner; do
-        file -b "$inner" | grep -q Mach-O && sign_file "$identity" "$inner" 2>/dev/null || true
-      done
-  done
-  local framework="$BUNDLE_DIR/Contents/Frameworks/Chromium Embedded Framework.framework"
-  if [[ -d "$framework" ]]; then
-    # Chromium's own libraries (its GL and Vulkan loaders) sit beside the
-    # framework's binary, and are signed before the framework is.
-    if [[ -d "$framework/Libraries" ]]; then
-      find "$framework/Libraries" -type f -name '*.dylib' -print0 |
-        while IFS= read -r -d '' inner; do
-          sign_file "$identity" "$inner"
-        done
-    fi
-    sign_file "$identity" "$framework"
-  fi
-  for inner in "$BUNDLE_DIR/Contents/Frameworks/"*; do
-    # The framework is signed above, before its own libraries' turn.
-    [[ -e "$inner" && "$inner" != "$framework" ]] || continue
-    if [[ "$inner" == *.app ]]; then
-      sign_bundle "$identity" "$inner"
-    else
-      sign_file "$identity" "$inner"
-    fi
-  done
-  # The Chromium for iCloud Passwords in Contents/Helpers keeps the
-  # signature it came with: it is signed by another team with library
-  # validation, and re-signing it here would stop macOS's iCloud Passwords
-  # helper from trusting it. The verify below proves its seal is whole.
-  sign_app "$identity"
-  # A broken signature shows itself only when macOS refuses to start the
-  # app, so the build checks it here instead.
-  codesign --verify --deep --strict "$BUNDLE_DIR"
 }
 
-# A Companion still running from dist/ keeps the old build (and its
+# A Companion still running from this dist/ keeps the old build (and its
 # Chromium windows) on screen, and replacing its files under it breaks its
 # signature. It is asked to quit first, then stopped if it has not.
+#
+# Only the Companion started from this folder's dist/ is touched. A board
+# task builds in a copy of the repository of its own, and a build there
+# used to quit whichever Companion was running, by name: the person's app
+# went away under them with no crash report (2026-11-25, twice, from a
+# task's "build.sh app"). A Companion from another folder is left alone:
+# its files are not the ones replaced here.
+own_app() {
+  local binary
+  binary="$(pwd -P)/$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
+  ps -axo pid=,command= | awk -v binary="$binary" '
+    { pid = $1; $1 = ""; sub(/^ +/, "") }
+    $0 == binary || index($0, binary " ") == 1 { print pid }'
+}
+
+# Every running Companion, whichever folder it was started from. Read from
+# ps, not pgrep: pgrep leaves out its own ancestors, and a build started
+# from Companion's agent shell has the app as one, so pgrep would say no
+# Companion is running while the person's is.
+any_app() {
+  ps -axo pid=,command= | awk -v name="/Contents/MacOS/$APP_NAME" '
+    { pid = $1; $1 = ""; sub(/^ +/, "") }
+    length($0) >= length(name) && substr($0, length($0) - length(name) + 1) == name { print pid }'
+}
+
 quit_running() {
-  pgrep -x "$APP_NAME" >/dev/null 2>&1 || return 0
-  echo "Quitting the running ${APP_NAME}…"
-  osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+  local mine others
+  mine="$(own_app)"
+  [[ -n "$mine" ]] || return 0
+  echo "Quitting the ${APP_NAME} running from this build…"
+  others="$(any_app | grep -v -x -F "$mine" || true)"
+  if [[ -z "$others" ]]; then
+    # Asked by name, the app saves and closes as it does for Cmd+Q. With
+    # another Companion running too the name could reach that one, so
+    # then this build is only signalled.
+    osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+  else
+    kill $mine 2>/dev/null || true
+  fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    pgrep -x "$APP_NAME" >/dev/null 2>&1 || return 0
+    [[ -n "$(own_app)" ]] || return 0
     sleep 0.5
   done
-  pkill -x "$APP_NAME" 2>/dev/null || true
+  mine="$(own_app)"
+  [[ -z "$mine" ]] || kill $mine 2>/dev/null || true
   sleep 0.5
+}
+
+# Is this folder a copy of the repository made for a board task (a linked
+# git worktree), not the person's own checkout?
+in_task_copy() {
+  local dir common
+  dir="$(git rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  common="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" || return 1
+  [[ "$dir" != "$common" ]]
 }
 
 bundle() {
@@ -334,15 +322,27 @@ restart() {
   bundle="$(cd "$BUNDLE_DIR" && pwd)"
   /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/sh -c "
     osascript -e 'quit app id \"com.harshsah.companion\"' >/dev/null 2>&1
-    for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f '$bundle/Contents/MacOS/$APP_NAME' >/dev/null || break; sleep 1; done
+    for i in 1 2 3 4 5 6 7 8 9 10; do ps -axo command= | grep -q '/Contents/MacOS/$APP_NAME\$' || break; sleep 1; done
     open -n '$bundle'
   " </dev/null >/dev/null 2>&1 &
   echo "Restarting $bundle"
 }
 
+# Restarting replaces the Companion the person is using with this build.
+# From a task's copy that is never wanted by accident: the app would be
+# swapped for unreviewed work in the middle of whatever it was doing.
+restart_allowed() {
+  if in_task_copy && [[ "${COMPANION_RESTART_FROM_COPY:-0}" != "1" ]]; then
+    echo "This folder is a board task's copy of the repository, so its build does not replace the running ${APP_NAME}."
+    echo "Use \"bash build.sh app\" to build here, or restart from the project's own folder."
+    echo "(COMPANION_RESTART_FROM_COPY=1 restarts from here anyway.)"
+    return 1
+  fi
+}
+
 case "${1:-run}" in
   build) build ;;
-  restart) build; bundle; restart ;;
+  restart) restart_allowed || exit 1; build; bundle; restart ;;
   app)   build; bundle ;;
   run)   build; bundle; open "$BUNDLE_DIR" ;;
   dmg)   build; bundle; dmg ;;
