@@ -170,6 +170,17 @@ struct TaskCard: View {
                 statusLine("The supervisor is reviewing it", mark: .thinking)
             } else if advanced.preparing.contains(item.id) {
                 statusLine("Readying its copy", mark: .working)
+            } else if advanced.waitsForSlot(item.id, in: project.id) {
+                HStack(spacing: 5) {
+                    Image(systemName: "hourglass")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.amber)
+                    Text(RunLimit.waitingWords)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Theme.amber)
+                        .lineLimit(1)
+                }
+                .help("In line: it starts by itself when a slot frees, most pressing first (" + advanced.runLimit.reason + ").")
             } else if advanced.merging.contains(item.id) {
                 statusLine("Merging its work", mark: .working)
             } else if board.mergeWaitsOnPerson(item) {

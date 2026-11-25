@@ -18,12 +18,14 @@ public struct Budget: Codable, Equatable, Sendable {
 public struct BoardSettings: Codable, Equatable, Sendable {
     /// The supervisor starts tasks that are ready, without being asked.
     public var autopilot: Bool
-    /// How many runs it keeps going at once (`defaultParallel` on a new
-    /// board). With a copy per task (`copyPerTask`) runs work apart, each
-    /// in its task's copy; without, they share the project's folder, and
-    /// two that touch the same files get in each other's way. Either way
-    /// the leases keep tasks whose paths overlap apart (`Leases`).
+    /// What used to be the board's own Runs at Once. Runs no longer
+    /// follow it: how many go on at once is the app's limit, set from
+    /// what is free (`RunLimit`). It is kept so boards saved before still
+    /// read, and it sized the team when a board first had one.
     public var parallel: Int
+    /// An optional ceiling on this board's runs at once, to keep its cost
+    /// down; nil leaves it to the app's limit. It only ever lowers it.
+    public var runCeiling: Int?
     /// A finished run is checked against the task before it can be done.
     public var reviewGate: Bool
     /// The most tasks wanted in progress at once, or nil for no limit.
@@ -55,13 +57,14 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     public static let defaultParallel = 3
 
     public init(autopilot: Bool = false, parallel: Int = BoardSettings.defaultParallel, reviewGate: Bool = true,
-                wipLimit: Int? = nil,
+                wipLimit: Int? = nil, runCeiling: Int? = nil,
                 runAccess: String? = nil, advice: Bool = true, followsAdvice: Bool = false,
                 copyPerTask: Bool = true, teamLimit: Int = TeamRules.defaultTeamLimit) {
         self.autopilot = autopilot
         self.parallel = parallel
         self.reviewGate = reviewGate
         self.wipLimit = wipLimit
+        self.runCeiling = runCeiling.flatMap { $0 > 0 ? $0 : nil }
         self.runAccess = runAccess
         self.advice = advice
         self.followsAdvice = followsAdvice
@@ -79,7 +82,8 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     public var startsWorkByItself: Bool { autopilot || supervisorAnswers }
 
     private enum CodingKeys: String, CodingKey {
-        case autopilot, parallel, reviewGate, wipLimit, runAccess, advice, followsAdvice, copyPerTask, teamLimit
+        case autopilot, parallel, reviewGate, wipLimit, runCeiling, runAccess, advice, followsAdvice, copyPerTask
+        case teamLimit
     }
 
     public init(from decoder: Decoder) throws {
@@ -88,6 +92,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
         parallel = try values.decodeIfPresent(Int.self, forKey: .parallel) ?? Self.defaultParallel
         reviewGate = try values.decodeIfPresent(Bool.self, forKey: .reviewGate) ?? true
         wipLimit = try values.decodeIfPresent(Int.self, forKey: .wipLimit)
+        runCeiling = try values.decodeIfPresent(Int.self, forKey: .runCeiling).flatMap { $0 > 0 ? $0 : nil }
         runAccess = try values.decodeIfPresent(String.self, forKey: .runAccess)
         advice = try values.decodeIfPresent(Bool.self, forKey: .advice) ?? true
         followsAdvice = try values.decodeIfPresent(Bool.self, forKey: .followsAdvice) ?? false

@@ -2284,11 +2284,8 @@ final class AppState: ObservableObject {
             refuse("The agent is still working on the last task in this chat. Press Stop (in the chat box, or Cmd+Shift+period) to end it, then ask again.")
             return
         }
-        let limit = max(1, AppSettings.shared.agentMaxTasks)
-        guard jobs.count < limit else {
-            refuse("\(jobs.count) tasks are already running in other chats (the most at once is \(limit), set in Settings > Agent). Ask again when one is done.")
-            return
-        }
+        // Never refused for want of a slot: the owner's chats always get
+        // one, and board runs wait in line for theirs (`Advanced.tick`).
         followUps[chatID]?.cancel()
         followUps[chatID] = nil
         lastError = nil
@@ -5842,22 +5839,15 @@ extension AppState {
         return conversation.id
     }
 
-    /// Whether another run fits beside the tasks going on (Settings >
-    /// Agent sets how many chats' tasks run at once).
-    var hasRoomForRun: Bool {
-        jobs.count < max(1, AppSettings.shared.agentMaxTasks)
-    }
-
     /// Starts an agent run for a board task in a new chat of its project,
     /// without leaving the chat that is open: the run's chat is kept live
     /// like one that was left while it worked, and can be opened from the
     /// board or the sidebar at any time. `registered` is called with the
     /// new chat before the agent starts, so the board knows the run from
-    /// its first request on. Returns the chat, or nil when no more runs
-    /// fit beside the ones going on.
+    /// its first request on. Returns the chat. Whether a slot is free was
+    /// weighed before (`Advanced.boardRoom`), against the app's limit.
     func startBoardRun(title: String, brief: String, project: UUID, task: UUID? = nil, engine: EngineChoice,
                        access: AgentAccess?, registered: (UUID) -> Void) -> UUID? {
-        guard hasRoomForRun else { return nil }
         var chat = Conversation()
         chat.title = String(title.prefix(80))
         chat.projectID = project
@@ -5916,7 +5906,7 @@ extension AppState {
     func continueRun(in chatID: UUID, prompt: String = "continue", brief: String, engine: EngineChoice?,
                      title: String? = nil, access: AgentAccess? = nil, task: UUID? = nil,
                      registered: () -> Void = {}) -> Bool {
-        guard hasRoomForRun, jobs[chatID] == nil else { return false }
+        guard jobs[chatID] == nil else { return false }
         let turn = ChatTurn(kind: .reply, origin: .typed, prompt: prompt, model: engine?.label ?? engineLabel)
         func carry(_ chat: inout Conversation) {
             chat.turns.append(turn)

@@ -1275,17 +1275,6 @@ private struct AgentSettings: View {
             }
             Note((AgentAccess(rawValue: settings.agentAccess) ?? .manual).detail)
             RowLine()
-            SettingRow("Tasks at once",
-                       detail: "Each chat can run its own task. Shell, file and web work run side by side; tasks that click or type take turns with the mouse and keyboard.") {
-                Picker("", selection: $settings.agentMaxTasks) {
-                    ForEach([1, 2, 3, 5, 8], id: \.self) { count in
-                        Text(count == 1 ? "1 task" : "\(count) tasks").tag(count)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 190)
-            }
-            RowLine()
             ToggleRow("Run read-only commands without asking",
                       detail: "ls, cat, git status and the like. In Manual, anything that writes, deletes, sends or types asks.",
                       isOn: $settings.agentAutoApproveReads)

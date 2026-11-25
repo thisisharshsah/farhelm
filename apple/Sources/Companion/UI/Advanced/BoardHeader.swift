@@ -57,6 +57,7 @@ struct BoardHeader: View {
                 progress
                 spend
                 if board.budget.isSet { budget }
+                limitLabel
                 if let waiting = advanced.waiting[project.id] { waitingLabel(waiting) }
                 Spacer(minLength: 4)
                 supervisorMenu
@@ -254,14 +255,21 @@ struct BoardHeader: View {
                 Label("Recommend an Answer Wherever I Am Asked" + check(board.settings.advice), systemImage: "star")
             }
             answersItem
-            Menu("Runs at Once") {
-                ForEach([1, 2, 3, 4], id: \.self) { count in
-                    Button("\(count)" + check(board.settings.parallel == count)) {
-                        advanced.change(project.id) { $0.settings.parallel = count }
+            // Only a cost ceiling: how many run at once is the app's limit,
+            // set from what is free, and this can only lower it.
+            Menu("Cost Ceiling on Runs") {
+                Button("None: Follow the App's Limit" + check(board.settings.runCeiling == nil)) {
+                    advanced.change(project.id) { $0.settings.runCeiling = nil }
+                    advanced.tick(project.id)
+                }
+                ForEach([1, 2, 4, 8], id: \.self) { count in
+                    Button("At Most \(count)" + check(board.settings.runCeiling == count)) {
+                        advanced.change(project.id) { $0.settings.runCeiling = count }
                         advanced.tick(project.id)
                     }
                 }
             }
+            .help("How many of this board's runs go at once is set for the whole app from what is free. A ceiling here only keeps the board's runs, and what they spend, below it.")
             Menu("Limit on In Progress") {
                 Button("None" + check(board.settings.wipLimit == nil)) {
                     advanced.change(project.id) { $0.settings.wipLimit = nil }
@@ -452,10 +460,31 @@ struct BoardHeader: View {
         }
         .disabled(byMode)
         .help(byMode
-              ? "The supervisor runs the board (Supervisor mode), so tasks that are ready start by themselves, \(board.settings.parallel) at a time. Switch Supervisor mode off in the supervisor's menu to start them yourself."
+              ? "The supervisor runs the board (Supervisor mode), so tasks that are ready start by themselves, as many as the app's run limit allows. Switch Supervisor mode off in the supervisor's menu to start them yourself."
               : on
-              ? "Autopilot is on: tasks that are ready start by themselves, \(board.settings.parallel) at a time, while the budget lasts, never two that change the same files at once. Click to switch it off."
+              ? "Autopilot is on: tasks that are ready start by themselves, as many as the app's run limit allows, while the budget lasts, never two that change the same files at once. Click to switch it off."
               : "Autopilot is off: a task runs when you start it. Click to let tasks that are ready start by themselves.")
+    }
+
+    /// The app's run limit as it stands and why (`Advanced.runLimit`). It
+    /// is one limit for every board and chat, so it is said where the
+    /// board's own runs are, as the reason they wait.
+    private var limitLabel: some View {
+        let limit = advanced.runLimit
+        let ceiling = board.settings.runCeiling.map { " This board keeps to at most \($0) at once (its cost ceiling)." } ?? ""
+        return HStack(spacing: 4) {
+            Image(systemName: "gauge.with.dots.needle.33percent")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(Theme.ink.opacity(0.5))
+            Text("Up to \(limit.limit) at once · " + limit.reason)
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink.opacity(0.65))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .layoutPriority(-1)
+        .help("One limit for the whole app, set from the Mac's free processors and memory, what is left of each plan, and how many tasks can start. Your own chats always get a slot; board runs share the rest, \(limit.forBoards) now. Work over the limit waits in line and starts by itself, most pressing first." + ceiling)
     }
 
     /// Why nothing runs while work is left, on a board where work starts

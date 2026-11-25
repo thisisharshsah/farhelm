@@ -111,7 +111,7 @@ enum Supervisor {
     private static func flowText(_ board: Board) -> String {
         var lines: [String] = []
         lines.append(board.settings.startsWorkByItself
-            ? "Tasks in todo start by themselves, \(board.settings.parallel) at a time, once what they wait on is done and merged and no running or unmerged task's paths overlap theirs."
+            ? "Tasks in todo start by themselves, the most pressing first and one per specialist, as many at a time as the app's run limit leaves free (set by itself from the Mac's load, what is left of each plan and how much work is ready), once what they wait on is done and merged and no running or unmerged task's paths overlap theirs. Work over the limit waits in line and starts when a slot frees."
             : "Tasks start only when the user starts them: Autopilot and supervisor mode are off. Say so when the user expects work to begin by itself.")
         if board.settings.copyPerTask {
             lines.append("Approved work is merged one task at a time into the board's own branch, then into the user's branch when their uncommitted changes allow. Conflicts go back to the task's own agent to settle.")

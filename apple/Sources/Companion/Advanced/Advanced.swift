@@ -69,6 +69,16 @@ final class Advanced: ObservableObject {
     /// it would collide with). nil when nothing ready waits, and on a board
     /// where work starts when the person starts it.
     @Published private(set) var waiting: [UUID: String] = [:]
+    /// Runs at once across the app and why, as last worked out
+    /// (`refreshLimit`), for the board's header to show.
+    @Published private(set) var runLimit = RunLimit.Slots(limit: 1, forBoards: 1, reason: "Nothing running")
+    /// Tasks a person started while every slot was taken, per project.
+    /// They are never refused: they wait here and start by themselves,
+    /// most pressing first, when a slot frees (`tick`).
+    @Published private(set) var queued: [UUID: Set<UUID>] = [:]
+    /// The specialist given to each task whose copy is being readied, so
+    /// it is not given a second run meanwhile.
+    private var seated: [UUID: UUID] = [:]
     /// Tasks whose finished run is being checked right now: the project's
     /// checks running on its work, then the supervisor's review.
     @Published private(set) var reviewing: Set<UUID> = []
@@ -806,7 +816,8 @@ final class Advanced: ObservableObject {
     /// started once its copy is ready (what goes wrong then is said on
     /// the board), or why it could not start, in words for the person.
     @discardableResult
-    func start(_ itemID: UUID, in projectID: UUID, by actor: BoardActor = .person) -> String? {
+    func start(_ itemID: UUID, in projectID: UUID, by actor: BoardActor = .person, specialist: UUID? = nil,
+               fromLine: Bool = false) -> String? {
         guard let project = self.project(projectID) else { return "This project is no longer on the list." }
         let board = load(projectID)
         guard let item = board.item(itemID) else { return "That task is no longer on the board." }
@@ -828,10 +839,16 @@ final class Advanced: ObservableObject {
         guard !board.budget.state(spent: spent).isOver else {
             return "The project's budget is used up. Raise it on the board to start more work."
         }
-        guard app.hasRoomForRun else {
-            return "As many tasks as fit are running already (Settings > Agent sets how many). Start this one when another is done."
-        }
         refreshRoster()
+        // Over the app's limit it is never refused: it waits in line and
+        // starts by itself when a slot frees (`tick`). The pass that takes
+        // it from the line has found it a slot already (`fromLine`).
+        if !fromLine,
+           boardRoom(on: board, extra: [planGroup(of: engine(for: item, roster: roster, on: board).engine)]) <= 0 {
+            queued[projectID, default: []].insert(itemID)
+            notices[projectID] = "\(item.key): \(RunLimit.waitingWords). It starts by itself when one frees, most pressing first."
+            return nil
+        }
         var chosen = engine(for: item, roster: roster, on: board)
         // Found out now, not after a chat has been made for it.
         do {
@@ -850,9 +867,14 @@ final class Advanced: ObservableObject {
         }
         // Its own copy of the repository is readied first, where it works
         // in one; the run starts in it once that is done.
-        return withCopy(of: itemID, in: projectID, folder: folder, by: actor) { [chosen, standing] in
-            self.launch(itemID, in: projectID, chosen: chosen, by: actor, standing: standing)
+        // Seated while its copy is readied, so no other task takes the
+        // same specialist meanwhile.
+        if let specialist { seated[itemID] = specialist }
+        let problem = withCopy(of: itemID, in: projectID, folder: folder, by: actor) { [chosen, standing] in
+            self.launch(itemID, in: projectID, chosen: chosen, by: actor, standing: standing, specialist: specialist)
         }
+        if !preparing.contains(itemID) { seated[itemID] = nil }
+        return problem
     }
 
     /// Starts a run on a task whose copy, when it works in one, is ready:
@@ -860,7 +882,7 @@ final class Advanced: ObservableObject {
     /// says why another model runs it, for its notes. Returns why it
     /// could not, or nil.
     private func launch(_ itemID: UUID, in projectID: UUID, chosen: (engine: EngineChoice, assignment: Assignment?),
-                        by actor: BoardActor, standing: String? = nil) -> String? {
+                        by actor: BoardActor, standing: String? = nil, specialist: UUID? = nil) -> String? {
         guard let project = self.project(projectID) else { return "This project is no longer on the list." }
         let board = load(projectID)
         guard let item = board.item(itemID) else { return "That task is no longer on the board." }
@@ -875,7 +897,7 @@ final class Advanced: ObservableObject {
                 if let assignment = chosen.assignment { board.assign(itemID, assignment, by: actor, now: Date()) }
                 if let standing { board.note(itemID, standing, author: actor.title, now: Date()) }
                 board.beginRun(itemID, WorkRun(conversation: chat, model: chosen.engine.choice, modelLabel: label,
-                                               startedAt: Date()),
+                                               startedAt: Date(), specialist: specialist),
                                by: actor, now: Date())
             }
         }
@@ -899,7 +921,9 @@ final class Advanced: ObservableObject {
 
     /// Starts a run and says so on the board when it could not.
     func startOrExplain(_ item: UUID, in project: UUID) {
-        notices[project] = start(item, in: project)
+        let problem = start(item, in: project)
+        // A start that went into the line keeps the notice saying so.
+        if problem != nil || !waitsForSlot(item, in: project) { notices[project] = problem }
     }
 
     /// Stops the run going on in a task: from its card (the person), or
@@ -948,6 +972,8 @@ final class Advanced: ObservableObject {
             entry.value.allItems.contains { $0.activeRun?.conversation == chat }
         })?.key else {
             taskEnded(in: chat, failed: failed, ending: ending)
+            // Its slot is free now: work waiting in line on any board may start.
+            Task { @MainActor in self.tickAll() }
             return
         }
         let outcome: WorkRun.Outcome
@@ -980,7 +1006,7 @@ final class Advanced: ObservableObject {
             if outcome == .succeeded, ended.item.status == .review {
                 self.checkThenReview(ended.item.id, run: ended.run.id, in: projectID, chat: chat, report: report)
             }
-            self.tick(projectID)
+            self.tickAll()
         }
     }
 
@@ -1207,13 +1233,34 @@ final class Advanced: ObservableObject {
     /// that was refused a step. When ready work does not start, why is
     /// kept in `waiting`, for the board to show.
     func tick(_ projectID: UUID) {
-        guard armed.contains(projectID), let board = store.boards[projectID], board.settings.startsWorkByItself,
-              project(projectID) != nil else {
+        guard let board = store.boards[projectID], project(projectID) != nil else {
+            if waiting[projectID] != nil { waiting[projectID] = nil }
+            if queued[projectID] != nil { queued[projectID] = nil }
+            return
+        }
+        seated = seated.filter { preparing.contains($0.key) }
+        let automatic = armed.contains(projectID) && board.settings.startsWorkByItself
+        // One in line that started since, was finished or was taken off
+        // the board leaves the line.
+        let line = (queued[projectID] ?? []).filter { id in
+            guard let item = board.item(id) else { return false }
+            return item.activeRun == nil && !preparing.contains(id) && item.status != .done && item.status != .review
+        }
+        if (queued[projectID] ?? []) != line { queued[projectID] = line.isEmpty ? nil : line }
+        guard automatic || !line.isEmpty else {
             if waiting[projectID] != nil { waiting[projectID] = nil }
             return
         }
         let spent = ledger(for: projectID).total
         if board.budget.state(spent: spent).isOver {
+            if !line.isEmpty {
+                queued[projectID] = nil
+                notices[projectID] = "The project's budget is used up, so the tasks waiting for a free slot were taken out of the line."
+            }
+            guard automatic else {
+                if waiting[projectID] != nil { waiting[projectID] = nil }
+                return
+            }
             if board.settings.autopilot {
                 change(projectID) { board in
                     board.settings.autopilot = false
@@ -1232,35 +1279,40 @@ final class Advanced: ObservableObject {
         // Tasks whose copy is being readied are as good as started.
         var starting = preparing
         var reason: String?
+        // What may start: what a person put in line, and on a board where
+        // work starts by itself, every ready task the rules let go.
+        var eligible = line.compactMap { board.item($0) }.filter { board.blockers(of: $0).isEmpty }
+        if automatic {
+            for item in board.ready where !line.contains(item.id) {
+                // One whose copy is being readied is as good as started; one
+                // whose copy could not be made just now waits a while.
+                if preparing.contains(item.id) || troubled(item.id) { continue }
+                // Work that stopped halfway is carried on in the chat it
+                // stopped in, where the supervisor answers (`carryOnStopped`).
+                if board.settings.supervisorAnswers, board.mayCarryOn(item) { continue }
+                // A run that a person stopped, or that was refused a step, is
+                // theirs to start again; so is a task whose last two runs did
+                // not finish (`Board.autopilotMayStart`).
+                if !board.autopilotMayStart(item) {
+                    reason = reason ?? Self.heldWords(item, on: board)
+                    continue
+                }
+                if !board.budget.fits(estimate: item.estimateTokens ?? 0, spent: spent) {
+                    reason = reason ?? "\(item.key) is estimated at more than what is left of the budget."
+                    continue
+                }
+                eligible.append(item)
+            }
+        }
         var running = board.running.count + readying(on: board)
-        let most = max(1, board.settings.parallel)
-        // The board's own limit on runs at once was reached.
+        var room = boardRoom(on: board)
+        // Every slot the app's limit leaves this board is taken.
         var full = false
-        for item in board.ready {
-            guard running < most else {
+        let held = Set(seated.values)
+        for (item, seat) in RunLimit.pick(eligible, on: board, slots: eligible.count, held: held) {
+            guard room > 0 else {
                 full = true
                 break
-            }
-            guard app.hasRoomForRun else {
-                reason = reason ?? "There is no room for another run on this Mac right now."
-                break
-            }
-            // One whose copy is being readied is as good as started; one
-            // whose copy could not be made just now waits a while.
-            if preparing.contains(item.id) || troubled(item.id) { continue }
-            // Work that stopped halfway is carried on in the chat it
-            // stopped in, where the supervisor answers (`carryOnStopped`).
-            if board.settings.supervisorAnswers, board.mayCarryOn(item) { continue }
-            // A run that a person stopped, or that was refused a step, is
-            // theirs to start again; so is a task whose last two runs did
-            // not finish (`Board.autopilotMayStart`).
-            if !board.autopilotMayStart(item) {
-                reason = reason ?? Self.heldWords(item, on: board)
-                continue
-            }
-            if !board.budget.fits(estimate: item.estimateTokens ?? 0, spent: spent) {
-                reason = reason ?? "\(item.key) is estimated at more than what is left of the budget."
-                continue
             }
             // Never two tasks on the same files at once, and never a start
             // from a base that lacks work it could collide with.
@@ -1268,7 +1320,16 @@ final class Advanced: ObservableObject {
                 reason = reason ?? Self.leaseWords(item, lease)
                 continue
             }
-            if let problem = start(item.id, in: projectID, by: actor) {
+            let fromLine = line.contains(item.id)
+            var specialist: UUID?
+            if case .specialist(let id) = seat { specialist = id }
+            let problem = start(item.id, in: projectID, by: fromLine ? .person : actor, specialist: specialist,
+                                fromLine: true)
+            if fromLine {
+                queued[projectID]?.remove(item.id)
+                if queued[projectID]?.isEmpty == true { queued[projectID] = nil }
+            }
+            if let problem {
                 // It is said once and the task is left for a person; the
                 // rest go on.
                 notices[projectID] = "\(item.key) was not started: \(problem)"
@@ -1277,26 +1338,101 @@ final class Advanced: ObservableObject {
             }
             starting.insert(item.id)
             running += 1
+            room -= 1
         }
-        // Said beside runs going on too, so one task at a time is never a
-        // mystery: the tasks Autopilot could start that are left waiting.
-        let left = board.ready.filter { !starting.contains($0.id) && board.autopilotMayStart($0) }.count
+        // Said beside runs going on too, so waiting work is never a
+        // mystery: what could start and is left in line.
+        let left = eligible.filter { !starting.contains($0.id) }.count
         let idle: String?
-        if running == 0 {
+        if full, left > 0 {
+            idle = Self.limitWords(runLimit, left: left)
+        } else if running == 0 {
             idle = reason ?? idleReason(on: board)
-        } else if full, left > 0 {
-            idle = Self.limitWords(most: most, left: left)
         } else {
             idle = left > 0 ? reason : nil
         }
         if waiting[projectID] != idle { waiting[projectID] = idle }
     }
 
-    /// Why ready tasks wait while the board runs as many as it may.
-    private static func limitWords(most: Int, left: Int) -> String {
-        (most == 1 ? "One task runs" : "\(most) tasks run") + " at a time on this board, and "
-            + (left == 1 ? "1 more is" : "\(left) more are")
-            + " ready. Raise Runs at Once in the board's menu to start more."
+    /// Why ready tasks wait while every slot the app's limit leaves is taken.
+    private static func limitWords(_ limit: RunLimit.Slots, left: Int) -> String {
+        RunLimit.waitingWords + ": " + (left == 1 ? "1 task is" : "\(left) tasks are")
+            + " ready and start by themselves, most pressing first, as runs end (" + limit.reason + ")."
+    }
+
+    /// Looks at every board with work that could start: after a run or a
+    /// chat's task ends, a slot may have freed.
+    func tickAll() {
+        for project in armed.union(queued.keys) { tick(project) }
+    }
+
+    /// Whether a task waits in line for a free slot, for its card.
+    func waitsForSlot(_ item: UUID, in project: UUID) -> Bool {
+        queued[project]?.contains(item) == true
+    }
+
+    // MARK: The app's run limit
+
+    /// The chats board runs are going on in, on every board.
+    private var boardRunChats: Set<UUID> {
+        Set(store.boards.values.flatMap { $0.running.compactMap { $0.activeRun?.conversation } })
+    }
+
+    /// Board runs going on, and tasks whose copy is being readied.
+    private var boardRunCount: Int { boardRunChats.count + preparing.count }
+
+    /// The plan a model's runs count against: a subscription tool's,
+    /// the way `ModelRoster` groups them; nil for any other model.
+    private func planGroup(of engine: EngineChoice) -> String? {
+        engine.kind == .subscription ? "\(engine.kind.rawValue)|\(engine.tool ?? "")" : nil
+    }
+
+    /// Works the app's limit out afresh from what is free now
+    /// (`RunLimit.slots`). `extra` are tasks about to be started that may
+    /// not be in To do, by the plan each would use.
+    @discardableResult
+    func refreshLimit(extra: [String?] = []) -> RunLimit.Slots {
+        if roster.isEmpty { refreshRoster() }
+        let boardChats = boardRunChats
+        var onPlan: [String: Int] = [:]
+        for job in app.jobs.values {
+            if let group = planGroup(of: job.engine ?? .inUse) { onPlan[group, default: 0] += 1 }
+        }
+        let agents = CLIAgents.shared
+        let plans = agents.limits.map { tool, windows in
+            let group = "\(LLMProviderKind.subscription.rawValue)|\(tool)"
+            return RunLimit.Plan(group: group, name: agents.name(of: tool), used: windows.compactMap(\.used).max(),
+                                 running: onPlan[group] ?? 0)
+        }.sorted { $0.name < $1.name }
+        var ready = extra
+        var blocked = 0
+        for projectID in armed.union(queued.keys) {
+            guard let board = store.boards[projectID] else { continue }
+            let changed = changedPaths(on: board)
+            for item in board.items(in: .todo) where item.activeRun == nil && !preparing.contains(item.id) {
+                if !board.blockers(of: item).isEmpty
+                    || board.leaseHolder(for: item, changed: changed, starting: preparing) != nil {
+                    blocked += 1
+                } else {
+                    ready.append(planGroup(of: engine(for: item, roster: roster, on: board).engine))
+                }
+            }
+        }
+        let inputs = RunLimit.Inputs(mac: MacRoom.now(), plans: plans,
+                                     chats: app.jobs.keys.filter { !boardChats.contains($0) }.count,
+                                     boardRuns: boardRunCount, ready: ready, blocked: blocked)
+        let found = RunLimit.slots(inputs)
+        if found != runLimit { runLimit = found }
+        return found
+    }
+
+    /// How many more runs a board may start now: the slots the app's limit
+    /// leaves board runs, within the board's own cost ceiling if it has one.
+    private func boardRoom(on board: Board, extra: [String?] = []) -> Int {
+        let slots = refreshLimit(extra: extra)
+        return RunLimit.boardRoom(free: slots.free(boardRuns: boardRunCount),
+                                  running: board.running.count + readying(on: board),
+                                  ceiling: board.settings.runCeiling)
     }
 
     /// Why Autopilot leaves a ready task for the person
@@ -1409,7 +1545,6 @@ final class Advanced: ObservableObject {
         guard !board.budget.state(spent: ledger(for: projectID).total).isOver else {
             return "The project's budget is used up."
         }
-        guard app.hasRoomForRun else { return "As many tasks as fit are running already." }
         // Its chat is gone, or the copy it worked in was closed: the work
         // starts again.
         guard app.anyChat(last.conversation) != nil, item.workingCopy?.isOpen ?? true else {
@@ -1469,17 +1604,16 @@ final class Advanced: ObservableObject {
     func carryOnStopped(_ projectID: UUID) {
         guard armed.contains(projectID), let board = store.boards[projectID], board.settings.supervisorAnswers,
               project(projectID) != nil, !board.budget.state(spent: ledger(for: projectID).total).isOver else { return }
-        var running = board.running.count + readying(on: board)
-        let most = max(1, board.settings.parallel)
+        var room = boardRoom(on: board)
         let changed = changedPaths(on: board)
         for item in board.stoppedHalfway {
-            guard running < most, app.hasRoomForRun else { break }
+            guard room > 0 else { break }
             if preparing.contains(item.id) || troubled(item.id) { continue }
             // Not beside a task that could change the same files.
             if board.leaseHolder(for: item, changed: changed, starting: preparing) != nil { continue }
             let why = item.runs.last?.outcome == .stopped ? "The app was quit while it worked."
                 : "The run ended before the task was finished."
-            if carryOn(item.id, in: projectID, why: why) == nil { running += 1 }
+            if carryOn(item.id, in: projectID, why: why) == nil { room -= 1 }
         }
     }
 
