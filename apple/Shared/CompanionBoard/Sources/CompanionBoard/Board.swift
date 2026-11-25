@@ -35,6 +35,9 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     /// agent's question, a task waiting in Review), the supervisor says
     /// which answer it recommends. Each time is a request to its model.
     public var advice: Bool
+    /// The most specialists the board may have (Team Size).
+    public var teamLimit: Int
+
     /// The answer the supervisor recommends is taken as the person's,
     /// wherever its answer may be (see `Delegation`): it is not waited
     /// for the person to pick it. Off until switched on, per project.
@@ -54,7 +57,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     public init(autopilot: Bool = false, parallel: Int = BoardSettings.defaultParallel, reviewGate: Bool = true,
                 wipLimit: Int? = nil,
                 runAccess: String? = nil, advice: Bool = true, followsAdvice: Bool = false,
-                copyPerTask: Bool = true) {
+                copyPerTask: Bool = true, teamLimit: Int = TeamRules.defaultTeamLimit) {
         self.autopilot = autopilot
         self.parallel = parallel
         self.reviewGate = reviewGate
@@ -63,6 +66,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
         self.advice = advice
         self.followsAdvice = followsAdvice
         self.copyPerTask = copyPerTask
+        self.teamLimit = teamLimit
     }
 
     /// The supervisor answers in the person's place: it recommends, and
@@ -75,7 +79,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     public var startsWorkByItself: Bool { autopilot || supervisorAnswers }
 
     private enum CodingKeys: String, CodingKey {
-        case autopilot, parallel, reviewGate, wipLimit, runAccess, advice, followsAdvice, copyPerTask
+        case autopilot, parallel, reviewGate, wipLimit, runAccess, advice, followsAdvice, copyPerTask, teamLimit
     }
 
     public init(from decoder: Decoder) throws {
@@ -88,6 +92,8 @@ public struct BoardSettings: Codable, Equatable, Sendable {
         advice = try values.decodeIfPresent(Bool.self, forKey: .advice) ?? true
         followsAdvice = try values.decodeIfPresent(Bool.self, forKey: .followsAdvice) ?? false
         copyPerTask = try values.decodeIfPresent(Bool.self, forKey: .copyPerTask) ?? true
+        teamLimit = try values.decodeIfPresent(Int.self, forKey: .teamLimit)
+            ?? (try values.decodeIfPresent(Int.self, forKey: .parallel) ?? TeamRules.defaultTeamLimit)
     }
 }
 
@@ -154,12 +160,16 @@ public struct Board: Codable, Equatable, Sendable {
     public var supervisorChat: UUID?
     /// The model that supervises, or nil for the engine in use.
     public var supervisor: ModelChoice?
+    /// The roles the project needs.
+    public internal(set) var roles: [TeamRole]
+    /// The team: each specialist holds one role.
+    public internal(set) var specialists: [Specialist]
     public var createdAt: Date
     public var updatedAt: Date
 
-    /// 2: a board holds several goals, each with its tasks. (1 had one
-    /// goal, kept as a text, and every task was that goal's.)
-    public static let currentVersion = 2
+    /// 3: a board has a team of roles and specialists, and a scorecard
+    /// per role-model pair.
+    public static let currentVersion = 3
     public static let activityLimit = 400
 
     public init(project: UUID, now: Date) {
@@ -174,6 +184,8 @@ public struct Board: Codable, Equatable, Sendable {
         activity = []
         budget = Budget()
         settings = BoardSettings()
+        roles = []
+        specialists = []
         supervisorChat = nil
         supervisor = nil
         createdAt = now
@@ -182,7 +194,7 @@ public struct Board: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version, project, goals, currentGoal, nextNumber, activity, budget, settings, supervisorChat, supervisor
-        case createdAt, updatedAt, earlierProjects
+        case createdAt, updatedAt, earlierProjects, roles, specialists
         case allItems = "items"
     }
 
@@ -235,6 +247,31 @@ public struct Board: Codable, Equatable, Sendable {
         }
         goals = known
         currentGoal = known[place].id
+
+        let savedRoles = try values.decodeIfPresent([TeamRole].self, forKey: .roles) ?? []
+        let savedSpecialists = try values.decodeIfPresent([Specialist].self, forKey: .specialists) ?? []
+        if savedRoles.isEmpty && saved < 3 {
+            let parallel = settings.parallel
+            let count = max(1, min(parallel, TeamRules.roleLimit))
+            let generalist = TeamRole(key: "generalist", title: "Generalist",
+                                      brief: "Takes every kind of work until the PM proposes roles.",
+                                      kinds: WorkKind.allCases.map { $0 },
+                                      createdAt: made, createdBy: .autopilot)
+            roles = [generalist]
+            var migrated: [Specialist] = []
+            for _ in 0..<count {
+                migrated.append(Specialist(role: "generalist", createdAt: made, createdBy: .autopilot))
+            }
+            specialists = migrated
+            settings.teamLimit = count
+            for index in tasks.indices where tasks[index].role == nil {
+                tasks[index].role = "generalist"
+            }
+        } else {
+            roles = savedRoles
+            specialists = savedSpecialists
+        }
+
         allItems = tasks
         version = max(saved, Self.currentVersion)
     }
@@ -367,6 +404,7 @@ extension Board {
     /// the person, as nobody can tell whether it was refused a step.
     public func mayCarryOn(_ item: WorkItem) -> Bool {
         guard item.status == .todo, let last = item.runs.last, !last.isRunning else { return false }
+        if last.ending == .overrun { return false }
         switch last.outcome {
         case .stopped:
             return last.ending == .quit || (last.ending == nil && last.report == nil)
@@ -478,18 +516,22 @@ extension Board {
     public mutating func add(title: String, details: String = "", acceptance: [String] = [],
                              status: WorkStatus = .todo, priority: WorkPriority = .medium,
                              kind: WorkKind = .feature, milestone: String? = nil, dependsOn: [Int] = [],
-                             estimateTokens: Int? = nil, paths: [String] = [], by actor: BoardActor,
-                             now: Date) -> WorkItem {
+                             estimateTokens: Int? = nil, paths: [String] = [], role: String? = nil,
+                             by actor: BoardActor, now: Date) -> WorkItem {
         let number = nextNumber
         nextNumber += 1
         // A new task can only wait on tasks that exist; it cannot be one
         // of them, so no circle can come of this.
         let known = Set(items.map(\.number))
+        let assignedRole = role ?? TeamRouting.role(for:
+            WorkItem(number: 0, title: title, kind: kind, createdAt: now, goal: currentGoal),
+            among: roles, items: allItems)
         var item = WorkItem(number: number, title: BoardRules.title(title), details: details,
                             acceptance: BoardRules.lines(acceptance), status: status, priority: priority, kind: kind,
                             milestone: BoardRules.name(milestone), dependsOn: dependsOn.filter { known.contains($0) },
                             estimateTokens: estimateTokens.flatMap { $0 > 0 ? $0 : nil },
-                            createdAt: now, order: lastOrder(in: status, of: currentGoal), goal: currentGoal)
+                            createdAt: now, order: lastOrder(in: status, of: currentGoal), goal: currentGoal,
+                            role: assignedRole)
         item.paths = Leases.list(paths)
         if status == .inProgress { item.startedAt = now }
         if status == .done { item.finishedAt = now }
