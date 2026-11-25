@@ -253,12 +253,12 @@ struct AgentUseBanner: View {
     var body: some View {
         if let place {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(Theme.amber)
-                    .frame(width: 7, height: 7)
-                    .opacity(pulse ? 1 : 0.45)
-                    .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
-                    .onAppear { pulse = true }
+                // Breathing through Core Animation: a `repeatForever`
+                // animation redraws on the main thread at the display's rate.
+                Breathing(low: 0.45, period: 0.9) {
+                    Circle().fill(Theme.amber)
+                }
+                .frame(width: 7, height: 7)
                 Text("Using \(place)")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.amber)

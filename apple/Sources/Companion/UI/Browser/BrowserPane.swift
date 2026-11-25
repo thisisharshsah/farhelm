@@ -553,14 +553,15 @@ private struct AgentRing: View {
     @State private var lit = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: Theme.innerRadius + 3, style: .continuous)
-            .strokeBorder(Theme.accentGradient, lineWidth: 2)
-            .padding(-3)
-            .opacity(lit ? 1 : 0.3)
-            .allowsHitTesting(false)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { lit = true }
-            }
+        // Breathing through Core Animation: a `repeatForever` animation
+        // redraws on the main thread at the display's rate, beside a page
+        // that is already working.
+        Breathing(low: 0.3, period: 0.9) {
+            RoundedRectangle(cornerRadius: Theme.innerRadius + 3, style: .continuous)
+                .strokeBorder(Theme.accentGradient, lineWidth: 2)
+        }
+        .padding(-3)
+        .allowsHitTesting(false)
     }
 }
 

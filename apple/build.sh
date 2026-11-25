@@ -232,6 +232,14 @@ bundle() {
   mkdir -p "$BUNDLE_DIR/Contents/MacOS" "$BUNDLE_DIR/Contents/Resources"
   cp ".build/release/$APP_NAME" "$BUNDLE_DIR/Contents/MacOS/"
   cp Resources/Info.plist "$BUNDLE_DIR/Contents/"
+  # A board task's copy builds an app of its own name to the system: with
+  # the same identifier as the person's Companion, opening Companion (from
+  # the Dock, Spotlight or by its id) could start a task's unreviewed build
+  # in place of the real one, and did.
+  if in_task_copy; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.harshsah.companion.taskcopy" \
+      "$BUNDLE_DIR/Contents/Info.plist" >/dev/null 2>&1 || true
+  fi
   cp Resources/AppIcon.icns "$BUNDLE_DIR/Contents/Resources/"
   # The engines' logos, one SVG each, named after the engine or tool.
   cp -R Resources/Engines "$BUNDLE_DIR/Contents/Resources/"
@@ -322,8 +330,19 @@ restart() {
   bundle="$(cd "$BUNDLE_DIR" && pwd)"
   /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/sh -c "
     osascript -e 'quit app id \"com.harshsah.companion\"' >/dev/null 2>&1
-    for i in 1 2 3 4 5 6 7 8 9 10; do ps -axo command= | grep -q '/Contents/MacOS/$APP_NAME\$' || break; sleep 1; done
+    # Quitting can take a while (chats saved, runs stopped). Opening the
+    # new build while the old one is still on its way out left neither
+    # running, so this waits it out, and looks once more that the new one
+    # really came up.
+    i=0
+    while [ \$i -lt 120 ] && ps -axo command= | grep -q '/Contents/MacOS/$APP_NAME\$'; do sleep 1; i=\$((i+1)); done
     open -n '$bundle'
+    # With board runs going the old one can outlast the wait, and the new
+    # one then leaves again as a second copy: looked at a few more times.
+    for n in 1 2 3; do
+      sleep 10
+      ps -axo command= | grep -q '/Contents/MacOS/$APP_NAME\$' || open -n '$bundle'
+    done
   " </dev/null >/dev/null 2>&1 &
   echo "Restarting $bundle"
 }
@@ -342,7 +361,18 @@ restart_allowed() {
 
 case "${1:-run}" in
   build) build ;;
-  restart) restart_allowed || exit 1; build; bundle; restart ;;
+  restart)
+    restart_allowed || exit 1
+    build
+    # Bundling quits the running app first. Started from a chat inside
+    # that app, this script went down with it, half way through the
+    # bundle, and nothing came back up. So everything after the build
+    # runs in a session of its own that outlives the app.
+    /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$PWD/build.sh" finish-restart \
+      </dev/null >.build/restart.log 2>&1 &
+    echo "Built. Bundling and restarting on its own now (log: apple/.build/restart.log)."
+    ;;
+  finish-restart) bundle; restart ;;
   app)   build; bundle ;;
   run)   build; bundle; open "$BUNDLE_DIR" ;;
   dmg)   build; bundle; dmg ;;
