@@ -269,7 +269,7 @@ private struct EmptyBoard: View {
                     .foregroundStyle(Theme.ink.opacity(0.6))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 420)
-                TextField("What should this project achieve?", text: $goal, axis: .vertical)
+                TextField("", text: $goal, prompt: Text("What should this project achieve?").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
                     .lineLimit(2...6)
                     .boardField()
                     .focused($focused)

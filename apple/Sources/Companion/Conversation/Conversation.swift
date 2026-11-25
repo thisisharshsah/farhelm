@@ -52,6 +52,64 @@ struct WorkStep: Codable, Equatable {
     /// supervisor in their place, with its reason.
     var answeredBy: String?
 
+    /// The tools with a mark and a name of their own in the work list:
+    /// earlier chats and the Mac's services, told apart by how their line
+    /// starts.
+    struct Mark {
+        let prefix: String
+        let icon: String
+        let name: String
+        /// How the line reads: "Calendar: events in the next 7 days".
+        let verb: String
+        /// In a summary: "checked Calendar".
+        let phrase: String
+    }
+
+    static let marks: [Mark] = [
+        Mark(prefix: "Searched chats for ", icon: "bubble.left.and.bubble.right", name: "Chats",
+             verb: "Looked through your chats for", phrase: "looked through your chats"),
+        Mark(prefix: "Read chat ", icon: "text.bubble", name: "Chat", verb: "Read the earlier chat", phrase: "looked through your chats"),
+        Mark(prefix: "Spotlight ", icon: "magnifyingglass.circle", name: "Spotlight", verb: "Spotlight:", phrase: "searched your Mac"),
+        Mark(prefix: "Clipboard ", icon: "doc.on.clipboard", name: "Clipboard", verb: "Clipboard:", phrase: "used the clipboard"),
+        Mark(prefix: "Calendar ", icon: "calendar", name: "Calendar", verb: "Calendar:", phrase: "checked Calendar"),
+        Mark(prefix: "Reminders ", icon: "checklist", name: "Reminders", verb: "Reminders:", phrase: "used Reminders"),
+        Mark(prefix: "Mail ", icon: "envelope", name: "Mail", verb: "Mail:", phrase: "used Mail"),
+        Mark(prefix: "Notes ", icon: "note.text", name: "Notes", verb: "Notes:", phrase: "used Notes"),
+        Mark(prefix: "Check-in at ", icon: "alarm", name: "Check-in", verb: "Check-in at", phrase: "set a check-in"),
+        Mark(prefix: "Delegated ", icon: "person.2", name: "Helper", verb: "A helper looked into", phrase: "asked a helper"),
+    ]
+
+    var mark: Mark? { Self.marks.first { title.hasPrefix($0.prefix) } }
+
+    /// What a marked step worked on, without its tool's words.
+    var markSubject: String {
+        guard let mark else { return title }
+        var text = String(title.dropFirst(mark.prefix.count))
+        for tail in ["  (failed)", " (failed)"] where text.hasSuffix(tail) { text = String(text.dropLast(tail.count)) }
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A step in the browser beside the chat or in Chrome, filed as web.
+    var inBrowser: Bool {
+        kind == .web && (title.hasPrefix("Browser: ") || title.hasPrefix("Chrome: "))
+    }
+
+    /// The picture a browser step took of the page ("look"), when it is
+    /// still on this Mac.
+    var picture: String? {
+        guard inBrowser, let output, let range = output.range(of: "PICTURE: ", options: .backwards) else { return nil }
+        let path = String(output[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
+    /// What a picture is of: the page's title, from the step's result.
+    var pageName: String {
+        guard let output, let range = output.range(of: "as it shows now: ") else { return "The page" }
+        let line = output[range.upperBound...].prefix { $0 != "\n" }
+        let title = line.components(separatedBy: " <").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return title.isEmpty ? "The page" : title
+    }
+
     private static func phrase(_ kind: Kind, _ count: Int) -> String {
         let plural = count == 1 ? "" : "s"
         switch kind {
@@ -75,14 +133,24 @@ struct WorkStep: Codable, Equatable {
     /// 3 files and changed 2 files". Up to four kinds are named, in the
     /// order they were first done; anything past that is counted.
     static func summary(of steps: [WorkStep]) -> String {
-        var order: [Kind] = []
-        var counts: [Kind: Int] = [:]
+        // Browser steps are filed with the web's, and chats and the Mac's
+        // services with searches, but each is named apart.
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        var kinds: [String: Kind] = [:]
         // What was said is not work, so it is not counted.
         for step in steps where step.kind != .note && step.kind != .think {
-            if counts[step.kind] == nil { order.append(step.kind) }
-            counts[step.kind, default: 0] += 1
+            let key = step.inBrowser ? "browser" : (step.mark.map { "mark:" + $0.phrase } ?? step.kind.rawValue)
+            if counts[key] == nil { order.append(key) }
+            counts[key, default: 0] += 1
+            kinds[key] = step.kind
         }
-        var parts = order.prefix(4).map { phrase($0, counts[$0] ?? 0) }
+        var parts = order.prefix(4).map { key -> String in
+            let count = counts[key] ?? 0
+            if key == "browser" { return "used the browser" + (count == 1 ? "" : " (\(count) steps)") }
+            if key.hasPrefix("mark:") { return String(key.dropFirst(5)) }
+            return phrase(kinds[key] ?? .other, count)
+        }
         let rest = order.dropFirst(4).reduce(0) { $0 + (counts[$1] ?? 0) }
         if rest > 0 {
             parts.append("\(rest) more step\(rest == 1 ? "" : "s")")
@@ -205,6 +273,14 @@ struct Conversation: Identifiable, Codable, Equatable {
     var summarizedLines: Int?
     /// The conversation written up as structured notes (Markdown) for later use.
     var record: String?
+    /// The agent's own notes on where this chat's work stands: the goal,
+    /// where it lives (sites, hosts, folders, job numbers), what is done
+    /// and what is next. They go with every task in the chat, so a short
+    /// "go on" or a check-in after a restart picks up with the whole picture.
+    var workNotes: String?
+    /// The pages the agent worked on in this chat, newest last, to go back
+    /// to after the browser was closed or Companion restarted.
+    var workPages: [String]?
     /// Facts from earlier conversations that were brought into this one.
     var usedMemories: [String]?
     /// What the answers in this conversation drew on besides the
@@ -229,6 +305,11 @@ struct Conversation: Identifiable, Codable, Equatable {
     var taskID: UUID?
     /// When the person archived it; nil while it is listed.
     var archivedAt: Date?
+    /// Whether the model has given it a short name after its first answer
+    /// (asked once, so a name the person chose is never replaced).
+    var autoNamed: Bool?
+    /// The chat this one was forked from, when it is a fork.
+    var forkedFrom: UUID?
 
     /// How much this conversation holds. `spoken` is the size of the
     /// transcript when the live one is fuller than the saved one.
@@ -281,6 +362,8 @@ extension Conversation {
         kind = try values.decodeIfPresent(Kind.self, forKey: .kind)
         taskID = try values.decodeIfPresent(UUID.self, forKey: .taskID)
         archivedAt = try values.decodeIfPresent(Date.self, forKey: .archivedAt)
+        autoNamed = try values.decodeIfPresent(Bool.self, forKey: .autoNamed)
+        forkedFrom = try values.decodeIfPresent(UUID.self, forKey: .forkedFrom)
     }
 }
 
@@ -334,6 +417,12 @@ struct ConversationSummary: Identifiable, Equatable {
     var kind: Conversation.Kind? = nil
     var taskID: UUID? = nil
     var archivedAt: Date? = nil
+    /// A fork of another chat (older forks are known by their name).
+    var isFork = false
+    /// The first message's id: forks of one chat share it.
+    var firstTurn: UUID? = nil
+    /// The chat it was forked from, when that is recorded.
+    var forkedFrom: UUID? = nil
 
     /// A saved conversation, as the lists show it.
     init(_ conversation: Conversation) {
@@ -346,6 +435,9 @@ struct ConversationSummary: Identifiable, Equatable {
         kind = conversation.kind
         taskID = conversation.taskID
         archivedAt = conversation.archivedAt
+        isFork = conversation.forkedFrom != nil || conversation.title.hasSuffix(" (fork)")
+        firstTurn = conversation.turns.first?.id
+        forkedFrom = conversation.forkedFrom
     }
 }
 
@@ -402,16 +494,38 @@ final class ConversationStore {
     }
 
     func list() -> [ConversationSummary] {
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        return files
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys)) ?? []
+        summaryLock.lock()
+        defer { summaryLock.unlock() }
+        var seen = Set<String>()
+        let summaries = files
             .filter { $0.pathExtension == "json" && $0.lastPathComponent != Self.projectsFile }
             .compactMap { url -> ConversationSummary? in
+                // Each chat is read whole only when its file changed since
+                // the last listing: opening a chat or saving one listed every
+                // chat again, all of them decoded, on the main thread.
+                let values = try? url.resourceValues(forKeys: Set(keys))
+                let stamp = (values?.contentModificationDate ?? .distantPast, values?.fileSize ?? 0)
+                seen.insert(url.lastPathComponent)
+                if let cached = summaryCache[url.lastPathComponent], cached.modified == stamp.0, cached.size == stamp.1 {
+                    return cached.summary
+                }
                 guard let data = try? Data(contentsOf: url),
                       let conversation = try? decoder.decode(Conversation.self, from: data) else { return nil }
-                return ConversationSummary(conversation)
+                let summary = ConversationSummary(conversation)
+                summaryCache[url.lastPathComponent] = (stamp.0, stamp.1, summary)
+                return summary
             }
             .sorted { $0.updatedAt > $1.updatedAt }
+        summaryCache = summaryCache.filter { seen.contains($0.key) }
+        return summaries
     }
+
+    /// Summaries of chats as last read, by file name, with the file's
+    /// modification time and size when read.
+    private var summaryCache: [String: (modified: Date, size: Int, summary: ConversationSummary)] = [:]
+    private let summaryLock = NSLock()
 
     /// Conversations whose title, transcript, answers or notes contain every
     /// word of the query, newest first.
@@ -435,6 +549,9 @@ final class ConversationStore {
     }
 
     func load(_ id: UUID) -> Conversation? {
+        // A save of this chat still under way is waited for, so what is
+        // read is never older than what was saved.
+        flush()
         guard let data = try? Data(contentsOf: fileURL(id)) else { return nil }
         return try? decoder.decode(Conversation.self, from: data)
     }
@@ -442,6 +559,30 @@ final class ConversationStore {
     func save(_ conversation: Conversation) {
         guard let data = try? encoder.encode(conversation) else { return }
         try? data.write(to: fileURL(conversation.id), options: .atomic)
+    }
+
+    /// Saves off the main thread, one save after another in order, then
+    /// tells `done` on the main thread. A long chat took tens of
+    /// milliseconds to encode and write, and saving happens on every
+    /// switch, send and pause in typing.
+    func saveInBackground(_ conversation: Conversation, done: @escaping @MainActor () -> Void = {}) {
+        let url = fileURL(conversation.id)
+        saveQueue.async {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(conversation) {
+                try? data.write(to: url, options: .atomic)
+            }
+            DispatchQueue.main.async { MainActor.assumeIsolated { done() } }
+        }
+    }
+
+    private let saveQueue = DispatchQueue(label: "companion.conversation-save", qos: .utility)
+
+    /// Waits for the saves under way (before quitting, or before reading a
+    /// chat's file straight after saving it).
+    func flush() {
+        saveQueue.sync {}
     }
 
     /// The projects, in one file beside the conversations.
@@ -497,5 +638,41 @@ final class ConversationStore {
         } catch {
             return nil
         }
+    }
+}
+
+
+/// Chats and their forks, as one family in the list: each fork under the
+/// chat it came from. A fork records where it came from; older forks
+/// (named "... (fork)") are matched by the first message they share.
+enum ChatFamilies {
+    /// The chat each fork belongs under, by the fork's id.
+    static func parents(in chats: [ConversationSummary]) -> [UUID: UUID] {
+        let ids = Set(chats.map(\.id))
+        // For older forks: the original among the chats that share a first
+        // message, the one that is not a fork, with the most messages.
+        var originals: [UUID: ConversationSummary] = [:]
+        for chat in chats where !chat.isFork {
+            guard let first = chat.firstTurn else { continue }
+            if let kept = originals[first], kept.turnCount >= chat.turnCount { continue }
+            originals[first] = chat
+        }
+        var parent: [UUID: UUID] = [:]
+        for chat in chats where chat.isFork {
+            if let from = chat.forkedFrom, ids.contains(from), from != chat.id {
+                parent[chat.id] = from
+            } else if let first = chat.firstTurn, let original = originals[first], original.id != chat.id {
+                parent[chat.id] = original.id
+            }
+        }
+        // A fork of a fork goes under the first chat of the family.
+        var root: [UUID: UUID] = [:]
+        for (child, _) in parent {
+            var top = child
+            var steps = 0
+            while let up = parent[top], steps < 20 { top = up; steps += 1 }
+            root[child] = top
+        }
+        return root
     }
 }

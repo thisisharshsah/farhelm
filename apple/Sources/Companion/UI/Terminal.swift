@@ -29,6 +29,19 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         start()
     }
 
+    /// The last lines the terminal shows (its scrollback included), for
+    /// the agent to read what happened in it (a sign-in, an error) instead
+    /// of asking the person.
+    func recentText(lines count: Int = 40) -> String {
+        let data = view.getTerminal().getBufferAsData()
+        let all = String(decoding: data, as: UTF8.self)
+            .components(separatedBy: "\n")
+        // Blank rows below the cursor are not part of what was shown.
+        var kept = all
+        while let last = kept.last, last.trimmingCharacters(in: .whitespaces).isEmpty { kept.removeLast() }
+        return kept.suffix(count).joined(separator: "\n")
+    }
+
     /// Starts the user's shell as a login shell, so it reads the same
     /// profile Terminal does and finds the same programs.
     func start() {

@@ -19,7 +19,7 @@ case "$(uname -m)" in
   *) echo "fetch-python: unsupported architecture $(uname -m)"; exit 1 ;;
 esac
 
-if [[ -x "$DEST/bin/python3" ]] && "$DEST/bin/python3" -c "import apwlib, companion_arc" 2>/dev/null \
+if [[ -x "$DEST/bin/python3" ]] && "$DEST/bin/python3" -c "import apwlib, companion_host" 2>/dev/null \
    && [[ "$("$DEST/bin/python3" -m pip show apwlib 2>/dev/null | awk '/^Version/ {print $2}')" == "${APWLIB#*==}" ]]; then
   echo "fetch-python: Python with $APWLIB is already here."
   exit 0
@@ -62,9 +62,10 @@ mv "$TMP/python" "$DEST"
 echo "fetch-python: adding ${APWLIB}…"
 "$DEST/bin/python3" -m pip install --quiet --no-cache-dir --disable-pip-version-check "$APWLIB"
 
-# Lets apwlib use Arc too (it lists Chrome, Chromium, Brave and Edge).
+# Lets apwlib use the Chromium inside Companion (and never Arc).
 SITE="$("$DEST/bin/python3" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-cp Resources/Python/companion_arc.py "$SITE/companion_arc.py"
-echo "import companion_arc" > "$SITE/companion_arc.pth"
+rm -f "$SITE/companion_arc.py" "$SITE/companion_arc.pth"
+cp Resources/Python/companion_host.py "$SITE/companion_host.py"
+echo "import companion_host" > "$SITE/companion_host.pth"
 
 echo "fetch-python: ready in Vendor/python."

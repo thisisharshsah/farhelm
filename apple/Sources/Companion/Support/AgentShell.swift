@@ -48,6 +48,8 @@ actor AgentShell {
         process.arguments = ["-lc", script]
         let folder = FileManager.default.fileExists(atPath: directory) ? directory : NSHomeDirectory()
         process.currentDirectoryURL = URL(fileURLWithPath: folder)
+        // In a folder the person allowed, it runs with Companion's access.
+        process.inheritsAccess = ShellAccess.covers(command: command, in: folder)
         process.environment = AgentProcess.plainEnvironment()
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -89,7 +91,7 @@ actor AgentShell {
         self.process = nil
         if let failure = box.startFailure {
             reading.readabilityHandler = nil
-            return ShellResult(output: "Could not start the command: \(failure)",
+            return ShellResult(output: "Could not start the command: \(failure)" + Self.privacyNote(failure, in: folder),
                                exitCode: -1, timedOut: false, directory: folder)
         }
         // A moment for the last of the output to arrive, then stop listening.
@@ -107,10 +109,39 @@ actor AgentShell {
         if text.count > Self.outputLimit {
             text = "[earlier output left out]\n" + String(text.suffix(Self.outputLimit))
         }
+        if process.terminationStatus != 0 { text += Self.privacyNote(text, in: folder) }
         return ShellResult(output: text,
                            exitCode: process.terminationStatus,
                            timedOut: box.timedOut,
                            directory: ended.isEmpty ? folder : ended)
+    }
+
+    /// For the model, when macOS refused a command a folder: why, and what
+    /// works instead. Commands start responsible for themselves
+    /// (`AgentProcess`), so access given to Companion is not theirs, and
+    /// sending the person to System Settings for Companion changes nothing.
+    static func privacyNote(_ output: String, in folder: String) -> String {
+        guard output.localizedCaseInsensitiveContains("Operation not permitted") else { return "" }
+        let home = NSHomeDirectory()
+        let kept = ["Documents", "Desktop", "Downloads", "Library/Mobile Documents", "Library/CloudStorage"]
+            .map { home + "/" + $0 }
+        let named = kept.contains { folder == $0 || folder.hasPrefix($0 + "/") || output.contains($0) }
+            || ["Documents", "Desktop", "Downloads"].contains { output.contains("~/" + $0) || output.contains($0 + "/") }
+        guard named else { return "" }
+        // Allowed by the person, and still refused: it is macOS's own
+        // permission for Companion that is missing now.
+        if ShellAccess.allows(folder) {
+            return """
+
+
+            [Companion: the user allowed commands in this folder, but macOS has not given Companion itself this place yet. Ask the user to allow it in the dialog macOS shows, or in System Settings > Privacy & Security > Files and Folders > Companion, then run the command again.]
+            """
+        }
+        return """
+
+
+        [Companion: macOS keeps commands out of Documents, Desktop, Downloads and iCloud Drive. This is not Companion's own permission: giving Companion Files and Folders or Full Disk Access does not change it, so do not ask for that or retry. The user was asked whether to allow commands in this folder and has not allowed it. Your file tools do reach those folders: read files there with read_file (it reads a PDF or Word document as text), and write or edit them with the file tools. To run commands on those files, copy what you need to a folder outside them (such as ~/Project) and work there, or ask the user to move the project.]
+        """
     }
 
     /// Stops the command that is running, if any.

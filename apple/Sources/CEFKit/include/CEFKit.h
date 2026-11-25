@@ -34,6 +34,16 @@ NS_ASSUME_NONNULL_BEGIN
 /// A page called a binding added with -addBinding: (DevTools
 /// Runtime.bindingCalled), with the string it passed.
 - (void)chromiumBrowser:(ChromiumBrowser *)browser didCallBinding:(NSString *)name payload:(NSString *)payload;
+/// The page opened a dialog of its own: kind is "alert", "confirm",
+/// "prompt" or "leave" (leaving a page with unsaved changes). It waits
+/// until -answerDialog:text: is called. Without this method Chromium
+/// shows the dialog itself.
+- (void)chromiumBrowser:(ChromiumBrowser *)browser
+          opensDialog:(NSString *)kind
+              message:(NSString *)message
+          defaultText:(NSString *)defaultText;
+/// The page's dialog went away (answered, or the page moved on).
+- (void)chromiumBrowserDialogClosed:(ChromiumBrowser *)browser;
 @end
 
 @interface Chromium : NSObject
@@ -76,7 +86,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// leaves them square.
 @property (nonatomic) CGFloat cornerRadius;
 
+/// The page's sound is off (the tab's, not the Mac's).
+@property (nonatomic) BOOL muted;
+
 - (void)load:(NSString *)url;
+/// Answers the page's open dialog: OK (YES) or Cancel (NO), with the text
+/// for a prompt.
+- (void)answerDialog:(BOOL)accept text:(nullable NSString *)text NS_SWIFT_NAME(answerDialog(accept:text:));
 - (void)goBack;
 - (void)goForward;
 - (void)reload;
@@ -100,6 +116,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// result as JSON text, or an error.
 - (void)evaluate:(NSString *)expression
       completion:(void (^)(NSString *_Nullable json, NSString *_Nullable error))completion;
+
+/// Runs any DevTools method with its parameters as JSON text (an object).
+/// The completion gets the method's result as JSON text, or an error.
+- (void)devTools:(NSString *)method
+      parameters:(NSString *)parametersJSON
+      completion:(void (^)(NSString *_Nullable json, NSString *_Nullable error))completion
+    NS_SWIFT_NAME(devTools(_:parameters:completion:));
 @end
 
 NS_ASSUME_NONNULL_END

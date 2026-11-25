@@ -309,10 +309,10 @@ public struct LoadingMark: View {
             case .idle, .thinking, .working, .waiting:
                 // A mark the size of a line of text looks just as smooth at
                 // half the frames.
-                OrbitMark(speed: speed, dots: dots, lines: lines, trail: size >= 20,
-                          pulse: state != .idle, moving: state != .idle,
-                          tint: state == .waiting ? Theme.amber : nil,
-                          frameRate: size < 24 ? 15 : nil)
+                IsolatedAnimation(OrbitMark(speed: speed, dots: dots, lines: lines, trail: size >= 20,
+                                            pulse: state != .idle, moving: state != .idle,
+                                            tint: state == .waiting ? Theme.amber : nil,
+                                            frameRate: size < 24 ? 15 : nil))
                     .opacity(state == .idle ? 0.55 : 1)
             }
         }
@@ -332,3 +332,45 @@ public struct LoadingMark: View {
     }
 }
 
+
+
+/// An animated view drawn in a host of its own. Every frame of an
+/// animation in a window lays out and redraws the whole view tree it is
+/// part of: a small spinner in a long chat made the chat, the sidebar and
+/// the browser beside it all work fifteen times a second, and typing
+/// lagged. In a host of its own, a frame touches only its own few pixels.
+public struct IsolatedAnimation<Content: View>: View {
+    let content: Content
+
+    public init(_ content: Content) {
+        self.content = content
+    }
+
+    public var body: some View {
+        #if os(macOS)
+        IsolatedHost(content: content)
+        #else
+        content
+        #endif
+    }
+}
+
+#if os(macOS)
+import AppKit
+
+private struct IsolatedHost<Content: View>: NSViewRepresentable {
+    let content: Content
+
+    func makeNSView(context: Context) -> NSHostingView<Content> {
+        let host = NSHostingView(rootView: content)
+        // Its size is the one it is given; it never asks the window above
+        // it for another layout.
+        host.sizingOptions = []
+        return host
+    }
+
+    func updateNSView(_ host: NSHostingView<Content>, context: Context) {
+        host.rootView = content
+    }
+}
+#endif

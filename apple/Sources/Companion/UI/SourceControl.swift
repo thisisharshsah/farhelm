@@ -100,7 +100,7 @@ struct SourceTab: View {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                TextField("Name of the new branch", text: $newBranch)
+                TextField("", text: $newBranch, prompt: Text("Name of the new branch").foregroundStyle(Theme.ink.opacity(0.42)))
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.ink.opacity(0.95))
@@ -202,7 +202,7 @@ struct SourceTab: View {
     private var commitBox: some View {
         let ready = !git.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && git.count > 0 && !git.busy
         return HStack(alignment: .bottom, spacing: 6) {
-            TextField("Message", text: $git.message, axis: .vertical)
+            TextField("", text: $git.message, prompt: Text("Message").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.ink.opacity(0.95))

@@ -98,9 +98,14 @@ final class CommandRegistry: ObservableObject {
     }
 
     /// Runs the command a key press belongs to. False when the keys are
-    /// nobody's, so the press goes on to whatever has the focus.
+    /// nobody's, so the press goes on to whatever has the focus. Keys may
+    /// be shared by commands that never run at the same time (⌘W closes a
+    /// browser tab only while the browser is open); the one that can run
+    /// now has them.
     func handle(_ event: NSEvent) -> Bool {
-        guard let command = all.first(where: { $0.keys?.matches(event) == true }) else { return false }
+        guard let command = all.first(where: { $0.keys?.matches(event) == true && $0.available() }) else {
+            return false
+        }
         return run(command.id)
     }
 
@@ -295,7 +300,8 @@ extension CommandRegistry {
     /// are the Mac's own for the key named beside them.
     func registerBuiltIns() {
         let app = AppState.shared
-        let inCode: @MainActor () -> Bool = { AppState.shared.hasWorkFolder }
+        // Companion's own editor's commands; VS Code has its own.
+        let inCode: @MainActor () -> Bool = { AppState.shared.hasWorkFolder && !CodeServer.chosen }
         let fileOpen: @MainActor () -> Bool = { AppState.shared.workspace.openPath != nil }
         let inRepository: @MainActor () -> Bool = { AppState.shared.hasWorkFolder && GitModel.shared.isRepository }
 
@@ -566,6 +572,9 @@ extension CommandRegistry {
                 NSPasteboard.general.setString(app.workspace.relative(path), forType: .string)
             }
         ])
+
+        // The browser's own: tabs, the command bar, split view, pins.
+        register(BrowserActions.commands)
 
         // What the global shortcuts do is in the list too, with the keys
         // they have now.

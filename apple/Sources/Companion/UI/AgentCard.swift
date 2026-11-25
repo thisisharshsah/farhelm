@@ -30,17 +30,27 @@ struct AgentCard: View {
         let why = given.map { "Recommended by the supervisor (\($0.by)). \($0.reason)" } ?? ""
         // "Always allow" is offered only where it can be remembered.
         let offersAlways = !proposal.remember.isEmpty || proposal.steps.contains(where: { $0.kind.usesKeyboard })
+            || !proposal.sites.isEmpty
+        // Only browser steps on known sites: the choice is per site, as a
+        // browser asks.
+        let onSite = !proposal.sites.isEmpty && proposal.steps.allSatisfy { $0.kind == .browser }
+        let siteName = proposal.sites.count == 1 ? proposal.sites[0] : "these sites"
         return HStack(alignment: .top, spacing: short ? 6 : 8) {
             Button { app.decide(.allow) } label: { Chip("Allow", icon: "checkmark", tint: Theme.accent) }
                 .buttonStyle(.plain)
                 .help("Run this once (or say \"allow\")")
                 .recommended(pick == .allow || (pick == .always && !offersAlways), why: why)
             if offersAlways {
-                Button { app.decide(.always) } label: { Chip(short ? "Always" : "Always allow", icon: "checkmark.circle") }
+                Button { app.decide(.always) } label: {
+                    Chip(onSite ? (short ? "This site" : "Allow on \(siteName)") : (short ? "Always" : "Always allow"),
+                         icon: "checkmark.circle")
+                }
                     .buttonStyle(.plain)
-                    .help(proposal.remember.isEmpty
-                          ? "Run this, and stop asking about clicks and typing for the rest of this task"
-                          : "Run this, and never ask again about: \(proposal.remember.joined(separator: ", "))")
+                    .help(onSite
+                          ? "Run this, and stop asking about \(siteName) for the rest of this task (sending files is still asked)"
+                          : (proposal.remember.isEmpty
+                             ? "Run this, and stop asking about clicks and typing for the rest of this task"
+                             : "Run this, and never ask again about: \(proposal.remember.joined(separator: ", "))"))
                     .recommended(pick == .always, why: why)
             }
             Button { app.decide(.deny) } label: { Chip("Deny", icon: "xmark", tint: Theme.rose) }
@@ -282,6 +292,9 @@ private struct StepCard: View {
         case .delegate: return "person.2"
         case .browser: return "safari"
         case .terminal: return "terminal"
+        case .chats: return "bubble.left.and.bubble.right"
+        case .notes: return "note.text"
+        case .mac: return step.macCommand.flatMap { MacServices.service($0.service)?.icon } ?? "macwindow"
         case .wait, .done, .ask, .plan: return "circle"
         }
     }
@@ -302,6 +315,9 @@ private struct StepCard: View {
         case .delegate: return "Hand a question to a helper (it only reads and searches)"
         case .browser: return step.browserCommand?.args["in"] as? String == "chrome" ? "In your Chrome" : "In the browser beside the chat"
         case .terminal: return "Open a terminal beside the chat"
+        case .chats: return "Look through your earlier chats"
+        case .notes: return "Keep notes on the task"
+        case .mac: return "In " + (step.macCommand.flatMap { MacServices.service($0.service)?.title } ?? "your Mac")
         case .wait, .done, .ask, .plan: return ""
         }
     }

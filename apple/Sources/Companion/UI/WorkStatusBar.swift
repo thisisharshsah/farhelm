@@ -43,8 +43,16 @@ struct WorkStatusBar: View {
         thinking ? "Thinking…" : (app.agentStatus ?? "Working…")
     }
 
+    @ObservedObject private var checkIns = CheckIns.shared
+
     var body: some View {
         VStack(spacing: 6) {
+            // A check-in this chat waits for: when, for what, and the way
+            // to have it now or call it off.
+            ForEach(checkIns.pending(in: app.conversation.id)) { checkIn in
+                CheckInBar(checkIn: checkIn)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             if planOpen, let plan {
                 PlanCard(plan: plan, current: PlanProgress.current(in: plan)) {
                     planOpen = false
@@ -57,13 +65,50 @@ struct WorkStatusBar: View {
         .onChange(of: plan == nil) { _, gone in if gone { planOpen = false } }
     }
 
+    /// What comes after the step under way, from the plan: the "Now"
+    /// line says what it does, this says where it goes next.
+    private var nextStep: String? {
+        guard working, let plan, !plan.isEmpty else { return nil }
+        let doing = plan.firstIndex { $0.state == .doing } ?? plan.firstIndex { $0.state == .todo }
+        guard let doing else { return nil }
+        let rest = plan[(doing + 1)...]
+        return rest.first { $0.state != .done }?.text
+    }
+
     private var line: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            lineNow
+            if let nextStep {
+                Text("Then: " + nextStep)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.ink.opacity(0.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 48)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: nextStep)
+    }
+
+    private var lineNow: some View {
         ZStack {
             if working {
                 // The shared status pill (as on the phone), floating over
                 // the conversation at the left; clear of the ring.
-                StatusPill(status, thinking: thinking, size: 11.5)
-                    .animation(.easeOut(duration: 0.2), value: status)
+                Group {
+                    if let until = app.agentStatusUntil, !thinking {
+                        // Only this line ticks, once a second.
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            StatusPill(status + " in " + WorkTrail.duration(until.timeIntervalSince(context.date)),
+                                       thinking: false, size: 11.5)
+                        }
+                    } else {
+                        StatusPill(status, thinking: thinking, size: 11.5)
+                            .animation(.easeOut(duration: 0.2), value: status)
+                    }
+                }
                     .allowsHitTesting(false)
                 .padding(.trailing, 48)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -182,5 +227,117 @@ extension PlanItem {
     /// As the shared plan views take it.
     var design: PlanStep {
         PlanStep(text: text, state: PlanStep.State(rawValue: state.rawValue) ?? .todo)
+    }
+}
+
+/// While the agent is acting in the browser or on the Mac, a strip across
+/// the top of the chat says so, with Stop, the way an assistant that uses
+/// the computer shows it: whoever looks at the panel knows who is moving
+/// the page, and can take it back in one click.
+struct AgentUseBanner: View {
+    @EnvironmentObject var app: AppState
+    @State private var pulse = false
+
+    /// "the browser" or "your computer" while the agent acts there.
+    private var place: String? {
+        guard app.agentHere,
+              let turn = app.conversation.turns.last(where: { app.streamingTurns.contains($0.id) }),
+              let last = turn.steps?.last(where: { $0.kind != .note && $0.kind != .think }) else { return nil }
+        if last.inBrowser { return last.title.hasPrefix("Chrome: ") ? "Chrome" : "the browser" }
+        switch last.kind {
+        case .open, .click, .type, .key: return "your computer"
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        if let place {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Theme.amber)
+                    .frame(width: 7, height: 7)
+                    .opacity(pulse ? 1 : 0.45)
+                    .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+                    .onAppear { pulse = true }
+                Text("Using \(place)")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.amber)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 6)
+                Button { app.stopAgent() } label: {
+                    Text("Stop")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Theme.ink.opacity(0.9))
+                        .padding(.horizontal, 10)
+                        .frame(height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.1)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Stop the agent here (it keeps what it has done)")
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.amber.opacity(0.1)))
+            // Solid under its tint, so the chat never shows through it.
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.shade.opacity(0.96)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.amber.opacity(0.22), lineWidth: 0.5))
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+}
+
+
+/// A check-in the chat waits for, above the chat box: a clock, when it
+/// comes and the time left, what it will check, and Check now and Cancel.
+struct CheckInBar: View {
+    let checkIn: CheckIn
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "alarm")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.amber)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let left = max(0, checkIn.due.timeIntervalSince(context.date))
+                (Text("Checking at \(CheckIns.time(checkIn.due))").fontWeight(.semibold)
+                 + Text("  \(WorkTrail.duration(left)) left  \u{00B7}  \(checkIn.note)"))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.ink.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .monospacedDigit()
+            }
+            Spacer(minLength: 6)
+            Button { CheckIns.shared.checkNow(checkIn.id) } label: {
+                Text("Check now")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.accent.opacity(0.14)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Have the agent check now")
+            Button { CheckIns.shared.cancel(checkIn.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.ink.opacity(0.6))
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.08)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Cancel this check-in")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 5)
+        .frame(height: 32)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.amber.opacity(0.1)))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.shade.opacity(0.96)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.amber.opacity(0.22), lineWidth: 0.5))
     }
 }
