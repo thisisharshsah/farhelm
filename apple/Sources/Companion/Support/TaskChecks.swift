@@ -65,6 +65,18 @@ final class TaskChecks {
         return results
     }
 
+    /// Runs the project's checks that cover these changed files in the
+    /// project's own folder, before they are committed there. nil when
+    /// the project has no checks that can be read.
+    func run(inFolder folder: String, changed: [String]) async -> [CheckResult]? {
+        guard case .success(let checks)? = Self.setUp(in: folder) else { return nil }
+        var results: [CheckResult] = []
+        for check in Checks.due(checks, changed: changed) {
+            results.append(await inTurn(check, in: folder))
+        }
+        return results
+    }
+
     /// Runs a check once the checks asked for before it are done.
     private func inTurn(_ check: Check, in directory: String) async -> CheckResult {
         let before = queue

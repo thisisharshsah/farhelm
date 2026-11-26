@@ -58,6 +58,7 @@ struct BoardHeader: View {
                 spend
                 if board.budget.isSet { budget }
                 limitLabel
+                gitLabel
                 if let waiting = advanced.waiting[project.id] { waitingLabel(waiting) }
                 Spacer(minLength: 4)
                 supervisorMenu
@@ -502,6 +503,38 @@ struct BoardHeader: View {
         }
         .layoutPriority(-1)
         .help(text)
+    }
+
+    /// Where the project's folder stands with git, in the order it goes:
+    /// what waits to be committed, then what waits to be pushed, each
+    /// with the button that does it. Nothing shows when both are empty.
+    @ViewBuilder
+    private var gitLabel: some View {
+        if let work = advanced.gitWork[project.id] {
+            HStack(spacing: 5) {
+                LoadingMark(state: .working, size: 11)
+                Text(work)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.ink.opacity(0.7))
+                    .lineLimit(1)
+            }
+        } else if let git = advanced.folderGit[project.id] {
+            if !git.changed.isEmpty {
+                BoardButton("\(git.changed.count) to commit", icon: "tray.and.arrow.down", tint: Theme.amber) {
+                    advanced.commitFolder(project.id)
+                }
+                .help("Waiting to commit on \(git.branch):\n" + git.changed.prefix(12).joined(separator: "\n")
+                      + (git.changed.count > 12 ? "\nand \(git.changed.count - 12) more" : "")
+                      + "\n\nThe project's checks run first. Files git does not track are left alone, and nothing is pushed."
+                      + (board.settings.supervisorAnswers ? "\nThe supervisor commits them itself once they have not changed for a few minutes." : ""))
+            }
+            if git.ahead > 0, let upstream = git.upstream {
+                BoardButton("\(git.ahead) to push", icon: "arrow.up.circle", tint: Theme.accent) {
+                    advanced.pushFolder(project.id)
+                }
+                .help("\(git.ahead == 1 ? "1 commit waits" : "\(git.ahead) commits wait") to be pushed from \(git.branch) to \(upstream). Pushing is only ever done by you, here.")
+            }
+        }
     }
 
     private func noticeBanner(_ text: String) -> some View {

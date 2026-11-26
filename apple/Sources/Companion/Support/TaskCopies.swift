@@ -646,6 +646,116 @@ final class TaskCopies {
         return "The board's merged work waits to go into \(target): changes in your folder that are not committed are in the way (\(named)). Commit them or put them aside, and it goes in by itself."
     }
 
+    // MARK: The project's own folder: commit, then push
+
+    /// Where the person's own checkout stands: what waits to be committed,
+    /// and what waits to be pushed after that.
+    struct FolderGit: Equatable, Sendable {
+        /// The top of the repository the folder is in.
+        var top: String
+        /// The branch it is on; empty when it is on none.
+        var branch = ""
+        /// Tracked files with changes not committed, from the top. Files
+        /// git does not track yet are left to the person.
+        var changed: [String] = []
+        /// One of them is in a merge that is not settled: nothing is
+        /// committed over that.
+        var unsettled = false
+        /// When the newest of them was last written.
+        var lastWrite: Date?
+        /// The branch it pushes to, when it has one, and how many commits
+        /// wait to go there.
+        var upstream: String?
+        var ahead = 0
+    }
+
+    /// Reads where a folder stands. It only looks: no lock is taken, so
+    /// it never gets in the way of a git command going on there.
+    func folderGit(in folder: String) async -> FolderGit? {
+        guard let repository = await top(of: folder) else { return nil }
+        let status = await Shell.run("GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 git -c core.quotePath=false "
+                                     + "status --porcelain=v1 --branch --untracked-files=no", in: repository, timeout: 60)
+        guard status.ok else { return nil }
+        var found = FolderGit(top: repository)
+        for line in status.output.split(whereSeparator: \.isNewline).map(String.init) {
+            if line.hasPrefix("## ") {
+                var head = String(line.dropFirst(3))
+                if let note = head.range(of: " [") {
+                    let counts = String(head[note.upperBound...])
+                    if let at = counts.range(of: "ahead ") {
+                        found.ahead = Int(String(counts[at.upperBound...].prefix { $0.isNumber })) ?? 0
+                    }
+                    head = String(head[..<note.lowerBound])
+                }
+                if let dots = head.range(of: "...") {
+                    found.upstream = String(head[dots.upperBound...])
+                    head = String(head[..<dots.lowerBound])
+                }
+                found.branch = head.hasPrefix("HEAD (no branch)") || head.hasPrefix("No commits yet") ? "" : head
+                continue
+            }
+            guard line.count > 3 else { continue }
+            let marks = String(line.prefix(2))
+            if marks.contains("U") || marks == "AA" || marks == "DD" { found.unsettled = true }
+            var path = String(line.dropFirst(3))
+            if let arrow = path.range(of: " -> ") { path = String(path[arrow.upperBound...]) }
+            if path.count > 1, path.hasPrefix("\""), path.hasSuffix("\"") { path = String(path.dropFirst().dropLast()) }
+            found.changed.append(path)
+        }
+        for path in found.changed {
+            let full = (repository as NSString).appendingPathComponent(path)
+            if let written = (try? FileManager.default.attributesOfItem(atPath: full))?[.modificationDate] as? Date,
+               written > (found.lastWrite ?? .distantPast) {
+                found.lastWrite = written
+            }
+        }
+        return found
+    }
+
+    /// What the folder's tracked files changed since the last commit, cut
+    /// short: what a commit message is written from.
+    func folderDiff(in folder: String, limit: Int = 6_000) async -> String {
+        guard let repository = await top(of: folder) else { return "" }
+        let diff = await git("diff HEAD --no-color --unified=1", in: repository, timeout: 60)
+        return diff.ok ? String(diff.output.prefix(limit)) : ""
+    }
+
+    enum Committed: Sendable, Equatable {
+        /// Committed, as this commit.
+        case done(String)
+        case failed(String)
+    }
+
+    /// Commits the tracked files that changed in the person's folder, on
+    /// the branch it is on. Files git does not track are not taken along,
+    /// and nothing is pushed.
+    func commitTracked(in folder: String, message: String) async -> Committed {
+        await inTurn(folder) {
+            guard let repository = await self.top(of: folder) else {
+                return .failed("The folder is not in a git repository.")
+            }
+            let added = await self.git("add -u", in: repository, timeout: 120)
+            guard added.ok else { return .failed(Self.said(added.output)) }
+            // The commit is the person's: no co-author or AI credit lines.
+            let committed = await self.git("commit -q -m \(Shell.quote(CommitHygiene.clean(message)))", in: repository,
+                                           timeout: 120)
+            guard committed.ok else { return .failed(Self.said(committed.output)) }
+            _ = await CommitHygiene.fixLastCommit(in: repository)
+            let head = await self.revision("HEAD", in: repository) ?? ""
+            return .done(String(head.prefix(7)))
+        }
+    }
+
+    /// Pushes the branch the folder is on to where it pushes to. Returns
+    /// why it could not, or nil.
+    func push(in folder: String) async -> String? {
+        await inTurn(folder) {
+            guard let repository = await self.top(of: folder) else { return "The folder is not in a git repository." }
+            let pushed = await self.git("push", in: repository, timeout: 180)
+            return pushed.ok ? nil : Self.said(pushed.output)
+        }
+    }
+
     // MARK: Taking a copy down
 
     /// Removes a copy's folder (whatever git ignores in it goes too) and,
