@@ -1089,7 +1089,7 @@ final class Advanced: ObservableObject {
     /// project's checks run on the folder first, and what does not pass
     /// them is not committed. Only tracked files go in, and nothing is
     /// pushed.
-    func commitFolder(_ projectID: UUID, by actor: BoardActor = .person) {
+    func commitFolder(_ projectID: UUID, by actor: BoardActor = .person, message: String = "") {
         guard let folder = project(projectID)?.folder, let state = folderGit[projectID], !state.changed.isEmpty,
               gitWork[projectID] == nil else { return }
         guard !state.unsettled, !state.branch.isEmpty else {
@@ -1118,7 +1118,15 @@ final class Advanced: ObservableObject {
             guard let now = await TaskCopies.shared.folderGit(in: folder), now.changed == state.changed,
                   now.lastWrite == state.lastWrite else { return }
             self.gitWork[projectID] = "Committing"
-            let subject = await self.commitSubject(for: state, in: folder, project: projectID)
+            // The person's own words when they gave some; otherwise the
+            // supervisor writes the message from the changes.
+            let given = CommitHygiene.clean(message)
+            let subject: String
+            if given.isEmpty {
+                subject = await self.commitSubject(for: state, in: folder, project: projectID)
+            } else {
+                subject = given
+            }
             switch await TaskCopies.shared.commitTracked(in: folder, message: subject) {
             case .done(let commit):
                 let files = state.changed.count == 1 ? "1 file" : "\(state.changed.count) files"

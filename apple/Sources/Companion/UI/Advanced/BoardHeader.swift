@@ -18,6 +18,11 @@ struct BoardHeader: View {
     @Binding var viewName: String
     /// The project's goals are open, under the goal.
     @State private var showGoals = false
+    /// The commit and the push are two steps, each shown before it is
+    /// done: what goes in and under which message, then what is sent.
+    @State private var showCommit = false
+    @State private var showPush = false
+    @State private var commitMessage = ""
     /// They were opened to start a new goal.
     @State private var startingGoal = false
 
@@ -521,8 +526,10 @@ struct BoardHeader: View {
         } else if let git = advanced.folderGit[project.id] {
             if !git.changed.isEmpty {
                 BoardButton("\(git.changed.count) to commit", icon: "tray.and.arrow.down", tint: Theme.amber) {
-                    advanced.commitFolder(project.id)
+                    commitMessage = ""
+                    showCommit = true
                 }
+                .popover(isPresented: $showCommit, arrowEdge: .bottom) { commitSheet(git) }
                 .help("Waiting to commit on \(git.branch):\n" + git.changed.prefix(12).joined(separator: "\n")
                       + (git.changed.count > 12 ? "\nand \(git.changed.count - 12) more" : "")
                       + "\n\nThe project's checks run first. Files git does not track are left alone, and nothing is pushed."
@@ -530,11 +537,90 @@ struct BoardHeader: View {
             }
             if git.ahead > 0, let upstream = git.upstream {
                 BoardButton("\(git.ahead) to push", icon: "arrow.up.circle", tint: Theme.accent) {
-                    advanced.pushFolder(project.id)
+                    showPush = true
                 }
+                .popover(isPresented: $showPush, arrowEdge: .bottom) { pushSheet(git, upstream: upstream) }
                 .help("\(git.ahead == 1 ? "1 commit waits" : "\(git.ahead) commits wait") to be pushed from \(git.branch) to \(upstream). Pushing is only ever done by you, here.")
             }
         }
+    }
+
+    /// What a commit would take in, and the message it goes under: the
+    /// person's own, or the supervisor's when the field is left empty.
+    private func commitSheet(_ git: TaskCopies.FolderGit) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Commit to \(git.branch)")
+                .font(.system(size: 12, weight: .semibold))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(git.changed, id: \.self) { path in
+                        Text(path)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(Theme.ink.opacity(0.75))
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 140)
+            TextField("Message (left empty, the supervisor writes it)", text: $commitMessage)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11.5))
+            Text("The project's checks run first. Files git does not track stay out, and nothing is pushed.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.ink.opacity(0.55))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                Spacer(minLength: 4)
+                BoardButton("Cancel") { showCommit = false }
+                BoardButton("Commit", icon: "checkmark", prominent: true) {
+                    showCommit = false
+                    advanced.commitFolder(project.id, message: commitMessage)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 400)
+    }
+
+    /// What a push would send: each commit that waits, with its message.
+    private func pushSheet(_ git: TaskCopies.FolderGit, upstream: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Push \(git.branch) to \(upstream)")
+                .font(.system(size: 12, weight: .semibold))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(git.unpushed, id: \.self) { line in
+                        Text(line)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .lineLimit(2)
+                    }
+                    if git.ahead > git.unpushed.count {
+                        Text("and \(git.ahead - git.unpushed.count) more")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.ink.opacity(0.55))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 200)
+            Text("A push cannot be taken back, so it is only ever done by you, here.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.ink.opacity(0.55))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                Spacer(minLength: 4)
+                BoardButton("Cancel") { showPush = false }
+                BoardButton("Push", icon: "arrow.up", prominent: true) {
+                    showPush = false
+                    advanced.pushFolder(project.id)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 440)
     }
 
     private func noticeBanner(_ text: String) -> some View {

@@ -667,6 +667,9 @@ final class TaskCopies {
         /// wait to go there.
         var upstream: String?
         var ahead = 0
+        /// Those commits, newest first, each as its short id and its
+        /// message's first line: what a push would send.
+        var unpushed: [String] = []
     }
 
     /// Reads where a folder stands. It only looks: no lock is taken, so
@@ -708,6 +711,11 @@ final class TaskCopies {
                written > (found.lastWrite ?? .distantPast) {
                 found.lastWrite = written
             }
+        }
+        if found.ahead > 0, found.upstream != nil {
+            let log = await Shell.run("GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 git log --format='%h %s' -n 30 '@{upstream}..HEAD'",
+                                      in: repository, timeout: 30)
+            if log.ok { found.unpushed = Self.lines(log.output) }
         }
         return found
     }
