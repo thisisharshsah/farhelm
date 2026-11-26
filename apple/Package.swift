@@ -41,9 +41,19 @@ let package = Package(
                 .product(name: "CompanionLink", package: "CompanionLink"),
                 .product(name: "CompanionBoard", package: "CompanionBoard"),
                 "CEFKit",
-                "CrashKit"
+                "CrashKit",
+                "ChatDocumentPage"
             ],
             path: "Sources/Companion"
+        ),
+        // The page the chat is drawn in as one document: its HTML, CSS and
+        // JS go with the app, so the page loads nothing from the network.
+        // A target of its own, since SwiftPM bundles only files inside a
+        // target's folder.
+        .target(
+            name: "ChatDocumentPage",
+            path: "Resources/ChatDocument",
+            resources: [.copy("page")]
         ),
         // What runs inside a fatal signal, for crash recording: C, because
         // a signal handler may not allocate memory or take a lock.

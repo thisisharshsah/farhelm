@@ -1,0 +1,202 @@
+/* The chat as one document. Values follow the design system's tokens
+   (apple/Design/README.md): spacing 4, 8, 12, 16, 20, 24, 32; corners chip 6,
+   control 8, tile 12, card 14. Depth comes from tint and a hairline edge,
+   never a cast shade. The app sets the look's colors and text size. */
+
+:root {
+  --accent: rgb(186, 161, 255);
+  --ink: rgb(255, 255, 255);
+  --scale: 1.12;
+  --reply-font: ui-serif, "New York", Georgia, serif;
+  --top: 0px;
+  --bottom: 0px;
+
+  --space-xxs: 4px;
+  --space-xs: 8px;
+  --space-s: 12px;
+  --space-m: 16px;
+  --space-l: 20px;
+  --space-xl: 24px;
+  --space-xxl: 32px;
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-tile: 12px;
+  --radius-card: 14px;
+  --reading-width: 780px;
+
+  --text-1: color-mix(in srgb, var(--ink) 92%, transparent);
+  --text-2: color-mix(in srgb, var(--ink) 60%, transparent);
+  --text-3: color-mix(in srgb, var(--ink) 40%, transparent);
+  --line: color-mix(in srgb, var(--ink) 12%, transparent);
+  --fill: color-mix(in srgb, var(--ink) 6%, transparent);
+  --glass: color-mix(in srgb, var(--accent) 16%, transparent);
+  --glass-edge: color-mix(in srgb, var(--accent) 34%, transparent);
+
+  color-scheme: light dark;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: calc(13px * var(--scale)) / 1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-wrap: anywhere;
+}
+
+::selection { background: color-mix(in srgb, var(--accent) 38%, transparent); }
+
+main {
+  box-sizing: border-box;
+  max-width: var(--reading-width);
+  margin: 0 auto;
+  padding: var(--top) var(--space-m) var(--bottom);
+}
+
+.turn { margin: 0 0 var(--space-l); }
+
+/* What the person sent: on the right, on a tinted glass bubble. */
+.prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-xxs);
+  margin-bottom: var(--space-s);
+}
+
+.bubble {
+  max-width: 85%;
+  padding: var(--space-xs) var(--space-s);
+  border-radius: var(--radius-tile);
+  background: var(--glass);
+  border: 0.5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  white-space: pre-wrap;
+}
+
+.attached {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-xxs);
+}
+
+.attached li {
+  padding: 2px var(--space-xs);
+  border-radius: var(--radius-chip);
+  background: var(--fill);
+  border: 0.5px solid var(--line);
+  color: var(--text-2);
+  font-size: 0.85em;
+}
+
+.prompt img, .prompt video { max-width: 60%; }
+
+/* The answer: running text on the panel itself, never on glass. */
+.reply .answer { font-family: var(--reply-font); }
+.answer > :first-child { margin-top: 0; }
+.answer p { margin: 0 0 var(--space-xs); }
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.25;
+  margin: var(--space-m) 0 var(--space-xs);
+}
+h1 { font-size: 1.45em; }
+h2 { font-size: 1.25em; }
+h3 { font-size: 1.1em; }
+h4, h5, h6 { font-size: 1em; }
+
+ul, ol { margin: 0 0 var(--space-xs); padding-left: var(--space-xl); }
+li { margin: 2px 0; }
+li > ul, li > ol { margin: 0; }
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 0.5px solid color-mix(in srgb, var(--accent) 50%, transparent);
+}
+a:hover { border-bottom-color: var(--accent); }
+
+blockquote {
+  margin: 0 0 var(--space-xs);
+  padding: 0 var(--space-s);
+  border-left: 2px solid var(--glass-edge);
+  color: var(--text-2);
+}
+
+hr { border: none; border-top: 0.5px solid var(--line); margin: var(--space-m) 0; }
+
+code {
+  font: 0.9em ui-monospace, "SF Mono", Menlo, monospace;
+  padding: 1px var(--space-xxs);
+  border-radius: var(--radius-chip);
+  background: var(--fill);
+}
+
+pre.code {
+  margin: 0 0 var(--space-s);
+  padding: var(--space-s);
+  border-radius: var(--radius-control);
+  background: var(--fill);
+  border: 0.5px solid var(--line);
+  overflow-x: auto;
+  white-space: pre;
+}
+pre.code code { padding: 0; background: none; font-size: 0.88em; }
+pre.code[data-lang]::before {
+  content: attr(data-lang);
+  display: block;
+  margin-bottom: var(--space-xxs);
+  color: var(--text-3);
+  font: 0.75em -apple-system, sans-serif;
+  user-select: none;
+}
+
+.table { overflow-x: auto; margin: 0 0 var(--space-s); }
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 0.5px solid var(--line);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 0.92em;
+}
+th, td { padding: var(--space-xxs) var(--space-s); text-align: left; border-bottom: 0.5px solid var(--line); }
+tr:last-child td { border-bottom: none; }
+th { background: var(--glass); font-weight: 600; }
+.align-center { text-align: center; }
+.align-right { text-align: right; }
+
+img, video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--space-xxs) 0 var(--space-xs);
+  border-radius: var(--radius-tile);
+  border: 0.5px solid var(--line);
+}
+
+input[type="checkbox"] { accent-color: var(--accent); margin: 0 var(--space-xxs) 0 0; }
+
+.pending { color: var(--text-3); }
+.error { color: rgb(255, 120, 150); }
+.model {
+  margin-top: var(--space-xxs);
+  color: var(--text-3);
+  font: 0.78em -apple-system, sans-serif;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .bubble { -webkit-backdrop-filter: none; backdrop-filter: none; background: color-mix(in srgb, var(--accent) 22%, Canvas); }
+}
+
+@media (prefers-contrast: more) {
+  .bubble, pre.code, table, img, video { border-width: 1px; border-color: var(--text-2); }
+}

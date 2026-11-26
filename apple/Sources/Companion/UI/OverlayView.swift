@@ -1596,6 +1596,8 @@ struct OverlayView: View {
 /// happened, each tagged with its kind. The filter chips narrow it to one kind.
 struct ChatThread: View {
     @EnvironmentObject var app: AppState
+    /// Watched for Chat as one document, which swaps the message list.
+    @ObservedObject private var settings = AppSettings.shared
     /// Room to leave at the top and bottom of the conversation for the
     /// bars that float over it.
     var topInset: CGFloat = 0
@@ -1723,6 +1725,8 @@ struct ChatThread: View {
                 }
                 .padding(.top, topInset)
                 .padding(.bottom, bottomInset)
+            } else if settings.chatAsDocument {
+                chatDocument(top: topRoom, bottom: bottomInset)
             } else {
                 timeline
             }

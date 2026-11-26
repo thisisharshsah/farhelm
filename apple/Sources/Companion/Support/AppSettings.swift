@@ -127,6 +127,18 @@ final class AppSettings: ObservableObject {
     @Published var rememberAcross: Bool { didSet { d.set(rememberAcross, forKey: "rememberAcross") } }
     @Published var keepNotes: Bool { didSet { d.set(keepNotes, forKey: "keepNotes") } }
     @Published var hideFromScreenShare: Bool { didSet { d.set(hideFromScreenShare, forKey: "hideFromScreenShare") } }
+    /// The conversation drawn as one web page (`ChatDocumentPane`), so a
+    /// selection runs across messages, code and pictures. Off while it is
+    /// read-only and new.
+    @Published var chatAsDocument: Bool { didSet { d.set(chatAsDocument, forKey: "chatAsDocument") } }
+
+    /// On and off settings whose default matters to privacy or to what is
+    /// still new, read in one place so tests can check them.
+    nonisolated static let flagDefaults: [String: Bool] = ["hideFromScreenShare": true, "chatAsDocument": false]
+
+    nonisolated static func flag(_ key: String, in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? flagDefaults[key] ?? false
+    }
     /// Everything is drawn at its own size; only the conversation's text
     /// changes size (chatTextScale, from Aa). Kept as 1 for the views that
     /// scale pages, code and the terminal by it.
@@ -260,7 +272,8 @@ final class AppSettings: ObservableObject {
         monthlyBudget = d.double(forKey: "monthlyBudget")
         rememberAcross = d.object(forKey: "rememberAcross") as? Bool ?? true
         keepNotes = d.object(forKey: "keepNotes") as? Bool ?? true
-        hideFromScreenShare = d.object(forKey: "hideFromScreenShare") as? Bool ?? true
+        hideFromScreenShare = Self.flag("hideFromScreenShare", in: d)
+        chatAsDocument = Self.flag("chatAsDocument", in: d)
         useLocation = d.bool(forKey: "useLocation")
         agentOrbit = d.object(forKey: "agentOrbit") as? Bool ?? true
         // Off for new installs; a value the user has saved is kept.
