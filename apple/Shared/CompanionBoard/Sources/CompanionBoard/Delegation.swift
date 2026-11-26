@@ -189,7 +189,7 @@ public enum Delegation {
     ]
 
     /// Programs that make or hand over keys.
-    private static let keyTools: Set<String> = ["ssh-keygen", "ssh-add", "ssh-copy-id", "gpg", "gpg2"]
+    static let keyTools: Set<String> = ["ssh-keygen", "ssh-add", "ssh-copy-id", "gpg", "gpg2"]
 
     /// What these programs are told to do when they publish, or sign in
     /// to where they publish.
@@ -349,7 +349,7 @@ public enum Delegation {
 
     /// What git is told to do, with the words after it. Its own options
     /// before that ("-C folder") are passed over.
-    private static func gitVerb(_ arguments: [String]) -> (verb: String, rest: [String]) {
+    static func gitVerb(_ arguments: [String]) -> (verb: String, rest: [String]) {
         let takeValue: Set<String> = ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]
         var index = 0
         while index < arguments.count {
@@ -551,7 +551,7 @@ public enum Delegation {
 
     /// Places for throwaway files, and the ones that swallow or show
     /// what is written to them.
-    private static func isScratch(_ path: String) -> Bool {
+    static func isScratch(_ path: String) -> Bool {
         if ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/stdin", "/dev/tty"].contains(path) { return true }
         return scratchRoots.contains { root in
             path == root || path.hasPrefix(root + "/")

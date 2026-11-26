@@ -2487,7 +2487,16 @@ final class AppState: ObservableObject {
                 // takes effect in the middle of a task.
                 let access = self.access(of: job.chatID)
                 let repository = job.repository
+                // The board's Auto, where it reaches, decides before the
+                // chat's own access: what it covers runs, and the four it
+                // never covers are asked about even at full access.
+                let auto = Advanced.shared.autoRules(for: job.chatID, repository: repository, directory: directory)
                 let asking = steps.filter { step in
+                    switch auto?(step) {
+                    case .runs?: return false
+                    case .asks?: return true
+                    case .notCovered?, nil: break
+                    }
                     switch step.kind {
                     case .run:
                         // Keys and credentials are asked about in every mode.

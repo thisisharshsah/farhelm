@@ -265,7 +265,7 @@ extension Advanced {
     /// A step as the rules for answering in the person's place read it
     /// (`Delegation`). Whether it names keys is judged the way it is for
     /// every level of access.
-    private static func ruled(_ step: ActionStep, directory: String) -> Delegation.Step {
+    static func ruled(_ step: ActionStep, directory: String) -> Delegation.Step {
         switch step.kind {
         case .run:
             return Delegation.Step(.command(step.value), namesKeys: AgentPermissions.touchesSecrets(step.value))
@@ -305,6 +305,12 @@ extension Advanced {
                                      directory: proposal.directory, home: NSHomeDirectory())
         let steps = proposal.steps.map { Advanced.ruled($0, directory: proposal.directory) }
         let stand = standing(on: found.board, project: found.project.id) {
+            // With Auto on, the four it never covers stay the person's even
+            // where the supervisor could otherwise answer for them.
+            if found.board.settings.auto,
+               let kept = steps.lazy.compactMap({ AutoPermission.alwaysAsk($0, in: place) }).first {
+                return kept.words
+            }
             if let reason = Delegation.reserved(steps, in: place) { return reason.words }
             // It answers only for what it is shown in full.
             let whole = proposal.steps.count <= Supervisor.stepsShownInFull

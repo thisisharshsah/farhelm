@@ -742,9 +742,21 @@ final class Advanced: ObservableObject {
         } else if reply.prose != seen {
             rest = "\n\n" + reply.prose
         }
+        // With the board's Auto on, taking a task off stays the owner's
+        // (`AutoPermission.decide`): only the tasks they named in their
+        // message go, since naming one is their own say.
+        var held: [String] = []
+        let current = load(project)
+        if case .asks = AutoPermission.decide(.delete(ref: "", reason: ""), settings: current.settings) {
+            summary.deleting.removeAll { id in
+                guard let item = current.item(id), !named.contains(item.number) else { return false }
+                held.append("\(item.key) was not deleted: with Auto on, deleting a task is yours. Delete it from its card, or name it.")
+                return true
+            }
+        }
         var lines: [String] = []
         if !summary.isEmpty { lines.append("**Board:** " + summary.sentence) }
-        let problems = reply.problems + summary.problems
+        let problems = reply.problems + summary.problems + held
         if !problems.isEmpty {
             lines.append(contentsOf: problems.prefix(6).map { "- " + $0 })
         }

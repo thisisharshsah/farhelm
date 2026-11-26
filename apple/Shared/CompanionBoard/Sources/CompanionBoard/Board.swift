@@ -51,6 +51,12 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     /// switched off. Where the project's folder is not in a git
     /// repository with a commit on a branch, runs work in the folder.
     public var copyPerTask: Bool
+    /// Auto: the owner's one grant for the whole board. Every run it
+    /// starts, its supervisor and every other chat in the project edit,
+    /// run commands, build, test and commit on their own branches without
+    /// asking, within `AutoPermission`. Off on a new board, and off again
+    /// makes them ask again, since it is read at every step.
+    public var auto: Bool
 
     /// Runs at once on a new board: as many as the app runs at once by
     /// default, so work spread across models goes on side by side.
@@ -59,7 +65,8 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     public init(autopilot: Bool = false, parallel: Int = BoardSettings.defaultParallel, reviewGate: Bool = true,
                 wipLimit: Int? = nil, runCeiling: Int? = nil,
                 runAccess: String? = nil, advice: Bool = true, followsAdvice: Bool = false,
-                copyPerTask: Bool = true, teamLimit: Int = TeamRules.defaultTeamLimit) {
+                copyPerTask: Bool = true, teamLimit: Int = TeamRules.defaultTeamLimit, auto: Bool = false) {
+        self.auto = auto
         self.autopilot = autopilot
         self.parallel = parallel
         self.reviewGate = reviewGate
@@ -83,7 +90,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case autopilot, parallel, reviewGate, wipLimit, runCeiling, runAccess, advice, followsAdvice, copyPerTask
-        case teamLimit
+        case teamLimit, auto
     }
 
     public init(from decoder: Decoder) throws {
@@ -97,6 +104,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
         advice = try values.decodeIfPresent(Bool.self, forKey: .advice) ?? true
         followsAdvice = try values.decodeIfPresent(Bool.self, forKey: .followsAdvice) ?? false
         copyPerTask = try values.decodeIfPresent(Bool.self, forKey: .copyPerTask) ?? true
+        auto = try values.decodeIfPresent(Bool.self, forKey: .auto) ?? false
         teamLimit = try values.decodeIfPresent(Int.self, forKey: .teamLimit)
             ?? (try values.decodeIfPresent(Int.self, forKey: .parallel) ?? TeamRules.defaultTeamLimit)
     }
