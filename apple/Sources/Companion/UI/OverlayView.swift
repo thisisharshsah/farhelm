@@ -3855,6 +3855,82 @@ struct ReadAlongText: View {
     }
 }
 
+// MARK: - Pictures and films a model made
+
+/// A picture or a film a model made, shown where its path stands in the
+/// answer: the picture itself, or for a film a tile that plays it in the
+/// Mac's own player. Under it, the ways to take it somewhere else.
+struct GeneratedMedia: View {
+    let path: String
+
+    static let films: Set<String> = ["mp4", "mov", "m4v", "webm"]
+    static let pictures: Set<String> = ["png", "jpg", "jpeg", "webp", "gif", "heic", "tiff"]
+    static let kinds = films.union(pictures)
+
+    /// Pictures read once, not with every redraw of the chat.
+    private static let cache = NSCache<NSString, NSImage>()
+
+    private var isFilm: Bool { Self.films.contains((path as NSString).pathExtension.lowercased()) }
+
+    private var picture: NSImage? {
+        if let kept = Self.cache.object(forKey: path as NSString) { return kept }
+        guard let read = NSImage(contentsOfFile: path) else { return nil }
+        Self.cache.setObject(read, forKey: path as NSString)
+        return read
+    }
+
+    private func open() { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: open) {
+                if !isFilm, let picture {
+                    Image(nsImage: picture)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 460, maxHeight: 460, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
+                            .strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.5))
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: isFilm ? "play.rectangle.fill" : "photo")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Theme.accent)
+                        Text((path as NSString).lastPathComponent)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.ink.opacity(0.9))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
+                        .fill(Theme.ink.opacity(0.06)))
+                }
+            }
+            .buttonStyle(.plain)
+            .help(isFilm ? "Play it" : "Open it")
+            HStack(spacing: 12) {
+                Button("Open", action: open)
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                }
+                if !isFilm {
+                    Button("Copy") {
+                        guard let picture else { return }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.writeObjects([picture])
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Theme.accent)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
 // MARK: - Notes
 
 /// Renders Markdown the way models write it: headings, bullets, checkboxes,
@@ -3869,6 +3945,29 @@ struct MarkdownNotes: View {
         case table([[String]])
         /// A fenced block: commands, output, source code.
         case code(String)
+        /// A picture or a film on this Mac, by its path: one a model made.
+        case media(String)
+    }
+
+    /// The picture or film a line stands for, when it is nothing but one:
+    /// a Markdown image (`![made](/path/to.png)`) or a bare path, to a
+    /// file that is on this Mac. Only local files: nothing is fetched.
+    static func mediaPath(in line: String) -> String? {
+        var target: String
+        if line.hasPrefix("!["), line.hasSuffix(")"), let open = line.range(of: "](") {
+            target = String(line[open.upperBound...].dropLast())
+        } else {
+            target = line.trimmingCharacters(in: CharacterSet(charactersIn: "`\"'<> "))
+        }
+        guard target.hasPrefix("/") || target.hasPrefix("~/") || target.hasPrefix("file://") else { return nil }
+        if target.hasPrefix("file://") {
+            guard let url = URL(string: target) else { return nil }
+            target = url.path
+        }
+        target = (target as NSString).expandingTildeInPath
+        guard GeneratedMedia.kinds.contains((target as NSString).pathExtension.lowercased()),
+              FileManager.default.fileExists(atPath: target) else { return nil }
+        return target
     }
 
     /// The text on one line with the Markdown symbols taken out, for previews.
@@ -3892,6 +3991,7 @@ struct MarkdownNotes: View {
             if trimmed.hasPrefix("#") || trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
                 return true
             }
+            if mediaPath(in: trimmed) != nil { return true }
         }
         return false
     }
@@ -3921,6 +4021,11 @@ struct MarkdownNotes: View {
             }
             if code != nil {
                 code?.append(raw)
+                continue
+            }
+            if let media = Self.mediaPath(in: line) {
+                closeTable()
+                result.append(.media(media))
                 continue
             }
             if line.hasPrefix("|") {
@@ -3982,6 +4087,8 @@ struct MarkdownNotes: View {
                         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                             .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
                         .padding(.vertical, 2)
+                case .media(let path):
+                    GeneratedMedia(path: path)
                 }
             }
         }
