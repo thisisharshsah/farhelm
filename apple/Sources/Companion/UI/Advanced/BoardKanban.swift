@@ -7,28 +7,68 @@ struct BoardKanban: View {
     let project: Project
     let board: Board
     let ledger: Ledger
+    var filters = BoardFilters()
 
-    private static let columnLeast: CGFloat = 204
-    private static let gap: CGFloat = 8
+    @State private var visibleStatus: WorkStatus? = .backlog
 
     var body: some View {
         GeometryReader { geometry in
-            // Five columns share the width; in a narrow pane each keeps
-            // its least and the row scrolls sideways.
-            let count = CGFloat(WorkStatus.allCases.count)
-            let room = geometry.size.width - 20 - Self.gap * (count - 1)
-            let width = max(Self.columnLeast, room / count)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: Self.gap) {
-                    ForEach(WorkStatus.allCases) { status in
-                        BoardColumn(project: project, board: board, ledger: ledger, status: status)
-                            .frame(width: width)
+            let widthClass = Design.WidthClass(width: geometry.size.width)
+            Group {
+                switch widthClass {
+                case .compact:
+                    compactList
+                case .regular:
+                    ScrollView(.horizontal) {
+                        LazyHStack(alignment: .top, spacing: Design.Space.xs) {
+                            ForEach(WorkStatus.allCases) { status in
+                                column(status)
+                                    .containerRelativeFrame(.horizontal, count: 5, span: 2, spacing: Design.Space.xs)
+                            }
+                        }
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.viewAligned)
+                case .wide:
+                    HStack(alignment: .top, spacing: Design.Space.xs) {
+                        ForEach(WorkStatus.allCases) { status in
+                            column(status)
+                                .frame(minWidth: 0, maxWidth: .infinity)
+                        }
                     }
                 }
-                .padding(10)
-                .frame(minHeight: geometry.size.height, alignment: .top)
             }
+            .environment(\.widthClass, widthClass)
+            .padding(Design.Space.xs)
         }
+    }
+
+    private var compactList: some View {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
+            SegmentedSwitcher("Jump to status", options: WorkStatus.allCases.map {
+                SwitcherOption(id: $0, title: $0.title, symbol: $0.icon)
+            }, selection: Binding(
+                get: { visibleStatus ?? .backlog },
+                set: { visibleStatus = $0 }
+            ))
+            .glassToolbarGroup()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: Design.Space.m) {
+                    ForEach(WorkStatus.allCases) { status in
+                        column(status, isListSection: true)
+                            .id(status)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollPosition(id: $visibleStatus, anchor: .top)
+        }
+    }
+
+    private func column(_ status: WorkStatus, isListSection: Bool = false) -> some View {
+        BoardColumn(project: project, board: board, ledger: ledger, status: status,
+                    isListSection: isListSection, matches: filters.matches)
     }
 }
 
@@ -39,61 +79,70 @@ private struct BoardColumn: View {
     let board: Board
     let ledger: Ledger
     let status: WorkStatus
-    /// A card is being dragged over this column.
+    var isListSection = false
+    var matches: (WorkItem) -> Bool = { _ in true }
     @State private var targeted = false
 
     private var overLimit: Bool { status == .inProgress && board.overWipLimit }
 
     var body: some View {
-        let items = board.items(in: status)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        let allItems = board.items(in: status)
+        let visible = allItems.filter(matches)
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
+            HStack(spacing: Design.Space.xxs) {
                 WorkStatusPill(status: status)
-                Text("\(items.count)")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(overLimit ? Theme.amber : Theme.ink.opacity(0.5))
+                Text(visible.count, format: .number)
+                    .textRole(.number, .secondary)
+                    .accessibilityLabel("\(visible.count) visible tasks")
                 if overLimit, let limit = board.settings.wipLimit {
-                    Text("of \(limit)")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.amber)
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(Design.Tone.caution.color)
+                        .help("\(allItems.count) tasks in progress, limit \(limit)")
+                        .accessibilityLabel("\(allItems.count) tasks in progress, limit \(limit)")
                 }
-                Spacer(minLength: 2)
+                Spacer(minLength: Design.Space.xxs)
                 if status == .backlog || status == .todo {
                     IconButton("plus", help: "Add a task to \(status.title)") {
                         advanced.selectedItem = advanced.addTask(BoardRules.newTaskTitle, status: status, in: project.id)
                     }
                 }
             }
-            .frame(height: 26)
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 6) {
-                    ForEach(items) { item in
-                        TaskCard(project: project, board: board, item: item, used: ledger.total(of: item))
-                            .draggable(item.id.uuidString)
-                            // Dropped on a card: the dragged task goes just above it.
-                            .dropDestination(for: String.self) { dropped, _ in
-                                drop(dropped, above: item.id)
-                            }
-                    }
-                }
-                .padding(.bottom, 24)
+            .padding(Design.Space.xxs)
+            .glassToolbarGroup()
+
+            if isListSection {
+                cards(visible)
+            } else {
+                ScrollView(.vertical) { cards(visible) }
             }
         }
-        .padding(8)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous)
-            .fill(targeted ? status.tint.opacity(0.14) : Theme.ink.opacity(0.035)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous)
-            .strokeBorder(targeted ? status.tint.opacity(0.6) : Theme.ink.opacity(0.06), lineWidth: 1))
+        .frame(maxWidth: .infinity, maxHeight: isListSection ? nil : .infinity, alignment: .topLeading)
+        .overlay {
+            if targeted {
+                RoundedRectangle(cornerRadius: Design.Radius.tile, style: .continuous)
+                    .strokeBorder(status.tint)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
-        // Dropped on the column itself: to its foot.
         .dropDestination(for: String.self) { dropped, _ in
             drop(dropped, above: nil)
         } isTargeted: { over in
             targeted = over
         }
-        .animation(.easeOut(duration: 0.12), value: targeted)
+        .designAnimation(.quick, value: targeted)
+    }
+
+    private func cards(_ items: [WorkItem]) -> some View {
+        LazyVStack(spacing: Design.Space.xs) {
+            ForEach(items) { item in
+                TaskCard(project: project, board: board, item: item, used: ledger.total(of: item))
+                    .draggable(item.id.uuidString)
+                    .dropDestination(for: String.self) { dropped, _ in
+                        drop(dropped, above: item.id)
+                    }
+            }
+        }
     }
 
     private func drop(_ dropped: [String], above other: UUID?) -> Bool {
@@ -126,42 +175,41 @@ struct TaskCard: View {
     private var waitingOnPerson: Bool { job?.waitsOnPerson ?? false }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(item.key)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
+            Text(item.title)
+                .textRole(.label, item.status == .done ? .secondary : .primary)
+                .fontWeight(.semibold)
+                .lineLimit(2, reservesSpace: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(item.title)
+            HStack(spacing: Design.Space.xxs) {
                 PriorityMark(priority: item.priority)
                 Image(systemName: item.kind.icon)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
+                    .iconWidth(.small)
+                    .foregroundStyle(.secondary)
                     .help(item.kind.title)
+                    .accessibilityLabel(item.kind.title)
+                ModelChip(assignment: item.assignment)
+                Spacer(minLength: 0)
+                tokens
+                    .layoutPriority(1)
+            }
+            HStack(spacing: Design.Space.xxs) {
+                Text(item.key)
                 if let milestone = item.milestone {
-                    Text(milestone)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.ink.opacity(0.5))
-                        .lineLimit(1)
+                    Text(milestone).lineLimit(1)
                 }
-                Spacer(minLength: 2)
                 if let copy = item.workingCopy, copy.isOpen {
                     Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundStyle(Theme.ink.opacity(0.45))
                         .help("Works in a copy of its own, on \(copy.branch), made from \(copy.base)")
                 }
                 if !blockers.isEmpty, item.status != .done {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 8.5))
-                        .foregroundStyle(Theme.amber)
+                        .foregroundStyle(Design.Tone.caution.color)
                         .help("Waits on " + blockers.map(\.key).joined(separator: ", "))
                 }
             }
-            Text(item.title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.ink.opacity(item.status == .done ? 0.6 : 0.95))
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            .textRole(.caption, .secondary)
             if item.activeRun != nil {
                 runLine
             } else if advanced.checkingWork.contains(item.id) {
@@ -171,61 +219,37 @@ struct TaskCard: View {
             } else if advanced.preparing.contains(item.id) {
                 statusLine("Readying its copy", mark: .working)
             } else if advanced.waitsForSlot(item.id, in: project.id) {
-                HStack(spacing: 5) {
-                    Image(systemName: "hourglass")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.amber)
-                    Text(RunLimit.waitingWords)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Theme.amber)
-                        .lineLimit(1)
-                }
+                toneLine(RunLimit.waitingWords, symbol: "hourglass", tone: .caution)
                 .help("In line: it starts by itself when a slot frees, most pressing first (" + advanced.runLimit.reason + ").")
             } else if advanced.merging.contains(item.id) {
                 statusLine("Merging its work", mark: .working)
             } else if board.mergeWaitsOnPerson(item) {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.triangle.merge")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.amber)
-                    Text("Not merged")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Theme.amber)
-                        .lineLimit(1)
-                }
+                toneLine("Not merged", symbol: "arrow.triangle.merge", tone: .caution)
                 .help(item.workingCopy?.problem ?? "Nobody approved its work to be merged")
             } else if item.status == .review, let checks = item.runs.last?.checks, !Checks.letThrough(checks) {
                 let failed = checks.filter { !$0.passed }
-                HStack(spacing: 5) {
-                    Image(systemName: "xmark.octagon.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.rose)
-                    Text(failed.count == 1 ? "\(failed[0].name) did not pass" : "\(failed.count) checks did not pass")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Theme.rose)
-                        .lineLimit(1)
-                }
+                toneLine(failed.count == 1 ? "\(failed[0].name) did not pass" : "\(failed.count) checks did not pass",
+                         symbol: "xmark.octagon.fill", tone: .critical)
                 .help(failed.map { "\($0.name) \(Checks.status($0))" }.joined(separator: "\n"))
             } else if item.status == .review {
                 reviewState
-            }
-            HStack(spacing: 6) {
-                ModelChip(assignment: item.assignment, limit: 18)
-                Spacer(minLength: 2)
-                tokens
             }
             if hover || selected {
                 actions
                     .transition(.opacity)
             }
         }
-        .padding(9)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
-            .fill(Theme.shade.opacity(Theme.isLight ? 0.55 : 0.30)))
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
-            .fill(Theme.ink.opacity(hover ? 0.07 : 0.04)))
-        .glassBorder(radius: Theme.controlRadius, tint: selected ? Theme.accent : (waitingOnPerson ? Theme.amber : nil))
-        .contentShape(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous))
+        .padding(Design.Space.xs)
+        .background(Design.Fill.raised.style, in: Design.Radius.shape(Design.Radius.card))
+        .overlay {
+            let shape = Design.Radius.shape(Design.Radius.card)
+            if waitingOnPerson || selected {
+                shape.strokeBorder(waitingOnPerson ? Design.Tone.caution.color : Design.Tone.accent.color)
+            } else {
+                shape.strokeBorder(Design.Fill.line.style)
+            }
+        }
+        .contentShape(Design.Radius.shape(Design.Radius.card))
         .onTapGesture { advanced.selectedItem = selected ? nil : item.id }
         .onHover { hover = $0 }
         .animation(.easeOut(duration: 0.12), value: hover)
@@ -237,15 +261,8 @@ struct TaskCard: View {
     private var runLine: some View {
         Group {
             if waitingOnPerson {
-                HStack(spacing: 5) {
-                    Image(systemName: "exclamationmark.bubble.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.amber)
-                    Text(job?.pendingQuestion != nil ? "Has a question for you" : "Waits for your OK")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Theme.amber)
-                        .lineLimit(1)
-                }
+                toneLine(job?.pendingQuestion != nil ? "Has a question for you" : "Waits for your OK",
+                         symbol: "exclamationmark.bubble.fill", tone: .caution)
             } else if job?.supervisorAnswering == true {
                 statusLine("The supervisor is answering", mark: .thinking)
             } else {
@@ -261,16 +278,25 @@ struct TaskCard: View {
     private var reviewState: some View {
         let since = item.runs.last?.endedAt ?? item.runs.last?.startedAt ?? .distantPast
         let handed = item.notes.last { $0.date >= since && $0.text.hasPrefix("The review ") }
-        HStack(spacing: 5) {
-            Image(systemName: handed == nil ? "hourglass" : "person.crop.circle.badge.exclamationmark")
-                .font(.system(size: 10))
-                .foregroundStyle(handed == nil ? Theme.ink.opacity(0.5) : Theme.amber)
-            Text(reviewWords(handed: handed != nil))
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(handed == nil ? Theme.ink.opacity(0.62) : Theme.amber)
+        toneLine(reviewWords(handed: handed != nil),
+                 symbol: handed == nil ? "hourglass" : "person.crop.circle.badge.exclamationmark",
+                 tone: handed == nil ? nil : .caution)
+            .help(handed?.text ?? item.runs.last?.advice?.notes ?? "Open the card to approve it or ask for changes")
+    }
+
+    /// A one-line state under the card's badges: in a tone's color when it
+    /// asks for attention, secondary text when it does not.
+    private func toneLine(_ text: String, symbol: String, tone: Design.Tone?) -> some View {
+        HStack(spacing: Design.Space.xxs) {
+            Image(systemName: symbol)
+                .iconWidth(.small)
+            Text(text)
+                .fontWeight(.medium)
                 .lineLimit(1)
+                .truncationMode(.tail)
         }
-        .help(handed?.text ?? item.runs.last?.advice?.notes ?? "Open the card to approve it or ask for changes")
+        .font(Design.TextRole.caption.font)
+        .foregroundStyle(tone.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.secondary))
     }
 
     /// The card's line in Review: whether the work is done as far as the
@@ -286,11 +312,10 @@ struct TaskCard: View {
     }
 
     private func statusLine(_ text: String, mark: LoadingMark.Phase) -> some View {
-        HStack(spacing: 5) {
-            LoadingMark(state: mark, size: 11)
+        HStack(spacing: Design.Space.xxs) {
+            LoadingMark(state: mark, size: Design.Icon.small.width - Design.Space.xxs)
             Text(text)
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.ink.opacity(0.62))
+                .textRole(.caption, .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -306,9 +331,9 @@ struct TaskCard: View {
             } else {
                 Text(used.isEmpty ? "est \(ContextUse.short(estimate))"
                      : (estimate > 0 ? "\(BoardText.tokens(used)) / \(ContextUse.short(estimate))" : BoardText.tokens(used)))
-                    .font(.system(size: 10))
+                    .font(Design.TextRole.caption.font)
                     .monospacedDigit()
-                    .foregroundStyle(over ? Theme.amber : Theme.ink.opacity(0.5))
+                    .foregroundStyle(over ? AnyShapeStyle(Design.Tone.caution.color) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                     .help(used.isEmpty
                           ? "Expected to take about \(ContextUse.short(estimate)) tokens."
@@ -322,17 +347,18 @@ struct TaskCard: View {
     /// has looked at a finished run for the person who reviews it, the
     /// answer it recommends says so.
     private var actions: some View {
-        HStack(alignment: .top, spacing: 5) {
+        HStack(alignment: .top, spacing: Design.Space.xxs) {
             if let run = item.activeRun {
-                BoardButton(waitingOnPerson ? "Answer" : "Open", icon: "bubble.left", tint: waitingOnPerson ? Theme.amber : nil) {
+                BoardButton(waitingOnPerson ? "Answer" : "Open", icon: "bubble.left",
+                            tint: waitingOnPerson ? Design.Tone.caution.color : nil) {
                     app.openConversation(run.conversation)
                 }
                 .help("Open the chat this run works in")
-                BoardButton("Stop", icon: "stop.fill", tint: Theme.rose) { advanced.stop(item.id, in: project.id) }
+                BoardButton("Stop", icon: "stop.fill", tint: Design.Tone.critical.color) { advanced.stop(item.id, in: project.id) }
             } else if item.status == .review {
                 let advised = item.runs.last?.advice
                 let redo = advised?.verdict == .changesRequested
-                BoardButton("Approve", icon: "checkmark", tint: Theme.mint) { advanced.approve(item.id, in: project.id) }
+                BoardButton("Approve", icon: "checkmark", tint: Design.Tone.positive.color) { advanced.approve(item.id, in: project.id) }
                     .recommended(advised?.verdict == .approved, why: BoardText.why(advised))
                 BoardButton("Redo", icon: "arrow.uturn.backward") {
                     // What the supervisor found goes to the next run.
@@ -341,12 +367,12 @@ struct TaskCard: View {
                 .help(redo ? "Send it back to To do, with what the supervisor found" : "Send it back to To do")
                 .recommended(redo, why: BoardText.why(advised))
             } else if board.mergeWaitsOnPerson(item), !advanced.merging.contains(item.id) {
-                BoardButton("Merge", icon: "arrow.triangle.merge", tint: Theme.amber) {
+                BoardButton("Merge", icon: "arrow.triangle.merge", tint: Design.Tone.caution.color) {
                     advanced.mergeNow(item.id, in: project.id)
                 }
                 .help((item.workingCopy?.problem.map { $0 + " " } ?? "") + "Merge its work now, as yours.")
             } else if item.status == .todo || item.status == .backlog, !advanced.preparing.contains(item.id) {
-                BoardButton("Start", icon: "play.fill", tint: Theme.accent) {
+                BoardButton("Start", icon: "play.fill", tint: Design.Tone.accent.color) {
                     advanced.startOrExplain(item.id, in: project.id)
                 }
                 .help(blockers.isEmpty ? "Start a run on this task with \(item.assignment?.label ?? "the model in use")"

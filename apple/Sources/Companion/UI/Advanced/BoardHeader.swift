@@ -37,15 +37,15 @@ struct BoardHeader: View {
     private var budgetState: BudgetState { board.budget.state(spent: ledger.total) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
+            HStack(spacing: Design.Space.xs) {
                 projectMenu
                 goal
                 if goalMade { newGoalButton }
-                Spacer(minLength: 4)
+                Spacer(minLength: Design.Space.xxs)
                 // Back to the supervisor, when a run's chat is beside the board.
                 if app.conversation.id != board.supervisorChat {
-                    BoardButton("Supervisor", icon: "bubble.left.and.text.bubble.right", tint: Theme.accent) {
+                    BoardButton("Supervisor", icon: "bubble.left.and.text.bubble.right", tint: Design.Tone.accent.color) {
                         advanced.open(project)
                     }
                     .help("Back to the chat with this project's supervisor")
@@ -58,14 +58,14 @@ struct BoardHeader: View {
                     moreMenu
                 }
             }
-            HStack(spacing: 10) {
+            HStack(spacing: Design.Space.xs) {
                 progress
                 spend
                 if board.budget.isSet { budget }
                 limitLabel
                 gitLabel
                 if let waiting = advanced.waiting[project.id] { waitingLabel(waiting) }
-                Spacer(minLength: 4)
+                Spacer(minLength: Design.Space.xxs)
                 supervisorMenu
                 autopilot
             }
@@ -73,8 +73,8 @@ struct BoardHeader: View {
                 noticeBanner(notice)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, Design.Space.s)
+        .padding(.vertical, Design.Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -102,19 +102,18 @@ struct BoardHeader: View {
     /// more than one. A click opens the project's goals: this one, to
     /// read in full and change; a new one to start; and the ones before.
     private var goal: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: Design.Space.xxs) {
             if board.goals.count > 1 {
                 Text(board.current.key)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.ink.opacity(0.55))
-                    .padding(.horizontal, 5)
-                    .frame(height: 16)
-                    .background(Capsule().fill(Theme.ink.opacity(0.08)))
+                    .font(Design.TextRole.caption.font.monospaced().weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, Design.Space.xxs)
+                    .padding(.vertical, Design.Space.xxs / 2)
+                    .background(Capsule().fill(Design.Fill.raised.style))
                     .fixedSize()
             }
             Text(board.goal.isEmpty ? "No goal set" : board.goal)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.ink.opacity(board.goal.isEmpty ? 0.4 : 0.7))
+                .textRole(.label, board.goal.isEmpty ? .tertiary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -162,7 +161,7 @@ struct BoardHeader: View {
     private var viewSwitcher: some View {
         ToolbarGroup {
             ForEach(BoardViewKind.allCases) { kind in
-                IconButton(kind.icon, help: kind.title, tint: viewName == kind.rawValue ? Theme.accent : nil) {
+                IconButton(kind.icon, help: kind.title, tint: viewName == kind.rawValue ? Design.Tone.accent.color : nil) {
                     viewName = kind.rawValue
                 }
             }
@@ -311,9 +310,9 @@ struct BoardHeader: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(0.68))
-                .frame(width: 26, height: 26)
+                .font(Design.TextRole.label.font.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: Design.Control.regular.height, height: Design.Control.regular.height)
                 .contentShape(Circle())
         }
         .boardMenu()
@@ -325,27 +324,25 @@ struct BoardHeader: View {
     private var progress: some View {
         let done = board.count(in: .done)
         let running = board.running.count
-        return HStack(spacing: 7) {
-            ShareBar(fraction: board.doneFraction, tint: Theme.mint)
-                .frame(width: 64)
+        return HStack(spacing: Design.Space.xs) {
+            ShareBar(fraction: board.doneFraction, tint: Design.Tone.positive.color)
+                .frame(width: Design.Space.xxl * 2)
             Text("\(done) of \(board.items.count) done")
-                .font(.system(size: 11, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(Theme.ink.opacity(0.8))
+                .textRole(.number, .primary)
+                .fontWeight(.medium)
             if running > 0 {
-                HStack(spacing: 4) {
-                    LoadingMark(state: .working, size: 11)
+                HStack(spacing: Design.Space.xxs) {
+                    LoadingMark(state: .working, size: Design.Icon.small.width - Design.Space.xxs)
                     Text("\(running) running")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.ink.opacity(0.65))
+                        .textRole(.label, .secondary)
                 }
             }
             if board.goalReached {
-                Chip("Goal reached", icon: "checkmark.seal.fill", tint: Theme.mint)
+                Chip("Goal reached", icon: "checkmark.seal.fill", tint: Design.Tone.positive.color)
                     .help("Every task of this goal is done. New goal starts the next one.")
             }
             if board.overWipLimit {
-                Chip("Over the limit", icon: "exclamationmark.triangle", tint: Theme.amber)
+                Chip("Over the limit", icon: "exclamationmark.triangle", tint: Design.Tone.caution.color)
                     .help("More tasks are in progress than the limit set for this board.")
             }
         }
@@ -355,9 +352,7 @@ struct BoardHeader: View {
     private var spend: some View {
         let total = ledger.total
         return Text("\(BoardText.tokens(total)) tokens · \(Money.text(total.cost))")
-            .font(.system(size: 11))
-            .monospacedDigit()
-            .foregroundStyle(Theme.ink.opacity(0.65))
+            .textRole(.number, .secondary)
             .lineLimit(1)
             .help("Everything asked of any model for this project: \(total.requests) requests, \(ContextUse.short(total.inputTokens)) tokens in, \(ContextUse.short(total.output)) out."
                   + (total.isExact ? "" : " \(total.estimated) of them were estimated from the text, as their engine gave no count."))
@@ -365,19 +360,19 @@ struct BoardHeader: View {
 
     private var budgetTint: Color {
         switch budgetState {
-        case .none, .within: return Theme.mint
-        case .near: return Theme.amber
-        case .over: return Theme.rose
+        case .none, .within: return Design.Tone.positive.color
+        case .near: return Design.Tone.caution.color
+        case .over: return Design.Tone.critical.color
         }
     }
 
     private var budget: some View {
         let share = budgetState.fraction ?? 0
-        return HStack(spacing: 6) {
+        return HStack(spacing: Design.Space.xs) {
             ShareBar(fraction: share, tint: budgetTint)
-                .frame(width: 48)
+                .frame(width: Design.Space.xxl * 1.5)
             Text("\(Int((share * 100).rounded()))% of budget")
-                .font(.system(size: 11, weight: .medium))
+                .font(Design.TextRole.label.font.weight(.medium))
                 .monospacedDigit()
                 .foregroundStyle(budgetTint)
         }
@@ -427,30 +422,31 @@ struct BoardHeader: View {
             Divider()
             answersItem
         } label: {
-            HStack(spacing: 5) {
-                EngineLogo(kind: engine.kind, tool: engine.tool, size: 10)
+            HStack(spacing: Design.Space.xxs) {
+                EngineLogo(kind: engine.kind, tool: engine.tool, size: Design.Icon.small.width - Design.Space.xxs)
                 Text("Supervisor: " + BoardText.modelName(engine.label) + (answers && !compact ? " · runs the board" : ""))
-                    .font(.system(size: 11, weight: .medium))
+                    .font(Design.TextRole.label.font.weight(.medium))
                     .lineLimit(1)
                 // Standing in for a model that is out of its limit.
                 if rest != nil {
                     Image(systemName: "hourglass")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(Theme.amber)
+                        .font(Design.TextRole.caption.font.weight(.bold))
+                        .foregroundStyle(Design.Tone.caution.color)
                 }
                 if answers {
                     Image(systemName: "star.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Theme.mint)
+                        .font(Design.TextRole.caption.font.weight(.bold))
+                        .foregroundStyle(Design.Tone.positive.color)
                 }
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .opacity(0.6)
+                    .font(Design.TextRole.caption.font.weight(.bold))
+                    .foregroundStyle(.secondary)
             }
-            .foregroundStyle(Theme.ink.opacity(0.85))
-            .padding(.horizontal, 8)
-            .frame(height: 24)
-            .background(Capsule().fill((answers ? Theme.mint : Theme.ink).opacity(answers ? 0.16 : 0.08)))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, Design.Space.xs)
+            .frame(height: Design.Control.small.height)
+            .glassToolbarGroup()
+            .background(Capsule().fill(answers ? Design.Tone.positive.color.opacity(0.16) : Color.clear))
             .contentShape(Capsule())
         }
         .boardMenu()
@@ -478,14 +474,12 @@ struct BoardHeader: View {
     private var limitLabel: some View {
         let limit = advanced.runLimit
         let ceiling = board.settings.runCeiling.map { " This board keeps to at most \($0) at once (its cost ceiling)." } ?? ""
-        return HStack(spacing: 4) {
+        return HStack(spacing: Design.Space.xxs) {
             Image(systemName: "gauge.with.dots.needle.33percent")
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(0.5))
+                .font(Design.TextRole.caption.font.weight(.semibold))
+                .foregroundStyle(.tertiary)
             Text("Up to \(limit.limit) at once · " + limit.reason)
-                .font(.system(size: 11))
-                .monospacedDigit()
-                .foregroundStyle(Theme.ink.opacity(0.65))
+                .textRole(.number, .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -496,13 +490,12 @@ struct BoardHeader: View {
     /// Why nothing runs while work is left, on a board where work starts
     /// by itself (`Advanced.waiting`).
     private func waitingLabel(_ text: String) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Design.Space.xxs) {
             Image(systemName: "hourglass")
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(Theme.amber)
+                .font(Design.TextRole.caption.font.weight(.semibold))
+                .foregroundStyle(Design.Tone.caution.color)
             Text(text)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.ink.opacity(0.7))
+                .textRole(.label, .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -516,16 +509,15 @@ struct BoardHeader: View {
     @ViewBuilder
     private var gitLabel: some View {
         if let work = advanced.gitWork[project.id] {
-            HStack(spacing: 5) {
-                LoadingMark(state: .working, size: 11)
+            HStack(spacing: Design.Space.xxs) {
+                LoadingMark(state: .working, size: Design.Icon.small.width - Design.Space.xxs)
                 Text(work)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.7))
+                    .textRole(.label, .secondary)
                     .lineLimit(1)
             }
         } else if let git = advanced.folderGit[project.id] {
             if !git.changed.isEmpty {
-                BoardButton("\(git.changed.count) to commit", icon: "tray.and.arrow.down", tint: Theme.amber) {
+                BoardButton("\(git.changed.count) to commit", icon: "tray.and.arrow.down", tint: Design.Tone.caution.color) {
                     commitMessage = ""
                     showCommit = true
                 }
@@ -536,7 +528,7 @@ struct BoardHeader: View {
                       + (board.settings.supervisorAnswers ? "\nThe supervisor commits them itself once they have not changed for a few minutes." : ""))
             }
             if git.ahead > 0, let upstream = git.upstream {
-                BoardButton("\(git.ahead) to push", icon: "arrow.up.circle", tint: Theme.accent) {
+                BoardButton("\(git.ahead) to push", icon: "arrow.up.circle", tint: Design.Tone.accent.color) {
                     showPush = true
                 }
                 .popover(isPresented: $showPush, arrowEdge: .bottom) { pushSheet(git, upstream: upstream) }
@@ -548,31 +540,31 @@ struct BoardHeader: View {
     /// What a commit would take in, and the message it goes under: the
     /// person's own, or the supervisor's when the field is left empty.
     private func commitSheet(_ git: TaskCopies.FolderGit) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
             Text("Commit to \(git.branch)")
-                .font(.system(size: 12, weight: .semibold))
+                .textRole(.label, .primary)
+                .fontWeight(.semibold)
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Design.Space.xxs / 2) {
                     ForEach(git.changed, id: \.self) { path in
                         Text(path)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(Theme.ink.opacity(0.75))
+                            .font(Design.TextRole.caption.font.monospaced())
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.head)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 140)
+            .frame(maxHeight: Self.sheetListHeight)
             TextField("Message (left empty, the supervisor writes it)", text: $commitMessage)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11.5))
+                .font(Design.TextRole.label.font)
             Text("The project's checks run first. Files git does not track stay out, and nothing is pushed.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.ink.opacity(0.55))
+                .textRole(.caption, .secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                Spacer(minLength: 4)
+            HStack(spacing: Design.Space.xs) {
+                Spacer(minLength: Design.Space.xxs)
                 BoardButton("Cancel") { showCommit = false }
                 BoardButton("Commit", icon: "checkmark", prominent: true) {
                     showCommit = false
@@ -580,38 +572,40 @@ struct BoardHeader: View {
                 }
             }
         }
-        .padding(12)
-        .frame(width: 400)
+        .padding(Design.Space.s)
+        .frame(width: Self.sheetWidth)
     }
+
+    /// The commit and push sheets' width, and the most their lists grow.
+    private static let sheetWidth: CGFloat = 420
+    private static let sheetListHeight: CGFloat = 180
 
     /// What a push would send: each commit that waits, with its message.
     private func pushSheet(_ git: TaskCopies.FolderGit, upstream: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
             Text("Push \(git.branch) to \(upstream)")
-                .font(.system(size: 12, weight: .semibold))
+                .textRole(.label, .primary)
+                .fontWeight(.semibold)
             ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: Design.Space.xxs) {
                     ForEach(git.unpushed, id: \.self) { line in
                         Text(line)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .textRole(.label, .primary)
                             .lineLimit(2)
                     }
                     if git.ahead > git.unpushed.count {
                         Text("and \(git.ahead - git.unpushed.count) more")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Theme.ink.opacity(0.55))
+                            .textRole(.caption, .secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 200)
+            .frame(maxHeight: Self.sheetListHeight)
             Text("A push cannot be taken back, so it is only ever done by you, here.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.ink.opacity(0.55))
+                .textRole(.caption, .secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                Spacer(minLength: 4)
+            HStack(spacing: Design.Space.xs) {
+                Spacer(minLength: Design.Space.xxs)
                 BoardButton("Cancel") { showPush = false }
                 BoardButton("Push", icon: "arrow.up", prominent: true) {
                     showPush = false
@@ -619,26 +613,24 @@ struct BoardHeader: View {
                 }
             }
         }
-        .padding(12)
-        .frame(width: 440)
+        .padding(Design.Space.s)
+        .frame(width: Self.sheetWidth)
     }
 
     private func noticeBanner(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.amber)
-                .padding(.top, 1)
+                .font(Design.TextRole.caption.font)
+                .foregroundStyle(Design.Tone.caution.color)
             Text(text)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.ink.opacity(0.88))
+                .textRole(.label, .primary)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 4)
+            Spacer(minLength: Design.Space.xxs)
             IconButton("xmark", help: "Dismiss") { advanced.notices[project.id] = nil }
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 4)
-        .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.amber.opacity(0.12)))
+        .padding(.leading, Design.Space.s)
+        .padding(.trailing, Design.Space.xxs)
+        .padding(.vertical, Design.Space.xxs)
+        .background(Design.Tone.caution.color.opacity(0.12), in: Design.Radius.shape(Design.Radius.chip))
     }
 }

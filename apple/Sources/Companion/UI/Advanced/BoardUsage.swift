@@ -16,13 +16,12 @@ struct BoardUsage: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: Design.Space.m) {
                 tiles
                 BudgetEditor(project: project, board: board, spent: ledger.total)
                 if ledger.total.isEmpty {
                     Text("Nothing has been asked of a model for this project yet. Every request shows here as it is made, with what it used.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.ink.opacity(0.55))
+                        .textRole(.label, .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     if board.goals.count > 1 { byGoal }
@@ -38,7 +37,7 @@ struct BoardUsage: View {
                     }
                 }
             }
-            .padding(14)
+            .padding(Design.Space.m)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -53,7 +52,8 @@ struct BoardUsage: View {
         var doneTotal = UsageTotal()
         for item in done { doneTotal.add(ledger.total(of: item)) }
         let overhead = ledger.overheadShare(purposes: Advanced.overheadPurposes)
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], alignment: .leading, spacing: 8) {
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: Design.Space.xs)],
+                         alignment: .leading, spacing: Design.Space.xs) {
             tile("Tokens", BoardText.tokens(total),
                  "\(ContextUse.short(total.inputTokens)) in · \(ContextUse.short(total.output)) out")
             tile("Cost", Money.text(total.cost),
@@ -68,65 +68,62 @@ struct BoardUsage: View {
     }
 
     private func tile(_ title: String, _ value: String, _ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             BoardHeading(title)
             Text(value)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .font(Design.TextRole.title.font.weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(Theme.ink.opacity(0.96))
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(detail)
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.ink.opacity(0.5))
+                .textRole(.caption, .secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 78, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous).fill(Theme.ink.opacity(0.05)))
+        .padding(Design.Space.s)
+        .frame(maxWidth: .infinity, minHeight: Design.Space.xxl * 2.5, alignment: .topLeading)
+        .background(Design.Fill.raised.style, in: Design.Radius.shape(Design.Radius.tile))
     }
 
     // MARK: Breakdowns
 
+    /// The width of a breakdown's number columns, so they line up down the list.
+    private static let numberWidth: CGFloat = 58
+
     /// One line of a breakdown: its name, its share as a bar, its numbers.
-    private func line(_ name: String, _ total: UsageTotal, most: Int, tint: Color = Theme.accent,
+    private func line(_ name: String, _ total: UsageTotal, most: Int, tint: Color = Design.Tone.accent.color,
                       detail: String = "", action: (() -> Void)? = nil) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+        HStack(spacing: Design.Space.xs) {
+            VStack(alignment: .leading, spacing: Design.Space.xxs) {
+                HStack(spacing: Design.Space.xxs) {
                     Text(name)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.ink.opacity(0.9))
+                        .textRole(.label, .primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if !detail.isEmpty {
                         Text(detail)
-                            .font(.system(size: 10))
-                            .foregroundStyle(Theme.ink.opacity(0.45))
+                            .textRole(.caption, .tertiary)
                             .lineLimit(1)
                     }
                 }
-                ShareBar(fraction: most > 0 ? Double(total.tokens) / Double(most) : 0, tint: tint, height: 4)
+                ShareBar(fraction: most > 0 ? Double(total.tokens) / Double(most) : 0, tint: tint,
+                         height: Design.Space.xxs)
             }
             Text(BoardText.tokens(total))
-                .font(.system(size: 11))
-                .monospacedDigit()
-                .foregroundStyle(Theme.ink.opacity(0.8))
-                .frame(width: 58, alignment: .trailing)
+                .textRole(.number, .primary)
+                .frame(width: Self.numberWidth, alignment: .trailing)
             Text(Money.text(total.cost))
-                .font(.system(size: 11))
-                .monospacedDigit()
-                .foregroundStyle(Theme.ink.opacity(0.6))
-                .frame(width: 58, alignment: .trailing)
+                .textRole(.number, .secondary)
+                .frame(width: Self.numberWidth, alignment: .trailing)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, Design.Space.xxs / 2)
         .contentShape(Rectangle())
         .onTapGesture { action?() }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             BoardHeading(title)
             content()
         }
@@ -166,13 +163,12 @@ struct BoardUsage: View {
         return section("By task") {
             if used.isEmpty {
                 Text("No run has been made on a task yet.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
+                    .textRole(.label, .tertiary)
             }
             ForEach(used, id: \.item.id) { entry in
                 let estimate = entry.item.estimateTokens ?? 0
                 line("\(entry.item.key) \(entry.item.title)", entry.total, most: most,
-                     tint: estimate > 0 && entry.total.tokens > estimate ? Theme.amber : entry.item.status.tint,
+                     tint: estimate > 0 && entry.total.tokens > estimate ? Design.Tone.caution.color : entry.item.status.tint,
                      detail: estimate > 0 ? "est \(ContextUse.short(estimate))" : "") {
                     advanced.selectedItem = entry.item.id
                 }
@@ -193,7 +189,7 @@ struct BoardUsage: View {
         let most = chats.first?.total.tokens ?? 0
         return section("By conversation") {
             ForEach(chats.prefix(40), id: \.id) { chat in
-                line(chatName(chat.id), chat.total, most: most, tint: Theme.violet,
+                line(chatName(chat.id), chat.total, most: most, tint: Design.Tone.info.color,
                      detail: "\(chat.total.requests) requests") {
                     app.openConversation(chat.id)
                 }
@@ -201,8 +197,7 @@ struct BoardUsage: View {
             }
             if chats.count > 40 {
                 Text("\(chats.count - 40) more, each smaller than these.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
+                    .textRole(.caption, .tertiary)
             }
         }
     }
@@ -213,31 +208,35 @@ struct BoardUsage: View {
         return section("By kind of work") {
             ForEach(lines) { entry in
                 line(entry.name, entry.total, most: most,
-                     tint: Advanced.overheadPurposes.contains(entry.name) ? Theme.amber : Theme.mint)
+                     tint: Advanced.overheadPurposes.contains(entry.name) ? Design.Tone.caution.color : Design.Tone.positive.color)
             }
         }
     }
+
+    /// The tallest a day's bar grows, and the narrowest a day takes.
+    private static let dayBarHeight = Design.Space.xxl * 1.75
+    private static let dayWidth = Design.Space.m
 
     private var byDay: some View {
         let days = ledger.byDay(calendar: .current).suffix(21)
         let most = days.map(\.total.tokens).max() ?? 0
         return section("By day") {
-            HStack(alignment: .bottom, spacing: 3) {
+            HStack(alignment: .bottom, spacing: Design.Space.xxs) {
                 ForEach(Array(days), id: \.day) { day in
-                    VStack(spacing: 3) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(Theme.accent.opacity(0.8))
-                            .frame(height: max(2, most > 0 ? CGFloat(day.total.tokens) / CGFloat(most) * 56 : 2))
+                    let floor = Design.Space.xxs / 2
+                    VStack(spacing: Design.Space.xxs) {
+                        Capsule()
+                            .fill(Design.Tone.accent.color)
+                            .frame(height: max(floor, most > 0 ? CGFloat(day.total.tokens) / CGFloat(most) * Self.dayBarHeight : floor))
                         Text(day.day.formatted(.dateTime.day()))
-                            .font(.system(size: 8.5))
-                            .foregroundStyle(Theme.ink.opacity(0.4))
+                            .textRole(.caption, .tertiary)
                     }
-                    .frame(width: 16)
+                    .frame(width: Self.dayWidth)
                     .help("\(day.day.formatted(date: .abbreviated, time: .omitted)): \(BoardText.tokens(day.total)) tokens, \(Money.text(day.total.cost))")
                 }
                 Spacer(minLength: 0)
             }
-            .frame(height: 74, alignment: .bottom)
+            .frame(height: Self.dayBarHeight + Design.Space.l, alignment: .bottom)
         }
     }
 
@@ -270,11 +269,14 @@ private struct BudgetEditor: View {
 
     private var tint: Color {
         switch state {
-        case .none, .within: return Theme.mint
-        case .near: return Theme.amber
-        case .over: return Theme.rose
+        case .none, .within: return Design.Tone.positive.color
+        case .near: return Design.Tone.caution.color
+        case .over: return Design.Tone.critical.color
         }
     }
+
+    /// The width of a budget's field: room for "1.5M" or "250.00".
+    private static let fieldWidth = Design.Space.xxl * 3
 
     private var words: String {
         switch state {
@@ -295,34 +297,32 @@ private struct BudgetEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
             BoardHeading("Budget")
-            HStack(spacing: 8) {
+            HStack(spacing: Design.Space.xs) {
                 Text("Tokens")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.ink.opacity(0.7))
+                    .textRole(.label, .secondary)
                 CommitField(placeholder: "No limit", value: board.budget.tokens.map { ContextUse.short($0) } ?? "") { text in
                     setBudget(tokens: BoardText.parseTokens(text), dollars: board.budget.dollars)
                 }
-                .frame(width: 96)
+                .frame(width: Self.fieldWidth)
                 Text("Dollars")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.ink.opacity(0.7))
+                    .textRole(.label, .secondary)
                 CommitField(placeholder: "No limit",
                             value: board.budget.dollars.map { String(format: "%.2f", $0) } ?? "") { text in
                     let cleaned = text.replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespaces)
                     setBudget(tokens: board.budget.tokens, dollars: Double(cleaned).flatMap { $0 > 0 ? $0 : nil })
                 }
-                .frame(width: 96)
+                .frame(width: Self.fieldWidth)
                 Spacer(minLength: 0)
             }
             if board.budget.isSet {
-                ShareBar(fraction: state.fraction ?? 0, tint: tint, height: 6)
-                    .frame(maxWidth: 420)
+                ShareBar(fraction: state.fraction ?? 0, tint: tint, height: Design.Space.xxs + Design.Space.xxs / 2)
+                    .frame(maxWidth: Design.readableWidth)
             }
             Text(words)
-                .font(.system(size: 11))
-                .foregroundStyle(state.isOver ? Theme.rose : Theme.ink.opacity(0.55))
+                .font(Design.TextRole.label.font)
+                .foregroundStyle(state.isOver ? AnyShapeStyle(Design.Tone.critical.color) : AnyShapeStyle(.secondary))
         }
     }
 }

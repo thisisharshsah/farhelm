@@ -37,16 +37,16 @@ struct BoardTimeline: View {
         let length = shown.end.timeIntervalSince(shown.start)
         VStack(alignment: .leading, spacing: 0) {
             axis(shown.start, shown.end)
-                .padding(.leading, Self.labelWidth + 8)
-                .padding(.trailing, 14)
-                .padding(.top, 10)
+                .padding(.leading, Self.labelWidth + Design.Space.xs + Design.Space.s)
+                .padding(.trailing, Design.Space.m)
+                .padding(.top, Design.Space.xs)
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(rows) { item in
                         row(item, start: shown.start, length: length, now: now)
                     }
                 }
-                .padding(.bottom, 20)
+                .padding(.bottom, Design.Space.l)
             }
             legend
         }
@@ -62,22 +62,19 @@ struct BoardTimeline: View {
             Spacer()
             Text(BoardText.when(end))
         }
-        .font(.system(size: 10))
-        .monospacedDigit()
-        .foregroundStyle(Theme.ink.opacity(0.45))
-        .frame(height: 18)
+        .textRole(.number, .tertiary)
+        .frame(minHeight: Design.Control.small.height)
     }
 
     private func row(_ item: WorkItem, start: Date, length: TimeInterval, now: Date) -> some View {
         let selected = advanced.selectedItem == item.id
-        return HStack(spacing: 8) {
-            HStack(spacing: 5) {
+        return HStack(spacing: Design.Space.xs) {
+            HStack(spacing: Design.Space.xxs) {
                 Text(item.key)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
+                    .font(Design.TextRole.caption.font.monospaced().weight(.semibold))
+                    .foregroundStyle(.tertiary)
                 Text(item.title)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.ink.opacity(0.88))
+                    .textRole(.label, .primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -87,9 +84,9 @@ struct BoardTimeline: View {
             }
             .frame(height: Self.rowHeight)
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 14)
-        .background(Theme.ink.opacity(selected ? 0.10 : 0))
+        .padding(.leading, Design.Space.s)
+        .padding(.trailing, Design.Space.m)
+        .background(selected ? AnyShapeStyle(Design.Tone.accent.color.opacity(0.16)) : AnyShapeStyle(Color.clear))
         .contentShape(Rectangle())
         .onTapGesture { advanced.selectedItem = selected ? nil : item.id }
         .help("\(item.key) \(item.title)\n\(item.status.title)" + (item.runs.isEmpty ? "" : ", \(item.runs.count) \(item.runs.count == 1 ? "run" : "runs")"))
@@ -103,10 +100,10 @@ struct BoardTimeline: View {
 
     private func runTint(_ run: WorkRun) -> Color {
         switch run.outcome {
-        case .running: return Theme.accent
-        case .succeeded: return Theme.mint
-        case .failed: return Theme.rose
-        case .stopped: return Theme.ink.opacity(0.45)
+        case .running: return Design.Tone.accent.color
+        case .succeeded: return Design.Tone.positive.color
+        case .failed: return Design.Tone.critical.color
+        case .stopped: return Design.Tone.neutral.color
         }
     }
 
@@ -118,11 +115,11 @@ struct BoardTimeline: View {
         return ZStack(alignment: .leading) {
             // The whole row's line, faint.
             Rectangle()
-                .fill(Theme.ink.opacity(0.06))
+                .fill(Design.Fill.line.style)
                 .frame(height: 1)
             // Waiting: from being made to being started (or to now).
             Capsule()
-                .fill(Theme.ink.opacity(0.16))
+                .fill(Design.Tone.neutral.color.opacity(0.4))
                 .frame(width: max(2, (began ?? ended) - made), height: 3)
                 .offset(x: made)
             // Worked on: from the start to being done (or to now).
@@ -144,8 +141,8 @@ struct BoardTimeline: View {
             // The day it is wanted by.
             if let due = item.dueAt, due >= start, due <= start.addingTimeInterval(length) {
                 Rectangle()
-                    .fill(Theme.amber)
-                    .frame(width: 1.5, height: 16)
+                    .fill(Design.Tone.caution.color)
+                    .frame(width: 1.5, height: Design.Space.m)
                     .offset(x: place(due, start: start, length: length, width: width))
             }
         }
@@ -153,24 +150,25 @@ struct BoardTimeline: View {
     }
 
     private func key(_ tint: Color, _ text: String, tall: Bool = false) -> some View {
-        HStack(spacing: 4) {
-            Capsule().fill(tint).frame(width: 14, height: tall ? 9 : 4)
+        HStack(spacing: Design.Space.xxs) {
+            Capsule().fill(tint)
+                .frame(width: Design.Icon.small.width, height: tall ? Design.Space.xs : Design.Space.xxs)
             Text(text)
         }
     }
 
     private var legend: some View {
-        HStack(spacing: 12) {
-            key(Theme.ink.opacity(0.2), "Waiting")
-            key(Theme.accent.opacity(0.35), "Worked on", tall: true)
-            key(Theme.accent, "Run going on")
-            key(Theme.mint, "Run finished")
-            key(Theme.rose, "Run failed")
+        HStack(spacing: Design.Space.s) {
+            key(Design.Tone.neutral.color.opacity(0.4), "Waiting")
+            key(Design.Tone.accent.color.opacity(0.35), "Worked on", tall: true)
+            key(Design.Tone.accent.color, "Run going on")
+            key(Design.Tone.positive.color, "Run finished")
+            key(Design.Tone.critical.color, "Run failed")
             Spacer()
         }
-        .font(.system(size: 10))
-        .foregroundStyle(Theme.ink.opacity(0.5))
-        .padding(.horizontal, 12)
-        .frame(height: 26)
+        .textRole(.caption, .secondary)
+        .padding(.horizontal, Design.Space.s)
+        .frame(minHeight: Design.Control.regular.height)
+        .glassToolbarGroup()
     }
 }

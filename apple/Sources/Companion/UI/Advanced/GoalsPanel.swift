@@ -37,7 +37,7 @@ struct GoalsPanel: View {
     var body: some View {
         let used = board.usageByGoal(ledger)
         let earlier = board.earlierGoals
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
             if starting {
                 newGoal
             } else {
@@ -47,7 +47,7 @@ struct GoalsPanel: View {
                 history(earlier, used: used)
             }
         }
-        .padding(12)
+        .padding(Design.Space.s)
         .frame(width: 400, alignment: .leading)
         .onAppear {
             words = board.goal
@@ -62,11 +62,11 @@ struct GoalsPanel: View {
     private func current(_ total: UsageTotal) -> some View {
         let progress = board.progress(of: board.currentGoal)
         let reworded = words.trimmingCharacters(in: .whitespacesAndNewlines) != board.goal
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        return VStack(alignment: .leading, spacing: Design.Space.xs) {
+            HStack(spacing: Design.Space.xs) {
                 BoardHeading(board.goals.count > 1 ? "Goal \(board.current.key)" : "Goal")
                 if board.goalReached { GoalStatusPill(status: .reached) }
-                Spacer(minLength: 6)
+                Spacer(minLength: Design.Space.xs)
                 if goalMade {
                     BoardButton("New goal", icon: "plus") {
                         starting = true
@@ -75,16 +75,16 @@ struct GoalsPanel: View {
                     .help("Turn the board to a new goal. This one is kept, with its tasks, and can be gone back to.")
                 }
             }
-            TextField("", text: $words, prompt: Text("What should this project achieve?").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
+            TextField("", text: $words, prompt: Text("What should this project achieve?").foregroundStyle(.tertiary), axis: .vertical)
                 .lineLimit(2...8)
                 .boardField()
-            HStack(spacing: 6) {
+            HStack(spacing: Design.Space.xs) {
                 Text(Self.facts(progress: progress, total: total, days: ""))
-                    .font(.system(size: 10.5))
+                    .font(Design.TextRole.caption.font)
                     .monospacedDigit()
-                    .foregroundStyle(Theme.ink.opacity(0.5))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Spacer(minLength: 6)
+                Spacer(minLength: Design.Space.xs)
                 if reworded {
                     BoardButton("Save", prominent: true) {
                         advanced.setGoal(words, in: project.id)
@@ -109,9 +109,9 @@ struct GoalsPanel: View {
     private var newGoal: some View {
         let stillOpen = board.unfinished.count
         let said = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: Design.Space.xs) {
             BoardHeading("New goal")
-            TextField("", text: $draft, prompt: Text("What should this project achieve next?").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
+            TextField("", text: $draft, prompt: Text("What should this project achieve next?").foregroundStyle(.tertiary), axis: .vertical)
                 .lineLimit(2...8)
                 .boardField()
                 .focused($typing)
@@ -119,13 +119,12 @@ struct GoalsPanel: View {
                 Button {
                     bring.toggle()
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: Design.Space.xs) {
                         Image(systemName: bring ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(bring ? Theme.accent : Theme.ink.opacity(0.5))
+                            .font(Design.TextRole.label.font.weight(.medium))
+                            .foregroundStyle(bring ? AnyShapeStyle(Design.Tone.accent.color) : AnyShapeStyle(.secondary))
                         Text(stillOpen == 1 ? "Bring the 1 unfinished task along" : "Bring the \(stillOpen) unfinished tasks along")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.ink.opacity(0.88))
+                            .textRole(.label, .primary)
                     }
                     .contentShape(Rectangle())
                 }
@@ -133,10 +132,9 @@ struct GoalsPanel: View {
                 .help("The tasks of the goal there is that are not done move to the new goal. Left unticked, they stay with the goal they were planned for.")
             }
             Text(keptNote)
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.ink.opacity(0.5))
+                .textRole(.caption, .secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
+            HStack(spacing: Design.Space.xs) {
                 Spacer(minLength: 0)
                 BoardButton("Cancel") {
                     if startsNew { close() } else { starting = false }
@@ -172,10 +170,10 @@ struct GoalsPanel: View {
     // MARK: The goals before it
 
     private func history(_ earlier: [BoardGoal], used: [UUID: UsageTotal]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
             BoardHeading(earlier.count == 1 ? "Earlier goal" : "Earlier goals (\(earlier.count))")
             ScrollView(.vertical) {
-                VStack(spacing: 6) {
+                VStack(spacing: Design.Space.xs) {
                     ForEach(earlier) { goal in
                         GoalRow(board: board, goal: goal, used: used[goal.id] ?? UsageTotal(),
                                 expanded: expanded == goal.id,
@@ -213,17 +211,16 @@ private struct GoalRow: View {
 
     var body: some View {
         let progress = board.progress(of: goal.id)
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
             Button(action: toggle) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .top, spacing: 6) {
+                VStack(alignment: .leading, spacing: Design.Space.xxs) {
+                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
                         Text(goal.key)
-                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Theme.ink.opacity(0.5))
-                            .padding(.top, 1)
+                            .font(Design.TextRole.caption.font.monospaced().weight(.semibold))
+                            .foregroundStyle(.secondary)
                         Text(goal.text.isEmpty ? "Never put into words" : goal.text)
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(Theme.ink.opacity(goal.text.isEmpty ? 0.45 : 0.92))
+                            .font(Design.TextRole.label.font.weight(.medium))
+                            .foregroundStyle(goal.text.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                             .lineLimit(expanded ? 8 : 1)
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -231,9 +228,9 @@ private struct GoalRow: View {
                     }
                     Text(GoalsPanel.facts(progress: progress, total: used,
                                           days: BoardText.days(from: goal.startedAt, to: goal.closedAt)))
-                        .font(.system(size: 10.5))
+                        .font(Design.TextRole.caption.font)
                         .monospacedDigit()
-                        .foregroundStyle(Theme.ink.opacity(0.5))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 .contentShape(Rectangle())
@@ -242,8 +239,8 @@ private struct GoalRow: View {
             .help(expanded ? "Hide its tasks" : "Show its tasks, and the way back to it")
             if expanded {
                 tasks
-                HStack(spacing: 6) {
-                    BoardButton("Work on it again", icon: "arrow.uturn.backward", tint: Theme.accent, action: resume)
+                HStack(spacing: Design.Space.xs) {
+                    BoardButton("Work on it again", icon: "arrow.uturn.backward", tint: Design.Tone.accent.color, action: resume)
                         .help("Turn the board back to this goal, with its tasks as they were left. The goal there is now is kept the same way.")
                     if progress.all == 0 {
                         BoardButton("Remove", icon: "trash", action: remove)
@@ -253,10 +250,10 @@ private struct GoalRow: View {
                 }
             }
         }
-        .padding(8)
+        .padding(Design.Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
-            .fill(Theme.ink.opacity(hover || expanded ? 0.08 : 0.05)))
+        .background(hover || expanded ? Design.Fill.raised.style : Design.Fill.content.style,
+                    in: Design.Radius.shape(Design.Radius.control))
         .onHover { hover = $0 }
     }
 
@@ -266,16 +263,14 @@ private struct GoalRow: View {
         let items = board.items(of: goal.id)
         if items.isEmpty {
             Text("Nothing was planned for it.")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.ink.opacity(0.45))
+                .textRole(.label, .tertiary)
         } else {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Design.Space.xxs) {
                 ForEach(Array(items.prefix(40))) { item in
-                    HStack(spacing: 6) {
+                    HStack(spacing: Design.Space.xs) {
                         WorkStatusPill(status: item.status, compact: true)
                         Text("\(item.key) \(item.title)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .textRole(.label, .primary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                         Spacer(minLength: 0)
@@ -283,8 +278,7 @@ private struct GoalRow: View {
                 }
                 if items.count > 40 {
                     Text("\(items.count - 40) more.")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.ink.opacity(0.45))
+                        .textRole(.caption, .tertiary)
                 }
             }
         }

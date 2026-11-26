@@ -9,11 +9,11 @@ extension WorkStatus {
     /// shown with it.
     var tint: Color {
         switch self {
-        case .backlog: return Theme.ink.opacity(0.55)
-        case .todo: return Theme.violet
-        case .inProgress: return Theme.accent
-        case .review: return Theme.amber
-        case .done: return Theme.mint
+        case .backlog: return Design.Tone.neutral.color
+        case .todo: return Design.Tone.info.color
+        case .inProgress: return Design.Tone.accent.color
+        case .review: return Design.Tone.caution.color
+        case .done: return Design.Tone.positive.color
         }
     }
 
@@ -31,10 +31,10 @@ extension WorkStatus {
 extension WorkPriority {
     var tint: Color {
         switch self {
-        case .low: return Theme.ink.opacity(0.45)
-        case .medium: return Theme.violet
-        case .high: return Theme.amber
-        case .urgent: return Theme.rose
+        case .low: return Design.Tone.neutral.color
+        case .medium: return Design.Tone.info.color
+        case .high: return Design.Tone.caution.color
+        case .urgent: return Design.Tone.critical.color
         }
     }
 
@@ -67,9 +67,9 @@ extension WorkKind {
 extension BoardGoal.Status {
     var tint: Color {
         switch self {
-        case .active: return Theme.accent
-        case .reached: return Theme.mint
-        case .setAside: return Theme.ink.opacity(0.55)
+        case .active: return Design.Tone.accent.color
+        case .reached: return Design.Tone.positive.color
+        case .setAside: return Design.Tone.neutral.color
         }
     }
 
@@ -87,17 +87,18 @@ struct GoalStatusPill: View {
     let status: BoardGoal.Status
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Design.Space.xxs) {
             Image(systemName: status.icon)
-                .font(.system(size: 8.5, weight: .bold))
+                .font(Design.Icon.small.font.weight(.bold))
+                .imageScale(.small)
             Text(status.title)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .font(Design.TextRole.caption.font.weight(.semibold))
                 .lineLimit(1)
         }
         .foregroundStyle(status.tint)
-        .padding(.horizontal, 8)
-        .frame(height: 20)
-        .background(Capsule().fill(status.tint.opacity(0.16)))
+        .padding(.horizontal, Design.Space.xs)
+        .frame(minHeight: Design.Control.small.height)
+        .background(status.tint.opacity(0.16), in: Capsule())
         .fixedSize()
         .accessibilityLabel(status.title)
     }
@@ -109,19 +110,20 @@ struct WorkStatusPill: View {
     var compact = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Design.Space.xxs) {
             Image(systemName: status.icon)
-                .font(.system(size: 8.5, weight: .bold))
+                .font(Design.Icon.small.font.weight(.bold))
+                .imageScale(.small)
             if !compact {
                 Text(status.title)
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .font(Design.TextRole.caption.font.weight(.semibold))
                     .lineLimit(1)
             }
         }
         .foregroundStyle(status.tint)
-        .padding(.horizontal, compact ? 6 : 8)
-        .frame(height: 20)
-        .background(Capsule().fill(status.tint.opacity(0.16)))
+        .padding(.horizontal, compact ? Design.Space.xxs : Design.Space.xs)
+        .frame(minHeight: Design.Control.small.height)
+        .background(status.tint.opacity(0.16), in: Capsule())
         .fixedSize()
         .accessibilityLabel(status.title)
     }
@@ -133,12 +135,13 @@ struct PriorityMark: View {
     var showsWord = false
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: Design.Space.xxs) {
             Image(systemName: priority.icon)
-                .font(.system(size: 8.5, weight: .bold))
+                .font(Design.Icon.small.font.weight(.bold))
+                .imageScale(.small)
             if showsWord {
                 Text(priority.title)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(Design.TextRole.caption.font.weight(.medium))
             }
         }
         .foregroundStyle(priority.tint)
@@ -162,24 +165,24 @@ struct ModelChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Design.Space.xxs) {
             if let assignment, let engine = EngineChoice(assignment.model) {
-                EngineLogo(kind: engine.kind, tool: engine.tool, size: 10)
+                EngineLogo(kind: engine.kind, tool: engine.tool, size: Design.Icon.small.width - Design.Space.xxs)
             } else {
                 Image(systemName: "questionmark.circle")
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(Design.Icon.small.font)
             }
             Text(name)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(Design.TextRole.caption.font.weight(.medium))
                 .lineLimit(1)
+                .truncationMode(.tail)
         }
-        .foregroundStyle(Theme.ink.opacity(assignment == nil ? 0.5 : 0.82))
-        .padding(.horizontal, 7)
-        .frame(height: 20)
-        .fixedSize()
-        .background(Capsule().fill(Theme.ink.opacity(0.07)))
-        .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.22),
-                                        style: StrokeStyle(lineWidth: 0.75, dash: accepted ? [] : [3, 2])))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, Design.Space.xxs)
+        .frame(minHeight: Design.Control.small.height)
+        .background(Design.Fill.raised.style, in: Capsule())
+        .overlay(Capsule().strokeBorder(Design.Fill.line.style,
+                                        style: StrokeStyle(lineWidth: 1, dash: accepted ? [] : [3, 2])))
         .help(help)
     }
 
@@ -203,17 +206,17 @@ struct ModelChip: View {
 /// waiting in Review.
 struct RecommendedTag: View {
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: Design.Space.xxs) {
             Image(systemName: "star.fill")
-                .font(.system(size: 7, weight: .bold))
+                .font(Design.TextRole.caption.font.weight(.bold))
+                .imageScale(.small)
             Text("Recommended")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .font(Design.TextRole.caption.font.weight(.semibold))
                 .lineLimit(1)
         }
-        .foregroundStyle(Theme.accent)
-        .padding(.horizontal, 5)
-        .frame(height: 14)
-        .background(Capsule().fill(Theme.accent.opacity(0.14)))
+        .foregroundStyle(Design.Tone.accent.color)
+        .padding(.horizontal, Design.Space.xxs)
+        .background(Design.Tone.accent.color.opacity(0.14), in: Capsule())
         .fixedSize()
         .accessibilityLabel("Recommended by the supervisor")
     }
@@ -225,7 +228,7 @@ private struct RecommendedMark: ViewModifier {
     let why: String
 
     func body(content: Content) -> some View {
-        VStack(spacing: 3) {
+        VStack(spacing: Design.Space.xxs) {
             content
             if on {
                 RecommendedTag()
@@ -249,13 +252,13 @@ extension View {
 struct ShareBar: View {
     /// 0 to 1; anything past 1 fills the bar.
     let fraction: Double
-    var tint: Color = Theme.accent
-    var height: CGFloat = 5
+    var tint: Color = Design.Tone.accent.color
+    var height: CGFloat = Design.Space.xxs
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                Capsule().fill(Theme.ink.opacity(0.10))
+                Capsule().fill(Design.Fill.line.style)
                 Capsule().fill(tint)
                     .frame(width: max(0, min(1, fraction)) * geometry.size.width)
             }
@@ -286,25 +289,25 @@ struct BoardButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: Design.Space.xxs) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(Design.Icon.small.font.weight(.semibold))
                 }
                 if !title.isEmpty {
                     Text(title)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .font(Design.TextRole.caption.font.weight(.semibold))
                         .lineLimit(1)
                 }
             }
-            .foregroundStyle(prominent ? Color.black.opacity(0.82) : (tint ?? Theme.ink.opacity(0.85)))
-            .padding(.horizontal, title.isEmpty ? 7 : 9)
-            .frame(height: 24)
+            .foregroundStyle(prominent ? AnyShapeStyle(.background) : (tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary)))
+            .padding(.horizontal, title.isEmpty ? Design.Space.xxs + Design.Space.xxs / 2 : Design.Space.xs)
+            .frame(minHeight: Design.Control.small.height)
             .background {
                 if prominent {
-                    Capsule().fill(Theme.accentGradient)
+                    Capsule().fill(Design.Tone.accent.color)
                 } else {
-                    Capsule().fill((tint ?? Theme.ink).opacity(hover ? 0.18 : 0.09))
+                    Capsule().fill((tint ?? Color.primary).opacity(hover ? 0.18 : 0.09))
                 }
             }
             .contentShape(Capsule())
@@ -326,8 +329,8 @@ struct BoardHeading: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10.5, weight: .semibold))
-            .foregroundStyle(Theme.ink.opacity(0.5))
+            .textRole(.caption, .secondary)
+            .fontWeight(.semibold)
             .textCase(.uppercase)
             .kerning(0.4)
     }
@@ -339,22 +342,23 @@ struct BoardMenuLabel: View {
     var icon: String?
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Design.Space.xxs) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .iconWidth(.small)
             }
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .font(Design.TextRole.caption.font.weight(.medium))
                 .lineLimit(1)
             Image(systemName: "chevron.down")
-                .font(.system(size: 7, weight: .bold))
-                .opacity(0.6)
+                .font(Design.TextRole.caption.font.weight(.bold))
+                .imageScale(.small)
+                .foregroundStyle(.secondary)
         }
-        .foregroundStyle(Theme.ink.opacity(0.85))
-        .padding(.horizontal, 8)
-        .frame(height: 24)
-        .background(Capsule().fill(Theme.ink.opacity(0.08)))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, Design.Space.xs)
+        .frame(minHeight: Design.Control.small.height)
+        .background(Design.Fill.raised.style, in: Capsule())
         .contentShape(Capsule())
     }
 }
@@ -372,12 +376,11 @@ extension View {
     /// A field the board edits text in.
     func boardField() -> some View {
         textFieldStyle(.plain)
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.ink.opacity(0.95))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
-                .fill(Theme.ink.opacity(0.07)))
+            .textRole(.label)
+            .padding(.horizontal, Design.Space.xs)
+            .padding(.vertical, Design.Space.xxs)
+            .background(Design.Fill.raised.style, in: Design.Radius.shape(Design.Radius.control))
+            .overlay(Design.Radius.shape(Design.Radius.control).strokeBorder(Design.Fill.line.style))
     }
 }
 

@@ -34,7 +34,7 @@ struct TaskInspector: View {
         VStack(alignment: .leading, spacing: 0) {
             top
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: Design.Space.m) {
                     actions
                     copy
                     facts
@@ -46,8 +46,8 @@ struct TaskInspector: View {
                     history
                     footer
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 16)
+                .padding(.horizontal, Design.Space.s)
+                .padding(.bottom, Design.Space.m)
             }
         }
         // A task's own drafts never carry over to the next one opened.
@@ -57,18 +57,18 @@ struct TaskInspector: View {
     // MARK: The top line
 
     private var top: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Design.Space.xs) {
             Text(item.key)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Theme.ink.opacity(0.5))
+                .font(Design.TextRole.label.font.monospaced().weight(.semibold))
+                .foregroundStyle(.secondary)
             StatusMenu(project: project, item: item)
-            Spacer(minLength: 2)
+            Spacer(minLength: Design.Space.xxs)
             IconButton("xmark", help: "Close") { advanced.selectedItem = nil }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
+        .padding(.leading, Design.Space.s)
+        .padding(.trailing, Design.Space.xs)
+        .padding(.vertical, Design.Space.xs)
+        .glassToolbarGroup()
     }
 
     // MARK: What can be done now
@@ -85,37 +85,36 @@ struct TaskInspector: View {
     @ViewBuilder
     private var actions: some View {
         if let run = item.activeRun {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    LoadingMark(state: (job?.waitsOnPerson ?? false) ? .waiting : .working, size: 13)
+            VStack(alignment: .leading, spacing: Design.Space.xs) {
+                HStack(spacing: Design.Space.xs) {
+                    LoadingMark(state: (job?.waitsOnPerson ?? false) ? .waiting : .working, size: Design.Icon.small.width)
                     Text(runStatus)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(Theme.ink.opacity(0.9))
+                        .textRole(.label, .primary)
+                        .fontWeight(.medium)
                         .lineLimit(2)
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: Design.Space.xs) {
                     BoardButton("Open the Chat", icon: "bubble.left", prominent: true) {
                         app.openConversation(run.conversation)
                     }
-                    BoardButton("Stop", icon: "stop.fill", tint: Theme.rose) { advanced.stop(item.id, in: project.id) }
+                    BoardButton("Stop", icon: "stop.fill", tint: Design.Tone.critical.color) { advanced.stop(item.id, in: project.id) }
                 }
             }
         } else if item.status == .review {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: Design.Space.xs) {
                 if advanced.reviewing.contains(item.id) {
                     let checking = advanced.checkingWork.contains(item.id)
-                    HStack(spacing: 6) {
-                        LoadingMark(state: checking ? .working : .thinking, size: 13)
+                    HStack(spacing: Design.Space.xs) {
+                        LoadingMark(state: checking ? .working : .thinking, size: Design.Icon.small.width)
                         Text(checking ? "Running the project's checks on its work" : "The supervisor is reviewing the run")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.ink.opacity(0.75))
+                            .textRole(.label, .secondary)
                     }
                 }
                 // What the supervisor makes of the run, for the person
                 // who reviews it: the answer it recommends says so.
                 let advised = item.runs.last?.advice
                 let redo = advised?.verdict == .changesRequested
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: Design.Space.xs) {
                     BoardButton("Approve", icon: "checkmark", prominent: true) { advanced.approve(item.id, in: project.id) }
                         .recommended(advised?.verdict == .approved, why: BoardText.why(advised))
                     BoardButton("Ask for Changes", icon: "arrow.uturn.backward") {
@@ -126,15 +125,13 @@ struct TaskInspector: View {
                     .recommended(redo, why: BoardText.why(advised))
                 }
                 if let advised {
-                    HStack(alignment: .top, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.xxs) {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(Theme.accent)
-                            .padding(.top, 2.5)
+                            .font(Design.TextRole.caption.font.weight(.bold))
+                            .foregroundStyle(Design.Tone.accent.color)
                         Text("The supervisor recommends " + (redo ? "asking for changes" : "approving it")
                              + (advised.notes.isEmpty ? "." : ": " + advised.notes))
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.ink.opacity(0.75))
+                            .textRole(.label, .secondary)
                             .lineLimit(8)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
@@ -142,10 +139,10 @@ struct TaskInspector: View {
                     .help("From \(advised.by), this project's supervisor. It is advice: you decide.")
                 }
                 if askingForChanges {
-                    TextField("", text: $changeNote, prompt: Text("What should change? The next run is given this.").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
+                    TextField("", text: $changeNote, prompt: Text("What should change? The next run is given this.").foregroundStyle(.tertiary), axis: .vertical)
                         .lineLimit(2...6)
                         .boardField()
-                    BoardButton("Send Back to To do", icon: "arrow.uturn.backward", tint: Theme.amber) {
+                    BoardButton("Send Back to To do", icon: "arrow.uturn.backward", tint: Design.Tone.caution.color) {
                         advanced.requestChanges(item.id, notes: changeNote.trimmingCharacters(in: .whitespacesAndNewlines),
                                                 in: project.id)
                         changeNote = ""
@@ -154,22 +151,21 @@ struct TaskInspector: View {
                 }
             }
         } else if advanced.preparing.contains(item.id) {
-            HStack(spacing: 6) {
-                LoadingMark(state: .working, size: 13)
+            HStack(spacing: Design.Space.xs) {
+                LoadingMark(state: .working, size: Design.Icon.small.width)
                 Text("Readying its copy of the repository, then the run starts")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.ink.opacity(0.75))
+                    .textRole(.label, .secondary)
             }
         } else if item.status != .done {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: Design.Space.xxs) {
                 BoardButton(item.runs.isEmpty ? "Start a Run" : "Run It Again", icon: "play.fill", prominent: true) {
                     advanced.startOrExplain(item.id, in: project.id)
                 }
                 .opacity(blockers.isEmpty ? 1 : 0.5)
                 if !blockers.isEmpty {
                     Text("Waits on " + blockers.map(\.key).joined(separator: ", ") + ".")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.amber)
+                        .font(Design.TextRole.label.font)
+                        .foregroundStyle(Design.Tone.caution.color)
                 }
             }
         }
@@ -188,21 +184,20 @@ struct TaskInspector: View {
     @ViewBuilder
     private var copy: some View {
         if let copy = item.workingCopy {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: Design.Space.xs) {
                 BoardHeading("Its Branch")
-                HStack(spacing: 5) {
+                HStack(spacing: Design.Space.xxs) {
                     Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.ink.opacity(0.55))
+                        .font(Design.TextRole.caption.font.weight(.semibold))
+                        .foregroundStyle(.secondary)
                     Text(copy.branch)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Theme.ink.opacity(copy.isOpen ? 0.9 : 0.5))
+                        .font(Design.TextRole.label.font.monospaced().weight(.medium))
+                        .foregroundStyle(copy.isOpen ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     Text("from \(copy.base)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.ink.opacity(0.5))
+                        .textRole(.label, .tertiary)
                         .lineLimit(1)
                 }
                 copyStanding(copy)
@@ -221,17 +216,16 @@ struct TaskInspector: View {
         let busy: String? = advanced.merging.contains(item.id) ? "Merging its work into \(copy.base)"
             : (advanced.discarding.contains(item.id) ? "Throwing its copy away" : nil)
         if let busy {
-            HStack(spacing: 6) {
-                LoadingMark(state: .working, size: 12)
+            HStack(spacing: Design.Space.xs) {
+                LoadingMark(state: .working, size: Design.Icon.small.width)
                 Text(busy)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.75))
+                    .textRole(.label, .secondary)
             }
         } else {
             let line = standing(of: copy)
             Text(line.text)
-                .font(.system(size: 11))
-                .foregroundStyle(line.warn ? Theme.amber : Theme.ink.opacity(0.65))
+                .font(Design.TextRole.label.font)
+                .foregroundStyle(line.warn ? AnyShapeStyle(Design.Tone.caution.color) : AnyShapeStyle(.secondary))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
@@ -265,27 +259,27 @@ struct TaskInspector: View {
     @ViewBuilder
     private func copyFiles(_ copy: WorkingCopy) -> some View {
         if let changes = advanced.copyChanges[item.id] {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Design.Space.xxs / 2) {
                 Text(changes.files.isEmpty ? "No changes yet."
                      : "\(changes.files.count == 1 ? "1 file" : "\(changes.files.count) files") · +\(changes.added) −\(changes.removed)")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(Design.TextRole.caption.font.weight(.medium))
                     .monospacedDigit()
-                    .foregroundStyle(Theme.ink.opacity(0.6))
+                    .foregroundStyle(.secondary)
                 ForEach(changes.files.prefix(12)) { file in
                     Button {
                         advanced.showChange(file, of: item.id, in: project.id)
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: Design.Space.xs) {
                             Text(file.path)
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(Theme.ink.opacity(0.8))
+                                .font(Design.TextRole.caption.font.monospaced())
+                                .foregroundStyle(.primary)
                                 .lineLimit(1)
                                 .truncationMode(.head)
-                            Spacer(minLength: 4)
+                            Spacer(minLength: Design.Space.xxs)
                             Text(file.untracked ? "new" : (file.added.map { "+\($0) −\(file.removed ?? 0)" } ?? "binary"))
-                                .font(.system(size: 10))
+                                .font(Design.TextRole.caption.font)
                                 .monospacedDigit()
-                                .foregroundStyle(Theme.ink.opacity(0.5))
+                                .foregroundStyle(.tertiary)
                         }
                         .contentShape(Rectangle())
                     }
@@ -294,8 +288,7 @@ struct TaskInspector: View {
                 }
                 if changes.files.count > 12 {
                     Text("and \(changes.files.count - 12) more")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.ink.opacity(0.45))
+                        .textRole(.caption, .tertiary)
                 }
             }
         }
@@ -305,7 +298,7 @@ struct TaskInspector: View {
     private func copyButtons(_ copy: WorkingCopy) -> some View {
         let busy = item.activeRun != nil || advanced.preparing.contains(item.id) || advanced.merging.contains(item.id)
             || advanced.discarding.contains(item.id)
-        HStack(spacing: 6) {
+        HStack(spacing: Design.Space.xs) {
             if board.mergeWaitsOnPerson(item), !busy {
                 BoardButton("Merge Now", icon: "arrow.triangle.merge", prominent: true) {
                     advanced.mergeNow(item.id, in: project.id)
@@ -318,7 +311,8 @@ struct TaskInspector: View {
             .help(copy.directory)
             Spacer(minLength: 2)
             if !busy {
-                BoardButton(confirmingDiscard ? "Throw Away for Good" : "Throw Away", icon: "trash", tint: Theme.rose) {
+                BoardButton(confirmingDiscard ? "Throw Away for Good" : "Throw Away", icon: "trash",
+                            tint: Design.Tone.critical.color) {
                     if confirmingDiscard {
                         confirmingDiscard = false
                         advanced.discardCopy(item.id, in: project.id)
@@ -334,52 +328,41 @@ struct TaskInspector: View {
     // MARK: Its facts
 
     private func row<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: Design.Space.xs) {
             Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.ink.opacity(0.5))
-                .frame(width: 66, alignment: .leading)
+                .textRole(.label, .secondary)
+                .frame(width: Self.labelWidth, alignment: .leading)
             content()
             Spacer(minLength: 0)
         }
-        .frame(minHeight: 24)
+        .frame(minHeight: Design.Control.regular.height)
     }
 
+    /// The width of a fact's name, so the values line up down the list.
+    private static let labelWidth: CGFloat = 66
+
     private var facts: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             CommitField(placeholder: "Title", value: item.title) { text in
                 edit { $0.title = text }
             }
             row("Priority") {
-                Menu {
-                    ForEach(WorkPriority.allCases.reversed()) { priority in
-                        Button {
-                            edit { $0.priority = priority }
-                        } label: {
-                            Label(priority.title + (priority == item.priority ? "  ✓" : ""), systemImage: priority.icon)
-                        }
+                let entries = WorkPriority.allCases.reversed().map { priority in
+                    MenuEntry(priority.title, symbol: priority.icon, selected: priority == item.priority) {
+                        edit { $0.priority = priority }
                     }
-                } label: {
-                    PriorityMark(priority: item.priority, showsWord: true)
-                        .padding(.horizontal, 8)
-                        .frame(height: 22)
-                        .background(Capsule().fill(Theme.ink.opacity(0.07)))
                 }
-                .boardMenu()
+                SectionedMenu(item.priority.title, symbol: item.priority.icon,
+                              groups: [MenuGroup("Priority", entries: entries)])
             }
             row("Kind") {
-                Menu {
-                    ForEach(WorkKind.allCases) { kind in
-                        Button {
-                            edit { $0.kind = kind }
-                        } label: {
-                            Label(kind.title + (kind == item.kind ? "  ✓" : ""), systemImage: kind.icon)
-                        }
+                let entries = WorkKind.allCases.map { kind in
+                    MenuEntry(kind.title, symbol: kind.icon, selected: kind == item.kind) {
+                        edit { $0.kind = kind }
                     }
-                } label: {
-                    BoardMenuLabel(text: item.kind.title, icon: item.kind.icon)
                 }
-                .boardMenu()
+                SectionedMenu(item.kind.title, symbol: item.kind.icon,
+                              groups: [MenuGroup("Kind", entries: entries)])
             }
             row("Phase") {
                 CommitField(placeholder: "None", value: item.milestone ?? "") { text in
@@ -393,13 +376,11 @@ struct TaskInspector: View {
                     let tokens = BoardText.parseTokens(text)
                     edit { $0.estimateTokens = tokens }
                 }
-                .frame(width: 130)
+                .frame(width: Design.Space.xxl * 4)
             }
             row("Used") {
                 Text(used.isEmpty ? "Nothing yet" : "\(BoardText.tokens(used)) tokens · \(Money.text(used.cost)) · \(used.requests) requests")
-                    .font(.system(size: 11.5))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.ink.opacity(used.isEmpty ? 0.45 : 0.85))
+                    .textRole(.number, used.isEmpty ? .tertiary : .primary)
                     .lineLimit(1)
             }
             row("Due") { due }
@@ -427,14 +408,14 @@ struct TaskInspector: View {
     // MARK: What is to be done
 
     private var writing: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             BoardHeading("What to do")
             CommitField(placeholder: "What the agent should do, and where. It reads this, the lines under Done means, and the project's own instructions.",
                         value: item.details, multiline: true) { text in
                 edit { $0.details = text.trimmingCharacters(in: .whitespacesAndNewlines) }
             }
             BoardHeading("Done means")
-                .padding(.top, 4)
+                .padding(.top, Design.Space.xxs)
             CommitField(placeholder: "One line each: what can be checked when it is done.",
                         value: item.acceptance.joined(separator: "\n"), multiline: true) { text in
                 let lines = text.split(whereSeparator: \.isNewline)
@@ -452,15 +433,14 @@ struct TaskInspector: View {
         let others = board.allItems
             .filter { $0.goal == item.goal && $0.id != item.id && !item.dependsOn.contains($0.number) }
             .sorted { $0.number < $1.number }
-        return VStack(alignment: .leading, spacing: 5) {
+        return VStack(alignment: .leading, spacing: Design.Space.xxs) {
             BoardHeading("Waits on")
             ForEach(item.dependsOn, id: \.self) { number in
-                HStack(spacing: 6) {
+                HStack(spacing: Design.Space.xs) {
                     if let other = board.item(number: number) {
                         WorkStatusPill(status: other.status, compact: true)
                         Text("\(other.key) \(other.title)")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .textRole(.label, .primary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .onTapGesture { advanced.selectedItem = other.id }
@@ -482,8 +462,7 @@ struct TaskInspector: View {
                 .boardMenu()
             } else if item.dependsOn.isEmpty {
                 Text("Nothing.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.ink.opacity(0.45))
+                    .textRole(.label, .tertiary)
             }
         }
     }
@@ -499,25 +478,23 @@ struct TaskInspector: View {
     // MARK: Its model
 
     private var model: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             BoardHeading("Model")
-            HStack(spacing: 6) {
+            HStack(spacing: Design.Space.xs) {
                 ModelMenu(project: project, item: item, limit: 30)
                 if let assignment = item.assignment, !assignment.accepted, assignment.source != .person {
-                    BoardButton("Confirm", icon: "checkmark", tint: Theme.mint) {
+                    BoardButton("Confirm", icon: "checkmark", tint: Design.Tone.positive.color) {
                         advanced.change(project.id) { $0.acceptAssignment(item.id, now: Date()) }
                     }
                 }
             }
             if let assignment = item.assignment {
                 Text(source(assignment) + (assignment.reason.isEmpty ? "" : " " + assignment.reason))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.6))
+                    .textRole(.label, .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("None yet. A run uses the model in the chat box until one is chosen; the supervisor suggests one when it plans.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.5))
+                    .textRole(.label, .tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -535,10 +512,10 @@ struct TaskInspector: View {
 
     private func outcomeTint(_ outcome: WorkRun.Outcome) -> Color {
         switch outcome {
-        case .running: return Theme.accent
-        case .succeeded: return Theme.mint
-        case .failed: return Theme.rose
-        case .stopped: return Theme.ink.opacity(0.5)
+        case .running: return Design.Tone.accent.color
+        case .succeeded: return Design.Tone.positive.color
+        case .failed: return Design.Tone.critical.color
+        case .stopped: return Design.Tone.neutral.color
         }
     }
 
@@ -553,12 +530,11 @@ struct TaskInspector: View {
 
     private var runs: some View {
         let ledger = advanced.ledger(for: project.id)
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: Design.Space.xs) {
             BoardHeading(item.runs.isEmpty ? "Runs" : "Runs (\(item.runs.count))")
             if item.runs.isEmpty {
                 Text("None yet. Each run is one agent's attempt; all of a task's runs share its chat.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.5))
+                    .textRole(.label, .tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(item.runs.reversed()) { run in
@@ -568,61 +544,57 @@ struct TaskInspector: View {
     }
 
     private func runCard(_ run: WorkRun, chat: UsageTotal?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
+            HStack(spacing: Design.Space.xs) {
                 Text(outcomeWord(run.outcome))
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .font(Design.TextRole.caption.font.weight(.semibold))
                     .foregroundStyle(outcomeTint(run.outcome))
-                    .padding(.horizontal, 7)
-                    .frame(height: 18)
+                    .padding(.horizontal, Design.Space.xs)
+                    .padding(.vertical, Design.Space.xxs / 2)
                     .background(Capsule().fill(outcomeTint(run.outcome).opacity(0.16)))
                 Text(BoardText.modelName(run.modelLabel))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.ink.opacity(0.85))
+                    .textRole(.label, .primary)
+                    .fontWeight(.medium)
                     .lineLimit(1)
-                Spacer(minLength: 2)
+                Spacer(minLength: Design.Space.xxs)
                 IconButton("bubble.left", help: "Open the task's chat") {
                     app.openConversation(run.conversation)
                 }
             }
             Text(runFacts(run, chat: chat))
-                .font(.system(size: 10.5))
-                .monospacedDigit()
-                .foregroundStyle(Theme.ink.opacity(0.55))
+                .textRole(.number, .secondary)
+                .font(Design.TextRole.caption.font)
                 .lineLimit(2)
             if let report = run.report, !report.isEmpty {
                 Text(report)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.75))
+                    .textRole(.label, .secondary)
                     .lineLimit(5)
                     .fixedSize(horizontal: false, vertical: true)
                     .help(report)
             }
             if let checks = run.checks, !checks.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: Design.Space.xxs) {
                     ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
                         checkLine(check)
                     }
                 }
             }
             if let review = run.review {
-                HStack(alignment: .top, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: Design.Space.xxs) {
                     Image(systemName: review.verdict == .approved ? "checkmark.seal.fill" : "arrow.uturn.backward.circle.fill")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(review.verdict == .approved ? Theme.mint : Theme.amber)
-                        .padding(.top, 1)
+                        .font(Design.TextRole.caption.font)
+                        .foregroundStyle(review.verdict == .approved ? Design.Tone.positive.color : Design.Tone.caution.color)
                     Text("\(review.verdict == .approved ? "Approved" : "Changes asked for") by \(BoardText.modelName(review.by))"
                          + (review.notes.isEmpty ? "." : ": " + review.notes))
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.ink.opacity(0.75))
+                        .textRole(.label, .secondary)
                         .lineLimit(8)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .padding(8)
+        .padding(Design.Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous).fill(Theme.ink.opacity(0.05)))
+        .background(Design.Fill.raised.style, in: Design.Radius.shape(Design.Radius.card))
     }
 
     /// One of the project's checks on a run's work: how it went, and for
@@ -631,15 +603,13 @@ struct TaskInspector: View {
         let said = check.problems.isEmpty
             ? check.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n")
             : check.problems.joined(separator: "\n")
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .top, spacing: 5) {
+        return VStack(alignment: .leading, spacing: Design.Space.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.xxs) {
                 Image(systemName: check.passed ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(check.passed ? Theme.mint : Theme.rose)
-                    .padding(.top, 1)
+                    .font(Design.TextRole.caption.font)
+                    .foregroundStyle(check.passed ? Design.Tone.positive.color : Design.Tone.critical.color)
                 Text("\(check.name) \(Checks.status(check))")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.ink.opacity(0.75))
+                    .textRole(.label, .secondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .help(check.command.isEmpty ? check.name : check.command)
@@ -647,14 +617,14 @@ struct TaskInspector: View {
             if !check.passed, !said.isEmpty {
                 ScrollView {
                     Text(said)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(Theme.ink.opacity(0.7))
+                        .font(Design.TextRole.code.font)
+                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 120)
-                .padding(6)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.ink.opacity(0.05)))
+                .frame(maxHeight: Design.Space.xxl * 4)
+                .padding(Design.Space.xs)
+                .background(Design.Fill.content.style, in: Design.Radius.shape(Design.Radius.chip))
             }
         }
     }
@@ -673,16 +643,14 @@ struct TaskInspector: View {
     // MARK: What was said, and what happened
 
     private var notes: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
             BoardHeading("Notes")
             ForEach(item.notes.suffix(12)) { note in
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: Design.Space.xxs / 2) {
                     Text("\(BoardText.modelName(note.author)) · \(BoardText.when(note.date))")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.ink.opacity(0.45))
+                        .textRole(.caption, .tertiary)
                     Text(note.text)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.ink.opacity(0.85))
+                        .textRole(.label, .primary)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
@@ -695,19 +663,18 @@ struct TaskInspector: View {
 
     private var history: some View {
         let lines = board.activity.filter { $0.item == item.number }.suffix(8)
-        return VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: Design.Space.xxs) {
             if !lines.isEmpty {
                 BoardHeading("History")
                 ForEach(Array(lines.reversed())) { line in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
                         Text(BoardText.when(line.date))
-                            .font(.system(size: 10))
+                            .font(Design.TextRole.caption.font)
                             .monospacedDigit()
-                            .foregroundStyle(Theme.ink.opacity(0.4))
-                            .frame(width: 74, alignment: .leading)
+                            .foregroundStyle(.tertiary)
+                            .frame(width: Self.whenWidth, alignment: .leading)
                         Text("\(line.actor.title): \(line.text)")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Theme.ink.opacity(0.6))
+                            .textRole(.caption, .secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -715,13 +682,15 @@ struct TaskInspector: View {
         }
     }
 
+    /// The width of a history line's time, so the lines after it align.
+    private static let whenWidth: CGFloat = 74
+
     private var footer: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Design.Space.xs) {
             Text("Made \(BoardText.when(item.createdAt))")
-                .font(.system(size: 10))
-                .foregroundStyle(Theme.ink.opacity(0.4))
+                .textRole(.caption, .tertiary)
             Spacer()
-            BoardButton(confirmingDelete ? "Delete for Good" : "Delete", icon: "trash", tint: Theme.rose) {
+            BoardButton(confirmingDelete ? "Delete for Good" : "Delete", icon: "trash", tint: Design.Tone.critical.color) {
                 if confirmingDelete {
                     advanced.remove(item.id, in: project.id)
                 } else {
@@ -740,7 +709,7 @@ private struct NoteField: View {
     @State private var text = ""
 
     var body: some View {
-        TextField("", text: $text, prompt: Text("Add a note").foregroundStyle(Theme.ink.opacity(0.42)), axis: .vertical)
+        TextField("", text: $text, prompt: Text("Add a note").foregroundStyle(.tertiary), axis: .vertical)
             .lineLimit(1...5)
             .boardField()
             .onSubmit {
