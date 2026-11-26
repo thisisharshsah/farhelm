@@ -190,7 +190,7 @@ extension GlassScreen {
                     Text(ask, style: .heading)
                 }
             }
-            .padding(20)
+            .padding(Design.Space.l)
             .background(.card)
             for row in rows {
                 FlexBox(direction: .column) {
@@ -199,7 +199,7 @@ extension GlassScreen {
                         Text(row.note, style: .meta, color: .secondary)
                     }
                 }
-                .padding(16)
+                .padding(Design.Space.m)
                 .background(.card)
                 .onTap { act(row.action) }
             }

@@ -18,14 +18,15 @@ struct PairView: View {
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    LoadingMark(state: .thinking, size: 56)
+                VStack(alignment: .leading, spacing: Design.Space.s) {
+                    LoadingMark(state: .thinking, size: Design.Icon.large.width * 2)
                     Text("Pair with your Mac")
-                        .font(.title2.weight(.semibold))
+                        .textRole(.title)
+                        .fontWeight(.semibold)
                     Text("On your Mac, open Companion > Settings > Remote, turn on **Let the Companion app connect**, then scan the code it shows.")
-                        .foregroundStyle(.secondary)
+                        .textRole(.body, .secondary)
                 }
-                .padding(.vertical, 8)
+                .padding(.vertical, Design.Space.xs)
                 Button {
                     scanning = true
                 } label: {
@@ -38,13 +39,13 @@ struct PairView: View {
                 TextField("companion://pair?…", text: $pasted, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .font(.footnote.monospaced())
+                    .font(Design.TextRole.code.font)
                 Button("Pair with this link") { pair(pasted) }
                     .disabled(pasted.isEmpty)
             } header: {
                 Text("Or paste the link")
             } footer: {
-                if let problem { Text(problem).foregroundStyle(.red) }
+                if let problem { Text(problem).foregroundStyle(Design.Tone.critical.color) }
             }
 
             if !discovery.found.isEmpty {
@@ -68,12 +69,10 @@ struct PairView: View {
             Section {
                 Label("To reach your Mac away from its Wi-Fi, turn on Reach this Mac from anywhere in Settings > Remote on the Mac before you scan. Everything then goes through your relay, end to end encrypted.",
                       systemImage: "network")
-                    .font(.footnote)
+                    .font(Design.TextRole.caption.font)
                     .foregroundStyle(.secondary)
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(CompanionBackdrop())
         .navigationTitle("Companion")
         .sheet(isPresented: $scanning) {
             QRScanner { code in

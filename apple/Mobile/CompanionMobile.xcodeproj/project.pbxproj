@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C1A0D47E5B2F4E6A9D3C7F30 /* Tokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0D47E5B2F4E6A9D3C7F40 /* Tokens.swift */; };
+		C1A0D47E5B2F4E6A9D3C7F31 /* SizeRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0D47E5B2F4E6A9D3C7F41 /* SizeRules.swift */; };
+		C1A0D47E5B2F4E6A9D3C7F32 /* GlassSurfaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0D47E5B2F4E6A9D3C7F42 /* GlassSurfaces.swift */; };
+		C1A0D47E5B2F4E6A9D3C7F33 /* SelectionTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0D47E5B2F4E6A9D3C7F43 /* SelectionTypes.swift */; };
+		C1A0D47E5B2F4E6A9D3C7F34 /* SearchablePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0D47E5B2F4E6A9D3C7F44 /* SearchablePicker.swift */; };
+		C1A0D47E5B2F4E6A9D3C7F35 /* SegmentedSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0D47E5B2F4E6A9D3C7F45 /* SegmentedSwitcher.swift */; };
 		1F8423637C706FBE72512EE6 /* CompanionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3D688DF38AF697F722834F4A /* CompanionKit */; };
 		268081018A6EDECC33C20871 /* CompanionWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = A95EF48E0F6FADA497142201 /* CompanionWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3340DE12FFD660376280199F /* CompanionDesign in Frameworks */ = {isa = PBXBuildFile; productRef = D95918621613689A03AB583C /* CompanionDesign */; };
@@ -14,6 +20,7 @@
 		F60CE19727AE0708AE21E9AC /* CompanionKit in Frameworks */ = {isa = PBXBuildFile; productRef = F59A6E7875BF1C7D46F3F857 /* CompanionKit */; };
 		C1A0D47E5B2F4E6A9D3C7F21 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = C1A0D47E5B2F4E6A9D3C7F11 /* MWDATCore */; };
 		C1A0D47E5B2F4E6A9D3C7F22 /* MWDATDisplay in Frameworks */ = {isa = PBXBuildFile; productRef = C1A0D47E5B2F4E6A9D3C7F12 /* MWDATDisplay */; };
+		C1A0D47E5B2F4E6A9D3C7F23 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = C1A0D47E5B2F4E6A9D3C7F13 /* MWDATMockDevice */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +48,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C1A0D47E5B2F4E6A9D3C7F40 /* Tokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/Companion/UI/Design/Tokens.swift; sourceTree = SOURCE_ROOT; };
+		C1A0D47E5B2F4E6A9D3C7F41 /* SizeRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/Companion/UI/Design/SizeRules.swift; sourceTree = SOURCE_ROOT; };
+		C1A0D47E5B2F4E6A9D3C7F42 /* GlassSurfaces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/Companion/UI/Design/GlassSurfaces.swift; sourceTree = SOURCE_ROOT; };
+		C1A0D47E5B2F4E6A9D3C7F43 /* SelectionTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/Companion/UI/Design/Controls/SelectionTypes.swift; sourceTree = SOURCE_ROOT; };
+		C1A0D47E5B2F4E6A9D3C7F44 /* SearchablePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/Companion/UI/Design/Controls/SearchablePicker.swift; sourceTree = SOURCE_ROOT; };
+		C1A0D47E5B2F4E6A9D3C7F45 /* SegmentedSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/Companion/UI/Design/Controls/SegmentedSwitcher.swift; sourceTree = SOURCE_ROOT; };
 		2EBF105A4715E259DC50DA78 /* Companion-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Companion-Info.plist"; sourceTree = "<group>"; };
 		A95EF48E0F6FADA497142201 /* CompanionWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CompanionWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FEE9503D1AC582F0753D4D1B /* Companion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Companion.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -68,6 +81,7 @@
 				849FD33CB017D89C20984DC9 /* CompanionDesign in Frameworks */,
 				C1A0D47E5B2F4E6A9D3C7F21 /* MWDATCore in Frameworks */,
 				C1A0D47E5B2F4E6A9D3C7F22 /* MWDATDisplay in Frameworks */,
+				C1A0D47E5B2F4E6A9D3C7F23 /* MWDATMockDevice in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -160,6 +174,7 @@
 				359539A71041AB3AF022AB4D /* CompanionDesign */,
 				C1A0D47E5B2F4E6A9D3C7F11 /* MWDATCore */,
 				C1A0D47E5B2F4E6A9D3C7F12 /* MWDATDisplay */,
+				C1A0D47E5B2F4E6A9D3C7F13 /* MWDATMockDevice */,
 			);
 			productName = Companion;
 			productReference = FEE9503D1AC582F0753D4D1B /* Companion.app */;
@@ -237,6 +252,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C1A0D47E5B2F4E6A9D3C7F30 /* Tokens.swift in Sources */,
+				C1A0D47E5B2F4E6A9D3C7F31 /* SizeRules.swift in Sources */,
+				C1A0D47E5B2F4E6A9D3C7F32 /* GlassSurfaces.swift in Sources */,
+				C1A0D47E5B2F4E6A9D3C7F33 /* SelectionTypes.swift in Sources */,
+				C1A0D47E5B2F4E6A9D3C7F34 /* SearchablePicker.swift in Sources */,
+				C1A0D47E5B2F4E6A9D3C7F35 /* SegmentedSwitcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -507,6 +528,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C1A0D47E5B2F4E6A9D3C7F10 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATDisplay;
+		};
+		C1A0D47E5B2F4E6A9D3C7F13 /* MWDATMockDevice */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C1A0D47E5B2F4E6A9D3C7F10 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATMockDevice;
 		};
 		359539A71041AB3AF022AB4D /* CompanionDesign */ = {
 			isa = XCSwiftPackageProductDependency;

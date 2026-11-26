@@ -36,18 +36,17 @@ struct RootView: View {
                         ZStack(alignment: .leading) {
                             ChatView(showChats: { withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { sidebarOpen = true } })
                             if sidebarOpen {
-                                Color.black.opacity(0.35)
+                                // The scrim under the chats: the look's own shade.
+                                Design.palette().shade.opacity(0.35)
                                     .ignoresSafeArea()
                                     .onTapGesture { close() }
                                     .transition(.opacity)
                                 SidebarView(picked: close)
                                     .frame(width: min(geometry.size.width * 0.84, 340))
                                     .frame(maxHeight: .infinity)
-                                    .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                        .fill(Color.black.opacity(0.55)))
-                                    .liquidGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                                    .padding(.leading, 6)
-                                    .padding(.vertical, 4)
+                                    .glassPanel()
+                                    .padding(.leading, Design.Space.xs)
+                                    .padding(.vertical, Design.Space.xxs)
                                     .transition(.move(edge: .leading))
                                     .gesture(DragGesture().onEnded { drag in
                                         if drag.translation.width < -60 { close() }
@@ -64,8 +63,7 @@ struct RootView: View {
                 }
             }
         }
-        // Companion's dark glass, as on the Mac.
-        .preferredColorScheme(.dark)
+        .readsWidthClass()
         .tint(Design.palette().accent)
     }
 

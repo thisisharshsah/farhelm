@@ -14,15 +14,14 @@ struct ProjectsView: View {
     private var palette: Palette { Design.palette() }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: Design.Space.xs) {
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: Design.Space.xxs) {
                     ForEach(session.projects) { project in row(project) }
                     if session.projects.isEmpty {
                         Text(session.isLive ? "No projects yet." : "Reaching your Mac…")
-                            .font(.system(size: 13))
-                            .foregroundStyle(palette.ink.opacity(0.45))
-                            .padding(.top, 30)
+                            .textRole(.body, .secondary)
+                            .padding(.top, Design.Space.xxl)
                     }
                 }
             }
@@ -31,7 +30,7 @@ struct ProjectsView: View {
 
             if let problem {
                 Text(problem)
-                    .font(.footnote)
+                    .font(Design.TextRole.caption.font)
                     .foregroundStyle(palette.rose)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -52,35 +51,30 @@ struct ProjectsView: View {
                 }
             }
         } label: {
-            HStack(spacing: 10) {
+            HStack(alignment: .top, spacing: Design.Space.s) {
                 Image(systemName: "folder")
-                    .font(.system(size: 14))
-                    .foregroundStyle(palette.ink.opacity(0.55))
-                VStack(alignment: .leading, spacing: 2) {
+                    .iconWidth(.regular)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: Design.Space.xxs) {
                     Text(project.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(palette.ink.opacity(0.92))
-                        .lineLimit(1)
+                        .textRole(.body)
+                        .fontWeight(.semibold)
                     Text(project.folder.map(Self.shortened) ?? "No folder")
-                        .font(.system(size: 12))
-                        .foregroundStyle(palette.ink.opacity(0.45))
-                        .lineLimit(1)
+                        .textRole(.caption, .secondary)
                         .truncationMode(.middle)
                     Text(project.chatTitle ?? "No conversations")
-                        .font(.system(size: 13, weight: open ? .semibold : .regular))
-                        .foregroundStyle(palette.ink.opacity(project.chatID == nil ? 0.4 : 0.75))
-                        .lineLimit(1)
+                        .textRole(.label, .secondary)
+                        .fontWeight(open ? .semibold : .regular)
                     if project.chatID != nil {
                         Text(project.updatedAt, format: .relative(presentation: .named))
-                            .font(.system(size: 11))
-                            .foregroundStyle(palette.ink.opacity(0.4))
+                            .textRole(.caption, .secondary)
                     }
                 }
-                Spacer(minLength: 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .padding(.horizontal, Design.Space.s)
+            .padding(.vertical, Design.Space.xs)
+            .background(Design.Radius.shape(Design.Radius.control)
                 .fill(open ? palette.accent.opacity(0.14) : Color.clear))
             .contentShape(Rectangle())
         }

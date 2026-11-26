@@ -15,7 +15,7 @@ struct GlassesButton: View {
             open = true
         } label: {
             Image(systemName: "eyeglasses")
-                .font(.system(size: 13, weight: .semibold))
+                .textRole(.caption, .primary)
                 .foregroundStyle(glasses.showing ? palette.accent : palette.ink.opacity(0.7))
                 .frame(width: 32, height: 32)
                 .background(Circle().fill(palette.ink.opacity(0.08)))
@@ -90,8 +90,10 @@ struct GlassesView: View {
                 if glasses.previewing {
                     GlassPreview(glasses: glasses)
                         .aspectRatio(1, contentMode: .fit)
-                        .background(Color.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        // The glasses' display is dark whatever the phone's look is.
+                        .background(Design.Fill.content.style)
+                        .environment(\.colorScheme, .dark)
+                        .clipShape(Design.Radius.shape(Design.Radius.card))
                         .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
                         .accessibilityLabel("Simulated glasses display")
                     Button("Stop Preview") {
@@ -113,7 +115,7 @@ struct GlassesView: View {
             if let problem = glasses.problem {
                 Section {
                     Text(problem)
-                        .font(.footnote)
+                        .font(Design.TextRole.caption.font)
                         .foregroundStyle(palette.rose)
                     if glasses.needsGlassesUpdate {
                         Button("Update the App on the Glasses") {

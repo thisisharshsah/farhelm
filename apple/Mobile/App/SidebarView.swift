@@ -25,20 +25,20 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: Design.Space.s) {
             // Search and New, as at the top of the Mac's sidebar.
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
+            HStack(spacing: Design.Space.xs) {
+                HStack(spacing: Design.Space.xs) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13))
-                        .foregroundStyle(palette.ink.opacity(0.5))
+                        .iconWidth(.regular)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     TextField("Search", text: $query)
-                        .font(.system(size: 15))
+                        .textRole(.body)
                         .textInputAutocapitalization(.never)
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 38)
-                .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(palette.ink.opacity(0.07)))
+                .padding(Design.Space.xs)
+                .background(Design.Fill.raised.style, in: Design.Radius.shape(Design.Radius.control))
                 Button {
                     run {
                         try await session.newChat()
@@ -46,33 +46,27 @@ struct SidebarView: View {
                     }
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(palette.shade)
-                        .frame(width: 38, height: 38)
-                        .background(Circle().fill(palette.accentGradient))
                 }
-                .buttonStyle(.plain)
+                .glassButton(.prominent, size: .large)
                 .disabled(!session.isLive)
                 .accessibilityLabel("New chat")
             }
 
-            Picker("Show", selection: $showProjects) {
-                Text("Chats").tag(false)
-                Text("Projects").tag(true)
-            }
-            .pickerStyle(.segmented)
+            SegmentedSwitcher("Show", options: [
+                SwitcherOption(id: false, title: "Chats", symbol: "bubble.left"),
+                SwitcherOption(id: true, title: "Projects", symbol: "folder")
+            ], selection: $showProjects)
 
             if showProjects {
                 ProjectsView(picked: picked)
             } else {
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: Design.Space.xxs) {
                     ForEach(shown) { chat in row(chat) }
                     if shown.isEmpty {
                         Text(session.isLive ? (query.isEmpty ? "No chats yet." : "Nothing matches.") : "Reaching your Mac…")
-                            .font(.system(size: 13))
-                            .foregroundStyle(palette.ink.opacity(0.45))
-                            .padding(.top, 30)
+                            .textRole(.body, .secondary)
+                            .padding(.top, Design.Space.xxl)
                     }
                 }
             }
@@ -81,13 +75,13 @@ struct SidebarView: View {
 
             if let problem {
                 Text(problem)
-                    .font(.footnote)
+                    .font(Design.TextRole.caption.font)
                     .foregroundStyle(palette.rose)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             macRow
         }
-        .padding(12)
+        .padding(Design.Space.s)
         .sheet(isPresented: $pairing) {
             NavigationStack { PairView() }
         }
@@ -101,30 +95,28 @@ struct SidebarView: View {
                 picked()
             }
         } label: {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: Design.Space.xs) {
+                VStack(alignment: .leading, spacing: Design.Space.xxs) {
                     Text(chat.title)
-                        .font(.system(size: 15, weight: open ? .semibold : .regular))
-                        .foregroundStyle(palette.ink.opacity(open ? 0.96 : 0.82))
-                        .lineLimit(1)
+                        .textRole(.body)
+                        .fontWeight(open ? .semibold : .regular)
                     Text(chat.date, format: .relative(presentation: .named))
-                        .font(.system(size: 11))
-                        .foregroundStyle(palette.ink.opacity(0.4))
+                        .textRole(.caption, .secondary)
                 }
-                Spacer(minLength: 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if chat.waiting == true {
                     Image(systemName: "exclamationmark.bubble.fill")
-                        .font(.system(size: 13))
+                        .textRole(.label)
                         .foregroundStyle(palette.amber)
                         .accessibilityLabel("Waiting for you")
                 } else if chat.running == true || (open && session.meta.busy) {
-                    LoadingMark(state: .working, size: 16)
+                    LoadingMark(state: .working, size: Design.Icon.regular.width)
                         .accessibilityLabel("Working")
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .padding(.horizontal, Design.Space.s)
+            .padding(.vertical, Design.Space.xs)
+            .background(Design.Radius.shape(Design.Radius.control)
                 .fill(open ? palette.accent.opacity(0.14) : Color.clear))
             .contentShape(Rectangle())
         }
@@ -133,10 +125,10 @@ struct SidebarView: View {
 
     /// The Mac in use, how it is reached, and the Macs menu.
     private var macRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Design.Space.s) {
             switch session.link {
             case .connecting:
-                LoadingMark(state: .thinking, size: 18)
+                LoadingMark(state: .thinking, size: Design.Icon.regular.width)
             case .live:
                 Circle().fill(palette.mint).frame(width: 8, height: 8).frame(width: 18)
             case .failed:
@@ -146,30 +138,38 @@ struct SidebarView: View {
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(store.selected?.name ?? "No Mac")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(palette.ink.opacity(0.9))
+                    .textRole(.heading, .primary)
                     .lineLimit(1)
+                    .foregroundStyle(palette.ink.opacity(0.9))
                 Text(linkText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(palette.ink.opacity(0.45))
+                    .textRole(.caption, .secondary)
                     .lineLimit(2)
+                    .foregroundStyle(palette.ink.opacity(0.45))
             }
             Spacer(minLength: 4)
             if case .failed = session.link {
                 Button("Retry") { session.restart() }
-                    .font(.system(size: 12, weight: .semibold))
+                    .textRole(.caption, .primary)
                     .buttonStyle(.plain)
                     .foregroundStyle(palette.accent)
             }
             GlassesButton()
             Menu {
                 if store.macs.count > 1 {
-                    Picker("Mac", selection: Binding(get: { store.selected?.id ?? "" },
-                                                     set: { id in
-                                                         store.selectedID = id
-                                                         session.restart()
-                                                     })) {
-                        ForEach(store.macs) { mac in Text(mac.name).tag(mac.id) }
+                    // A native menu section with a check on the Mac in use.
+                    Section("Mac") {
+                        ForEach(store.macs) { mac in
+                            Button {
+                                store.selectedID = mac.id
+                                session.restart()
+                            } label: {
+                                if mac.id == store.selected?.id {
+                                    Label(mac.name, systemImage: "checkmark")
+                                } else {
+                                    Text(mac.name)
+                                }
+                            }
+                        }
                     }
                 }
                 Button("Pair Another Mac…", systemImage: "plus") { pairing = true }
@@ -181,15 +181,15 @@ struct SidebarView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
+                    .textRole(.label)
                     .foregroundStyle(palette.ink.opacity(0.7))
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(palette.ink.opacity(0.08)))
             }
             .accessibilityLabel("Macs")
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.ink.opacity(0.05)))
+        .padding(Design.Space.s)
+        .background(Design.Radius.shape(Design.Radius.tile).fill(palette.ink.opacity(0.05)))
     }
 
     private var linkText: String {

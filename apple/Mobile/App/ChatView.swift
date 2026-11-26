@@ -63,7 +63,7 @@ struct ChatView: View {
                         .onDisappear { if !BottomTracking.measuresBottom { atBottom = false } }
                 }
                 .padding(.horizontal, Design.gutter)
-                .padding(.top, 8)
+                .padding(.top, Design.Space.xs)
                 .padding(.bottom, 48)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -74,7 +74,7 @@ struct ChatView: View {
             .onChange(of: meta.queued.count) { _, _ in follow(reader) }
             .overlay(alignment: .bottom) { floating(reader) }
         }
-        .background { if !framed { CompanionBackdrop() } }
+        .background(Design.Fill.content.style)
         .safeAreaInset(edge: .top, spacing: 0) { topBar }
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomArea }
         .toolbar(.hidden, for: .navigationBar)
@@ -113,16 +113,15 @@ struct ChatView: View {
     /// bubbles. One tap starts dictating, puts the cursor in the box, picks
     /// a photo or asks about the Mac's screen.
     private var empty: some View {
-        VStack(spacing: 14) {
-            LoadingMark(state: session.isLive ? .idle : .thinking, size: 48)
+        VStack(spacing: Design.Space.m) {
+            LoadingMark(state: session.isLive ? .idle : .thinking, size: Design.Icon.large.width * 2)
             Text(session.isLive ? "Ready when you are" : "Reaching your Mac…")
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundStyle(palette.ink.opacity(session.isLive ? 0.92 : 0.55))
+                .textRole(.heading, session.isLive ? .primary : .secondary)
             if session.isLive {
                 let ways = starts
-                ChoiceBubbles(ways.map { $0.bubble }, size: 14) { ways[$0].start() }
+                RoleSized(.label) { points in ChoiceBubbles(ways.map { $0.bubble }, size: points) { ways[$0].start() } }
                     .frame(maxWidth: 380)
-                    .padding(.top, 2)
+                    .padding(.top, Design.Space.xxs)
             }
         }
         .frame(maxWidth: .infinity)
@@ -141,19 +140,17 @@ struct ChatView: View {
     // MARK: The top bar
 
     private var topBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Space.xs) {
             if let showChats {
                 GlassIconButton("sidebar.left", label: "Chats", action: showChats)
             }
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: Design.Space.xxs) {
                 Text(meta.title.isEmpty ? "Companion" : meta.title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(palette.ink.opacity(0.96))
+                    .textRole(.heading)
                     .lineLimit(1)
                 if !meta.mac.isEmpty {
                     Text(meta.mac)
-                        .font(.system(size: 11))
-                        .foregroundStyle(palette.ink.opacity(0.5))
+                        .textRole(.caption, .secondary)
                         .lineLimit(1)
                 }
             }
@@ -164,13 +161,9 @@ struct ChatView: View {
             .disabled(!session.isLive)
         }
         .padding(.horizontal, Design.gutter)
-        .padding(.top, 4)
-        .padding(.bottom, 8)
-        .background(alignment: .top) {
-            LinearGradient(colors: [Color.black.opacity(0.55), .clear], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-        }
+        .padding(.top, Design.Space.xxs)
+        .padding(.bottom, Design.Space.xs)
+        .glassSurface(Design.Radius.shape(Design.Radius.card), fallback: .bar)
     }
 
     // MARK: Floating over the end of the chat
@@ -179,16 +172,15 @@ struct ChatView: View {
         ZStack(alignment: .bottom) {
             HStack {
                 if meta.busy {
-                    StatusPill(statusText, thinking: !meta.agentRunning, size: 13)
+                    RoleSized(.caption) { points in StatusPill(statusText, thinking: !meta.agentRunning, size: points) }
                 }
                 Spacer()
                 if !plan.isEmpty, !planOpen {
                     Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { planOpen = true } } label: {
-                        PlanRing(plan: plan, size: 17, showsCount: true)
-                            .padding(.horizontal, 10)
+                        PlanRing(plan: plan, size: Design.Icon.regular.width, showsCount: true)
+                            .padding(.horizontal, Design.Space.s)
                             .frame(height: 30)
-                            .background(Capsule().fill(Color.black.opacity(0.4)))
-                            .liquidGlass(in: Capsule())
+                            .glassSurface(Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -198,11 +190,10 @@ struct ChatView: View {
                     withAnimation(.easeOut(duration: 0.25)) { reader.scrollTo("end", anchor: .bottom) }
                 } label: {
                     Image(systemName: "arrow.down")
-                        .font(.system(size: 14, weight: .semibold))
+                        .textRole(.caption, .primary)
                         .foregroundStyle(palette.ink.opacity(0.9))
                         .frame(width: 36, height: 36)
-                        .background(Circle().fill(Color.black.opacity(0.4)))
-                        .liquidGlass(in: Circle())
+                        .glassSurface(Circle())
                 }
                 .buttonStyle(.plain)
                 .padding(.bottom, meta.busy || !plan.isEmpty ? 40 : 0)
@@ -211,7 +202,7 @@ struct ChatView: View {
             }
         }
         .padding(.horizontal, Design.gutter)
-        .padding(.bottom, 6)
+        .padding(.bottom, Design.Space.xs)
         .animation(.spring(response: 0.3, dampingFraction: 0.86), value: meta.busy)
         .animation(.easeOut(duration: 0.2), value: atBottom)
     }
@@ -226,7 +217,7 @@ struct ChatView: View {
     // MARK: The chat box and what sits on it
 
     private var bottomArea: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Design.Space.xs) {
             if planOpen, !plan.isEmpty {
                 PlanCard(plan: plan) {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { planOpen = false }
@@ -238,7 +229,7 @@ struct ChatView: View {
             }
             if let problem = problem ?? dictation.problem {
                 Text(problem)
-                    .font(.footnote)
+                    .font(Design.TextRole.caption.font)
                     .foregroundStyle(palette.rose)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -247,13 +238,9 @@ struct ChatView: View {
             controls
         }
         .padding(.horizontal, Design.gutter)
-        .padding(.top, 6)
-        .padding(.bottom, 6)
-        .background(alignment: .bottom) {
-            LinearGradient(colors: [.clear, Color.black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-        }
+        .padding(.top, Design.Space.xs)
+        .padding(.bottom, Design.Space.xs)
+
         .onChange(of: plan.isEmpty) { _, gone in if gone { planOpen = false } }
         .onChange(of: dictation.heard) { _, heard in
             draft = beforeDictation.isEmpty ? heard : beforeDictation + " " + heard
@@ -272,27 +259,26 @@ struct ChatView: View {
         .sheet(isPresented: $modelsOpen) {
             ModelSheet()
                 .presentationDetents([.medium, .large])
-                .presentationBackground(.ultraThinMaterial)
         }
     }
 
     /// The picked files above the box: each uploading, or ready, with ✕.
     private var fileChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: Design.Space.xs) {
                 ForEach(files) { file in
-                    HStack(spacing: 6) {
+                    HStack(spacing: Design.Space.xs) {
                         if let thumb = file.thumbnail {
                             Image(uiImage: thumb).resizable().scaledToFill()
                                 .frame(width: 26, height: 26)
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .clipShape(Design.Radius.shape(Design.Radius.chip))
                         } else {
                             Image(systemName: "doc")
-                                .font(.system(size: 13))
+                                .textRole(.caption, .primary)
                                 .foregroundStyle(palette.ink.opacity(0.7))
                         }
                         Text(file.name)
-                            .font(.system(size: 12, weight: .medium))
+                            .textRole(.caption, .primary)
                             .foregroundStyle(palette.ink.opacity(0.85))
                             .lineLimit(1)
                             .frame(maxWidth: 140)
@@ -300,20 +286,20 @@ struct ChatView: View {
                             ProgressView().controlSize(.mini)
                         } else if file.failed {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 11))
+                                .textRole(.caption, .secondary)
                                 .foregroundStyle(palette.amber)
                         }
                         Button { files.removeAll { $0.key == file.key } } label: {
                             Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .bold))
+                                .textRole(.caption, .secondary)
                                 .foregroundStyle(palette.ink.opacity(0.55))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Remove \(file.name)")
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, Design.Space.xs)
                     .frame(height: 34)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(palette.ink.opacity(0.08)))
+                    .background(Design.Radius.shape(Design.Radius.control).fill(palette.ink.opacity(0.08)))
                 }
             }
         }
@@ -375,20 +361,20 @@ struct ChatView: View {
     /// As on the Mac: the box holds only what you write, with Send (or
     /// Stop) at its end.
     private var chatBox: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: Design.Space.xs) {
             TextField(meta.question == nil ? "Ask anything" : "Your answer", text: $draft, axis: .vertical)
-                .font(.system(size: 15))
+                .textRole(.body)
                 .lineLimit(1...6)
                 .focused($typing)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 6)
+                .padding(.horizontal, Design.Space.xs)
+                .padding(.vertical, Design.Space.xs)
             if meta.busy {
                 Button {
                     run { try await session.stopWork() }
                 } label: {
                     Image(systemName: "stop.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
+                        .font(Design.Icon.small.font)
+                        .foregroundStyle(.background)
                         .frame(width: 32, height: 32)
                         .background(Circle().fill(palette.rose))
                 }
@@ -399,7 +385,7 @@ struct ChatView: View {
             if !meta.busy || ready {
                 Button { send(draft) } label: {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
+                        .textRole(.caption, .secondary)
                         .foregroundStyle(palette.ink.opacity(ready ? 1 : 0.4))
                         .frame(width: 32, height: 32)
                         .background(Circle().fill(ready ? AnyShapeStyle(palette.accentGradient)
@@ -409,18 +395,18 @@ struct ChatView: View {
                 .accessibilityLabel("Send")
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.45)))
-        .liquidGlass(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(palette.accent.opacity(typing ? 0.45 : 0), lineWidth: 1))
+        .padding(.horizontal, Design.Space.xs)
+        .padding(.vertical, Design.Space.xs)
+        .glassSurface(Design.Radius.shape(Design.Radius.card))
+        .overlay(Design.Radius.shape(Design.Radius.card)
+            .strokeBorder(Design.Tone.accent.color.opacity(typing ? 0.45 : 0), lineWidth: 1))
         .animation(.easeOut(duration: 0.18), value: typing)
     }
 
     /// Under the box, as on the Mac: the model, its effort, and the mode.
     private var controls: some View {
-        HStack(spacing: 8) {
+        ScrollView(.horizontal) {
+        HStack(spacing: Design.Space.xs) {
             Menu {
                 Button("Photos", systemImage: "photo.on.rectangle") { photosOpen = true }
                 Button("Files", systemImage: "folder") { filesOpen = true }
@@ -444,18 +430,18 @@ struct ChatView: View {
             if !meta.model.isEmpty {
                 // The model in use; a tap lists the engines and their models.
                 Button { modelsOpen = true } label: {
-                    HStack(spacing: 6) {
-                        LoadingMark(state: .idle, size: 14)
+                    HStack(spacing: Design.Space.xs) {
+                        LoadingMark(state: .idle, size: Design.Icon.small.width)
                         Text(meta.model)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(palette.ink.opacity(0.85))
+                            .textRole(.label)
+                            .fontWeight(.semibold)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Image(systemName: "chevron.up")
-                            .font(.system(size: 8, weight: .bold))
+                            .textRole(.caption)
                             .foregroundStyle(palette.ink.opacity(0.5))
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, Design.Space.s)
                     .frame(height: 28)
                     .bubbleSurface(tint: palette.accent, lit: modelsOpen)
                 }
@@ -473,7 +459,8 @@ struct ChatView: View {
                 run { try await session.setAccess(access) }
             }
         }
-        .padding(.horizontal, 2)
+        .padding(.horizontal, Design.Space.xxs)
+        }
         .disabled(!session.isLive)
     }
 
@@ -558,9 +545,9 @@ private struct MessageStack<Content: View>: View {
 
     var body: some View {
         if #available(iOS 18, *) {
-            VStack(alignment: .leading, spacing: 20) { content }
+            VStack(alignment: .leading, spacing: Design.Space.l) { content }
         } else {
-            LazyVStack(alignment: .leading, spacing: 20) { content }
+            LazyVStack(alignment: .leading, spacing: Design.Space.l) { content }
         }
     }
 }
@@ -617,33 +604,30 @@ struct TurnView: View {
     private var palette: Palette { Design.palette() }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
             if turn.image, let client = session.client {
                 TurnImage(client: client, turnID: turn.id, placeholder: palette.ink.opacity(0.06))
                 .frame(maxWidth: 240)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(Design.Radius.shape(Design.Radius.control))
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             if !turn.me.isEmpty { request }
             if !turn.steps.isEmpty { work }
             if !turn.reply.isEmpty {
                 Text(markdown(turn.reply))
-                    .font(.system(size: 15))
-                    .foregroundStyle(palette.ink.opacity(0.92))
-                    .lineSpacing(3)
+                    .textRole(.body)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if turn.streaming, turn.steps.isEmpty {
-                HStack(spacing: 7) {
-                    LoadingMark(state: .thinking, size: 16)
+                HStack(spacing: Design.Space.xs) {
+                    LoadingMark(state: .thinking, size: Design.Icon.regular.width)
                     Text("Thinking…")
-                        .font(.system(size: 13))
-                        .foregroundStyle(palette.ink.opacity(0.55))
+                        .textRole(.label, .secondary)
                 }
             }
             if !turn.error.isEmpty {
                 Label(turn.error, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
+                    .font(Design.TextRole.caption.font)
                     .foregroundStyle(palette.rose)
             }
             if !turn.streaming, !turn.reply.isEmpty { replyFooter }
@@ -654,24 +638,23 @@ struct TurnView: View {
     }
 
     private var request: some View {
-        VStack(alignment: .trailing, spacing: 4) {
+        VStack(alignment: .trailing, spacing: Design.Space.xxs) {
             if editing {
                 editor
             } else {
             Text(turn.me)
-                .font(.system(size: 15))
-                .foregroundStyle(palette.ink.opacity(0.93))
+                .textRole(.body)
                 .textSelection(.enabled)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, Design.Space.s)
+                .padding(.vertical, Design.Space.xs)
                 .background(BubbleShape(side: .right).fill(palette.accent.opacity(0.10)))
                 .overlay(BubbleShape(side: .right).strokeBorder(palette.accent.opacity(0.24), lineWidth: 0.5))
-            HStack(spacing: 4) {
+            HStack(spacing: Design.Space.xxs) {
                 if let date = turn.date {
                     Text(date, style: .time)
-                        .font(.system(size: 11))
+                        .textRole(.caption)
                         .foregroundStyle(palette.ink.opacity(0.45))
-                        .padding(.trailing, 4)
+                        .padding(.trailing, Design.Space.xxs)
                 }
                 if !turn.streaming {
                     FooterIcon("pencil", label: "Edit") {
@@ -697,15 +680,15 @@ struct TurnView: View {
 
     /// The message open for editing, in its bubble: Cancel and Send.
     private var editor: some View {
-        VStack(alignment: .trailing, spacing: 8) {
+        VStack(alignment: .trailing, spacing: Design.Space.xs) {
             TextField("Message", text: $editText, axis: .vertical)
-                .font(.system(size: 15))
+                .textRole(.body)
                 .lineLimit(1...10)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, Design.Space.s)
+                .padding(.vertical, Design.Space.xs)
                 .background(BubbleShape(side: .right).fill(palette.accent.opacity(0.14)))
                 .overlay(BubbleShape(side: .right).strokeBorder(palette.accent.opacity(0.45), lineWidth: 1))
-            HStack(spacing: 14) {
+            HStack(spacing: Design.Space.m) {
                 Button("Cancel") { editing = false }
                     .foregroundStyle(palette.ink.opacity(0.7))
                 Button("Send") {
@@ -715,7 +698,7 @@ struct TurnView: View {
                 .foregroundStyle(palette.accent)
                 .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .font(.system(size: 14))
+            .textRole(.label)
             .buttonStyle(.plain)
         }
     }
@@ -728,28 +711,28 @@ struct TurnView: View {
     /// The work it took: one line until opened, open while it is going.
     private var work: some View {
         let open = workOpen || turn.streaming
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: Design.Space.xs) {
             Button {
                 withAnimation(.easeOut(duration: 0.2)) { workOpen.toggle() }
             } label: {
-                HStack(spacing: 7) {
+                HStack(spacing: Design.Space.xs) {
                     LoadingMark(state: turn.streaming ? .working : (turn.steps.contains(where: \.failed) && !turn.error.isEmpty ? .failed : .done),
-                                size: 15)
+                                size: Design.Icon.small.width)
                     Text(turn.streaming ? (turn.steps.last.map { $0.why?.isEmpty == false ? $0.why! : $0.title } ?? "Working")
                          : "\(turn.steps.count) step\(turn.steps.count == 1 ? "" : "s")")
-                        .font(.system(size: 13, weight: .medium))
+                        .textRole(.body)
                         .foregroundStyle(palette.ink.opacity(0.7))
                         .lineLimit(1)
                     Image(systemName: open ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
+                        .textRole(.caption)
                         .foregroundStyle(palette.ink.opacity(0.4))
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             if open {
-                StepTrail(steps: turn.steps.map(\.design), live: turn.streaming, textSize: 13)
-                    .padding(10)
+                RoleSized(.label) { points in StepTrail(steps: turn.steps.map(\.design), live: turn.streaming, textSize: points) }
+                    .padding(Design.Space.s)
                     .background(RoundedRectangle(cornerRadius: Design.cardRadius, style: .continuous)
                         .fill(palette.ink.opacity(0.04)))
                     .overlay(RoundedRectangle(cornerRadius: Design.cardRadius, style: .continuous)
@@ -761,17 +744,17 @@ struct TurnView: View {
 
     /// As on the Mac: what can be done with it, a divider, then the facts.
     private var replyFooter: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Design.Space.xxs) {
             FooterIcon(copied == "reply" ? "checkmark" : "doc.on.doc", label: "Copy",
                        tint: copied == "reply" ? palette.mint : nil) { copy(turn.reply, as: "reply") }
             ShareLink(item: turn.reply) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Design.TextRole.label.font.weight(.medium))
                     .foregroundStyle(palette.ink.opacity(0.6))
                     .frame(width: 30, height: 30)
             }
-            Rectangle().fill(palette.ink.opacity(0.12)).frame(width: 1, height: 14).padding(.horizontal, 4)
-            LoadingMark(state: .idle, size: 12)
+            Rectangle().fill(palette.ink.opacity(0.12)).frame(width: 1, height: 14).padding(.horizontal, Design.Space.xxs)
+            LoadingMark(state: .idle, size: Design.Icon.small.width)
             Text(turn.model)
                 .lineLimit(1)
             if let date = turn.date {
@@ -779,7 +762,7 @@ struct TurnView: View {
                 Text(date, style: .time)
             }
         }
-        .font(.system(size: 11))
+        .font(Design.TextRole.caption.font)
         .foregroundStyle(palette.ink.opacity(0.45))
     }
 
@@ -821,7 +804,7 @@ private struct TurnImage: View {
             if let image {
                 Image(uiImage: image).resizable().scaledToFit()
             } else {
-                RoundedRectangle(cornerRadius: 10).fill(placeholder).frame(height: 120)
+                Design.Radius.shape(Design.Radius.control).fill(placeholder).frame(height: 120)
             }
         }
         .task(id: turnID) {
@@ -850,13 +833,9 @@ struct GlassIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Design.palette().ink.opacity(0.85))
-                .frame(width: 38, height: 38)
-                .background(Circle().fill(Color.black.opacity(0.35)))
-                .liquidGlass(in: Circle())
+                .iconWidth(.regular)
         }
-        .buttonStyle(.plain)
+        .glassButton(size: .large)
         .accessibilityLabel(label)
     }
 }
@@ -878,7 +857,7 @@ struct FooterIcon: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
+                .font(Design.TextRole.label.font.weight(.medium))
                 .foregroundStyle(tint ?? Design.palette().ink.opacity(0.6))
                 .frame(width: 30, height: 30)
                 .contentShape(Rectangle())
@@ -896,17 +875,16 @@ struct QueuedBubble: View {
 
     var body: some View {
         let palette = Design.palette()
-        VStack(alignment: .trailing, spacing: 5) {
+        VStack(alignment: .trailing, spacing: Design.Space.xxs) {
             Text(item.text)
-                .font(.system(size: 15))
-                .foregroundStyle(palette.ink.opacity(item.void ? 0.35 : 0.6))
+                .textRole(.body, .secondary)
                 .strikethrough(item.void, color: palette.ink.opacity(0.4))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, Design.Space.s)
+                .padding(.vertical, Design.Space.xs)
                 .background(BubbleShape(side: .right).fill(palette.accent.opacity(0.06)))
                 .overlay(BubbleShape(side: .right)
                     .strokeBorder(palette.accent.opacity(0.28), style: StrokeStyle(lineWidth: 0.75, dash: [3, 3])))
-            HStack(spacing: 14) {
+            HStack(spacing: Design.Space.m) {
                 if item.void {
                     Text("Cancelled").foregroundStyle(palette.ink.opacity(0.4))
                     Button("Restore") { act("restore") }.underline()
@@ -920,7 +898,7 @@ struct QueuedBubble: View {
                         .foregroundStyle(palette.accent)
                 }
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(Design.TextRole.caption.font.weight(.semibold))
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -934,21 +912,21 @@ struct NextSteps: View {
 
     var body: some View {
         let palette = Design.palette()
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
+            HStack(spacing: Design.Space.xs) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Design.TextRole.caption.font.weight(.semibold))
                     .foregroundStyle(palette.accentGradient)
                 Text("Next step")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Design.TextRole.caption.font.weight(.semibold))
                     .foregroundStyle(palette.accent)
             }
             // Each step a bubble, as on the Mac; one tap does it.
-            ChoiceBubbles(steps, size: 14) { send($0) }
+            RoleSized(.label) { points in ChoiceBubbles(steps, size: points) { send($0) } }
                 .id(steps)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(Design.Space.s)
         .background(RoundedRectangle(cornerRadius: Design.cardRadius, style: .continuous).fill(palette.ink.opacity(0.05)))
     }
 }
@@ -961,19 +939,19 @@ struct PlanCard: View {
 
     var body: some View {
         let palette = Design.palette()
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
             HStack {
                 Text("Plan")
-                    .font(.system(size: 14, weight: .semibold))
+                    .textRole(.label)
                     .foregroundStyle(palette.ink.opacity(0.95))
                 Spacer()
-                PlanRing(plan: plan, size: 16, showsCount: true)
-                    .padding(.horizontal, 9)
+                PlanRing(plan: plan, size: Design.Icon.regular.width, showsCount: true)
+                    .padding(.horizontal, Design.Space.xs)
                     .frame(height: 26)
                     .background(Capsule().fill(palette.accent.opacity(0.16)))
                 Button(action: close) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(Design.TextRole.caption.font.weight(.bold))
                         .foregroundStyle(palette.ink.opacity(0.6))
                         .frame(width: 26, height: 26)
                         .background(Circle().fill(palette.ink.opacity(0.08)))
@@ -982,15 +960,14 @@ struct PlanCard: View {
                 .accessibilityLabel("Close the plan")
             }
             ScrollView {
-                PlanChecklist(plan: plan, textSize: 14)
+                RoleSized(.label) { points in PlanChecklist(plan: plan, textSize: points) }
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 220)
             .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.45)))
-        .liquidGlass(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(Design.Space.s)
+        .glassSurface(Design.Radius.shape(Design.Radius.card))
     }
 }
 
@@ -1015,15 +992,15 @@ struct EffortMenu: View {
                 Button(Self.label(level)) { choose(level) }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: Design.Space.xxs) {
                 // Burning, still: the box's controls stay in view, and a
                 // flicker would redraw the screen all the time.
-                Fireball(heat: heat, size: 12, alive: lit, flickers: false)
+                Fireball(heat: heat, size: Design.Icon.small.width, alive: lit, flickers: false)
                 Text(Self.label(effort))
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(Design.TextRole.caption.font.weight(.semibold))
                     .foregroundStyle(lit ? palette.accent : palette.ink.opacity(0.85))
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, Design.Space.s)
             .frame(height: 28)
             .bubbleSurface(tint: lit ? palette.accent : nil)
             .shadow(color: palette.accent.opacity(lit ? 0.10 + 0.22 * heat : 0), radius: 2 + 4 * heat)
@@ -1064,34 +1041,34 @@ struct AccessSwitch: View {
     var body: some View {
         let palette = Design.palette()
         let tint = access == "full" ? palette.rose : palette.amber
-        HStack(spacing: 2) {
+        HStack(spacing: Design.Space.xxs) {
             Button { choose("manual") } label: {
                 Text("Manual")
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, Design.Space.s)
                     .frame(height: 24)
                     .background { mark(!auto, palette.ink) }
                     .foregroundStyle(palette.ink.opacity(auto ? 0.55 : 0.95))
             }
             Button { if !auto { choose("autoEdit") } } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: Design.Space.xxs) {
                     Text("Auto")
                     if auto {
                         Image(systemName: access == "full" ? "bolt.fill" : "pencil")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(Design.TextRole.caption.font.weight(.bold))
                             .frame(width: 18, height: 18)
                             .background(Circle().fill(tint.opacity(0.22)))
                             .onTapGesture { choose(access == "full" ? "autoEdit" : "full") }
                     }
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, Design.Space.s)
                 .frame(height: 24)
                 .background { mark(auto, tint) }
                 .foregroundStyle(auto ? tint : palette.ink.opacity(0.55))
             }
         }
-        .font(.system(size: 12, weight: .semibold))
+        .font(Design.TextRole.caption.font.weight(.semibold))
         .buttonStyle(.plain)
-        .padding(2)
+        .padding(Design.Space.xxs)
         .bubbleSurface(tint: auto ? tint : nil, lifts: false)
         .animation(.spring(response: 0.34, dampingFraction: 0.78), value: access)
     }
@@ -1105,24 +1082,23 @@ struct QuestionCard: View {
 
     var body: some View {
         let palette = Design.palette()
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                LoadingMark(state: .waiting, size: 14)
+        VStack(alignment: .leading, spacing: Design.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
+                LoadingMark(state: .waiting, size: Design.Icon.small.width)
                 Text(question)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(Design.TextRole.label.font.weight(.medium))
                     .foregroundStyle(palette.ink.opacity(0.92))
                     .fixedSize(horizontal: false, vertical: true)
             }
             // Its choices, as bubbles, as on the Mac; one tap answers.
             if !options.isEmpty {
-                ChoiceBubbles(options, numbered: true, size: 14) { answer($0) }
+                RoleSized(.label) { points in ChoiceBubbles(options, numbered: true, size: points) { answer($0) } }
                     .id(question)
             }
         }
-        .padding(12)
+        .padding(Design.Space.s)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Design.cardRadius, style: .continuous).fill(Color.black.opacity(0.4)))
-        .liquidGlass(in: RoundedRectangle(cornerRadius: Design.cardRadius, style: .continuous), tint: palette.amber)
+        .glassSurface(Design.Radius.shape(Design.Radius.card), tint: palette.amber)
     }
 }
 
@@ -1171,7 +1147,7 @@ struct RowIcon: View {
     var body: some View {
         let palette = Design.palette()
         Image(systemName: symbol)
-            .font(.system(size: 13, weight: .bold))
+            .font(Design.TextRole.label.font.weight(.bold))
             .foregroundStyle(tint ?? (on ? palette.accent : palette.ink.opacity(0.85)))
             .frame(width: 30, height: 30)
             .background(Circle().fill((tint ?? (on ? palette.accent : palette.ink)).opacity(on ? 0.18 : 0.10)))
