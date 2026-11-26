@@ -3278,7 +3278,9 @@ struct WorkTrail: View {
         return "\(total / 3600)h \(total % 3600 / 60)m"
     }
     /// Work stays open when asked to in Settings > Look.
-    @AppStorage("workAlwaysOpen") private var alwaysOpen = false
+    /// The work folds to one line once the agent is done; a click opens
+    /// it. Keeping it open in every reply is no longer a choice.
+    private let alwaysOpen = false
     /// Opened or folded by hand; nil follows the default: open while the
     /// agent works (or always, by the setting), folded once it is done.
     @State private var chosen: Bool?

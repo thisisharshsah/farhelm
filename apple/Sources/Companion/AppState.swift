@@ -358,8 +358,6 @@ final class AppState: ObservableObject {
     /// What the last recheck replaced, so it can be undone.
     private var rescanUndo: (current: [UUID], original: [TranscriptSegment])?
     private var rescanTask: Task<Void, Never>?
-    /// The by-voice pass that runs by itself while listening.
-    private var voicePassTask: Task<Void, Never>?
     private var voicePassBusy = false
     private var polishBackoffUntil = Date.distantPast
     private var bag = Set<AnyCancellable>()
@@ -558,7 +556,6 @@ final class AppState: ObservableObject {
                         micSessionID = 0
                         if separationReady {
                             micSessionID = await speakerID.sessionID()
-                            startVoicePasses()
                         }
                         voiceRemap = [:]
                     }
@@ -584,7 +581,6 @@ final class AppState: ObservableObject {
         isListening = false
         statusText = "Ready"
         autoSuggestWork?.cancel()
-        voicePassTask?.cancel()
         mic.stop()
         // Kept so a start() right after this stop waits for the teardown
         // instead of racing it.
@@ -992,41 +988,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// While listening, the accurate by-voice pass (the one Recheck uses)
-    /// runs by itself every so often and quietly corrects who said what. The
-    /// live labels are a first guess made on the spot; this pass hears the
-    /// whole session before deciding, and what it finds also teaches the
-    /// live check. It only runs when there is something new to check, and
-    /// backs off as a long session makes each pass take longer.
-    private func startVoicePasses() {
-        voicePassTask?.cancel()
-        voicePassTask = Task { @MainActor [weak self] in
-            var wait: TimeInterval = 45
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                guard let self, !Task.isCancelled, self.isListening else { return }
-                let session = self.micSessionID
-                guard AppSettings.shared.autoVoiceRecheck, !self.isRescanning, session != 0 else { continue }
-                let fresh = self.segments.contains {
-                    $0.isFinal && !$0.systemAudio && $0.micSession == session
-                        && !$0.voiceVerified && !$0.speakerByHand
-                }
-                guard fresh else { continue }
-                let began = Date()
-                if await self.relabelByVoice(quiet: true) {
-                    self.afterTranscriptRearranged()
-                    self.persist()
-                }
-                wait = min(max(45, Date().timeIntervalSince(began) * 10), 300)
-            }
-        }
-    }
-
     /// Re-labels every mic line of this session from the recorded audio, with
     /// the offline diarization pipeline. Returns whether anything changed.
     ///
-    /// `quiet` is the automatic pass: it reports no errors. Lines whose
-    /// speaker the user set by hand are never changed.
+    /// `quiet` reports no errors. Lines whose speaker the user set by hand
+    /// are never changed. It runs only when the person asks (Recheck): a
+    /// pass that ran by itself while listening moved replies to other
+    /// questions under the person's eyes, and was taken out.
     private func relabelByVoice(quiet: Bool = false) async -> Bool {
         // One pass at a time.
         while voicePassBusy {

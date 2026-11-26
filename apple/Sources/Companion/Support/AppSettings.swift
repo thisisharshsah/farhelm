@@ -112,11 +112,10 @@ final class AppSettings: ObservableObject {
     @Published var captureMic: Bool { didSet { d.set(captureMic, forKey: "captureMic") } }
     @Published var captureSystemAudio: Bool { didSet { d.set(captureSystemAudio, forKey: "captureSystemAudio") } }
     @Published var separateMicVoices: Bool { didSet { d.set(separateMicVoices, forKey: "separateMicVoices") } }
-    /// Re-check who said what from the recorded audio by itself while listening.
-    @Published var autoVoiceRecheck: Bool { didSet { d.set(autoVoiceRecheck, forKey: "autoVoiceRecheck") } }
     @Published var micSensitivity: MicSensitivity { didSet { d.set(micSensitivity.rawValue, forKey: "micSensitivity") } }
     @Published var asrEnglishOnly: Bool { didSet { d.set(asrEnglishOnly, forKey: "asrEnglishOnly") } }
-    @Published var polishTranscript: Bool { didSet { d.set(polishTranscript, forKey: "polishTranscript") } }
+    /// No longer a choice: always on.
+    let polishTranscript = true
     /// The context window local models (Farhelm, Ollama) are loaded with.
     /// What the user means to spend on engines in a month, in dollars. Zero
     /// means no budget is set.
@@ -138,7 +137,8 @@ final class AppSettings: ObservableObject {
     @Published var chatTextScale: Double { didSet { d.set(chatTextScale, forKey: "chatTextScale") } }
     /// Replies in a serif, as the Claude app sets them (the Mac's own New
     /// York): easier on long reading. Your messages and code keep theirs.
-    @Published var replySerif: Bool { didSet { d.set(replySerif, forKey: "replySerif") } }
+    /// No longer a choice: always on.
+    let replySerif = true
     /// One drag selects across the chat's messages, as in a document
     /// (`ChatSelection`). Off until switched on: messages are then drawn
     /// by a text view of AppKit's, not by SwiftUI's text.
@@ -162,7 +162,8 @@ final class AppSettings: ObservableObject {
     /// subscriptions are never cut off.
     @Published var apiStepMinutes: Int { didSet { d.set(apiStepMinutes, forKey: "apiStepMinutes") } }
     /// Shows the orbit on screen where the agent clicks, types or opens.
-    @Published var agentOrbit: Bool { didSet { d.set(agentOrbit, forKey: "agentOrbit") } }
+    /// No longer a choice: always on.
+    let agentOrbit = true
     /// Lets answers use where the Mac is (weather here, what is nearby).
     @Published var useLocation: Bool { didSet { d.set(useLocation, forKey: "useLocation") } }
     /// The panel floats above every other window. Off, it behaves like an
@@ -176,7 +177,8 @@ final class AppSettings: ObservableObject {
     /// An icon in the Dock, like an ordinary app. Off unless asked for.
     @Published var showInDock: Bool { didSet { d.set(showInDock, forKey: "showInDock") } }
     @Published var autoSuggest: Bool { didSet { d.set(autoSuggest, forKey: "autoSuggest") } }
-    @Published var replyToQuestionsOnly: Bool { didSet { d.set(replyToQuestionsOnly, forKey: "replyToQuestionsOnly") } }
+    /// No longer a choice: always on.
+    let replyToQuestionsOnly = true
     @Published var sessionMode: SessionMode { didSet { d.set(sessionMode.rawValue, forKey: "sessionMode") } }
     @Published var setupDismissed: Bool { didSet { d.set(setupDismissed, forKey: "setupDismissed") } }
     /// The monitor screen answers read. 0 follows the mouse pointer.
@@ -255,10 +257,8 @@ final class AppSettings: ObservableObject {
         captureMic = d.object(forKey: "captureMic") as? Bool ?? true
         captureSystemAudio = d.object(forKey: "captureSystemAudio") as? Bool ?? true
         separateMicVoices = d.object(forKey: "separateMicVoices") as? Bool ?? false
-        autoVoiceRecheck = d.object(forKey: "autoVoiceRecheck") as? Bool ?? true
         micSensitivity = MicSensitivity(rawValue: d.string(forKey: "micSensitivity") ?? "") ?? .medium
         asrEnglishOnly = d.object(forKey: "asrEnglishOnly") as? Bool ?? false
-        polishTranscript = d.object(forKey: "polishTranscript") as? Bool ?? true
         localContextTokens = d.object(forKey: "localContextTokens") as? Int ?? 32_000
         effort = Effort(rawValue: d.string(forKey: "effort") ?? "") ?? .auto
         monthlyBudget = d.double(forKey: "monthlyBudget")
@@ -266,21 +266,18 @@ final class AppSettings: ObservableObject {
         keepNotes = d.object(forKey: "keepNotes") as? Bool ?? true
         hideFromScreenShare = d.object(forKey: "hideFromScreenShare") as? Bool ?? true
         useLocation = d.bool(forKey: "useLocation")
-        agentOrbit = d.object(forKey: "agentOrbit") as? Bool ?? true
         // Off for new installs; a value the user has saved is kept.
         historyGit = d.object(forKey: "historyGit") as? Bool ?? false
         apiStepMinutes = d.object(forKey: "apiStepMinutes") as? Int ?? 15
         d.removeObject(forKey: "contentZoom")
         let chatText = d.double(forKey: "chatTextScale")
         chatTextScale = Self.chatTextRange.contains(chatText) ? chatText : Self.chatTextDefault
-        replySerif = d.object(forKey: "replySerif") as? Bool ?? true
         selectAcross = d.object(forKey: "selectAcross") as? Bool ?? false
         showInMenuBar = d.bool(forKey: "showInMenuBar")
         keepOnTop = d.object(forKey: "keepOnTop") as? Bool ?? true
         onAllDesktops = d.object(forKey: "onAllDesktops") as? Bool ?? true
         showInDock = d.bool(forKey: "showInDock")
         autoSuggest = d.object(forKey: "autoSuggest") as? Bool ?? true
-        replyToQuestionsOnly = d.object(forKey: "replyToQuestionsOnly") as? Bool ?? true
         sessionMode = SessionMode.current
         setupDismissed = d.bool(forKey: "setupDismissed")
         screenDisplayID = d.integer(forKey: "screenDisplayID")
