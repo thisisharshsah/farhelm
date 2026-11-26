@@ -645,7 +645,7 @@ final class Advanced: ObservableObject {
                                       messages: Supervisor.messages(history: history, message: message, context: context,
                                                                     attached: attached,
                                                                     room: max(2_000, room - context.count - Supervisor.system.count)))
-            request.maxOutput = min(budget.agentOutputTokens, 8_000)
+            request.maxOutput = min(budget.agentOutputTokens, 16_000)
             return (request.tagged("Supervisor"), config)
         }
         return AsyncThrowingStream { continuation in

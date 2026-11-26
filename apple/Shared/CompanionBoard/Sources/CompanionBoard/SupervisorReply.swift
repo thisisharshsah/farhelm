@@ -58,6 +58,15 @@ public struct SupervisorReply: Equatable, Sendable {
             }
             return SupervisorReply(prose: prose, operations: changes, problems: problems)
         }
+        // A block cut off before its end (the reply ran out of room): the
+        // changes that arrived whole are made, and the person is told that
+        // the rest is still to come.
+        if let start = candidates(in: text).last, let changes = salvaged(in: text, from: start) {
+            let count = changes.count == 1 ? "first change was" : "first \(changes.count) changes were"
+            problems.append("The supervisor's reply was cut off before its changes ended: the \(count) made. Say \"continue\" for the rest.")
+            return SupervisorReply(prose: String(text[..<start]).trimmingCharacters(in: .whitespacesAndNewlines),
+                                   operations: changes, problems: problems)
+        }
         if text.contains("```board") {
             problems.append("The supervisor's changes could not be read, so the board was left as it is.")
         }
@@ -133,6 +142,44 @@ public struct SupervisorReply: Equatable, Sendable {
             if between.isEmpty { end = fence.upperBound }
         }
         return (value, end)
+    }
+
+    /// The changes that arrived whole in a block that was cut off: every
+    /// element of its list that closed before the text ended. nil when
+    /// the block is whole, or holds no whole change.
+    private static func salvaged(in text: String, from start: String.Index) -> [BoardOperation]? {
+        guard let open = text[start...].firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var lastWhole: String.Index?
+        var index = open
+        while index < text.endIndex {
+            let character = text[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+            } else if character == "\"" {
+                inString = true
+            } else if character == "{" || character == "[" {
+                depth += 1
+            } else if character == "}" || character == "]" {
+                depth -= 1
+                // The outer object closed: the block is whole, not cut off.
+                if depth <= 0 { return nil }
+                // An element of the list inside the outer object closed.
+                if depth == 2, character == "}" { lastWhole = index }
+            }
+            index = text.index(after: index)
+        }
+        guard let lastWhole, let value = decode(String(text[open...lastWhole]) + "]}"),
+              let changes = operations(from: value), !changes.isEmpty else { return nil }
+        return changes
     }
 
     /// The bracket that closes the one at `open`, with strings skipped.
