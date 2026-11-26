@@ -2487,7 +2487,29 @@ final class AppState: ObservableObject {
                 // takes effect in the middle of a task.
                 let access = self.access(of: job.chatID)
                 let repository = job.repository
+                // What the person allowed for the rest of this task is
+                // not asked about again. Keys and credentials, sending
+                // files, a page's own "are you sure?" and changes in the
+                // Mac's apps are asked about all the same.
+                let granted = job.taskGrant
+                func alwaysAsked(_ step: ActionStep) -> Bool {
+                    switch step.kind {
+                    case .run, .terminal:
+                        return AgentPermissions.touchesSecrets(step.value)
+                    case .read, .write, .edit:
+                        return AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory))
+                    case .browser:
+                        guard let made = step.browserCommand else { return true }
+                        return made.command == "upload" || made.command == "dialog"
+                    case .mac:
+                        guard let made = step.macCommand else { return true }
+                        return MacServices.changes(made.service, made.action)
+                    default:
+                        return false
+                    }
+                }
                 let asking = steps.filter { step in
+                    if granted.contains(step.kind), !alwaysAsked(step) { return false }
                     switch step.kind {
                     case .run:
                         // Keys and credentials are asked about in every mode.
@@ -4113,6 +4135,15 @@ final class AppState: ObservableObject {
         job.questionAnswer = nil
     }
 
+    /// Allows the steps the open chat's task waits on, and every later
+    /// step of the same kinds for the rest of that task: one asking for
+    /// the task, in place of one for each step.
+    func allowForTask() {
+        guard let job = currentJob, let proposal = job.pendingApproval else { return }
+        job.taskGrant.formUnion(proposal.steps.map(\.kind))
+        decide(.allow)
+    }
+
     /// The user's answer to the steps the open chat's task is waiting on.
     func decide(_ decision: AgentDecision) {
         guard let job = currentJob else { return }
@@ -4620,6 +4651,35 @@ final class AppState: ObservableObject {
         screenSpokenWords = 0
         showHistory = false
         persist()
+    }
+
+    /// Marks an answer as good (1) or not (-1); the same mark again takes
+    /// it back.
+    func rate(_ turnID: UUID, _ value: Int) {
+        guard let index = conversation.turns.firstIndex(where: { $0.id == turnID }) else { return }
+        conversation.turns[index].rating = conversation.turns[index].rating == value ? nil : value
+        persist()
+    }
+
+    /// The open chat as plain text, in the order it was said: each
+    /// message under who said it.
+    var chatAsText: String {
+        conversation.turns.map { turn -> String in
+            var parts: [String] = []
+            if !turn.prompt.isEmpty { parts.append("You:\n" + turn.prompt) }
+            if !turn.answer.isEmpty { parts.append((turn.model.isEmpty ? "Companion" : turn.model) + ":\n" + turn.answer) }
+            return parts.joined(separator: "\n\n")
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n\n")
+    }
+
+    func copyChat() { copy(chatAsText) }
+
+    /// Opens the chat as one text, to select from with the cursor.
+    func openChatAsText() {
+        let title = conversation.title.isEmpty ? "Chat" : conversation.title
+        ChatTextWindow.show(title: title, text: chatAsText)
     }
 
     func copy(_ text: String) {

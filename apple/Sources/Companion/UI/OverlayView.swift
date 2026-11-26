@@ -2646,6 +2646,7 @@ struct TurnView: View {
     var onToggle: (() -> Void)?
     @State private var hover = false
     @State private var copied = false
+    @ObservedObject private var readAloud = ReadAloud.shared
 
     /// The engine, and which of the user's material the answer drew on.
     private var footnote: String {
@@ -2801,6 +2802,9 @@ struct TurnView: View {
             if !turn.answer.isEmpty {
                 Button("Copy") { app.copy(turn.answer) }
             }
+            Divider()
+            Button("Copy Whole Chat") { app.copyChat() }
+            Button("Open Chat as Text") { app.openChatAsText() }
         }
     }
 
@@ -2903,6 +2907,17 @@ struct TurnView: View {
                         copied = false
                     }
                 }
+            }
+            if !turn.answer.isEmpty {
+                let reading = readAloud.reading == turn.id
+                tool(reading ? "stop.fill" : "speaker.wave.2", help: reading ? "Stop reading" : "Read aloud",
+                     tint: reading ? Theme.accent : nil) {
+                    readAloud.toggle(turn.answer, turn: turn.id)
+                }
+                tool(turn.rating == 1 ? "hand.thumbsup.fill" : "hand.thumbsup", help: "Good answer",
+                     tint: turn.rating == 1 ? Theme.mint : nil) { app.rate(turn.id, 1) }
+                tool(turn.rating == -1 ? "hand.thumbsdown.fill" : "hand.thumbsdown", help: "Not a good answer",
+                     tint: turn.rating == -1 ? Theme.rose : nil) { app.rate(turn.id, -1) }
             }
             tool("arrow.clockwise", help: "Regenerate") { app.regenerate(turn.id) }
             tool("trash", help: "Delete this turn") { app.deleteTurn(turn.id) }
@@ -3725,6 +3740,9 @@ struct TurnInputBubble: View {
                 TimeLabel(date: turn.date)
                     .padding(.trailing, 4)
                 if !turn.prompt.isEmpty {
+                    FooterButton(symbol: "arrow.clockwise", help: "Send it again for a new answer") {
+                        app.regenerate(turn.id)
+                    }
                     FooterButton(symbol: "pencil", help: "Edit this message and send it again") {
                         editText = turn.prompt
                         editing = true
@@ -3755,6 +3773,9 @@ struct TurnInputBubble: View {
             if !turn.prompt.isEmpty {
                 Button("Copy") { app.copy(turn.prompt) }
             }
+            Divider()
+            Button("Copy Whole Chat") { app.copyChat() }
+            Button("Open Chat as Text") { app.openChatAsText() }
         }
         // Your own input is on the right, like what was heard, and may use
         // the chat's whole width.

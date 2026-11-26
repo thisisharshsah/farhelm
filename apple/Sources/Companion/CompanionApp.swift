@@ -9,7 +9,37 @@ import Combine
 /// uses the one already there.
 @main
 enum Launch {
+    /// Started to take the place of a Companion that is still running
+    /// (`build.sh restart` from inside that app, which names it in
+    /// COMPANION_REPLACE): that one is asked to quit, and waited for,
+    /// before anything of this one starts, so the two never share the
+    /// browser's profile or the saved chats. It is asked twice, since the
+    /// first asking is refused while it works on a task, and ended if it
+    /// still has not gone after a while.
+    private static func replaceRunning() {
+        guard let named = ProcessInfo.processInfo.environment["COMPANION_REPLACE"] else { return }
+        // Not handed on to what this app starts.
+        unsetenv("COMPANION_REPLACE")
+        guard let pid = pid_t(named), pid > 1, pid != getpid(), let old = NSRunningApplication(processIdentifier: pid),
+              old.bundleIdentifier == Bundle.main.bundleIdentifier else { return }
+        // Gone is read from the system, not from `isTerminated`, which
+        // only changes while a run loop turns.
+        func gone() -> Bool { kill(pid, 0) != 0 }
+        old.terminate()
+        var waited = 0.0
+        while !gone(), waited < 15 {
+            Thread.sleep(forTimeInterval: 0.25)
+            waited += 0.25
+            if waited == 1.5 || waited == 3 { old.terminate() }
+        }
+        if !gone() {
+            old.forceTerminate()
+            for _ in 0..<20 where !gone() { Thread.sleep(forTimeInterval: 0.25) }
+        }
+    }
+
     @MainActor static func main() {
+        replaceRunning()
         _ = CEFApplication.shared
         SharedDesign.install()
         // `--design-gallery` opens the Design Gallery alone (UI/Design/DesignGallery.swift).

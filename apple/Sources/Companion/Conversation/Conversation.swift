@@ -222,6 +222,9 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var plan: [PlanItem]?
     /// Names of the files that were attached with this message.
     var attached: [String]?
+    /// What the person made of the answer: 1 for good, -1 for not, nil
+    /// when they did not say.
+    var rating: Int?
 }
 
 /// Whether a suggested reply was actually said.

@@ -36,10 +36,15 @@ struct AgentCard: View {
         let onSite = !proposal.sites.isEmpty && proposal.steps.allSatisfy { $0.kind == .browser }
         let siteName = proposal.sites.count == 1 ? proposal.sites[0] : "these sites"
         return HStack(alignment: .top, spacing: short ? 6 : 8) {
-            Button { app.decide(.allow) } label: { Chip("Allow", icon: "checkmark", tint: Theme.accent) }
+            Button { app.decide(.allow) } label: { Chip(short ? "Once" : "Allow once", icon: "checkmark", tint: Theme.accent) }
                 .buttonStyle(.plain)
                 .help("Run this once (or say \"allow\")")
                 .recommended(pick == .allow || (pick == .always && !offersAlways), why: why)
+            Button { app.allowForTask() } label: {
+                Chip(short ? "This task" : "Allow for this task", icon: "checkmark.seal")
+            }
+                .buttonStyle(.plain)
+                .help("Run this, and stop asking about the same kinds of step for the rest of this task. Keys, credentials, sending files and changes in your Mac's apps are still asked about.")
             if offersAlways {
                 Button { app.decide(.always) } label: {
                     Chip(onSite ? (short ? "This site" : "Allow on \(siteName)") : (short ? "Always" : "Always allow"),
@@ -58,6 +63,51 @@ struct AgentCard: View {
                 .help("Do not run this; the task stops (or say \"deny\")")
                 .recommended(pick == .deny, why: why)
         }
+    }
+
+    /// What a proposal asks for, in a line: "run 2 commands and change 1
+    /// file". Said before the steps, so the asking can be read at a glance.
+    static func summary(of steps: [ActionStep]) -> String {
+        func count(_ kinds: Set<ActionStep.Kind>) -> Int { steps.filter { kinds.contains($0.kind) }.count }
+        var parts: [String] = []
+        let commands = count([.run, .terminal])
+        if commands > 0 { parts.append(commands == 1 ? "run 1 command" : "run \(commands) commands") }
+        let changes = count([.write, .edit])
+        if changes > 0 { parts.append(changes == 1 ? "change 1 file" : "change \(changes) files") }
+        if count([.read, .search]) > 0 { parts.append("read files") }
+        if count([.type, .key, .click, .open]) > 0 { parts.append("use the keyboard and pointer") }
+        if count([.browser]) > 0 { parts.append("work in the browser") }
+        if count([.fetch, .web]) > 0 { parts.append("look things up on the web") }
+        if count([.mac]) > 0 { parts.append("use this Mac's apps") }
+        if count([.delegate]) > 0 { parts.append("ask a helper") }
+        guard let last = parts.popLast() else { return "take a step" }
+        return parts.isEmpty ? last : parts.joined(separator: ", ") + " and " + last
+    }
+
+    /// The asking in words, above its steps: what is wanted, why, and
+    /// where commands would run.
+    @ViewBuilder
+    private func asking(_ proposal: AgentProposal) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Companion wants to " + Self.summary(of: proposal.steps))
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.ink.opacity(0.95))
+                .fixedSize(horizontal: false, vertical: true)
+            if let why = proposal.steps.compactMap(\.why).first(where: { !$0.isEmpty }) {
+                Text(why)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.ink.opacity(0.7))
+                    .lineLimit(2)
+            }
+            if !proposal.directory.isEmpty, proposal.steps.contains(where: { $0.kind == .run || $0.kind == .terminal }) {
+                Text("In " + (proposal.directory as NSString).abbreviatingWithTildeInPath)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Theme.ink.opacity(0.5))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// A quiet line under the answers.
@@ -206,6 +256,7 @@ struct AgentCard: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(Theme.ink.opacity(0.48))
             } else if let proposal = app.pendingApproval {
+                asking(proposal)
                 // The steps take the room they need up to a cap, then
                 // scroll, so Allow and Deny below never leave the panel.
                 ScrollView(.vertical, showsIndicators: listHeight > 260) {

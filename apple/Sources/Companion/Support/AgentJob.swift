@@ -42,6 +42,11 @@ final class AgentJob: ObservableObject, Identifiable {
     /// shows, so the status does not change (and redraw) every second.
     @Published var statusUntil: Date?
     @Published var pendingApproval: AgentProposal?
+    /// The kinds of step the person allowed for the rest of this task
+    /// ("Allow for this task"): they are not asked about again while it
+    /// runs. It ends with the task, and never covers keys, credentials,
+    /// sending files or changes in the Mac's own apps.
+    @Published var taskGrant: Set<ActionStep.Kind> = []
     @Published var pendingQuestion: AgentQuestion?
     /// What the project's supervisor recommends for the approval or the
     /// question it waits on, in a project that is run from a board. On a
