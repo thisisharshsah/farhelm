@@ -2731,7 +2731,9 @@ struct TurnView: View {
                     // always shown formatted, never as raw Markdown.
                     // New text fades in as it streams instead of popping.
                     Group {
-                        if MarkdownNotes.looksFormatted(turn.answer) {
+                        if AppSettings.shared.selectAcross {
+                            SelectableAnswer(text: turn.answer, size: 13)
+                        } else if MarkdownNotes.looksFormatted(turn.answer) {
                             MarkdownNotes(text: turn.answer, size: 13)
                         } else {
                             ReadAlongText(text: turn.answer, spokenWords: spokenWords, tint: tint, cursorID: cursorID)
@@ -3698,6 +3700,9 @@ struct TurnInputBubble: View {
                 // it is plain text (right-click still copies it).
                 if pinned {
                     promptText
+                } else if AppSettings.shared.selectAcross, expanded || !isLong {
+                    // Selectable together with the messages around it.
+                    SelectableText(text: MarkdownAttributed.plain(turn.prompt, size: 12.5), hugs: true)
                 } else {
                     promptText.textSelection(.enabled)
                 }

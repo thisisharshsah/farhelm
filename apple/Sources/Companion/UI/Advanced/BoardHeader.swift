@@ -532,7 +532,7 @@ struct BoardHeader: View {
                 .popover(isPresented: $showCommit, arrowEdge: .bottom) { commitSheet(git) }
                 .help("Waiting to commit on \(git.branch):\n" + git.changed.prefix(12).joined(separator: "\n")
                       + (git.changed.count > 12 ? "\nand \(git.changed.count - 12) more" : "")
-                      + "\n\nThe project's checks run first. Files git does not track are left alone, and nothing is pushed."
+                      + "\n\nThe project's checks run first. New files are included unless .gitignore leaves them out, and nothing is pushed."
                       + (board.settings.supervisorAnswers ? "\nThe supervisor commits them itself once they have not changed for a few minutes." : ""))
             }
             if git.ahead > 0, let upstream = git.upstream {
@@ -567,7 +567,7 @@ struct BoardHeader: View {
             TextField("Message (left empty, the supervisor writes it)", text: $commitMessage)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11.5))
-            Text("The project's checks run first. Files git does not track stay out, and nothing is pushed.")
+            Text("The project's checks run first. New files go in unless .gitignore leaves them out. Nothing is pushed.")
                 .font(.system(size: 10.5))
                 .foregroundStyle(Theme.ink.opacity(0.55))
                 .fixedSize(horizontal: false, vertical: true)

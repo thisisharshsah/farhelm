@@ -1790,6 +1790,10 @@ private struct LookSettings: View {
                       detail: "Set like the Claude app, in the Mac's New York. Your messages and code stay as they are.",
                       isOn: $settings.replySerif)
             RowLine()
+            ToggleRow("Select across messages",
+                      detail: "One drag selects through several messages, as in a document, and Copy takes them all. New: switch it off if a reply looks wrong.",
+                      isOn: $settings.selectAcross)
+            RowLine()
             ToggleRow("Keep the agent's work open",
                       detail: "Each step on a rail with what went in and came out, in every reply. Off, the work folds to one line once the agent is done; a click opens it.",
                       isOn: $workAlwaysOpen)
