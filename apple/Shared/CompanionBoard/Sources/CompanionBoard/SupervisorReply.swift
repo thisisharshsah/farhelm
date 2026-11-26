@@ -290,6 +290,9 @@ public struct SupervisorReply: Equatable, Sendable {
         case "approve", "approvetask", "accept", "pass":
             guard !ref.isEmpty else { return nil }
             return .approve(ref: ref)
+        case "start", "startrun", "starttask", "run", "restart", "rerun":
+            guard !ref.isEmpty else { return nil }
+            return .start(ref: ref)
         case "stop", "stoprun", "cancel", "cancelrun", "halt", "haltrun":
             guard !ref.isEmpty else { return nil }
             let reason = Loose.text(fields["reason"] ?? fields["why"] ?? fields["text"] ?? fields["note"]) ?? ""

@@ -72,6 +72,15 @@ final class Advanced: ObservableObject {
     /// The changes a commit was last refused for (by when they were last
     /// written), so the same ones are not tried over and over.
     private var commitRefused: [UUID: Date] = [:]
+    /// When the supervisor was last asked about each project's held work
+    /// (`triageHeld`), which projects it is being asked about now, and how
+    /// often each task was put to it: after a few times a task waits for
+    /// the person, so nothing is started over and over.
+    private var triaged: [UUID: Date] = [:]
+    private var triaging: Set<UUID> = []
+    private var triageCount: [UUID: Int] = [:]
+    private static let triageEvery: TimeInterval = 900
+    private static let triageLimit = 3
     /// How long the changed files have to lie still before the
     /// supervisor commits them: nobody is in the middle of an edit.
     private static let commitQuiet: TimeInterval = 180
@@ -211,6 +220,7 @@ final class Advanced: ObservableObject {
                     self.reviewAgain(project)
                     self.carryOnStopped(project)
                     self.tick(project)
+                    self.triageHeld(project)
                 }
             }
         }
@@ -742,6 +752,11 @@ final class Advanced: ObservableObject {
         // The board only noted these; the runs end here, the same way the
         // card's Stop ends them.
         for item in summary.stopping { stop(item, in: project, bySupervisor: true) }
+        // The same way a person's Start on the card goes; what keeps one
+        // from starting is said on the board.
+        for item in summary.starting {
+            if let problem = start(item, in: project, by: .supervisor) { notices[project] = problem }
+        }
         // The same ways a person's Approve and Delete on the card go; an
         // approval waits until its merge is known not to conflict.
         for item in summary.approving { approveForSupervisor(item, in: project) }
@@ -967,6 +982,83 @@ final class Advanced: ObservableObject {
                 }
                 stop(item.id, in: project, bySupervisor: true)
             }
+        }
+    }
+
+    // MARK: Work that is held back
+
+    /// On a board the supervisor runs, work is not left waiting to be
+    /// asked about. Tasks that could run but that nothing starts again by
+    /// itself (the last run was stopped, failed twice, or was sent back
+    /// too often) are put to the supervisor while there is room for a
+    /// run: it starts each one, changes it and starts it, or leaves a
+    /// note saying what it needs from the person. At most every quarter
+    /// of an hour, and each task only a few times.
+    private func triageHeld(_ projectID: UUID) {
+        guard let board = store.boards[projectID], board.settings.supervisorAnswers, armed.contains(projectID),
+              !triaging.contains(projectID),
+              Date().timeIntervalSince(triaged[projectID] ?? .distantPast) >= Self.triageEvery,
+              (queued[projectID] ?? []).isEmpty,
+              !board.allItems.contains(where: { preparing.contains($0.id) }),
+              !board.budget.state(spent: ledger(for: projectID).total).isOver,
+              boardRoom(on: board) > 0 else { return }
+        let held = board.items(in: .todo).filter { item in
+            item.activeRun == nil && item.goal == board.currentGoal && !BoardRules.isBlank(item)
+                && board.blockers(of: item).isEmpty && !board.movesOnByItself(item)
+                && (triageCount[item.id] ?? 0) < Self.triageLimit
+        }
+        guard !held.isEmpty else { return }
+        triaged[projectID] = Date()
+        triaging.insert(projectID)
+        let shown = Array(held.prefix(10))
+        for item in shown { triageCount[item.id, default: 0] += 1 }
+        let text = shown.map { item -> String in
+            var why: [String] = []
+            if let ending = item.runs.last?.ending, ending == .person || ending == .supervisor {
+                why.append("its last run was stopped by \(ending == .person ? "the owner or the app quitting" : "the supervisor or a limit")")
+            }
+            let failed = board.failuresInARow(of: item)
+            if failed > 0 { why.append("\(failed) runs in a row failed or were stopped") }
+            let sentBack = board.sentBackInARow(of: item)
+            if sentBack > 0 { why.append("reviews sent it back \(sentBack) times in a row") }
+            var lines = ["## \(item.key) \(item.title)",
+                         "Held because: " + (why.isEmpty ? "not known" : why.joined(separator: "; ")),
+                         "Runs so far: \(item.runs.count). Estimate: \(item.estimateTokens.map { "\($0 / 1000)k tokens" } ?? "none")."]
+            if !item.details.isEmpty { lines.append("What to do: " + String(item.details.prefix(500))) }
+            if !item.acceptance.isEmpty { lines.append("Done means: " + item.acceptance.prefix(8).joined(separator: " | ")) }
+            if let report = item.runs.last?.report, !report.isEmpty {
+                lines.append("Its last run reported: " + String(report.prefix(500)))
+            }
+            for note in item.notes.suffix(3) {
+                lines.append("Note by \(note.author): " + String(note.text.prefix(400)))
+            }
+            return lines.joined(separator: "\n")
+        }.joined(separator: "\n\n")
+        Task { @MainActor in
+            defer { self.triaging.remove(projectID) }
+            var request = ChatRequest(system: Supervisor.triageSystem, user: text)
+            request.maxOutput = 3_000
+            guard let asked = try? await self.askSupervisor(request.tagged("Supervisor"), project: projectID) else { return }
+            let reply = SupervisorReply.parse(asked.answer)
+            // Only what this asking is for: nothing is moved, deleted,
+            // stopped or approved from here.
+            let wanted = reply.operations.filter { operation in
+                switch operation {
+                case .start, .update, .note: return true
+                default: return false
+                }
+            }
+            guard !wanted.isEmpty else { return }
+            var summary = ChangeSummary()
+            self.change(projectID) { board in
+                summary = board.apply(wanted, model: { _ in nil }, now: Date())
+                board.log("Looked at \(shown.count == 1 ? "1 task" : "\(shown.count) tasks") that were held back: "
+                          + (summary.sentence.isEmpty ? "left as they are" : summary.sentence), by: .supervisor, now: Date())
+            }
+            for item in summary.starting {
+                if let problem = self.start(item, in: projectID, by: .supervisor) { self.notices[projectID] = problem }
+            }
+            self.tick(projectID)
         }
     }
 

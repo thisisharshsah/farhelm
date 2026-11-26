@@ -65,6 +65,11 @@ public enum BoardOperation: Equatable, Sendable {
     /// records it (`ChangeSummary.stopping`): ending the agent is the
     /// app's, the same way a person's Stop on the card ends it.
     case stop(ref: String, reason: String)
+    /// Starts a run on a task that has none going on: one that was
+    /// stopped or failed, or one not begun yet. The board only checks
+    /// that it may start and records it (`ChangeSummary.starting`): the
+    /// app starts it, the same way a person's Start on the card does.
+    case start(ref: String)
     /// Approves a task waiting in Review, as a person's Approve on its
     /// card does. The board only checks that its checks passed and
     /// records it (`ChangeSummary.approving`): whether its work merges
@@ -104,6 +109,9 @@ public struct ChangeSummary: Equatable, Sendable {
     /// The tasks whose run the supervisor asked to stop. Their runs are
     /// still going when `apply` returns; the app stops each one.
     public var stopping: [UUID] = []
+    /// The tasks the supervisor asked to start. No run is going on in
+    /// them when `apply` returns; the app starts each one.
+    public var starting: [UUID] = []
     /// The tasks the supervisor asked to approve, whose checks passed.
     /// They are still in Review when `apply` returns: the app tries their
     /// merge first, and approves each only when it has no conflict.
@@ -116,7 +124,7 @@ public struct ChangeSummary: Equatable, Sendable {
     public init() {}
 
     public var isEmpty: Bool {
-        added + updated + moved + assigned + noted + removed + stopping.count + approving.count + deleting.count == 0
+        added + updated + moved + assigned + noted + removed + stopping.count + starting.count + approving.count + deleting.count == 0
             && !goalChanged && !goalStarted && !budgetChanged
     }
 
@@ -133,6 +141,8 @@ public struct ChangeSummary: Equatable, Sendable {
         if noted > 0 { parts.append("left \(noted == 1 ? "a note" : "\(noted) notes")") }
         if removed > 0 { parts.append("removed \(tasks(removed))") }
         if !stopping.isEmpty { parts.append("stopped \(stopping.count == 1 ? "a run" : "\(stopping.count) runs")") }
+        // Not "started": the app can still refuse it (no room, no budget).
+        if !starting.isEmpty { parts.append("asked to start \(tasks(starting.count))") }
         // Not "approved": a merge that conflicts can still refuse it.
         if !approving.isEmpty { parts.append("asked to approve \(tasks(approving.count))") }
         if !deleting.isEmpty { parts.append("deleted \(tasks(deleting.count))") }
@@ -375,6 +385,28 @@ extension Board {
                 log("Asked to stop the run on \(found.key)", by: actor, item: found.number, now: now)
                 summary.stopping.append(found.id)
                 touch(found.id)
+
+            case .start(let ref):
+                guard let found = item(ref: ref, labels: labels) else {
+                    summary.problems.append("There is no task \(ref) to start.")
+                    continue
+                }
+                guard found.activeRun == nil else {
+                    summary.problems.append("\(found.key) already has a run going on.")
+                    continue
+                }
+                guard found.status != .done else {
+                    summary.problems.append("\(found.key) is done, so it was not started.")
+                    continue
+                }
+                let waitsOn = blockers(of: found)
+                guard waitsOn.isEmpty else {
+                    summary.problems.append("\(found.key) waits on \(waitsOn.map(\.key).joined(separator: ", ")), so it was not started.")
+                    continue
+                }
+                guard !summary.starting.contains(found.id) else { continue }
+                log("Asked to start \(found.key)", by: actor, item: found.number, now: now)
+                summary.starting.append(found.id)
 
             case .approve(let ref):
                 guard let found = item(ref: ref, labels: labels) else {
