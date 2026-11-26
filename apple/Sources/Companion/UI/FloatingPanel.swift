@@ -648,7 +648,13 @@ final class OverlayController {
     /// Moves or resizes the panel, in one step. The frame is never
     /// animated: an animated window frame passes through sizes the content
     /// does not fit, and can be left at one of them.
-    private func setPanelFrame(_ rect: NSRect, animated: Bool = false, _ why: String = #function) {
+    private func setPanelFrame(_ wanted: NSRect, animated: Bool = false, _ why: String = #function) {
+        // Never past the screen's edges, whatever asked for the size: the
+        // panes share the room that fits instead.
+        var rect = wanted
+        if let visible = (main.screen ?? targetScreen)?.visibleFrame {
+            rect = PaneWidths.clamp(wanted, to: visible)
+        }
         lastProgrammaticOrigin = rect.origin
         targetFrame = rect
         // The frame is set and the content laid out on its own next pass,
@@ -798,7 +804,10 @@ final class OverlayController {
         // narrowest. That is the one case it is widened without being
         // asked: by just enough that nothing is cut off, never to a
         // "preferred" size.
-        setFloor(NSSize(width: neededWidth, height: panelMinSize.height))
+        // Capped to the screen: a floor wider than the screen held the
+        // panel past its right edge. Past that, panes are put away instead.
+        let screenWidth = (main.screen ?? targetScreen)?.visibleFrame.width ?? .greatestFiniteMagnitude
+        setFloor(NSSize(width: min(neededWidth, screenWidth), height: panelMinSize.height))
         if let base {
             setPanelFrame(base)
         }

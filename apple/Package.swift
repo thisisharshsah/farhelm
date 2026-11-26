@@ -58,6 +58,12 @@ let package = Package(
             cxxSettings: [.unsafeFlags(cefFlags + ["-fno-rtti"])],
             linkerSettings: cefLinker
         ),
+        // Unit tests for the app's own rules, such as how panes share the window.
+        .testTarget(
+            name: "CompanionTests",
+            dependencies: ["Companion"],
+            path: "Tests/CompanionTests"
+        ),
         // Chromium's helper processes, bundled by build.sh.
         .executableTarget(
             name: "CompanionHelper",

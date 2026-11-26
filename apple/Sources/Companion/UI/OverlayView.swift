@@ -121,10 +121,9 @@ struct OverlayView: View {
                 // its end and nothing is ever hidden for good.
                 ZStack(alignment: .top) {
                 HStack(spacing: 0) {
-                // Pinned, the sidebar takes its own column on the left in
-                // chat. In code it sits between the workspace and the chat
-                // instead (see below).
-                if app.sidebarPinned, !app.showSettings, !splitLayout {
+                // Pinned, the sidebar takes its own column at the leading
+                // edge in every layout, while the window has room for it.
+                if paneLayout.shows("sidebar") {
                     SidebarView(toggle: AnyView(sidebarToggle))
                         .panelCard()
                         .padding(.top, topHeight)
@@ -406,27 +405,10 @@ struct OverlayView: View {
                 // Above the chat it floats over.
                 .zIndex(sidebarPeek ? 1 : 0)
                 .environment(\.layoutDirection, .leftToRight)
-                // In code the pinned conversations sit between the
-                // workspace and the chat. This row is laid out right to
-                // left there, so coming after the chat puts them on its
-                // left; dragging their divider left widens them.
-                if splitLayout, app.sidebarPinned, !sideIsFull {
-                    ColumnDivider(width: { app.sidebarWidth },
-                                  direction: -1,
-                                  resize: { app.overlay?.dragColumn(left: true, to: $0) },
-                                  reset: { app.overlay?.resetColumn(left: true) },
-                                  done: { app.saveColumnWidths() })
-                        .padding(.top, topHeight)
-                    SidebarView(toggle: AnyView(sidebarToggle))
-                        .panelCard()
-                        .padding(.top, topHeight)
-                        .frame(width: shownSidebarWidth)
-                        .environment(\.layoutDirection, .leftToRight)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
                 // The column on the right: details of the session, the
-                // browser, or the workspace.
-                if let side = app.sidePanel {
+                // browser, or the workspace. Details or the browser are
+                // put away when the window cannot fit them beside the chat.
+                if let side = app.sidePanel, splitLayout || sideIsFull || paneLayout.shows("side") {
                     if splitLayout, !sideIsFull {
                         // In code the divider sets the chat's width; the
                         // workspace has the rest. In Advanced, the board.
@@ -685,17 +667,39 @@ struct OverlayView: View {
     /// whatever is left beside the chat when it does not, so nothing is
     /// ever pushed out of the panel.
     private func sideWidth(_ side: SidePanelMode) -> CGFloat {
-        let taken = (app.sidebarPinned ? shownSidebarWidth : 0) + OverlayController.chatLeast + gapsWidth
-        return min(app.width(of: side), max(OverlayController.sideLeast(side), panelWidth - taken))
+        paneLayout.width("side")
+    }
+
+    /// How the panel's width is shared now. The sidebar is the first put
+    /// away when space runs short, then details or the browser; the chat
+    /// (or, in code and Advanced, the workspace or board with the chat)
+    /// always stays. Never reads `codeRoom`, which is worked out from it.
+    private var paneLayout: PaneWidths {
+        var panes: [PaneWidths.Pane] = []
+        if app.sidebarPinned, !app.showSettings, !(splitLayout && sideIsFull) {
+            panes.append(.init(id: "sidebar", wanted: app.sidebarWidth,
+                               least: OverlayController.sidebarLeast, rank: 0))
+        }
+        if splitLayout, !sideIsFull {
+            // The board or workspace and the chat share one span, split
+            // by their own divider.
+            let work = boardLayout ? OverlayController.boardLeast : OverlayController.codeWorkspaceLeast
+            panes.append(.init(id: "main", wanted: work + 300 + Theme.panelGap,
+                               least: work + 240 + Theme.panelGap, rank: 2, fills: true))
+        } else {
+            panes.append(.init(id: "chat", wanted: OverlayController.chatLeast,
+                               least: sideIsFull ? 0 : OverlayController.chatLeast, rank: 2, fills: !sideIsFull))
+            if let side = app.sidePanel, !sideIsFull {
+                panes.append(.init(id: "side", wanted: app.width(of: side),
+                                   least: OverlayController.sideLeast(side), rank: 1))
+            }
+        }
+        return PaneWidths(window: panelWidth, gap: Theme.panelGap, panes: panes)
     }
 
     /// The room the gaps take across the panel: one at each side and one
-    /// between every two columns.
-    private var gapsWidth: CGFloat {
-        let sidebar = app.sidebarPinned && !app.showSettings
-        let columns = 1 + (sidebar ? 1 : 0) + (app.sidePanel != nil ? 1 : 0)
-        return CGFloat(columns + 1) * Theme.panelGap
-    }
+    /// between every two columns shown.
+    private var gapsWidth: CGFloat { paneLayout.gapsWidth }
 
     /// The right column has the whole panel and the chat is out of the way.
     private var sideIsFull: Bool { app.sideFull && app.sidePanel != nil && !app.showSettings }
@@ -733,7 +737,8 @@ struct OverlayView: View {
     private var codeWorkspaceLeast: CGFloat { OverlayController.codeWorkspaceLeast }
     /// The width the chat and the workspace share in code.
     private var codeRoom: CGFloat {
-        panelWidth - (app.sidebarPinned ? shownSidebarWidth : 0) - gapsWidth
+        // The divider between the chat and the board or workspace is a gap too.
+        max(0, paneLayout.width("main") - Theme.panelGap)
     }
     /// The least the workspace (and the details beside it, when open) may
     /// have, so the chat can never grow and push them off the screen.
@@ -744,13 +749,9 @@ struct OverlayView: View {
     }
 
     /// The pinned sidebar's width: its set width when the panel has room,
-    /// less when it does not, down to its narrowest. The panel is never
-    /// narrower than its columns at their narrowest, so they always fit.
-    private var shownSidebarWidth: CGFloat {
-        let other = app.sidePanel.map(OverlayController.sideLeast) ?? 0
-        return min(app.sidebarWidth,
-                   max(OverlayController.sidebarLeast, panelWidth - OverlayController.chatLeast - other - gapsWidth))
-    }
+    /// less when it does not, and put away once even its narrowest would
+    /// crowd the panes beside it.
+    private var shownSidebarWidth: CGFloat { paneLayout.width("sidebar") }
 
     /// Reports a view's height whenever it changes.
     private func measure(_ report: @escaping (CGFloat) -> Void) -> some View {

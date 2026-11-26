@@ -21,6 +21,77 @@ enum SidePanelMode: Equatable {
     }
 }
 
+/// How the window's width is shared between the panes side by side in it
+/// (the sidebar, the chat, and the board, workspace, browser or details).
+/// Kept free of views so it can be tested. The panes and the gaps between
+/// them never add up past the window: when there is not room for every
+/// pane at its narrowest, the least important one is put away first,
+/// instead of a pane running past the edge or over another.
+struct PaneWidths: Equatable {
+    struct Pane: Equatable {
+        var id: String
+        /// The width it is set to, when there is room for it.
+        var wanted: CGFloat
+        /// The narrowest it is still useful at.
+        var least: CGFloat
+        /// Higher is kept longer when space runs short.
+        var rank: Int
+        /// Takes the room left once every pane has its wanted width.
+        var fills = false
+    }
+
+    /// Each shown pane's width, by id. A pane put away has none.
+    private(set) var widths: [String: CGFloat] = [:]
+    /// The gaps: one at each side of the window and one between every two panes.
+    private(set) var gapsWidth: CGFloat = 0
+
+    init(window: CGFloat, gap: CGFloat, panes: [Pane]) {
+        var shown = panes
+        func room() -> CGFloat { max(0, window - CGFloat(shown.count + 1) * gap) }
+        // The most important pane always stays, even when it alone does
+        // not fit; it is then given the whole room and no more.
+        while shown.count > 1, shown.reduce(0, { $0 + $1.least }) > room() {
+            guard let leastImportant = shown.min(by: { $0.rank < $1.rank }) else { break }
+            shown.removeAll { $0.id == leastImportant.id }
+        }
+        gapsWidth = CGFloat(shown.count + 1) * gap
+        let total = room()
+        if shown.count == 1, let only = shown.first {
+            widths[only.id] = total
+            return
+        }
+        var spare = total - shown.reduce(0, { $0 + $1.least })
+        for pane in shown { widths[pane.id] = pane.least }
+        // The more important panes reach their set width first; whoever
+        // fills (or else the most important pane) takes what is left, so
+        // the panes always use the window's whole width and never more.
+        for pane in shown.sorted(by: { $0.rank > $1.rank }) where !pane.fills {
+            let grow = min(max(0, pane.wanted - pane.least), spare)
+            widths[pane.id, default: 0] += grow
+            spare -= grow
+        }
+        let taker = shown.first(where: \.fills) ?? shown.max(by: { $0.rank < $1.rank })
+        if let taker, spare > 0 { widths[taker.id, default: 0] += spare }
+    }
+
+    func width(_ id: String) -> CGFloat { widths[id] ?? 0 }
+    func shows(_ id: String) -> Bool { widths[id] != nil }
+    /// The panes and the gaps together.
+    var total: CGFloat { widths.values.reduce(0, +) + gapsWidth }
+
+    /// A window frame kept inside the screen's visible frame (under the menu
+    /// bar, beside the Dock): no wider or taller than it, and moved in
+    /// where it would run past an edge.
+    static func clamp(_ frame: CGRect, to visible: CGRect) -> CGRect {
+        var rect = frame
+        rect.size.width = min(rect.width, visible.width)
+        rect.size.height = min(rect.height, visible.height)
+        rect.origin.x = min(max(rect.minX, visible.minX), visible.maxX - rect.width)
+        rect.origin.y = min(max(rect.minY, visible.minY), visible.maxY - rect.height)
+        return rect
+    }
+}
+
 /// The column on the right of the chat: the details of the session, or a
 /// browser.
 struct SidePanel: View {
