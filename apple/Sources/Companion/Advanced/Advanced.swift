@@ -871,6 +871,7 @@ final class Advanced: ObservableObject {
         guard !board.budget.state(spent: spent).isOver else {
             return "The project's budget is used up. Raise it on the board to start more work."
         }
+        if let over = pastCeiling(item, in: projectID) { return over }
         refreshRoster()
         // Over the app's limit it is never refused: it waits in line and
         // starts by itself when a slot frees (`tick`). The pass that takes
@@ -963,6 +964,24 @@ final class Advanced: ObservableObject {
     /// out of the count: they are most of a long run's tokens and cost
     /// next to nothing. The task goes back to To do with a note, and waits
     /// for a person or the supervisor to re-plan it.
+    /// What a task may use over all of its runs before nothing starts it
+    /// again: ten times its estimate, and never less than this. The limit
+    /// on one run does not catch a task that is started over and over,
+    /// each run under its own limit; two such tasks used three and ten
+    /// million tokens against estimates of a quarter of a million.
+    static let taskCeilingFloor = 2_000_000
+
+    /// Why a task may not run any more as it stands, when it is past its
+    /// ceiling; nil while it is under it. Reads served from the cache are
+    /// left out, as for a single run.
+    private func pastCeiling(_ item: WorkItem, in project: UUID) -> String? {
+        let total = ledger(for: project).total(of: item)
+        let used = total.input + total.cacheWrite + total.output
+        let ceiling = max(10 * (item.estimateTokens ?? 0), Self.taskCeilingFloor)
+        guard used > ceiling else { return nil }
+        return "\(item.key) has used \(used / 1000)k tokens over all its runs, past its ceiling of \(ceiling / 1000)k (ten times its estimate). Split it or sharpen it, or raise its estimate if it really is that big, then start it."
+    }
+
     private func stopRunaways() {
         let now = Date()
         for (project, board) in store.boards {
@@ -974,6 +993,15 @@ final class Advanced: ObservableObject {
                 let used = ledger.total(of: run, now: now)
                 let fresh = used.input + used.cacheWrite + used.output
                 let ceiling = max(3 * (item.estimateTokens ?? 0), Self.runawayFloor)
+                // Past what the task may use over all its runs: this run
+                // ends too, and nothing starts another (`start`).
+                if fresh <= ceiling, let over = pastCeiling(item, in: project) {
+                    change(project) { board in
+                        board.note(item.id, "Stopped by the board: " + over, author: "Board", now: now)
+                    }
+                    stop(item.id, in: project, bySupervisor: true)
+                    continue
+                }
                 guard fresh > ceiling else { continue }
                 change(project) { board in
                     board.note(item.id,
@@ -1005,7 +1033,7 @@ final class Advanced: ObservableObject {
         let held = board.items(in: .todo).filter { item in
             item.activeRun == nil && item.goal == board.currentGoal && !BoardRules.isBlank(item)
                 && board.blockers(of: item).isEmpty && !board.movesOnByItself(item)
-                && (triageCount[item.id] ?? 0) < Self.triageLimit
+                && (triageCount[item.id] ?? 0) < Self.triageLimit && pastCeiling(item, in: projectID) == nil
         }
         guard !held.isEmpty else { return }
         triaged[projectID] = Date()
@@ -1565,6 +1593,11 @@ final class Advanced: ObservableObject {
                 }
                 if !board.budget.fits(estimate: item.estimateTokens ?? 0, spent: spent) {
                     reason = reason ?? "\(item.key) is estimated at more than what is left of the budget."
+                    continue
+                }
+                // Past what it may use over all its runs: not started again.
+                if let over = pastCeiling(item, in: projectID) {
+                    reason = reason ?? over
                     continue
                 }
                 eligible.append(item)

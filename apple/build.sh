@@ -366,13 +366,39 @@ case "${1:-run}" in
     build
     # Bundling quits the running app first. Started from a chat inside
     # that app, this script went down with it, half way through the
-    # bundle, and nothing came back up. So everything after the build
-    # runs in a session of its own that outlives the app.
+    # bundle, and nothing came back up: a session of its own was not
+    # enough, twice. So with no terminal behind it (it was started by an
+    # app, not a person), everything after the build is handed to launchd
+    # as a job of the system's own, which nothing the app does on its way
+    # out can reach. From a terminal it runs apart as before, which works.
+    job="com.harshsah.companion.restart"
+    if [[ ! -t 0 ]] && command -v launchctl >/dev/null 2>&1; then
+      launchctl remove "$job" >/dev/null 2>&1 || true
+      if launchctl submit -l "$job" -o "$PWD/.build/restart.log" -e "$PWD/.build/restart.log" -- \
+           /bin/bash -c "cd '$PWD' && export PATH='$PATH' HOME='$HOME' && /bin/bash build.sh finish-restart-job; launchctl remove '$job'"; then
+        echo "Built. Bundling and restarting as a job of the system's now (log: apple/.build/restart.log)."
+        exit 0
+      fi
+      echo "launchd did not take the job; restarting the older way."
+    fi
     /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$PWD/build.sh" finish-restart \
       </dev/null >.build/restart.log 2>&1 &
     echo "Built. Bundling and restarting on its own now (log: apple/.build/restart.log)."
     ;;
   finish-restart) bundle; restart ;;
+  # The same, as launchd's job: nothing is left to a helper that could be
+  # ended with the job. The bundle quits the old app; the new one is
+  # opened here, and looked at a few more times that it really came up.
+  finish-restart-job)
+    bundle
+    app="$(cd "$BUNDLE_DIR" && pwd)"
+    open -n "$app"
+    for _ in 1 2 3; do
+      sleep 10
+      [[ -n "$(own_app)" ]] || open -n "$app"
+    done
+    echo "Restarted $app"
+    ;;
   app)   build; bundle ;;
   run)   build; bundle; open "$BUNDLE_DIR" ;;
   dmg)   build; bundle; dmg ;;
