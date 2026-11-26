@@ -277,8 +277,8 @@ struct TaskCard: View {
     /// supervisor can tell, and what it would do in the person's place.
     private func reviewWords(handed: Bool) -> String {
         switch item.runs.last?.advice?.verdict {
-        case .approved?: return "Work done · approve suggested"
-        case .changesRequested?: return "Not done · send back suggested"
+        case .approved?: return "Done · approve it"
+        case .changesRequested?: return "Not done · redo it"
         case nil:
             if handed { return "Reviewed: needs you" }
             return item.runs.last?.review == nil ? "Waiting for its review" : "Reviewed, waits for you"
@@ -321,32 +321,46 @@ struct TaskCard: View {
     /// What can be done with the task from its card. Where the supervisor
     /// has looked at a finished run for the person who reviews it, the
     /// answer it recommends says so.
+    /// The card's buttons, in words where the column is wide enough for
+    /// them and as symbols alone where it is not: a row wider than the
+    /// card pushed the whole card out past its column's edges.
     private var actions: some View {
+        ViewThatFits(in: .horizontal) {
+            actionRow(words: true)
+            actionRow(words: false)
+        }
+    }
+
+    private func actionRow(words: Bool) -> some View {
         HStack(alignment: .top, spacing: 5) {
             if let run = item.activeRun {
-                BoardButton(waitingOnPerson ? "Answer" : "Open", icon: "bubble.left", tint: waitingOnPerson ? Theme.amber : nil) {
+                BoardButton(!words ? "" : (waitingOnPerson ? "Answer" : "Open"), icon: "bubble.left", tint: waitingOnPerson ? Theme.amber : nil) {
                     app.openConversation(run.conversation)
                 }
                 .help("Open the chat this run works in")
-                BoardButton("Stop", icon: "stop.fill", tint: Theme.rose) { advanced.stop(item.id, in: project.id) }
+                BoardButton(words ? "Stop" : "", icon: "stop.fill", tint: Theme.rose) { advanced.stop(item.id, in: project.id) }
+                    .help("Stop this run")
             } else if item.status == .review {
                 let advised = item.runs.last?.advice
                 let redo = advised?.verdict == .changesRequested
-                BoardButton("Approve", icon: "checkmark", tint: Theme.mint) { advanced.approve(item.id, in: project.id) }
-                    .recommended(advised?.verdict == .approved, why: BoardText.why(advised))
-                BoardButton("Redo", icon: "arrow.uturn.backward") {
+                BoardButton(words ? "Approve" : "", icon: "checkmark", tint: Theme.mint) {
+                    advanced.approve(item.id, in: project.id)
+                }
+                .help("Approve it: its work is merged and the task is done")
+                .recommended(words && advised?.verdict == .approved, why: BoardText.why(advised))
+                BoardButton(words ? "Redo" : "", icon: "arrow.uturn.backward") {
                     // What the supervisor found goes to the next run.
                     advanced.requestChanges(item.id, notes: redo ? (advised?.notes ?? "") : "", in: project.id)
                 }
                 .help(redo ? "Send it back to To do, with what the supervisor found" : "Send it back to To do")
-                .recommended(redo, why: BoardText.why(advised))
+                .recommended(words && redo, why: BoardText.why(advised))
             } else if board.mergeWaitsOnPerson(item), !advanced.merging.contains(item.id) {
-                BoardButton("Merge", icon: "arrow.triangle.merge", tint: Theme.amber) {
+                BoardButton(words ? "Merge" : "", icon: "arrow.triangle.merge", tint: Theme.amber) {
                     advanced.mergeNow(item.id, in: project.id)
                 }
                 .help((item.workingCopy?.problem.map { $0 + " " } ?? "") + "Merge its work now, as yours.")
             } else if item.status == .todo || item.status == .backlog, !advanced.preparing.contains(item.id) {
-                BoardButton("Start", icon: "play.fill", tint: Theme.accent) {
+                BoardButton(words ? "Start" : "", icon: "play.fill", tint: Theme.accent) {
                     advanced.startOrExplain(item.id, in: project.id)
                 }
                 .help(blockers.isEmpty ? "Start a run on this task with \(item.assignment?.label ?? "the model in use")"
