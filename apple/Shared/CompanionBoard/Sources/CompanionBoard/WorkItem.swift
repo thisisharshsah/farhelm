@@ -225,11 +225,16 @@ public struct WorkRun: Codable, Identifiable, Equatable, Sendable {
     public var checks: [CheckResult]?
     public var specialist: UUID?
     public var tokens: Int?
+    /// What the run has been seen doing, for the loop detector
+    /// (`LoopDetection`): reads piled up without an edit between, edits
+    /// that keep failing the same way, and whether its model fell back
+    /// to a weaker one. Empty for a fresh run.
+    public var signals: RunSignals
 
     public init(id: UUID = UUID(), conversation: UUID, model: ModelChoice, modelLabel: String, startedAt: Date,
                 endedAt: Date? = nil, outcome: Outcome = .running, report: String? = nil, review: Review? = nil,
                 advice: Review? = nil, ending: Ending? = nil, carriesOn: Bool? = nil, checks: [CheckResult]? = nil,
-                specialist: UUID? = nil, tokens: Int? = nil) {
+                specialist: UUID? = nil, tokens: Int? = nil, signals: RunSignals = RunSignals()) {
         self.id = id
         self.conversation = conversation
         self.model = model
@@ -245,9 +250,37 @@ public struct WorkRun: Codable, Identifiable, Equatable, Sendable {
         self.checks = checks
         self.specialist = specialist
         self.tokens = tokens
+        self.signals = signals
     }
 
     public var isRunning: Bool { outcome == .running }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, conversation, model, modelLabel, startedAt, endedAt, outcome, report, review, advice
+        case ending, carriesOn, checks, specialist, tokens, signals
+    }
+
+    /// Read field by field, so a run saved before signals existed loads
+    /// with empty signals: nothing is lost and nothing is flagged.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        conversation = try values.decode(UUID.self, forKey: .conversation)
+        model = try values.decode(ModelChoice.self, forKey: .model)
+        modelLabel = try values.decode(String.self, forKey: .modelLabel)
+        startedAt = try values.decode(Date.self, forKey: .startedAt)
+        endedAt = try values.decodeIfPresent(Date.self, forKey: .endedAt)
+        outcome = try values.decodeIfPresent(Outcome.self, forKey: .outcome) ?? .running
+        report = try values.decodeIfPresent(String.self, forKey: .report)
+        review = try values.decodeIfPresent(Review.self, forKey: .review)
+        advice = try values.decodeIfPresent(Review.self, forKey: .advice)
+        ending = try values.decodeIfPresent(Ending.self, forKey: .ending)
+        carriesOn = try values.decodeIfPresent(Bool.self, forKey: .carriesOn)
+        checks = try values.decodeIfPresent([CheckResult].self, forKey: .checks)
+        specialist = try values.decodeIfPresent(UUID.self, forKey: .specialist)
+        tokens = try values.decodeIfPresent(Int.self, forKey: .tokens)
+        signals = try values.decodeIfPresent(RunSignals.self, forKey: .signals) ?? RunSignals()
+    }
 }
 
 /// Something said about a task: by the supervisor, a reviewer or a person.

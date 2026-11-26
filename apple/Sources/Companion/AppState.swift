@@ -2767,6 +2767,11 @@ final class AppState: ObservableObject {
                         job.status = "Reading \((step.value as NSString).lastPathComponent)"
                         let outcome = AgentTools.read(step.value, in: directory)
                         self.noteTool(job, "Read", step.value, outcome)
+                        // Reads of the same file piling up without an edit
+                        // between are what the loop detector watches.
+                        if outcome.ok {
+                            Advanced.shared.agentRead(step.value, in: job.chatID)
+                        }
                         // Reading a skill's file is using the skill: the chat
                         // shows it, and Settings > Skills lists the chats.
                         let target = AgentTools.resolve(step.value, in: directory)
@@ -2810,6 +2815,13 @@ final class AppState: ObservableObject {
                         }
                         self.noteTool(job, "Edited", step.value, outcome)
                         if outcome.ok { self.noteChange(job, target, from: old) }
+                        // Signal for the loop detector: a successful edit
+                        // clears piled-up reads and the failing-edit count;
+                        // a failing edit with the same error signature in a
+                        // row is what flags the run.
+                        Advanced.shared.agentEdited(step.value, in: job.chatID,
+                                                    succeeded: outcome.ok,
+                                                    errorKey: outcome.ok ? nil : outcome.text)
                     case .browser:
                         guard let browser = step.browserCommand else { break }
                         // Companion's own browser beside the chat unless Chrome was asked for.

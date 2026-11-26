@@ -377,6 +377,15 @@ extension Board {
                     summary.problems.append("\(found.key) has no run going on, so there was nothing to stop.")
                     continue
                 }
+                // A model can misread a healthy run as stuck. The board's
+                // own loop detector (`LoopDetection.flag`) is the evidence,
+                // so a run that is not flagged cannot be cut off by a stop.
+                guard LoopDetection.flag(for: found) != nil else {
+                    _ = note(found.id, "Not stopped: its run is not flagged as looping.", author: author, now: now)
+                    summary.problems.append("\(found.key)'s run is not flagged as looping, so it was not stopped. Stop a run only once the board has flagged it.")
+                    touch(found.id)
+                    continue
+                }
                 guard !summary.stopping.contains(found.id) else { continue }
                 // The reason stays on the task, so the person (and the
                 // next run) can read why it was cut short.

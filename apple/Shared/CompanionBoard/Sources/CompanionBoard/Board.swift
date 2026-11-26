@@ -710,6 +710,47 @@ extension Board {
         return true
     }
 
+    /// Records a signal from the run going on in `conversation` for the
+    /// loop detector (`LoopDetection`): a file the agent read. A chat
+    /// with no run going on (an ordinary chat, or a run that has already
+    /// ended) drops the signal: there is nothing to flag.
+    @discardableResult
+    public mutating func recordRead(_ file: String, in conversation: UUID) -> Bool {
+        withActiveRun(in: conversation) { $0.signals.recordRead(file) }
+    }
+
+    /// Records an edit the agent tried. A successful edit clears what
+    /// reads piled up and the failing-edit count; a failing edit whose
+    /// error signature matches the one before raises the count.
+    @discardableResult
+    public mutating func recordEdit(_ file: String, in conversation: UUID,
+                                    succeeded: Bool, errorKey: String? = nil) -> Bool {
+        withActiveRun(in: conversation) {
+            $0.signals.recordEdit(file, succeeded: succeeded, errorKey: errorKey)
+        }
+    }
+
+    /// Records that the run in `conversation` is running on a stand-in
+    /// model (its own rests). A fallback on its own is not a loop; it is
+    /// kept so a read or edit loop afterward reads as `fallbackLooping`.
+    @discardableResult
+    public mutating func markFellBack(in conversation: UUID) -> Bool {
+        withActiveRun(in: conversation) { $0.signals.fellBack = true }
+    }
+
+    private mutating func withActiveRun(in conversation: UUID,
+                                        _ mutate: (inout WorkRun) -> Void) -> Bool {
+        for index in allItems.indices {
+            if let place = allItems[index].runs.lastIndex(where: {
+                $0.conversation == conversation && $0.isRunning
+            }) {
+                mutate(&allItems[index].runs[place])
+                return true
+            }
+        }
+        return false
+    }
+
     /// A run ended: its outcome is kept, and the task moves as
     /// `BoardRules.status(after:)` says. Returns the task and the run, or
     /// nil when no running run here works in that chat.

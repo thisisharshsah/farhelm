@@ -413,13 +413,22 @@ final class OperationTests: XCTestCase {
         XCTAssertEqual(summary.problems.count, 1)
     }
 
-    func testTheSupervisorMayStopARunAndTheTaskWaitsForThePerson() {
+    func testTheSupervisorMayStopAFlaggedRunAndTheTaskWaitsForThePerson() {
         var board = Board(project: project, now: t0)
         let item = board.add(title: "Looping", by: .person, now: t0)
         let idle = board.add(title: "Idle", by: .person, now: t0)
+        // The task has a working copy of its own: stopping must leave
+        // the branch and the work on it, so the next run picks it up.
+        let copy = WorkingCopy(folder: "/copies/app/t-1", subfolder: "apple",
+                               branch: "task/t-1-looping", base: "companion/main",
+                               baseCommit: "abc1234", madeAt: t0)
+        board.setCopy(item.id, copy, by: .person, now: t0)
+        // A run only the board has flagged can be stopped by the
+        // supervisor: here, three reads of the same file in a row.
+        let flagged = RunSignals(reads: ["src/thing.swift": LoopDetection.repeatedReadsLimit])
         let chat = UUID()
-        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
-                       by: .person, now: t0)
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0,
+                                        signals: flagged), by: .person, now: t0)
         let summary = board.apply([.stop(ref: "T-1", reason: "It keeps reading the same file."),
                                    .stop(ref: "T-2", reason: "Nothing to stop."), .stop(ref: "T-9", reason: "")],
                                   model: models, now: minutes(1))
@@ -434,8 +443,29 @@ final class OperationTests: XCTestCase {
         board.endRun(in: chat, outcome: .stopped, report: "", ending: .supervisor, now: minutes(2))
         XCTAssertEqual(board.item(item.id)?.status, .todo)
         XCTAssertEqual(board.item(item.id)?.runs.last?.ending, .supervisor)
+        // The task's working copy, and the branch on it, are left alone:
+        // the next run picks the branch up and goes on from the work.
+        XCTAssertEqual(board.item(item.id)?.workingCopy?.state, .open)
+        XCTAssertEqual(board.item(item.id)?.workingCopy?.branch, "task/t-1-looping")
         // Stopped by the supervisor, it is not carried on without the person.
         XCTAssertFalse(board.mayCarryOn(board.item(item.id)!))
+    }
+
+    func testTheBoardRefusesToStopARunThatIsNotFlagged() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Healthy", by: .person, now: t0)
+        let chat = UUID()
+        // A run with nothing on its signals is not looping, so the board
+        // refuses to stop it even when the supervisor asks.
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        let summary = board.apply([.stop(ref: "T-1", reason: "A hunch.")], model: models, now: minutes(1))
+        XCTAssertTrue(summary.stopping.isEmpty)
+        XCTAssertEqual(summary.problems.count, 1)
+        XCTAssertTrue(summary.problems[0].contains("not flagged as looping"))
+        XCTAssertEqual(board.item(item.id)?.notes.last?.text,
+                       "Not stopped: its run is not flagged as looping.")
+        XCTAssertNotNil(board.item(item.id)?.activeRun)
     }
 
     /// A task with one finished run, waiting in Review, whose checks came

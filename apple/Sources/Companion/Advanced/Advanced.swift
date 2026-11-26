@@ -931,6 +931,9 @@ final class Advanced: ObservableObject {
                 board.beginRun(itemID, WorkRun(conversation: chat, model: chosen.engine.choice, modelLabel: label,
                                                startedAt: Date(), specialist: specialist),
                                by: actor, now: Date())
+                // Started on a stand-in: the loop detector reads a read or
+                // edit loop after this as fallback-looping, not just looping.
+                if standing != nil { board.markFellBack(in: chat) }
             }
         }
         // A task has one chat: a run after the first goes into it, under
@@ -1267,6 +1270,37 @@ final class Advanced: ObservableObject {
             }
             self.tickAll()
         }
+    }
+
+    // MARK: Loop signals from the live run
+
+    /// A file the agent read in `chat`, piled onto the loop detector's
+    /// signals when this chat belongs to a board's run (`LoopDetection`).
+    /// A chat with no run going on is left alone.
+    func agentRead(_ file: String, in chat: UUID) {
+        updateSignals(in: chat) { $0.recordRead(file, in: chat) }
+    }
+
+    /// An edit the agent tried, same as above. A successful edit clears
+    /// what reads piled up; a failing edit whose error matches the one
+    /// before raises the repeated-edit count.
+    func agentEdited(_ file: String, in chat: UUID, succeeded: Bool, errorKey: String? = nil) {
+        updateSignals(in: chat) {
+            $0.recordEdit(file, in: chat, succeeded: succeeded, errorKey: errorKey)
+        }
+    }
+
+    /// The run in `chat` is running on a stand-in model (its own rests).
+    /// Kept so a read or edit loop afterward reads as fallback-looping.
+    func agentFellBack(in chat: UUID) {
+        updateSignals(in: chat) { $0.markFellBack(in: chat) }
+    }
+
+    private func updateSignals(in chat: UUID, _ change: (inout Board) -> Void) {
+        guard let projectID = store.boards.first(where: { entry in
+            entry.value.allItems.contains { $0.activeRun?.conversation == chat }
+        })?.key else { return }
+        store.update(projectID, change)
     }
 
     // MARK: The review gate
@@ -1857,6 +1891,9 @@ final class Advanced: ObservableObject {
                 board.beginRun(itemID, WorkRun(conversation: chat, model: chosen.engine.choice, modelLabel: label,
                                                startedAt: Date(), carriesOn: true),
                                by: .supervisor, now: Date())
+                // Carried on by a stand-in: a read or edit loop afterward
+                // reads as fallback-looping, not just looping.
+                if standing != nil { board.markFellBack(in: chat) }
             }
         }
         return started ? nil : "There is no room for another run right now."
