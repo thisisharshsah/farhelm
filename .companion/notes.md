@@ -4,9 +4,9 @@
 
 ## Where things are (hosts, user names, accounts, folders, files, pages, job or session numbers)
 
-- Checkout `~/Project/farhelm`. From `apple/`, build with `bash build.sh` or rebuild and restart with `bash build.sh restart`. Restart log `apple/.build/restart.log`. App `apple/dist/Companion.app`.
-- Project notes are in `.companion/notes.md`. Companion learns from the Claude app through Settings > Skills.
-- Supervisor stops go through `AppState.swift` around line 4141 and `AgentJob.stoppedBySupervisor()` in `apple/Sources/Companion/Support/AgentJob.swift`. `Board.autopilotMayStart` (`Board.swift:410`) and `mayCarryOn` skip runs that ended as `.supervisor`.
+- Checkout `~/Project/farhelm`. From `apple/`, build with `bash build.sh` or rebuild and restart with `bash build.sh restart`. Log `apple/.build/restart.log`. App `apple/dist/Companion.app`.
+- Project notes live in `.companion/notes.md`. Companion learns from the Claude app through Settings > Skills.
+- Supervisor stops go through `AppState.swift` near line 4141 and `AgentJob.stoppedBySupervisor()` in `apple/Sources/Companion/Support/AgentJob.swift`. `Board.autopilotMayStart` (`Board.swift:410`) and `mayCarryOn` skip runs that ended as `.supervisor`.
 - Design files under `apple/` are `Sources/Companion/UI/Design/Theme.swift`, `Sources/Companion/UI/Design/GlassSurfaces.swift` and `Shared/CompanionDesign/Sources/CompanionDesign/OrbitMark.swift`. Chat selection lives in `ChatSelection.swift`.
 - Keep untracked `apple/sample.txt` and `apple/sample2.txt` out of commits.
 
@@ -15,12 +15,12 @@
 - `ls` or `wc` on a missing `.companion/` exits 1. Create the directory and notes file before appending.
 - Claude Opus 5.5, acting as supervisor, allowed read-only checks and file creation inside the owner's project.
 - Force-quits and crashes skip `applicationWillTerminate`. Debounced saves preserve state about 0.5 seconds after a change. Check `git log` before redoing work after a force-quit. The restore edits were already in `bd95506` when the tree looked clean.
-- Match U+2014 in code-server's window title with `\u{2014}`. Describe it in comments without quoting it. Before committing, scan added lines for U+2014 (`grep $'\u2014'`), keys and tokens.
+- Match U+2014 in code-server's window title with `\u{2014}` and describe it in comments. Scan added lines for U+2014 (`grep $'\u2014'`), keys and tokens before committing.
 - Update notes before staging to keep the work in one commit. Fold in an accidental second commit with `git reset --soft HEAD~1` and `git commit --amend --no-edit` only before pushing.
 - If a session disables file edits, turn edits on before making changes.
-- The board records supervisor stops, and `Advanced` ends the process. Naming `WorkRun` in `AppState.swift` fails to build because that file lacks a CompanionBoard import. Pass plain flags to `AgentJob`, which imports the package and sets the run ending.
+- The board records supervisor stops and `Advanced` ends the process. Naming `WorkRun` in `AppState.swift` fails to build because the file lacks a CompanionBoard import. Pass plain flags to `AgentJob`, which imports the package and sets the run ending.
 - `bash build.sh check` passes with one pre-existing warning in `AgentSession.swift`.
-- The first Nov 26 restart attempt was stopped after two minutes without output. The restart command can return while the build continues in the background. Companion restarts automatically after a successful build. When verification is requested, use the restart log and process list.
+- The first Nov 26 restart attempt was stopped after two minutes without output. The command can return while the build continues in the background. Companion restarts automatically after a successful build. When verification is requested, use the restart log and process list.
 
 ## Done (results, with numbers)
 
@@ -33,8 +33,8 @@
 - Nov 25, supervisor `delete` (`trash`) on `main` is separate from `remove`. For a task with an active run or open copy, the owner must name the task in their own message. `Board.named(in:)` accepts `T-3`, `t3`, `#3` and `task 3`. Refusals leave a reason. Allowed deletions go through `ChangeSummary.deleting` and the card's `Advanced.remove`, with each run written to the board log before deletion.
 - The approve and delete rules are in the supervisor prompt under the standing review rule. All 151 board tests passed, including four new tests. `bash build.sh check` passed.
 - Nov 26. Made “Select across messages” the sole rendering path in `ChatSelection.swift` and removed its switch. Settings has about 30 switches, with no trial switches remaining.
-- Nov 26. An earlier `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15` produced a successful build, confirmed in the restart log. The process list confirmed Companion was running from `apple/dist/Companion.app`.
-- Latest task. Ran `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15` and stopped after capturing its output, as requested. The build and restart outcome remains unverified.
+- Nov 26. An earlier restart succeeded according to the restart log. The process list confirmed Companion was running from `apple/dist/Companion.app`.
+- Latest task. Ran `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15` and stopped after reporting the output as requested. The build and restart outcome remains unverified.
   > Building apart now; Companion restarts by itself when it is built (log: apple/.build/restart.log).
 
 ## Next

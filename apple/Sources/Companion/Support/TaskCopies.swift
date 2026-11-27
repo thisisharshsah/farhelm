@@ -404,7 +404,24 @@ final class TaskCopies {
         let counted = await git("rev-list --count \(baseTip)..\(tip)", in: repository, timeout: 30)
         let message = Self.squashMessage(key: key, title: title, branch: copy.branch,
                                          commits: Int(Self.last(counted.output)) ?? 0)
-        let made = await git("commit-tree \(tree) -p \(baseTip) -m \(Shell.quote(message))",
+        // Where the task brought the person's branch in (a task that
+        // settles a merge with it), that branch's commits are kept as a
+        // second parent. Squashed to one parent, git no longer knew they
+        // were in: the board's work could never be brought into the
+        // person's branch, and every try made another merge task, while
+        // twenty approved tasks waited.
+        var parents = "-p \(baseTip)"
+        let head = await git("symbolic-ref --quiet --short HEAD", in: repository, timeout: 15)
+        let person = Self.last(head.output)
+        if head.ok, !person.isEmpty, person != copy.base, !WorkingCopy.isBoardBranch(person) {
+            let shared = await git("merge-base \(tip) \(Shell.quote("refs/heads/" + person))", in: repository, timeout: 30)
+            let joined = Self.last(shared.output)
+            if shared.ok, Self.isObject(joined), joined != baseTip,
+               !(await git("merge-base --is-ancestor \(joined) \(baseTip)", in: repository, timeout: 30).ok) {
+                parents += " -p \(joined)"
+            }
+        }
+        let made = await git("commit-tree \(tree) \(parents) -m \(Shell.quote(message))",
                              in: repository, timeout: 60)
         let commit = Self.last(made.output)
         guard made.ok, Self.isObject(commit) else {
