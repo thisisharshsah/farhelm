@@ -64,6 +64,32 @@ extension WorkKind {
     }
 }
 
+extension ReviewRecommendation {
+    var title: String {
+        switch self {
+        case .approve: return "Approve"
+        case .askForChanges: return "Ask for Changes"
+        case .throwAway: return "Throw Away"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .approve: return "checkmark.circle.fill"
+        case .askForChanges: return "arrow.uturn.backward.circle.fill"
+        case .throwAway: return "trash.fill"
+        }
+    }
+
+    var tone: Design.Tone {
+        switch self {
+        case .approve: return .positive
+        case .askForChanges: return .caution
+        case .throwAway: return .critical
+        }
+    }
+}
+
 extension BoardGoal.Status {
     var tint: Color {
         switch self {

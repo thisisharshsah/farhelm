@@ -15,8 +15,10 @@ struct TaskInspector: View {
     let used: UsageTotal
     /// Delete was pressed once: the next press deletes.
     @State private var confirmingDelete = false
-    /// Throw Away was pressed once: the next press throws the copy away.
+    /// Throw Away was pressed once: the next press throws the copy away (copy section).
     @State private var confirmingDiscard = false
+    /// Throw Away was pressed once in the review section: the next press discards.
+    @State private var confirmingReviewDiscard = false
     @State private var changeNote = ""
     @State private var askingForChanges = false
 
@@ -108,7 +110,7 @@ struct TaskInspector: View {
             }
         } else if item.status == .review {
             VStack(alignment: .leading, spacing: Design.Space.xs) {
-                if advanced.reviewing.contains(item.id) {
+                if advanced.reviewing.contains(item.id) || advanced.checkingWork.contains(item.id) {
                     let checking = advanced.checkingWork.contains(item.id)
                     HStack(spacing: Design.Space.xs) {
                         LoadingMark(state: checking ? .working : .thinking, size: Design.Icon.small.width)
@@ -116,33 +118,61 @@ struct TaskInspector: View {
                             .textRole(.label, .secondary)
                     }
                 }
-                // What the supervisor makes of the run, for the person
-                // who reviews it: the answer it recommends says so.
-                let advised = item.runs.last?.advice
-                let redo = advised?.verdict == .changesRequested
+                // The recommendation leads: icon, title and reason from checks and advice.
+                let rec = item.runs.last?.runRecommendation()
+                if let rec {
+                    HStack(spacing: Design.Space.xxs) {
+                        Image(systemName: rec.action.icon)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(rec.action.tone.color)
+                        Text(rec.action.title)
+                            .font(Design.TextRole.label.font.weight(.semibold))
+                            .foregroundStyle(rec.action.tone.color)
+                            .lineLimit(1)
+                        Text("recommended")
+                            .textRole(.caption, .secondary)
+                            .lineLimit(1)
+                    }
+                    Text(rec.reason)
+                        .textRole(.label, .secondary)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } else {
+                    HStack(spacing: Design.Space.xs) {
+                        Image(systemName: "hourglass")
+                            .foregroundStyle(.secondary)
+                        Text("No recommendation yet")
+                            .textRole(.label, .secondary)
+                            .lineLimit(1)
+                    }
+                }
+                // The recommended action is prominent; the other two are one click away.
                 HStack(alignment: .top, spacing: Design.Space.xs) {
-                    BoardButton("Approve", icon: "checkmark", prominent: true) { advanced.approve(item.id, in: project.id) }
-                        .recommended(advised?.verdict == .approved, why: BoardText.why(advised))
-                    BoardButton("Ask for Changes", icon: "arrow.uturn.backward") {
-                        // What the supervisor found is where the note starts.
-                        if !askingForChanges, redo, changeNote.isEmpty { changeNote = advised?.notes ?? "" }
+                    BoardButton("Approve", icon: "checkmark",
+                                prominent: rec?.action == .approve) {
+                        advanced.approve(item.id, in: project.id)
+                    }
+                    BoardButton("Ask for Changes", icon: "arrow.uturn.backward",
+                                prominent: rec?.action == .askForChanges) {
+                        if !askingForChanges {
+                            changeNote = rec?.reason ?? (item.runs.last?.advice?.notes ?? "")
+                        }
                         askingForChanges.toggle()
                     }
-                    .recommended(redo, why: BoardText.why(advised))
-                }
-                if let advised {
-                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.xxs) {
-                        Image(systemName: "star.fill")
-                            .font(Design.TextRole.caption.font.weight(.bold))
-                            .foregroundStyle(Design.Tone.accent.color)
-                        Text("The supervisor recommends " + (redo ? "asking for changes" : "approving it")
-                             + (advised.notes.isEmpty ? "." : ": " + advised.notes))
-                            .textRole(.label, .secondary)
-                            .lineLimit(8)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
+                    if item.workingCopy?.isOpen == true {
+                        BoardButton(confirmingReviewDiscard ? "Throw Away for Good" : "Throw Away",
+                                    icon: "trash", tint: Design.Tone.critical.color,
+                                    prominent: rec?.action == .throwAway) {
+                            if confirmingReviewDiscard {
+                                confirmingReviewDiscard = false
+                                advanced.discardCopy(item.id, in: project.id)
+                            } else {
+                                confirmingReviewDiscard = true
+                            }
+                        }
+                        .help("Delete the copy and its branch, with all the work on them")
                     }
-                    .help("From \(advised.by), this project's supervisor. It is advice: you decide.")
                 }
                 if askingForChanges {
                     TextField("", text: $changeNote, prompt: Text("What should change? The next run is given this.").foregroundStyle(.tertiary), axis: .vertical)

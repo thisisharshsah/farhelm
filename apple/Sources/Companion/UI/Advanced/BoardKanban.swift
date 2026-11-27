@@ -165,6 +165,7 @@ struct TaskCard: View {
     let item: WorkItem
     let used: UsageTotal
     @State private var hover = false
+    @State private var confirmingCardDiscard = false
 
     private var selected: Bool { advanced.selectedItem == item.id }
     private var blockers: [WorkItem] { board.blockers(of: item) }
@@ -176,6 +177,7 @@ struct TaskCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.xxs) {
+            reviewBanner
             Text(item.title)
                 .textRole(.label, item.status == .done ? .secondary : .primary)
                 .fontWeight(.semibold)
@@ -226,13 +228,6 @@ struct TaskCard: View {
             } else if board.mergeWaitsOnPerson(item) {
                 toneLine("Not merged", symbol: "arrow.triangle.merge", tone: .caution)
                 .help(item.workingCopy?.problem ?? "Nobody approved its work to be merged")
-            } else if item.status == .review, let checks = item.runs.last?.checks, !Checks.letThrough(checks) {
-                let failed = checks.filter { !$0.passed }
-                toneLine(failed.count == 1 ? "\(failed[0].name) did not pass" : "\(failed.count) checks did not pass",
-                         symbol: "xmark.octagon.fill", tone: .critical)
-                .help(failed.map { "\($0.name) \(Checks.status($0))" }.joined(separator: "\n"))
-            } else if item.status == .review {
-                reviewState
             }
             if hover || selected {
                 actions
@@ -255,6 +250,95 @@ struct TaskCard: View {
         .animation(.easeOut(duration: 0.12), value: hover)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(item.key), \(item.title), \(item.status.title), \(item.priority.title) priority")
+    }
+
+    // MARK: Recommendation banner for Review
+
+    /// The recommendation header shown at the top of a Review card when the
+    /// card is at rest (no active run, no background work in progress). It
+    /// replaces the old single-line state row and surfaces the three actions.
+    @ViewBuilder
+    private var reviewBanner: some View {
+        if item.status == .review, item.activeRun == nil,
+           !advanced.checkingWork.contains(item.id), !advanced.reviewing.contains(item.id),
+           !advanced.preparing.contains(item.id), !advanced.merging.contains(item.id),
+           !board.mergeWaitsOnPerson(item) {
+            let rec = item.runs.last?.runRecommendation()
+            VStack(alignment: .leading, spacing: Design.Space.xxs) {
+                if let rec {
+                    HStack(spacing: Design.Space.xxs) {
+                        Image(systemName: rec.action.icon)
+                            .font(Design.TextRole.caption.font.weight(.bold))
+                            .foregroundStyle(rec.action.tone.color)
+                        Text(rec.action.title)
+                            .font(Design.TextRole.caption.font.weight(.semibold))
+                            .foregroundStyle(rec.action.tone.color)
+                            .lineLimit(1)
+                    }
+                    Text(rec.reason)
+                        .textRole(.caption, .secondary)
+                        .lineLimit(2, reservesSpace: true)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    HStack(spacing: Design.Space.xxs) {
+                        Image(systemName: "hourglass")
+                            .font(Design.TextRole.caption.font)
+                        Text("No recommendation yet")
+                            .font(Design.TextRole.caption.font.weight(.medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Color.secondary)
+                    // Reserve the same two lines so height matches the case with a reason.
+                    Text("")
+                        .textRole(.caption, .secondary)
+                        .lineLimit(2, reservesSpace: true)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                reviewCardActions(rec)
+            }
+            Divider()
+                .padding(.vertical, Design.Space.xxs / 2)
+        }
+    }
+
+    private func reviewCardActions(_ rec: RunRecommendation?) -> some View {
+        ViewThatFits(in: .horizontal) {
+            reviewCardActionRow(rec, labeled: true)
+            reviewCardActionRow(rec, labeled: false)
+        }
+    }
+
+    private func reviewCardActionRow(_ rec: RunRecommendation?, labeled: Bool) -> some View {
+        HStack(spacing: Design.Space.xxs) {
+            BoardButton(labeled ? "Approve" : "", icon: "checkmark",
+                        tint: rec?.action == .approve ? nil : Design.Tone.positive.color,
+                        prominent: rec?.action == .approve) {
+                advanced.approve(item.id, in: project.id)
+            }
+            .help("Approve it: its work is merged and the task is done")
+            BoardButton(labeled ? "Ask for Changes" : "", icon: "arrow.uturn.backward",
+                        prominent: rec?.action == .askForChanges) {
+                advanced.requestChanges(item.id, notes: rec?.reason ?? (item.runs.last?.advice?.notes ?? ""),
+                                        in: project.id)
+            }
+            .help("Send it back to To do")
+            if item.workingCopy?.isOpen == true {
+                BoardButton(
+                    labeled ? (confirmingCardDiscard ? "Confirm?" : "Throw Away") : "",
+                    icon: "trash",
+                    tint: Design.Tone.critical.color,
+                    prominent: rec?.action == .throwAway
+                ) {
+                    if confirmingCardDiscard {
+                        confirmingCardDiscard = false
+                        advanced.discardCopy(item.id, in: project.id)
+                    } else {
+                        confirmingCardDiscard = true
+                    }
+                }
+                .help("Throw the copy and its branch away; the next run starts fresh")
+            }
+        }
     }
 
     /// What the agent is doing right now, or that it waits on the person.

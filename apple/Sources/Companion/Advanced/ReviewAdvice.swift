@@ -1,6 +1,53 @@
 import CompanionBoard
 import Foundation
 
+// MARK: - PM's recommendation for Review
+
+/// What the board recommends as the next action for a task waiting in Review.
+enum ReviewRecommendation: Equatable {
+    case approve
+    case askForChanges
+    case throwAway
+}
+
+/// The board's recommendation for one run, with the reason behind it.
+struct RunRecommendation: Equatable {
+    var action: ReviewRecommendation
+    /// Up to two lines drawn from checks and supervisor advice.
+    var reason: String
+}
+
+extension WorkRun {
+    /// The board's recommendation for this run, or nil when the checks have
+    /// not run yet and nothing can be concluded.
+    ///
+    /// Core invariant: nil checks or any check that did not pass prevents
+    /// .approve regardless of what the supervisor said.
+    func runRecommendation() -> RunRecommendation? {
+        guard let checks else { return nil }
+        let failed = checks.filter { !$0.passed }
+        if !failed.isEmpty {
+            let detail = Checks.digest(checks)
+            return RunRecommendation(action: .askForChanges,
+                                     reason: detail.isEmpty ? "Some checks did not pass." : detail)
+        }
+        switch advice?.verdict {
+        case .changesRequested:
+            let notes = advice?.notes ?? ""
+            return RunRecommendation(action: .askForChanges,
+                                     reason: notes.isEmpty ? "The supervisor found changes needed." : notes)
+        case .approved:
+            let notes = advice?.notes ?? ""
+            return RunRecommendation(action: .approve,
+                                     reason: notes.isEmpty ? "All checks passed and the supervisor approved." : notes)
+        case nil:
+            return RunRecommendation(
+                action: .approve,
+                reason: checks.isEmpty ? "No checks were needed for this work." : "All checks passed.")
+        }
+    }
+}
+
 /// What a project's supervisor recommends where an agent waits on the
 /// person: for steps that need a yes, which answer; for a question with
 /// answers to pick from, which one. It is shown on that option as
