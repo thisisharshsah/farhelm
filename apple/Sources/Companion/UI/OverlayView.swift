@@ -371,6 +371,11 @@ struct OverlayView: View {
                 // steps aside: it keeps its place and its state, takes no
                 // room, and comes back the moment it is asked for.
                 .frame(width: sideIsFull ? 0 : (splitLayout ? codeChatShown : nil))
+                // In Advanced's board, a floor from the design tokens so the
+                // task chat beside an open detail panel keeps room for its
+                // input bar and at least one line of reply, instead of being
+                // squeezed away to nothing.
+                .frame(minHeight: boardLayout ? Design.Control.large.height * 3 : nil)
                 .clipped()
                 .opacity(sideIsFull ? 0 : 1)
                 .allowsHitTesting(!sideIsFull)
@@ -379,8 +384,11 @@ struct OverlayView: View {
                 // It takes no room: the chat, the workspace and its files,
                 // editor and terminal stay exactly where they are. Pick one
                 // and it closes, or move the pointer off it and it closes.
+                // In Advanced's board, peeking reserves its own column
+                // instead (through `paneLayout`), so the chat is never
+                // covered: this overlay only still floats outside the board.
                 .overlay(alignment: .topLeading) {
-                    if sidebarPeek, !app.sidebarPinned, !isPill, !app.showSettings, !sideIsFull {
+                    if sidebarPeek, !sidebarTakesRoom, !isPill, !app.showSettings, !sideIsFull {
                         SidebarView()
                             .frame(width: 258)
                             .frame(maxHeight: .infinity)
@@ -670,13 +678,20 @@ struct OverlayView: View {
         paneLayout.width("side")
     }
 
+    /// The sidebar takes its own room in the layout whenever it is pinned,
+    /// and in Advanced's board also while it is only peeking (hovered): a
+    /// board's chat column is already narrow, so floating a fixed-width
+    /// sidebar over it there could cover it entirely. Outside the board,
+    /// peeking still floats over the chat, where there is room to spare.
+    private var sidebarTakesRoom: Bool { app.sidebarPinned || (boardLayout && sidebarPeek) }
+
     /// How the panel's width is shared now. The sidebar is the first put
     /// away when space runs short, then details or the browser; the chat
     /// (or, in code and Advanced, the workspace or board with the chat)
     /// always stays. Never reads `codeRoom`, which is worked out from it.
     private var paneLayout: PaneWidths {
         var panes: [PaneWidths.Pane] = []
-        if app.sidebarPinned, !app.showSettings, !(splitLayout && sideIsFull) {
+        if sidebarTakesRoom, !app.showSettings, !(splitLayout && sideIsFull) {
             panes.append(.init(id: "sidebar", wanted: app.sidebarWidth,
                                least: OverlayController.sidebarLeast, rank: 0))
         }

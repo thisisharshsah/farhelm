@@ -476,6 +476,10 @@ struct CommitField: View {
     var body: some View {
         TextField(placeholder, text: $text, axis: multiline ? .vertical : .horizontal)
             .lineLimit(multiline ? 1...12 : 1...1)
+            // A long title shows its start and its end rather than
+            // running off the panel's edge, as the branch name and file
+            // rows beside it already do.
+            .truncationMode(multiline ? .tail : .middle)
             .boardField()
             .focused($focused)
             .onAppear { text = value }

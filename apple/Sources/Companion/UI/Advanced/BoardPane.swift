@@ -100,10 +100,13 @@ struct BoardPane: View {
                             .panelCard()
                     }
                     if let selected {
+                        // Its width comes from the column, not a fixed
+                        // number: a floor so its rows have room to lay
+                        // out, a ceiling so it never crowds the board.
                         TaskInspector(project: project, board: board, item: selected, used: ledger.total(of: selected))
                             .frame(maxHeight: .infinity, alignment: .top)
-                            .frame(width: beside ? EmptyLayout.inspectorWidth : nil)
-                            .frame(maxWidth: beside ? nil : .infinity)
+                            .frame(minWidth: beside ? EmptyLayout.inspectorMinWidth : nil,
+                                   maxWidth: beside ? EmptyLayout.inspectorMaxWidth : .infinity)
                             .panelCard()
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
@@ -147,8 +150,12 @@ struct BoardPane: View {
 private enum EmptyLayout {
     static let textWidth: CGFloat = 420
     static let fieldWidth: CGFloat = 440
-    /// The task detail's width when it sits beside the board.
-    static let inspectorWidth: CGFloat = 312
+    /// The task detail's width when it sits beside the board: the same
+    /// floor the session details panel already uses elsewhere in the app
+    /// (`SidePanelMode.details`), and a ceiling at the workspace panel's
+    /// width, so it never crowds the board itself.
+    static let inspectorMinWidth: CGFloat = SidePanelMode.details.width
+    static let inspectorMaxWidth: CGFloat = SidePanelMode.workspace.width
 }
 
 /// No project is open: the projects there are, to choose the one to run.

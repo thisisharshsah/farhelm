@@ -35,7 +35,11 @@ struct TaskInspector: View {
             top
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: Design.Space.m) {
+                    // A floor from the design tokens, so this does not
+                    // collapse to nothing for a done task with no run and
+                    // make the rows under it jump up while the panel is open.
                     actions
+                        .frame(minHeight: Design.Control.large.height, alignment: .top)
                     copy
                     facts
                     writing
@@ -63,7 +67,9 @@ struct TaskInspector: View {
                 .foregroundStyle(.secondary)
             StatusMenu(project: project, item: item)
             Spacer(minLength: Design.Space.xxs)
+            // It is the only way to close the panel: never clipped.
             IconButton("xmark", help: "Close") { advanced.selectedItem = nil }
+                .layoutPriority(1)
         }
         .padding(.leading, Design.Space.s)
         .padding(.trailing, Design.Space.xs)
@@ -274,12 +280,14 @@ struct TaskInspector: View {
                                 .font(Design.TextRole.caption.font.monospaced())
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
-                                .truncationMode(.head)
+                                .truncationMode(.middle)
                             Spacer(minLength: Design.Space.xxs)
                             Text(file.untracked ? "new" : (file.added.map { "+\($0) −\(file.removed ?? 0)" } ?? "binary"))
                                 .font(Design.TextRole.caption.font)
                                 .monospacedDigit()
                                 .foregroundStyle(.tertiary)
+                                // Never the one that gives way to a long path.
+                                .layoutPriority(1)
                         }
                         .contentShape(Rectangle())
                     }
@@ -298,30 +306,49 @@ struct TaskInspector: View {
     private func copyButtons(_ copy: WorkingCopy) -> some View {
         let busy = item.activeRun != nil || advanced.preparing.contains(item.id) || advanced.merging.contains(item.id)
             || advanced.discarding.contains(item.id)
-        HStack(spacing: Design.Space.xs) {
-            if board.mergeWaitsOnPerson(item), !busy {
-                BoardButton("Merge Now", icon: "arrow.triangle.merge", prominent: true) {
-                    advanced.mergeNow(item.id, in: project.id)
+        // A row when there is room for all three; a column, Throw Away
+        // last, when there is not, rather than letting it run off the
+        // edge: none of these buttons truncates its own word.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Design.Space.xs) {
+                copyLeftButtons(copy, busy: busy)
+                Spacer(minLength: 2)
+                copyDiscardButton(busy: busy)
+            }
+            VStack(alignment: .leading, spacing: Design.Space.xs) {
+                HStack(spacing: Design.Space.xs) { copyLeftButtons(copy, busy: busy) }
+                copyDiscardButton(busy: busy)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func copyLeftButtons(_ copy: WorkingCopy, busy: Bool) -> some View {
+        if board.mergeWaitsOnPerson(item), !busy {
+            BoardButton("Merge Now", icon: "arrow.triangle.merge", prominent: true) {
+                advanced.mergeNow(item.id, in: project.id)
+            }
+            .help("Merge its work into \(copy.base) now, as yours")
+        }
+        BoardButton("Show in Finder", icon: "folder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: copy.directory)])
+        }
+        .help(copy.directory)
+    }
+
+    @ViewBuilder
+    private func copyDiscardButton(busy: Bool) -> some View {
+        if !busy {
+            BoardButton(confirmingDiscard ? "Throw Away for Good" : "Throw Away", icon: "trash",
+                        tint: Design.Tone.critical.color) {
+                if confirmingDiscard {
+                    confirmingDiscard = false
+                    advanced.discardCopy(item.id, in: project.id)
+                } else {
+                    confirmingDiscard = true
                 }
-                .help("Merge its work into \(copy.base) now, as yours")
             }
-            BoardButton("Show in Finder", icon: "folder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: copy.directory)])
-            }
-            .help(copy.directory)
-            Spacer(minLength: 2)
-            if !busy {
-                BoardButton(confirmingDiscard ? "Throw Away for Good" : "Throw Away", icon: "trash",
-                            tint: Design.Tone.critical.color) {
-                    if confirmingDiscard {
-                        confirmingDiscard = false
-                        advanced.discardCopy(item.id, in: project.id)
-                    } else {
-                        confirmingDiscard = true
-                    }
-                }
-                .help("Delete its copy and its branch, with all the work on them. Its next run starts again in a new copy.")
-            }
+            .help("Delete its copy and its branch, with all the work on them. Its next run starts again in a new copy.")
         }
     }
 
