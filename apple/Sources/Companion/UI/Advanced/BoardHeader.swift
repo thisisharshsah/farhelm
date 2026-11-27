@@ -269,7 +269,7 @@ struct BoardHeader: View {
 
     private var spend: some View {
         let total = ledger.total
-        return Text("\(BoardText.tokens(total)) tokens · \(Money.text(total.cost))")
+        return Text("\(BoardText.tokens(total)) tokens · \(BoardCost.text(ledger))")
             .textRole(.number, .secondary)
             .lineLimit(1)
             .help("Everything asked of any model for this project: \(total.requests) requests, \(ContextUse.short(total.inputTokens)) tokens in, \(ContextUse.short(total.output)) out."

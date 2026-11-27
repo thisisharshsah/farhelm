@@ -36,15 +36,16 @@ struct GoalsPanel: View {
 
     var body: some View {
         let used = board.usageByGoal(ledger)
+        let onPlan = board.usageByGoal(ledger.plan)
         let earlier = board.earlierGoals
         VStack(alignment: .leading, spacing: Design.Space.s) {
             if starting {
                 newGoal
             } else {
-                current(used[board.currentGoal] ?? UsageTotal())
+                current(used[board.currentGoal] ?? UsageTotal(), covered: onPlan[board.currentGoal] ?? UsageTotal())
             }
             if !earlier.isEmpty {
-                history(earlier, used: used)
+                history(earlier, used: used, covered: onPlan)
             }
         }
         .padding(Design.Space.s)
@@ -59,7 +60,7 @@ struct GoalsPanel: View {
 
     // MARK: The goal being worked toward
 
-    private func current(_ total: UsageTotal) -> some View {
+    private func current(_ total: UsageTotal, covered: UsageTotal) -> some View {
         let progress = board.progress(of: board.currentGoal)
         let reworded = words.trimmingCharacters(in: .whitespacesAndNewlines) != board.goal
         return VStack(alignment: .leading, spacing: Design.Space.xs) {
@@ -79,7 +80,7 @@ struct GoalsPanel: View {
                 .lineLimit(2...8)
                 .boardField()
             HStack(spacing: Design.Space.xs) {
-                Text(Self.facts(progress: progress, total: total, days: ""))
+                Text(Self.facts(progress: progress, total: total, covered: covered, days: ""))
                     .font(Design.TextRole.caption.font)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -96,11 +97,12 @@ struct GoalsPanel: View {
     }
 
     /// "Nov 3 to Nov 9 · 4 of 6 done · 412k tokens · $3.10"
-    fileprivate static func facts(progress: (done: Int, all: Int), total: UsageTotal, days: String) -> String {
+    fileprivate static func facts(progress: (done: Int, all: Int), total: UsageTotal,
+                                  covered: UsageTotal = UsageTotal(), days: String) -> String {
         var parts: [String] = []
         if !days.isEmpty { parts.append(days) }
         parts.append(progress.all == 0 ? "no tasks" : "\(progress.done) of \(progress.all) done")
-        if !total.isEmpty { parts.append("\(BoardText.tokens(total)) tokens · \(Money.text(total.cost))") }
+        if !total.isEmpty { parts.append("\(BoardText.tokens(total)) tokens · \(BoardCost.text(total, covered: covered))") }
         return parts.joined(separator: " · ")
     }
 
@@ -169,13 +171,14 @@ struct GoalsPanel: View {
 
     // MARK: The goals before it
 
-    private func history(_ earlier: [BoardGoal], used: [UUID: UsageTotal]) -> some View {
+    private func history(_ earlier: [BoardGoal], used: [UUID: UsageTotal], covered: [UUID: UsageTotal]) -> some View {
         VStack(alignment: .leading, spacing: Design.Space.xs) {
             BoardHeading(earlier.count == 1 ? "Earlier goal" : "Earlier goals (\(earlier.count))")
             ScrollView(.vertical) {
                 VStack(spacing: Design.Space.xs) {
                     ForEach(earlier) { goal in
                         GoalRow(board: board, goal: goal, used: used[goal.id] ?? UsageTotal(),
+                                covered: covered[goal.id] ?? UsageTotal(),
                                 expanded: expanded == goal.id,
                                 toggle: { expanded = expanded == goal.id ? nil : goal.id },
                                 resume: {
@@ -203,6 +206,8 @@ private struct GoalRow: View {
     let board: Board
     let goal: BoardGoal
     let used: UsageTotal
+    /// The part of `used` that ran on a subscription plan.
+    var covered = UsageTotal()
     let expanded: Bool
     let toggle: () -> Void
     let resume: () -> Void
@@ -226,7 +231,7 @@ private struct GoalRow: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         GoalStatusPill(status: goal.status)
                     }
-                    Text(GoalsPanel.facts(progress: progress, total: used,
+                    Text(GoalsPanel.facts(progress: progress, total: used, covered: covered,
                                           days: BoardText.days(from: goal.startedAt, to: goal.closedAt)))
                         .font(Design.TextRole.caption.font)
                         .monospacedDigit()

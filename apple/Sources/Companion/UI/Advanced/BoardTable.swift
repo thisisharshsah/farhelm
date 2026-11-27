@@ -86,8 +86,13 @@ struct BoardTable: View {
 
     private func section(_ group: RowGroup) -> some View {
         let isFolded = folded.contains(group.id)
+        let plan = ledger.plan
         var total = UsageTotal()
-        for item in group.items { total.add(ledger.total(of: item)) }
+        var covered = UsageTotal()
+        for item in group.items {
+            total.add(ledger.total(of: item))
+            covered.add(plan.total(of: item))
+        }
         let estimate = group.items.reduce(0) { $0 + ($1.estimateTokens ?? 0) }
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Design.Space.xs) {
@@ -103,7 +108,7 @@ struct BoardTable: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                 if !total.isEmpty {
-                    Text("\(BoardText.tokens(total)) tokens · \(Money.text(total.cost))")
+                    Text("\(BoardText.tokens(total)) tokens · \(BoardCost.text(total, covered: covered))")
                         .font(Design.TextRole.caption.font)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -128,7 +133,7 @@ struct BoardTable: View {
             if !isFolded {
                 TableColumns.header
                 ForEach(group.items) { item in
-                    TableRow(project: project, board: board, item: item, used: ledger.total(of: item),
+                    TableRow(project: project, board: board, item: item, used: ledger.total(of: item), covered: ledger.plan.total(of: item),
                              edge: group.tint)
                 }
             }
@@ -148,7 +153,7 @@ private enum TableColumns {
     static let waits: CGFloat = 82
     static let estimate: CGFloat = 62
     static let used: CGFloat = 70
-    static let cost: CGFloat = 62
+    static let cost: CGFloat = 100
     static let updated: CGFloat = 96
 
     private static func cell(_ text: String, _ width: CGFloat, trailing: Bool = false) -> some View {
@@ -185,6 +190,8 @@ private struct TableRow: View {
     let board: Board
     let item: WorkItem
     let used: UsageTotal
+    /// The part of `used` that ran on a subscription plan.
+    var covered = UsageTotal()
     /// The color of the group it is in, down its leading edge.
     let edge: Color
     @State private var hover = false
@@ -240,7 +247,7 @@ private struct TableRow: View {
                 .frame(width: TableColumns.waits, alignment: .leading)
             number(estimate > 0 ? ContextUse.short(estimate) : "", TableColumns.estimate, faint: true)
             number(used.isEmpty ? "" : BoardText.tokens(used), TableColumns.used, tint: over ? Design.Tone.caution.color : nil)
-            number(used.isEmpty ? "" : Money.text(used.cost), TableColumns.cost)
+            number(used.isEmpty ? "" : BoardCost.text(used, covered: covered), TableColumns.cost)
             number(BoardText.when(item.updatedAt), TableColumns.updated, faint: true)
         }
         .padding(.leading, Design.Space.xs)

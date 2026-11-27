@@ -49,21 +49,26 @@ struct BoardUsage: View {
         // The project's cost is that of all its goals, so its finished
         // tasks are counted under all of them too.
         let done = board.allItems.filter { $0.status == .done }
+        let plan = ledger.plan
         var doneTotal = UsageTotal()
-        for item in done { doneTotal.add(ledger.total(of: item)) }
+        var doneCovered = UsageTotal()
+        for item in done {
+            doneTotal.add(ledger.total(of: item))
+            doneCovered.add(plan.total(of: item))
+        }
         let overhead = ledger.overheadShare(purposes: Advanced.overheadPurposes)
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: Design.Space.xs)],
                          alignment: .leading, spacing: Design.Space.xs) {
             tile("Tokens", BoardText.tokens(total),
                  "\(ContextUse.short(total.inputTokens)) in · \(ContextUse.short(total.output)) out")
-            tile("Cost", Money.text(total.cost),
+            tile("Cost", BoardCost.text(total, covered: plan.total),
                  total.cacheRead > 0 ? "\(ContextUse.short(total.cacheRead)) read from cache" : "at the prices in Settings")
             tile("Requests", "\(total.requests)",
                  total.requests > 0 ? "\(BoardText.duration(total.seconds)) of model time" : "none yet")
             tile("Supervising", "\(Int((overhead * 100).rounded()))%",
                  "of the tokens went on planning and review")
             tile("Per task done", done.isEmpty ? "n/a" : ContextUse.short(doneTotal.tokens / done.count),
-                 done.isEmpty ? "no task is done yet" : "\(Money.text(doneTotal.cost / Double(done.count))) each, over \(done.count)")
+                 done.isEmpty ? "no task is done yet" : "\(BoardCost.each(doneTotal, covered: doneCovered, count: done.count)), over \(done.count)")
         }
     }
 
@@ -90,9 +95,12 @@ struct BoardUsage: View {
 
     /// The width of a breakdown's number columns, so they line up down the list.
     private static let numberWidth: CGFloat = 58
+    /// Wide enough for "Covered by plan", so a row never changes height or shifts its columns.
+    private static let costWidth: CGFloat = 96
 
     /// One line of a breakdown: its name, its share as a bar, its numbers.
-    private func line(_ name: String, _ total: UsageTotal, most: Int, tint: Color = Design.Tone.accent.color,
+    private func line(_ name: String, _ total: UsageTotal, covered: UsageTotal = UsageTotal(), most: Int,
+                      tint: Color = Design.Tone.accent.color,
                       detail: String = "", action: (() -> Void)? = nil) -> some View {
         HStack(spacing: Design.Space.xs) {
             VStack(alignment: .leading, spacing: Design.Space.xxs) {
@@ -113,9 +121,11 @@ struct BoardUsage: View {
             Text(BoardText.tokens(total))
                 .textRole(.number, .primary)
                 .frame(width: Self.numberWidth, alignment: .trailing)
-            Text(Money.text(total.cost))
+            Text(BoardCost.text(total, covered: covered))
                 .textRole(.number, .secondary)
-                .frame(width: Self.numberWidth, alignment: .trailing)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: Self.costWidth, alignment: .trailing)
         }
         .padding(.vertical, Design.Space.xxs / 2)
         .contentShape(Rectangle())
@@ -133,12 +143,14 @@ struct BoardUsage: View {
     /// and the ones before it.
     private var byGoal: some View {
         let used = board.usageByGoal(ledger)
+        let onPlan = board.usageByGoal(ledger.plan)
         let goals = board.goals.sorted { $0.number > $1.number }
         let most = goals.compactMap { used[$0.id]?.tokens }.max() ?? 0
         return section("By goal") {
             ForEach(goals) { goal in
                 let progress = board.progress(of: goal.id)
                 line("\(goal.key) \(goal.text.isEmpty ? "Not put into words" : goal.text)", used[goal.id] ?? UsageTotal(),
+                     covered: onPlan[goal.id] ?? UsageTotal(),
                      most: most, tint: goal.status.tint,
                      detail: "\(goal.status.title.lowercased()) · \(progress.done) of \(progress.all) done")
             }
@@ -150,7 +162,9 @@ struct BoardUsage: View {
         let most = lines.first?.total.tokens ?? 0
         return section("By model") {
             ForEach(lines) { entry in
-                line(entry.name, entry.total, most: most, detail: "\(entry.total.requests) requests")
+                let onPlan = entry.id.hasPrefix(LLMProviderKind.subscription.rawValue + "|")
+                line(entry.name, entry.total, covered: onPlan ? entry.total : UsageTotal(),
+                     most: most, detail: "\(entry.total.requests) requests")
             }
         }
     }
@@ -160,6 +174,7 @@ struct BoardUsage: View {
             .filter { !$0.total.isEmpty }
             .sorted { $0.total.tokens > $1.total.tokens }
         let most = used.first?.total.tokens ?? 0
+        let plan = ledger.plan
         return section("By task") {
             if used.isEmpty {
                 Text("No run has been made on a task yet.")
@@ -167,7 +182,7 @@ struct BoardUsage: View {
             }
             ForEach(used, id: \.item.id) { entry in
                 let estimate = entry.item.estimateTokens ?? 0
-                line("\(entry.item.key) \(entry.item.title)", entry.total, most: most,
+                line("\(entry.item.key) \(entry.item.title)", entry.total, covered: plan.total(of: entry.item), most: most,
                      tint: estimate > 0 && entry.total.tokens > estimate ? Design.Tone.caution.color : entry.item.status.tint,
                      detail: estimate > 0 ? "est \(ContextUse.short(estimate))" : "") {
                     advanced.selectedItem = entry.item.id
@@ -187,9 +202,11 @@ struct BoardUsage: View {
         let chats = ledger.byConversation.map { (id: $0.key, total: $0.value) }
             .sorted { ($1.total.tokens, $0.id.uuidString) < ($0.total.tokens, $1.id.uuidString) }
         let most = chats.first?.total.tokens ?? 0
+        let onPlan = ledger.plan.byConversation
         return section("By conversation") {
             ForEach(chats.prefix(40), id: \.id) { chat in
-                line(chatName(chat.id), chat.total, most: most, tint: Design.Tone.info.color,
+                line(chatName(chat.id), chat.total, covered: onPlan[chat.id] ?? UsageTotal(), most: most,
+                     tint: Design.Tone.info.color,
                      detail: "\(chat.total.requests) requests") {
                     app.openConversation(chat.id)
                 }
@@ -205,9 +222,10 @@ struct BoardUsage: View {
     private var byPurpose: some View {
         let lines = ledger.byPurpose
         let most = lines.first?.total.tokens ?? 0
+        let onPlan = Dictionary(ledger.plan.byPurpose.map { ($0.id, $0.total) }, uniquingKeysWith: { first, _ in first })
         return section("By kind of work") {
             ForEach(lines) { entry in
-                line(entry.name, entry.total, most: most,
+                line(entry.name, entry.total, covered: onPlan[entry.id] ?? UsageTotal(), most: most,
                      tint: Advanced.overheadPurposes.contains(entry.name) ? Design.Tone.caution.color : Design.Tone.positive.color)
             }
         }
@@ -220,6 +238,8 @@ struct BoardUsage: View {
     private var byDay: some View {
         let days = ledger.byDay(calendar: .current).suffix(21)
         let most = days.map(\.total.tokens).max() ?? 0
+        let onPlan = Dictionary(ledger.plan.byDay(calendar: .current).map { ($0.day, $0.total) },
+                                uniquingKeysWith: { first, _ in first })
         return section("By day") {
             HStack(alignment: .bottom, spacing: Design.Space.xxs) {
                 ForEach(Array(days), id: \.day) { day in
@@ -232,7 +252,7 @@ struct BoardUsage: View {
                             .textRole(.caption, .tertiary)
                     }
                     .frame(width: Self.dayWidth)
-                    .help("\(day.day.formatted(date: .abbreviated, time: .omitted)): \(BoardText.tokens(day.total)) tokens, \(Money.text(day.total.cost))")
+                    .help("\(day.day.formatted(date: .abbreviated, time: .omitted)): \(BoardText.tokens(day.total)) tokens, \(BoardCost.text(day.total, covered: onPlan[day.day] ?? UsageTotal()))")
                 }
                 Spacer(minLength: 0)
             }
@@ -249,7 +269,7 @@ struct BoardUsage: View {
                 stamp.string(from: entry.date), entry.conversation?.uuidString ?? "", task, entry.engine,
                 entry.model.isEmpty ? "auto" : entry.model, entry.purpose, "\(entry.input)", "\(entry.cacheRead)",
                 "\(entry.cacheWrite)", "\(entry.output)", entry.exact ? "yes" : "estimated",
-                String(format: "%.2f", entry.seconds), String(format: "%.6f", entry.cost)
+                String(format: "%.2f", entry.seconds), BoardCost.isPlan(entry) ? "" : String(format: "%.6f", entry.cost)
             ].joined(separator: ","))
         }
         NSPasteboard.general.clearContents()

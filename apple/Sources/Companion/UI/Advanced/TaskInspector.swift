@@ -440,7 +440,7 @@ struct TaskInspector: View {
                 .frame(width: Design.Space.xxl * 4)
             }
             row("Used") {
-                Text(used.isEmpty ? "Nothing yet" : "\(BoardText.tokens(used)) tokens · \(Money.text(used.cost)) · \(used.requests) requests")
+                Text(used.isEmpty ? "Nothing yet" : "\(BoardText.tokens(used)) tokens · \(BoardCost.text(used, covered: advanced.ledger(for: project.id).plan.total(of: item))) · \(used.requests) requests")
                     .textRole(.number, used.isEmpty ? .tertiary : .primary)
                     .lineLimit(1)
             }
@@ -696,7 +696,7 @@ struct TaskInspector: View {
         parts.append(BoardText.duration((run.endedAt ?? Date()).timeIntervalSince(run.startedAt)))
         if let chat, !chat.isEmpty {
             parts.append("\(BoardText.tokens(chat)) tokens")
-            parts.append(Money.text(chat.cost))
+            parts.append(BoardCost.text(chat, covered: advanced.ledger(for: project.id).plan.total(of: run, now: Date())))
         }
         return parts.joined(separator: " · ")
     }

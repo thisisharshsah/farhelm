@@ -136,7 +136,8 @@ private struct BoardColumn: View {
     private func cards(_ items: [WorkItem]) -> some View {
         LazyVStack(spacing: Design.Space.xs) {
             ForEach(items) { item in
-                TaskCard(project: project, board: board, item: item, used: ledger.total(of: item))
+                TaskCard(project: project, board: board, item: item, used: ledger.total(of: item),
+                         covered: ledger.plan.total(of: item))
                     .draggable(item.id.uuidString)
                     .dropDestination(for: String.self) { dropped, _ in
                         drop(dropped, above: item.id)
@@ -164,6 +165,8 @@ struct TaskCard: View {
     let board: Board
     let item: WorkItem
     let used: UsageTotal
+    /// The part of `used` that ran on a subscription plan.
+    var covered = UsageTotal()
     @State private var hover = false
     @State private var confirmingCardDiscard = false
 
@@ -421,7 +424,7 @@ struct TaskCard: View {
                     .lineLimit(1)
                     .help(used.isEmpty
                           ? "Expected to take about \(ContextUse.short(estimate)) tokens."
-                          : "Used \(BoardText.tokens(used)) tokens (\(Money.text(used.cost)))"
+                          : "Used \(BoardText.tokens(used)) tokens (\(BoardCost.text(used, covered: covered)))"
                             + (estimate > 0 ? " of an expected \(ContextUse.short(estimate))." : "."))
             }
         }
