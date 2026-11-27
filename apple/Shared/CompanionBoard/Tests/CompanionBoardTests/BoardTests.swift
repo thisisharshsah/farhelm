@@ -33,6 +33,39 @@ final class BoardTests: XCTestCase {
         XCTAssertEqual(board.add(title: "   ", by: .person, now: t0).title, "Untitled task")
     }
 
+    func testACardWithAnEmptyOrBlankTitleIsFlaggedUnnamed() {
+        let empty = WorkItem(number: 1, title: "", createdAt: t0)
+        XCTAssertTrue(BoardRules.isUnnamed(empty))
+        let blank = WorkItem(number: 2, title: "   \n ", createdAt: t0)
+        XCTAssertTrue(BoardRules.isUnnamed(blank))
+        let named = WorkItem(number: 3, title: "Fix the bug", createdAt: t0)
+        XCTAssertFalse(BoardRules.isUnnamed(named))
+    }
+
+    func testWhyBlockedNamesNoTitleThenNoDetails() {
+        var board = Board(project: project, now: t0)
+        let blank = board.add(title: "   ", by: .person, now: t0)
+        XCTAssertEqual(BoardRules.whyBlocked(blank), "\(blank.key) has no title yet. Give it one, then it can run.")
+
+        let named = board.add(title: "Fix the thing", by: .person, now: t0)
+        XCTAssertEqual(BoardRules.whyBlocked(named),
+                       "\(named.key) has no details yet. Say what the agent should do, then it can run.")
+
+        board.update(named.id, now: t0) { $0.details = "Write the fix." }
+        XCTAssertNil(BoardRules.whyBlocked(board.item(named.id)!))
+    }
+
+    func testAutopilotWillNotStartANamedTaskThatHasNoDetails() {
+        var board = Board(project: project, now: t0)
+        board.settings.autopilot = true
+        let item = board.add(title: "Fix the thing", by: .person, now: t0)
+        XCTAssertFalse(board.autopilotMayStart(board.item(item.id)!))
+        XCTAssertFalse(board.movesOnByItself(board.item(item.id)!))
+
+        board.update(item.id, now: t0) { $0.details = "Write the fix." }
+        XCTAssertTrue(board.autopilotMayStart(board.item(item.id)!))
+    }
+
     func testMovingKeepsWhenWorkStartedAndFinished() {
         var board = Board(project: project, now: t0)
         let item = board.add(title: "Work", by: .person, now: t0)

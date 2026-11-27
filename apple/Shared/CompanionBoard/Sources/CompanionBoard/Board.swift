@@ -472,11 +472,12 @@ extension Board {
     }
 
     /// Whether Autopilot may start a task again, after its earlier runs:
-    /// not once its last two runs did not finish, not once the review sent
-    /// it back more than `BoardRules.redoLimit` times in a row (it waits
-    /// for a person), and not when someone stopped or refused its last run.
+    /// not without a title and details (`BoardRules.whyBlocked`), not once
+    /// its last two runs did not finish, not once the review sent it back
+    /// more than `BoardRules.redoLimit` times in a row (it waits for a
+    /// person), and not when someone stopped or refused its last run.
     public func autopilotMayStart(_ item: WorkItem) -> Bool {
-        if !BoardRules.hasTitle(item) { return false }
+        if BoardRules.whyBlocked(item) != nil { return false }
         if isHeld(item) { return false }
         if let ending = item.runs.last?.ending, ending == .person || ending == .supervisor { return false }
         // A stronger model given the task by the automatic reviewer gets
@@ -966,6 +967,27 @@ public enum BoardRules {
         let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return false }
         return ![newTaskTitle, untitled].contains { title.caseInsensitiveCompare($0) == .orderedSame }
+    }
+
+    /// A card still carrying its placeholder title, or one cleared back
+    /// to nothing. The board flags such a card "Unnamed".
+    public static func isUnnamed(_ item: WorkItem) -> Bool { !hasTitle(item) }
+
+    /// A card with something written for the agent to do, whatever its
+    /// title says.
+    public static func hasDetails(_ item: WorkItem) -> Bool {
+        !item.details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Why a task cannot have a run started on it, in words for its card:
+    /// no title, or nothing written for the agent to do. nil once it has
+    /// both; a blocker, a used-up budget or a resting model are reasons
+    /// of their own, said only where a run is actually tried
+    /// (`Advanced.start`).
+    public static func whyBlocked(_ item: WorkItem) -> String? {
+        if isUnnamed(item) { return "\(item.key) has no title yet. Give it one, then it can run." }
+        if !hasDetails(item) { return "\(item.key) has no details yet. Say what the agent should do, then it can run." }
+        return nil
     }
 
     /// How long an untitled card with nothing in it and no runs is left

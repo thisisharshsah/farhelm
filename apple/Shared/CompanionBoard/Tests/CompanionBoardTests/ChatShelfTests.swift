@@ -29,7 +29,7 @@ final class ChatShelfTests: XCTestCase {
         var board = Board(project: project, now: t0)
         board.settings.autopilot = autopilot
         board.settings.followsAdvice = answers
-        let item = board.add(title: "Work", by: .person, now: t0)
+        let item = board.add(title: "Work", details: "Do the work.", by: .person, now: t0)
         board.beginRun(item.id, attempt(in: chat), by: .person, now: t0)
         board.endRun(in: chat, outcome: outcome, report: "", ending: ending, now: minutes(5))
         return (board, item.id)
@@ -77,7 +77,7 @@ final class ChatShelfTests: XCTestCase {
 
     func testChangesAskedForAreARedoForThePersonUnlessAutopilotStartsIt() {
         var board = Board(project: project, now: t0)
-        let item = board.add(title: "Work", by: .person, now: t0)
+        let item = board.add(title: "Work", details: "Do the work.", by: .person, now: t0)
         board.beginRun(item.id, attempt(in: chat), by: .person, now: t0)
         board.endRun(in: chat, outcome: .succeeded, report: "Done.", ending: .itself, now: minutes(5))
         board.review(item.id, Review(verdict: .changesRequested, notes: "Add tests.", by: "You", date: minutes(6)),
@@ -134,7 +134,7 @@ final class ChatShelfTests: XCTestCase {
     func testAutopilotLeavesATaskForAPersonOnceTheReviewKeepsSendingItBack() {
         var board = Board(project: project, now: t0)
         board.settings.autopilot = true
-        let item = board.add(title: "Work", by: .person, now: t0)
+        let item = board.add(title: "Work", details: "Do the work.", by: .person, now: t0)
         func sentBack(at minute: Double, by reviewer: String = "M") {
             board.beginRun(item.id, attempt(in: chat, at: minute), by: .autopilot, now: minutes(minute))
             board.endRun(in: chat, outcome: .succeeded, report: "Done.", ending: .itself, now: minutes(minute + 1))

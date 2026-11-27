@@ -101,6 +101,15 @@ struct TaskInspector: View {
                         .fontWeight(.medium)
                         .lineLimit(2)
                 }
+                if let flag = LoopDetection.flag(for: item) {
+                    HStack(spacing: Design.Space.xxs) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Design.Tone.critical.color)
+                        Text(flag.reason)
+                            .textRole(.label, .secondary)
+                            .lineLimit(2)
+                    }
+                }
                 HStack(spacing: Design.Space.xs) {
                     BoardButton("Open the Chat", icon: "bubble.left", prominent: true) {
                         app.openConversation(run.conversation)
@@ -193,12 +202,17 @@ struct TaskInspector: View {
                     .textRole(.label, .secondary)
             }
         } else if item.status != .done {
+            let blocked = BoardRules.whyBlocked(item)
             VStack(alignment: .leading, spacing: Design.Space.xxs) {
                 BoardButton(item.runs.isEmpty ? "Start a Run" : "Run It Again", icon: "play.fill", prominent: true) {
                     advanced.startOrExplain(item.id, in: project.id)
                 }
-                .opacity(blockers.isEmpty ? 1 : 0.5)
-                if !blockers.isEmpty {
+                .opacity(blockers.isEmpty && blocked == nil ? 1 : 0.5)
+                if let blocked {
+                    Text(blocked)
+                        .font(Design.TextRole.label.font)
+                        .foregroundStyle(Design.Tone.caution.color)
+                } else if !blockers.isEmpty {
                     Text("Waits on " + blockers.map(\.key).joined(separator: ", ") + ".")
                         .font(Design.TextRole.label.font)
                         .foregroundStyle(Design.Tone.caution.color)

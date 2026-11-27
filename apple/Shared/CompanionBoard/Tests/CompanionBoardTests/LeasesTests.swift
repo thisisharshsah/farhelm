@@ -133,7 +133,7 @@ final class LeasesTests: XCTestCase {
     func testARunWhoseModelCouldNotAnswerIsNotHeldAgainstItsTask() {
         var board = Board(project: project, now: t0)
         board.settings.autopilot = true
-        let item = board.add(title: "Work", by: .person, now: t0)
+        let item = board.add(title: "Work", details: "Do the work.", by: .person, now: t0)
         let chat = UUID()
         for minute in [0.0, 2.0] {
             board.beginRun(item.id, WorkRun(conversation: chat, model: model, modelLabel: "M", startedAt: minutes(minute)),

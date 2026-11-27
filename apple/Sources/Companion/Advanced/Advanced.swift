@@ -917,9 +917,7 @@ final class Advanced: ObservableObject {
         guard let project = self.project(projectID) else { return "This project is no longer on the list." }
         let board = load(projectID)
         guard let item = board.item(itemID) else { return "That task is no longer on the board." }
-        guard BoardRules.hasTitle(item) else {
-            return "\(item.key) has no title yet. Give it one that says what the work is, then start it."
-        }
+        if let reason = BoardRules.whyBlocked(item) { return reason }
         guard item.activeRun == nil, !preparing.contains(itemID) else { return "\(item.key) already has a run going on." }
         guard !merging.contains(itemID), !discarding.contains(itemID) else {
             return "\(item.key)'s copy is being merged or thrown away. Start it again in a moment."

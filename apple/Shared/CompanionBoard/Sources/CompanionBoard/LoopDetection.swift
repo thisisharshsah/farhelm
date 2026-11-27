@@ -12,6 +12,11 @@ public enum LoopDetection {
     /// not to keep spending on.
     public static let tokenMultiple = 3
 
+    /// How far a run may go with no estimate to judge it against before
+    /// the board flags it anyway: no plan is not permission to run for
+    /// ever.
+    public static let noEstimateLimit = 1_000_000
+
     /// How many reads of the same file without a successful edit between
     /// them count as a read loop. One is a first look, two can be re-reading
     /// a long file, three in a row is going round.
@@ -133,13 +138,21 @@ extension LoopDetection {
     /// the model can stop it and re-plan the task in its next reply.
     public static func flag(for item: WorkItem) -> LoopFlag? {
         guard let run = item.activeRun else { return nil }
-        // Tokens over the multiple of the estimate: the plan is clearly
-        // wrong, so the task is to re-plan, not to keep spending on.
-        if let estimate = item.estimateTokens, estimate > 0, let used = run.tokens,
-           used > estimate * tokenMultiple {
-            return LoopFlag(kind: .overrun,
-                            reason: "\(item.key) has used \(tokens(used)), "
-                                + "over \(tokenMultiple)x its \(tokens(estimate))-token estimate.")
+        if let used = run.tokens {
+            // Tokens over the multiple of the estimate: the plan is
+            // clearly wrong, so the task is to re-plan, not to keep
+            // spending on. With no estimate to judge it against, a flat
+            // ceiling still catches a run that is plainly running away.
+            if let estimate = item.estimateTokens, estimate > 0 {
+                if used > estimate * tokenMultiple {
+                    return LoopFlag(kind: .overrun,
+                                    reason: "\(item.key) has used \(tokens(used)), "
+                                        + "over \(tokenMultiple)x its \(tokens(estimate))-token estimate.")
+                }
+            } else if used > noEstimateLimit {
+                return LoopFlag(kind: .overrun,
+                                reason: "\(item.key) has used \(tokens(used)) tokens, with no estimate to judge it against.")
+            }
         }
         // The same file read again and again without an edit between.
         // Ties between files are settled by name so the reason is stable.

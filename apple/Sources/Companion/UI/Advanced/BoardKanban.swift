@@ -195,6 +195,13 @@ struct TaskCard: View {
                     .help(item.kind.title)
                     .accessibilityLabel(item.kind.title)
                 ModelChip(assignment: item.assignment)
+                if let flag = LoopDetection.flag(for: item) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .iconWidth(.small)
+                        .foregroundStyle(Design.Tone.critical.color)
+                        .help(flag.reason)
+                        .accessibilityLabel(flag.reason)
+                }
                 Spacer(minLength: 0)
                 tokens
                     .layoutPriority(1)
@@ -212,6 +219,12 @@ struct TaskCard: View {
                     Image(systemName: "lock.fill")
                         .foregroundStyle(Design.Tone.caution.color)
                         .help("Waits on " + blockers.map(\.key).joined(separator: ", "))
+                }
+                if item.status != .done, item.activeRun == nil, let reason = BoardRules.whyBlocked(item) {
+                    Image(systemName: "exclamationmark.circle")
+                        .foregroundStyle(Design.Tone.caution.color)
+                        .help(reason)
+                        .accessibilityLabel(reason)
                 }
             }
             .textRole(.caption, .secondary)
