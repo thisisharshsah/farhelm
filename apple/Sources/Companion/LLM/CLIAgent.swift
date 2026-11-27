@@ -921,7 +921,7 @@ final class CLIAgents: ObservableObject {
 }
 
 enum CLIAgentClient {
-    private static let instruction = "Follow the instructions and answer the last user message of the conversation given on standard input. Reply with the answer only."
+    private static let instruction = "Follow the instructions and answer the last user message of the conversation given on standard input. Reply with the answer only. You have no tools of your own here for changing files or running commands: where the instructions give a way to ask for a step, use that way and nothing else, and never report that you lack permission."
 
     /// What the run needs, gathered on the main actor.
     private struct Plan {
@@ -993,6 +993,14 @@ enum CLIAgentClient {
             for folder in Set(pictures.map { ($0 as NSString).deletingLastPathComponent }) {
                 options += ["--add-dir", folder]
             }
+            // Its own tools for changing things are taken out of its sight,
+            // not merely refused. Left in sight (and denied by the
+            // permission mode), the model kept trying them, took the
+            // refusals to mean the task could not be done, and said so run
+            // after run: millions of tokens on tasks that never wrote a
+            // line. Changes go through Companion's own steps, which it is
+            // told how to ask for.
+            options += ["--disallowedTools", "Bash,Edit,Write,NotebookEdit,Agent,Task"]
         case "codex":
             for picture in pictures { options += ["--image", picture] }
         default:
@@ -1048,10 +1056,14 @@ enum CLIAgentClient {
         }
 
         let adapter = plan.adapter
+        let started = Date()
         return AsyncThrowingStream { continuation in
             let task = Task {
                 var said = false
                 var failure: String?
+                // Codex names its thread first; what it makes (pictures)
+                // is kept in a folder of that name.
+                var thread: String?
                 do {
                     for try await line in output.fileHandleForReading.bytes.lines {
                         // What is left of the plan, when the tool says so
@@ -1062,6 +1074,10 @@ enum CLIAgentClient {
                                 let id = adapter.id
                                 Task { @MainActor in CLIAgents.shared.noteLimits(found, for: id) }
                             }
+                        }
+                        if adapter.format == .codexJSON, thread == nil, line.contains("thread.started"),
+                           let event = LLM.parse(line[...]) {
+                            thread = event["thread_id"] as? String
                         }
                         switch read(line, as: adapter.format, said: said, usage: request.usage) {
                         case .text(let text):
@@ -1082,6 +1098,16 @@ enum CLIAgentClient {
                         let hint = adapter.signIn.map { " \($0)" } ?? ""
                         throw LLMError.network("\(adapter.name) stopped without an answer.\(detail.isEmpty ? "" : " \(String(detail.suffix(300)))")\(hint)")
                     }
+                    // What the tool made besides words (Codex's own image
+                    // tool keeps its pictures in its own folder, and its
+                    // answer often only says that it made one): each is
+                    // shown in the answer.
+                    if adapter.format == .codexJSON {
+                        let made = Self.codexMedia(thread: thread, since: started)
+                        if !made.isEmpty {
+                            continuation.yield((said ? "\n\n" : "") + made.map { "![Made by Codex](\($0))" }.joined(separator: "\n\n"))
+                        }
+                    }
                     continuation.finish()
                     // A reply used some of the plan: ask what is left now.
                     if adapter.limitsArguments != nil {
@@ -1095,6 +1121,43 @@ enum CLIAgentClient {
                 task.cancel()
                 if process.isRunning { process.terminate() }
             }
+        }
+    }
+
+    /// The pictures and films Codex made in this run, copied to a folder
+    /// of Companion's own so they stay when Codex tidies up: those in its
+    /// thread's folder, or, when it did not name its thread, whatever it
+    /// has written since the run began.
+    private static func codexMedia(thread: String?, since started: Date) -> [String] {
+        let files = FileManager.default
+        let home = ProcessInfo.processInfo.environment["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? (NSHomeDirectory() as NSString).appendingPathComponent(".codex")
+        let root = (home as NSString).appendingPathComponent("generated_images")
+        var folders: [String] = []
+        if let thread, !thread.isEmpty, !thread.contains("/") {
+            folders = [(root as NSString).appendingPathComponent(thread)]
+        } else {
+            folders = ((try? files.contentsOfDirectory(atPath: root)) ?? []).map { (root as NSString).appendingPathComponent($0) }
+        }
+        var found: [(path: String, written: Date)] = []
+        for folder in folders {
+            for name in (try? files.contentsOfDirectory(atPath: folder)) ?? [] {
+                let path = (folder as NSString).appendingPathComponent(name)
+                guard GeneratedMedia.kinds.contains((name as NSString).pathExtension.lowercased()),
+                      let written = (try? files.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                      written >= started.addingTimeInterval(-2) else { continue }
+                found.append((path, written))
+            }
+        }
+        guard !found.isEmpty else { return [] }
+        let kept = files.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Companion/Generated", isDirectory: true)
+        try? files.createDirectory(at: kept, withIntermediateDirectories: true)
+        let stamp = Int(started.timeIntervalSince1970)
+        return found.sorted { $0.written < $1.written }.prefix(8).map { item in
+            let copy = kept.appendingPathComponent("\(stamp)-" + (item.path as NSString).lastPathComponent).path
+            if !files.fileExists(atPath: copy) { try? files.copyItem(atPath: item.path, toPath: copy) }
+            return files.fileExists(atPath: copy) ? copy : item.path
         }
     }
 

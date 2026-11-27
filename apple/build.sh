@@ -227,8 +227,9 @@ in_task_copy() {
 }
 
 bundle() {
-  quit_running
-  rm -rf dist
+  # Put together beside the running app (STAGED), nothing is quit here.
+  [[ -n "${STAGED:-}" ]] || quit_running
+  rm -rf "$(dirname "$BUNDLE_DIR")"
   mkdir -p "$BUNDLE_DIR/Contents/MacOS" "$BUNDLE_DIR/Contents/Resources"
   cp ".build/release/$APP_NAME" "$BUNDLE_DIR/Contents/MacOS/"
   cp Resources/Info.plist "$BUNDLE_DIR/Contents/"
@@ -363,11 +364,47 @@ case "${1:-run}" in
   build) build ;;
   restart)
     restart_allowed || exit 1
+    # From inside the app the whole of it runs apart, and this returns at
+    # once: a build of many files takes longer than the two minutes the
+    # agent's shell gives a command, and was cut off half way. The app it
+    # was started from stays up until the new one takes its place, so
+    # running apart is enough here (see below for after it quits).
+    if [[ ! -t 0 && "${COMPANION_RESTART_JOB:-}" != "1" ]]; then
+      mkdir -p .build
+      COMPANION_RESTART_JOB=1 /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$PWD/build.sh" restart \
+        </dev/null >.build/restart.log 2>&1 &
+      echo "Building apart now; $APP_NAME restarts by itself when it is built (log: apple/.build/restart.log)."
+      exit 0
+    fi
     build
-    # Bundling quits the running app first. Started from a chat inside
-    # that app, this script went down with it, half way through the
-    # bundle, and nothing came back up. So everything after the build
-    # runs in a session of its own that outlives the app.
+    # Started from a chat inside the app that is being replaced (no
+    # terminal behind it), this script cannot outlive that app: macOS ends
+    # everything the app started soon after it quits, whatever session or
+    # launchd job it was moved to (tried, three times). So nothing is left
+    # to do after the old app goes. The new bundle is put together beside
+    # the running one, swapped in, and started while the old one still
+    # runs; told which one it replaces, the new app asks that one to quit
+    # and waits for it before it starts up (`Launch.replaceRunning`).
+    if [[ ! -t 0 ]]; then
+      old="$(own_app | head -1)"
+      rm -rf .build/stage .build/stage-old
+      BUNDLE_DIR=".build/stage/$APP_NAME.app"
+      STAGED=1
+      bundle
+      STAGED=""
+      BUNDLE_DIR="dist/$APP_NAME.app"
+      if [[ -d dist ]]; then mv dist .build/stage-old; fi
+      mv .build/stage dist
+      if [[ -n "$old" ]]; then
+        open -n --env "COMPANION_REPLACE=$old" "$PWD/$BUNDLE_DIR"
+      else
+        open -n "$PWD/$BUNDLE_DIR"
+      fi
+      echo "Built. The new $APP_NAME is starting and takes the old one's place."
+      exit 0
+    fi
+    # From a terminal, everything after the build runs apart, in a
+    # session of its own: the bundle quits the app, and that works there.
     /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$PWD/build.sh" finish-restart \
       </dev/null >.build/restart.log 2>&1 &
     echo "Built. Bundling and restarting on its own now (log: apple/.build/restart.log)."

@@ -148,8 +148,22 @@ final class Advanced: ObservableObject {
 
     /// Projects whose board was opened since launch. Autopilot acts only
     /// for these: nothing starts spending on a project nobody has looked
-    /// at since the app started.
-    private var armed: Set<UUID> = []
+    /// at since the app started. Kept across a quit (`resumeBoards`): a
+    /// board the person had handed to the supervisor or Autopilot went on
+    /// being theirs to run, yet every restart (a rebuild, a crash) left it
+    /// idle until someone happened to open it again.
+    private var armed: Set<UUID> = [] {
+        didSet {
+            guard armed != oldValue else { return }
+            UserDefaults.standard.set(armed.map(\.uuidString), forKey: Self.armedKey)
+        }
+    }
+    private static let armedKey = "advancedArmedBoards"
+    /// The boards that were running when the app last quit, read before
+    /// anything this launch writes over them.
+    private let armedBefore: [UUID] = (UserDefaults.standard.stringArray(forKey: Advanced.armedKey) ?? [])
+        .compactMap(UUID.init(uuidString:))
+    private var resumed = false
     private var pulse: Task<Void, Never>?
 
     /// Chats that are no board's run where the supervisor has just said
@@ -204,6 +218,7 @@ final class Advanced: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 guard let self else { return }
+                self.resumeBoards()
                 // Once a minute, whether or not Autopilot is on.
                 beats += 1
                 if beats % 3 == 0 { self.stopRunaways() }
@@ -241,6 +256,24 @@ final class Advanced: ObservableObject {
 
     private func project(_ id: UUID) -> Project? {
         app.projects.first { $0.id == id }
+    }
+
+    /// Once after launch: the boards that were running before the app
+    /// quit run again, where the person had left them to run by
+    /// themselves (the supervisor answers, or Autopilot is on). A board
+    /// whose project is gone, or that was only being looked at, waits to
+    /// be opened as before.
+    private func resumeBoards() {
+        guard !resumed else { return }
+        resumed = true
+        for id in armedBefore where !armed.contains(id) && project(id) != nil {
+            let board = load(id)
+            guard board.settings.startsWorkByItself else { continue }
+            armed.insert(id)
+            refreshRoster()
+            lookForStrays(id)
+            tick(id)
+        }
     }
 
     /// A project's board, read the first time. Runs it still calls
@@ -587,6 +620,14 @@ final class Advanced: ObservableObject {
                 for try await piece in try await LLM.stream(request, config: config) {
                     answer += piece
                 }
+                // A model that answers nothing has not answered: the next
+                // one is asked. Taken as an answer, an empty one left
+                // reviews without a verdict ("It said:" and nothing after)
+                // and commits under a made-up message, three times over.
+                if answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    last = LLMError.network("\(engine.label) answered nothing.")
+                    continue
+                }
                 answered(by: engine, for: project)
                 return (answer, engine)
             } catch {
@@ -894,6 +935,7 @@ final class Advanced: ObservableObject {
         guard !board.budget.state(spent: spent).isOver else {
             return "The project's budget is used up. Raise it on the board to start more work."
         }
+        if let over = pastCeiling(item, in: projectID) { return over }
         refreshRoster()
         // Over the app's limit it is never refused: it waits in line and
         // starts by itself when a slot frees (`tick`). The pass that takes
@@ -989,6 +1031,24 @@ final class Advanced: ObservableObject {
     /// out of the count: they are most of a long run's tokens and cost
     /// next to nothing. The task goes back to To do with a note, and waits
     /// for a person or the supervisor to re-plan it.
+    /// What a task may use over all of its runs before nothing starts it
+    /// again: ten times its estimate, and never less than this. The limit
+    /// on one run does not catch a task that is started over and over,
+    /// each run under its own limit; two such tasks used three and ten
+    /// million tokens against estimates of a quarter of a million.
+    static let taskCeilingFloor = 2_000_000
+
+    /// Why a task may not run any more as it stands, when it is past its
+    /// ceiling; nil while it is under it. Reads served from the cache are
+    /// left out, as for a single run.
+    private func pastCeiling(_ item: WorkItem, in project: UUID) -> String? {
+        let total = ledger(for: project).total(of: item)
+        let used = total.input + total.cacheWrite + total.output
+        let ceiling = max(10 * (item.estimateTokens ?? 0), Self.taskCeilingFloor)
+        guard used > ceiling else { return nil }
+        return "\(item.key) has used \(used / 1000)k tokens over all its runs, past its ceiling of \(ceiling / 1000)k (ten times its estimate). Split it or sharpen it, or raise its estimate if it really is that big, then start it."
+    }
+
     private func stopRunaways() {
         let now = Date()
         for (project, board) in store.boards {
@@ -1000,6 +1060,15 @@ final class Advanced: ObservableObject {
                 let used = ledger.total(of: run, now: now)
                 let fresh = used.input + used.cacheWrite + used.output
                 let ceiling = max(3 * (item.estimateTokens ?? 0), Self.runawayFloor)
+                // Past what the task may use over all its runs: this run
+                // ends too, and nothing starts another (`start`).
+                if fresh <= ceiling, let over = pastCeiling(item, in: project) {
+                    change(project) { board in
+                        board.note(item.id, "Stopped by the board: " + over, author: "Board", now: now)
+                    }
+                    stop(item.id, in: project, bySupervisor: true)
+                    continue
+                }
                 guard fresh > ceiling else { continue }
                 change(project) { board in
                     let words = "Stopped by the board: this run used \(fresh / 1000)k tokens, past its limit of \(ceiling / 1000)k (three times the estimate). Split the task or sharpen it before running it again."
@@ -1034,7 +1103,7 @@ final class Advanced: ObservableObject {
         let held = board.items(in: .todo).filter { item in
             item.activeRun == nil && item.goal == board.currentGoal && !BoardRules.isBlank(item)
                 && board.blockers(of: item).isEmpty && !board.movesOnByItself(item)
-                && (triageCount[item.id] ?? 0) < Self.triageLimit
+                && (triageCount[item.id] ?? 0) < Self.triageLimit && pastCeiling(item, in: projectID) == nil
         }
         guard !held.isEmpty else { return }
         triaged[projectID] = Date()
@@ -1658,6 +1727,11 @@ final class Advanced: ObservableObject {
                     reason = reason ?? "\(item.key) is estimated at more than what is left of the budget."
                     continue
                 }
+                // Past what it may use over all its runs: not started again.
+                if let over = pastCeiling(item, in: projectID) {
+                    reason = reason ?? over
+                    continue
+                }
                 eligible.append(item)
             }
         }
@@ -2269,6 +2343,20 @@ final class Advanced: ObservableObject {
                              "The project builds and its tests pass"],
                 status: .todo, priority: .urgent, kind: .chore, paths: files, by: .supervisor, now: now)
             key = made.key
+            // Given a model at once: made without one, it waited on the
+            // model in the chat box, which could be one out of its plan,
+            // and the board's merged work (sixteen tasks once) never
+            // reached the person's branch. The model of the latest task
+            // whose work was approved is one that does this board's work.
+            let proven = board.allItems
+                .filter { $0.status == .done && $0.assignment != nil && $0.runs.last?.review?.verdict == .approved }
+                .max { ($0.finishedAt ?? .distantPast) < ($1.finishedAt ?? .distantPast) }?.assignment
+            if var assignment = proven {
+                assignment.reason = "Settling a merge: the model of the latest approved task"
+                assignment.source = .rule
+                assignment.accepted = true
+                _ = board.assign(made.id, assignment, by: .supervisor, now: now)
+            }
         }
         noteDelivery("Your branch and the board's both changed \(list), so \(key) was added for an agent to settle that. Its work then goes into \(target) by itself.", in: projectID)
         tick(projectID)

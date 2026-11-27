@@ -320,10 +320,10 @@ struct OverlayView: View {
                             VStack(alignment: .leading, spacing: 0) {
                             if showModels {
                                 ModelPicker(isOpen: $showModels)
-                                    // As wide as it likes to be, but never
-                                    // wider than the chat it hangs over: in a
-                                    // narrow chat column it narrows with it.
-                                    .frame(maxWidth: 326)
+                                    // As wide as it likes to be (compact, or
+                                    // widened with "More"), but never wider
+                                    // than the chat it hangs over.
+                                    .frame(maxWidth: 610)
                                     .padding(.horizontal, Theme.gutter)
                                     // A small gap between it and the pill it
                                     // hangs from.
@@ -2666,6 +2666,7 @@ struct TurnView: View {
     var onToggle: (() -> Void)?
     @State private var hover = false
     @State private var copied = false
+    @ObservedObject private var readAloud = ReadAloud.shared
 
     /// The engine, and which of the user's material the answer drew on.
     private var footnote: String {
@@ -2746,14 +2747,17 @@ struct TurnView: View {
                 }
 
                 if !turn.answer.isEmpty {
-                    // An answer that came back formatted (lists, tables, bold) is
-                    // always shown formatted, never as raw Markdown.
+                    // An answer is drawn so that one drag selects through it
+                    // and on into the messages around it (`ChatSelection`),
+                    // formatted, never as raw Markdown. Only a reply being
+                    // said aloud right now is drawn the older way, which
+                    // marks the words already spoken.
                     // New text fades in as it streams instead of popping.
                     Group {
-                        if MarkdownNotes.looksFormatted(turn.answer) {
-                            MarkdownNotes(text: turn.answer, size: 13)
-                        } else {
+                        if spokenWords > 0, !MarkdownNotes.looksFormatted(turn.answer) {
                             ReadAlongText(text: turn.answer, spokenWords: spokenWords, tint: tint, cursorID: cursorID)
+                        } else {
+                            SelectableAnswer(text: turn.answer, size: 13)
                         }
                     }
                     // Set as the Claude app sets replies: a serif with room
@@ -2821,6 +2825,9 @@ struct TurnView: View {
             if !turn.answer.isEmpty {
                 Button("Copy") { app.copy(turn.answer) }
             }
+            Divider()
+            Button("Copy Whole Chat") { app.copyChat() }
+            Button("Open Chat as Text") { app.openChatAsText() }
         }
     }
 
@@ -2923,6 +2930,17 @@ struct TurnView: View {
                         copied = false
                     }
                 }
+            }
+            if !turn.answer.isEmpty {
+                let reading = readAloud.reading == turn.id
+                tool(reading ? "stop.fill" : "speaker.wave.2", help: reading ? "Stop reading" : "Read aloud",
+                     tint: reading ? Theme.accent : nil) {
+                    readAloud.toggle(turn.answer, turn: turn.id)
+                }
+                tool(turn.rating == 1 ? "hand.thumbsup.fill" : "hand.thumbsup", help: "Good answer",
+                     tint: turn.rating == 1 ? Theme.mint : nil) { app.rate(turn.id, 1) }
+                tool(turn.rating == -1 ? "hand.thumbsdown.fill" : "hand.thumbsdown", help: "Not a good answer",
+                     tint: turn.rating == -1 ? Theme.rose : nil) { app.rate(turn.id, -1) }
             }
             tool("arrow.clockwise", help: "Regenerate") { app.regenerate(turn.id) }
             tool("trash", help: "Delete this turn") { app.deleteTurn(turn.id) }
@@ -3281,7 +3299,9 @@ struct WorkTrail: View {
         return "\(total / 3600)h \(total % 3600 / 60)m"
     }
     /// Work stays open when asked to in Settings > Look.
-    @AppStorage("workAlwaysOpen") private var alwaysOpen = false
+    /// The work folds to one line once the agent is done; a click opens
+    /// it. Keeping it open in every reply is no longer a choice.
+    private let alwaysOpen = false
     /// Opened or folded by hand; nil follows the default: open while the
     /// agent works (or always, by the setting), folded once it is done.
     @State private var chosen: Bool?
@@ -3703,6 +3723,9 @@ struct TurnInputBubble: View {
                 // it is plain text (right-click still copies it).
                 if pinned {
                     promptText
+                } else if expanded || !isLong {
+                    // Selectable together with the messages around it.
+                    SelectableText(text: MarkdownAttributed.plain(turn.prompt, size: 12.5), hugs: true)
                 } else {
                     promptText.textSelection(.enabled)
                 }
@@ -3745,6 +3768,9 @@ struct TurnInputBubble: View {
                 TimeLabel(date: turn.date)
                     .padding(.trailing, 4)
                 if !turn.prompt.isEmpty {
+                    FooterButton(symbol: "arrow.clockwise", help: "Send it again for a new answer") {
+                        app.regenerate(turn.id)
+                    }
                     FooterButton(symbol: "pencil", help: "Edit this message and send it again") {
                         editText = turn.prompt
                         editing = true
@@ -3775,6 +3801,9 @@ struct TurnInputBubble: View {
             if !turn.prompt.isEmpty {
                 Button("Copy") { app.copy(turn.prompt) }
             }
+            Divider()
+            Button("Copy Whole Chat") { app.copyChat() }
+            Button("Open Chat as Text") { app.openChatAsText() }
         }
         // Your own input is on the right, like what was heard, and may use
         // the chat's whole width.
@@ -3875,6 +3904,82 @@ struct ReadAlongText: View {
     }
 }
 
+// MARK: - Pictures and films a model made
+
+/// A picture or a film a model made, shown where its path stands in the
+/// answer: the picture itself, or for a film a tile that plays it in the
+/// Mac's own player. Under it, the ways to take it somewhere else.
+struct GeneratedMedia: View {
+    let path: String
+
+    static let films: Set<String> = ["mp4", "mov", "m4v", "webm"]
+    static let pictures: Set<String> = ["png", "jpg", "jpeg", "webp", "gif", "heic", "tiff"]
+    static let kinds = films.union(pictures)
+
+    /// Pictures read once, not with every redraw of the chat.
+    private static let cache = NSCache<NSString, NSImage>()
+
+    private var isFilm: Bool { Self.films.contains((path as NSString).pathExtension.lowercased()) }
+
+    private var picture: NSImage? {
+        if let kept = Self.cache.object(forKey: path as NSString) { return kept }
+        guard let read = NSImage(contentsOfFile: path) else { return nil }
+        Self.cache.setObject(read, forKey: path as NSString)
+        return read
+    }
+
+    private func open() { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: open) {
+                if !isFilm, let picture {
+                    Image(nsImage: picture)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 460, maxHeight: 460, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
+                            .strokeBorder(Theme.ink.opacity(0.12), lineWidth: 0.5))
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: isFilm ? "play.rectangle.fill" : "photo")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Theme.accent)
+                        Text((path as NSString).lastPathComponent)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.ink.opacity(0.9))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
+                        .fill(Theme.ink.opacity(0.06)))
+                }
+            }
+            .buttonStyle(.plain)
+            .help(isFilm ? "Play it" : "Open it")
+            HStack(spacing: 12) {
+                Button("Open", action: open)
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                }
+                if !isFilm {
+                    Button("Copy") {
+                        guard let picture else { return }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.writeObjects([picture])
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Theme.accent)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
 // MARK: - Notes
 
 /// Renders Markdown the way models write it: headings, bullets, checkboxes,
@@ -3889,6 +3994,29 @@ struct MarkdownNotes: View {
         case table([[String]])
         /// A fenced block: commands, output, source code.
         case code(String)
+        /// A picture or a film on this Mac, by its path: one a model made.
+        case media(String)
+    }
+
+    /// The picture or film a line stands for, when it is nothing but one:
+    /// a Markdown image (`![made](/path/to.png)`) or a bare path, to a
+    /// file that is on this Mac. Only local files: nothing is fetched.
+    static func mediaPath(in line: String) -> String? {
+        var target: String
+        if line.hasPrefix("!["), line.hasSuffix(")"), let open = line.range(of: "](") {
+            target = String(line[open.upperBound...].dropLast())
+        } else {
+            target = line.trimmingCharacters(in: CharacterSet(charactersIn: "`\"'<> "))
+        }
+        guard target.hasPrefix("/") || target.hasPrefix("~/") || target.hasPrefix("file://") else { return nil }
+        if target.hasPrefix("file://") {
+            guard let url = URL(string: target) else { return nil }
+            target = url.path
+        }
+        target = (target as NSString).expandingTildeInPath
+        guard GeneratedMedia.kinds.contains((target as NSString).pathExtension.lowercased()),
+              FileManager.default.fileExists(atPath: target) else { return nil }
+        return target
     }
 
     /// The text on one line with the Markdown symbols taken out, for previews.
@@ -3912,6 +4040,7 @@ struct MarkdownNotes: View {
             if trimmed.hasPrefix("#") || trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
                 return true
             }
+            if mediaPath(in: trimmed) != nil { return true }
         }
         return false
     }
@@ -3941,6 +4070,11 @@ struct MarkdownNotes: View {
             }
             if code != nil {
                 code?.append(raw)
+                continue
+            }
+            if let media = Self.mediaPath(in: line) {
+                closeTable()
+                result.append(.media(media))
                 continue
             }
             if line.hasPrefix("|") {
@@ -4002,6 +4136,8 @@ struct MarkdownNotes: View {
                         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
                             .strokeBorder(Theme.ink.opacity(0.10), lineWidth: 0.5))
                         .padding(.vertical, 2)
+                case .media(let path):
+                    GeneratedMedia(path: path)
                 }
             }
         }

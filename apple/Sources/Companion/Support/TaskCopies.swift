@@ -655,8 +655,9 @@ final class TaskCopies {
         var top: String
         /// The branch it is on; empty when it is on none.
         var branch = ""
-        /// Tracked files with changes not committed, from the top. Files
-        /// git does not track yet are left to the person.
+        /// Files with changes not committed, from the top: changed ones,
+        /// and new ones git does not ignore. A new source file left out
+        /// of a commit would leave the commit unable to build.
         var changed: [String] = []
         /// One of them is in a merge that is not settled: nothing is
         /// committed over that.
@@ -677,7 +678,7 @@ final class TaskCopies {
     func folderGit(in folder: String) async -> FolderGit? {
         guard let repository = await top(of: folder) else { return nil }
         let status = await Shell.run("GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 git -c core.quotePath=false "
-                                     + "status --porcelain=v1 --branch --untracked-files=no", in: repository, timeout: 60)
+                                     + "status --porcelain=v1 --branch --untracked-files=all", in: repository, timeout: 60)
         guard status.ok else { return nil }
         var found = FolderGit(top: repository)
         for line in status.output.split(whereSeparator: \.isNewline).map(String.init) {
@@ -725,7 +726,11 @@ final class TaskCopies {
     func folderDiff(in folder: String, limit: Int = 6_000) async -> String {
         guard let repository = await top(of: folder) else { return "" }
         let diff = await git("diff HEAD --no-color --unified=1", in: repository, timeout: 60)
-        return diff.ok ? String(diff.output.prefix(limit)) : ""
+        // New files are not in the diff: they are named, so the message
+        // can say what was added.
+        let fresh = await git("ls-files --others --exclude-standard", in: repository, timeout: 30)
+        let named = fresh.ok ? Self.lines(fresh.output).prefix(30).map { "new file: " + $0 }.joined(separator: "\n") : ""
+        return (named.isEmpty ? "" : named + "\n\n") + (diff.ok ? String(diff.output.prefix(limit)) : "")
     }
 
     enum Committed: Sendable, Equatable {
@@ -734,15 +739,15 @@ final class TaskCopies {
         case failed(String)
     }
 
-    /// Commits the tracked files that changed in the person's folder, on
-    /// the branch it is on. Files git does not track are not taken along,
-    /// and nothing is pushed.
+    /// Commits what changed in the person's folder, on the branch it is
+    /// on: changed files and new ones git does not ignore (what should
+    /// stay out belongs in .gitignore). Nothing is pushed.
     func commitTracked(in folder: String, message: String) async -> Committed {
         await inTurn(folder) {
             guard let repository = await self.top(of: folder) else {
                 return .failed("The folder is not in a git repository.")
             }
-            let added = await self.git("add -u", in: repository, timeout: 120)
+            let added = await self.git("add -A", in: repository, timeout: 120)
             guard added.ok else { return .failed(Self.said(added.output)) }
             // The commit is the person's: no co-author or AI credit lines.
             let committed = await self.git("commit -q -m \(Shell.quote(CommitHygiene.clean(message)))", in: repository,

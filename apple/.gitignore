@@ -30,3 +30,6 @@ Mobile/CompanionMobile.xcodeproj/xcuserdata/
 Mobile/CompanionMobile.xcodeproj/project.xcworkspace/xcuserdata/
 Mobile/CompanionKit/.build/
 *.provisionprofile
+
+# Profiles taken with `sample` while looking into a slow spot.
+sample*.txt

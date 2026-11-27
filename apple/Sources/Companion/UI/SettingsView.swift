@@ -1067,11 +1067,21 @@ private struct ListeningSettings: View {
 
     var body: some View {
         SettingsCard("Sources", icon: "mic") {
-            ToggleRow("Microphone", detail: "You, and anyone in the room.", isOn: $settings.captureMic)
-            RowLine()
-            ToggleRow("System audio",
-                      detail: "The other side of Zoom, Meet or any app. Needs Screen Recording permission.",
-                      isOn: $settings.captureSystemAudio)
+            // One choice in place of two switches.
+            SettingRow("Listen to", detail: "The microphone is you and anyone in the room. System audio is the other side of Zoom, Meet or any app, and needs Screen Recording permission.") {
+                Picker("", selection: Binding(
+                    get: { settings.captureMic && settings.captureSystemAudio ? "both" : (settings.captureSystemAudio ? "system" : "mic") },
+                    set: { choice in
+                        settings.captureMic = choice != "system"
+                        settings.captureSystemAudio = choice != "mic"
+                    })) {
+                    Text("Both").tag("both")
+                    Text("Microphone").tag("mic")
+                    Text("System audio").tag("system")
+                }
+                .labelsHidden()
+                .frame(maxWidth: 170)
+            }
             RowLine()
             ToggleRow("English only", detail: "More accurate when the whole conversation is in English.",
                       isOn: $settings.asrEnglishOnly)
@@ -1089,12 +1099,6 @@ private struct ListeningSettings: View {
             ToggleRow("Separate voices on the mic",
                       detail: "Your voice stays You; every other voice becomes P1, P2 and gets reply suggestions.",
                       isOn: $settings.separateMicVoices)
-            RowLine()
-            ToggleRow("Keep correcting while listening",
-                      detail: "A more accurate pass re-checks who said what every so often and fixes labels in place.",
-                      isOn: $settings.autoVoiceRecheck)
-                .disabled(!settings.separateMicVoices)
-                .opacity(settings.separateMicVoices ? 1 : 0.5)
             RowLine()
             SettingRow("Your voice",
                        detail: app.voiceEnrolled
@@ -1137,19 +1141,12 @@ private struct RepliesSettings: View {
 
     var body: some View {
         SettingsCard("Suggestions", icon: "text.bubble") {
-            ToggleRow("Suggest a reply automatically", detail: "After the other person finishes speaking.",
+            ToggleRow("Suggest a reply automatically",
+                      detail: "After the other person asks something. Short remarks that are not questions are skipped.",
                       isOn: $settings.autoSuggest)
-            RowLine()
-            ToggleRow("Only for questions", detail: "Skip short remarks that are not questions, for fewer replies.",
-                      isOn: $settings.replyToQuestionsOnly)
-                .disabled(!settings.autoSuggest)
-                .opacity(settings.autoSuggest ? 1 : 0.5)
         }
 
         SettingsCard("Transcript and notes", icon: "doc.text", tint: Theme.violet) {
-            ToggleRow("Polish the transcript", detail: "Fix misheard words and tidy the wording.",
-                      isOn: $settings.polishTranscript)
-            RowLine()
             ToggleRow("Keep running notes", detail: "So long conversations stay in context.",
                       isOn: $settings.keepNotes)
         }
@@ -1282,10 +1279,6 @@ private struct AgentSettings: View {
             ToggleRow("Commit changes to git",
                       detail: "Where a folder is a git repository, files the agent changes (and files you save or undo in the workspace) are committed on the current branch as \"Companion: ...\". Nothing is pushed. Off keeps Companion's own history only.",
                       isOn: $settings.historyGit)
-            RowLine()
-            ToggleRow("Show the orbit while it works",
-                      detail: "An orbit appears on screen where the agent clicks, types or opens something, and rides along with text as it types.",
-                      isOn: $settings.agentOrbit)
             RowLine()
             ToggleRow("Voice commands",
                       detail: "Say \"Companion, ...\" to give a task, and \"allow\" or \"deny\" to answer.",
@@ -1761,7 +1754,6 @@ private struct NumberField: View {
 
 private struct LookSettings: View {
     /// The agent's work shown open in replies, not folded to a line.
-    @AppStorage("workAlwaysOpen") private var workAlwaysOpen = false
     @ObservedObject var settings = AppSettings.shared
 
     var body: some View {
@@ -1785,14 +1777,6 @@ private struct LookSettings: View {
                     PillButton("Reset", icon: "arrow.counterclockwise") { settings.chatText(0) }
                 }
             }
-            RowLine()
-            ToggleRow("Replies in a serif",
-                      detail: "Set like the Claude app, in the Mac's New York. Your messages and code stay as they are.",
-                      isOn: $settings.replySerif)
-            RowLine()
-            ToggleRow("Keep the agent's work open",
-                      detail: "Each step on a rail with what went in and came out, in every reply. Off, the work folds to one line once the agent is done; a click opens it.",
-                      isOn: $workAlwaysOpen)
         }
 
         LookColorCard()
@@ -1802,17 +1786,37 @@ private struct LookSettings: View {
         // Where Companion shows up outside its panel. Both are off to begin
         // with, so the things a menu would hold also live here.
         SettingsCard("App", icon: "macwindow", tint: Theme.violet) {
-            ToggleRow("Show in menu bar", detail: "An icon with a short menu: show or hide the panel, new conversation, settings, quit. Off, Companion shows no menus at the top of the screen either.",
-                      isOn: $settings.showInMenuBar)
+            // Two choices in place of four switches.
+            SettingRow("Show Companion in", detail: "The menu bar icon has a short menu: show or hide the panel, new conversation, settings, quit. The Dock icon brings the panel back.") {
+                Picker("", selection: Binding(
+                    get: { settings.showInMenuBar ? (settings.showInDock ? "both" : "menu") : (settings.showInDock ? "dock" : "none") },
+                    set: { choice in
+                        settings.showInMenuBar = choice == "menu" || choice == "both"
+                        settings.showInDock = choice == "dock" || choice == "both"
+                    })) {
+                    Text("The panel only").tag("none")
+                    Text("Menu bar").tag("menu")
+                    Text("Dock").tag("dock")
+                    Text("Menu bar and Dock").tag("both")
+                }
+                .labelsHidden()
+                .frame(maxWidth: 190)
+            }
             RowLine()
-            ToggleRow("Show in Dock", detail: "An icon in the Dock. Click it to bring the panel back.",
-                      isOn: $settings.showInDock)
-            RowLine()
-            ToggleRow("Keep on top", detail: "The panel floats above every other window. Off, it acts like an ordinary window: other apps can cover it, and clicking it brings it forward.",
-                      isOn: $settings.keepOnTop)
-            RowLine()
-            ToggleRow("Show on all desktops", detail: "The panel follows you to every desktop and over full-screen apps. Off, it stays on the desktop it is on.",
-                      isOn: $settings.onAllDesktops)
+            SettingRow("Panel", detail: "Floating, it stays above every other window. As an ordinary window, other apps can cover it and a click brings it forward.") {
+                Picker("", selection: Binding(
+                    get: { settings.keepOnTop ? (settings.onAllDesktops ? "everywhere" : "here") : "ordinary" },
+                    set: { choice in
+                        settings.keepOnTop = choice != "ordinary"
+                        settings.onAllDesktops = choice == "everywhere"
+                    })) {
+                    Text("Floats on every desktop").tag("everywhere")
+                    Text("Floats on this desktop").tag("here")
+                    Text("Ordinary window").tag("ordinary")
+                }
+                .labelsHidden()
+                .frame(maxWidth: 190)
+            }
             RowLine()
             SettingRow("Panel position", detail: "Puts the panel back where it started, if it ended up off screen.") {
                 PillButton("Reset", icon: "arrow.counterclockwise") {

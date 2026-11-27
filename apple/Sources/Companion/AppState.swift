@@ -358,8 +358,6 @@ final class AppState: ObservableObject {
     /// What the last recheck replaced, so it can be undone.
     private var rescanUndo: (current: [UUID], original: [TranscriptSegment])?
     private var rescanTask: Task<Void, Never>?
-    /// The by-voice pass that runs by itself while listening.
-    private var voicePassTask: Task<Void, Never>?
     private var voicePassBusy = false
     private var polishBackoffUntil = Date.distantPast
     private var bag = Set<AnyCancellable>()
@@ -558,7 +556,6 @@ final class AppState: ObservableObject {
                         micSessionID = 0
                         if separationReady {
                             micSessionID = await speakerID.sessionID()
-                            startVoicePasses()
                         }
                         voiceRemap = [:]
                     }
@@ -584,7 +581,6 @@ final class AppState: ObservableObject {
         isListening = false
         statusText = "Ready"
         autoSuggestWork?.cancel()
-        voicePassTask?.cancel()
         mic.stop()
         // Kept so a start() right after this stop waits for the teardown
         // instead of racing it.
@@ -992,41 +988,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// While listening, the accurate by-voice pass (the one Recheck uses)
-    /// runs by itself every so often and quietly corrects who said what. The
-    /// live labels are a first guess made on the spot; this pass hears the
-    /// whole session before deciding, and what it finds also teaches the
-    /// live check. It only runs when there is something new to check, and
-    /// backs off as a long session makes each pass take longer.
-    private func startVoicePasses() {
-        voicePassTask?.cancel()
-        voicePassTask = Task { @MainActor [weak self] in
-            var wait: TimeInterval = 45
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                guard let self, !Task.isCancelled, self.isListening else { return }
-                let session = self.micSessionID
-                guard AppSettings.shared.autoVoiceRecheck, !self.isRescanning, session != 0 else { continue }
-                let fresh = self.segments.contains {
-                    $0.isFinal && !$0.systemAudio && $0.micSession == session
-                        && !$0.voiceVerified && !$0.speakerByHand
-                }
-                guard fresh else { continue }
-                let began = Date()
-                if await self.relabelByVoice(quiet: true) {
-                    self.afterTranscriptRearranged()
-                    self.persist()
-                }
-                wait = min(max(45, Date().timeIntervalSince(began) * 10), 300)
-            }
-        }
-    }
-
     /// Re-labels every mic line of this session from the recorded audio, with
     /// the offline diarization pipeline. Returns whether anything changed.
     ///
-    /// `quiet` is the automatic pass: it reports no errors. Lines whose
-    /// speaker the user set by hand are never changed.
+    /// `quiet` reports no errors. Lines whose speaker the user set by hand
+    /// are never changed. It runs only when the person asks (Recheck): a
+    /// pass that ran by itself while listening moved replies to other
+    /// questions under the person's eyes, and was taken out.
     private func relabelByVoice(quiet: Bool = false) async -> Bool {
         // One pass at a time.
         while voicePassBusy {
@@ -2491,12 +2459,36 @@ final class AppState: ObservableObject {
                 // chat's own access: what it covers runs, and the four it
                 // never covers are asked about even at full access.
                 let auto = Advanced.shared.autoRules(for: job.chatID, repository: repository, directory: directory)
+                // What the person allowed for the rest of this task is
+                // not asked about again. Keys and credentials, sending
+                // files, a page's own "are you sure?" and changes in the
+                // Mac's apps are asked about all the same.
+                let granted = job.taskGrant
+                func alwaysAsked(_ step: ActionStep) -> Bool {
+                    switch step.kind {
+                    case .run, .terminal:
+                        return AgentPermissions.touchesSecrets(step.value)
+                    case .read, .write, .edit:
+                        return AgentTools.isSensitive(AgentTools.resolve(step.value, in: directory))
+                    case .browser:
+                        guard let made = step.browserCommand else { return true }
+                        return made.command == "upload" || made.command == "dialog"
+                    case .mac:
+                        guard let made = step.macCommand else { return true }
+                        return MacServices.changes(made.service, made.action)
+                    default:
+                        return false
+                    }
+                }
                 let asking = steps.filter { step in
+                    // Auto's answer comes first, so what it asks about is
+                    // asked even when the person granted that kind of step.
                     switch auto?(step) {
                     case .runs?: return false
                     case .asks?: return true
                     case .notCovered?, nil: break
                     }
+                    if granted.contains(step.kind), !alwaysAsked(step) { return false }
                     switch step.kind {
                     case .run:
                         // Keys and credentials are asked about in every mode.
@@ -4134,6 +4126,15 @@ final class AppState: ObservableObject {
         job.questionAnswer = nil
     }
 
+    /// Allows the steps the open chat's task waits on, and every later
+    /// step of the same kinds for the rest of that task: one asking for
+    /// the task, in place of one for each step.
+    func allowForTask() {
+        guard let job = currentJob, let proposal = job.pendingApproval else { return }
+        job.taskGrant.formUnion(proposal.steps.map(\.kind))
+        decide(.allow)
+    }
+
     /// The user's answer to the steps the open chat's task is waiting on.
     func decide(_ decision: AgentDecision) {
         guard let job = currentJob else { return }
@@ -4641,6 +4642,35 @@ final class AppState: ObservableObject {
         screenSpokenWords = 0
         showHistory = false
         persist()
+    }
+
+    /// Marks an answer as good (1) or not (-1); the same mark again takes
+    /// it back.
+    func rate(_ turnID: UUID, _ value: Int) {
+        guard let index = conversation.turns.firstIndex(where: { $0.id == turnID }) else { return }
+        conversation.turns[index].rating = conversation.turns[index].rating == value ? nil : value
+        persist()
+    }
+
+    /// The open chat as plain text, in the order it was said: each
+    /// message under who said it.
+    var chatAsText: String {
+        conversation.turns.map { turn -> String in
+            var parts: [String] = []
+            if !turn.prompt.isEmpty { parts.append("You:\n" + turn.prompt) }
+            if !turn.answer.isEmpty { parts.append((turn.model.isEmpty ? "Companion" : turn.model) + ":\n" + turn.answer) }
+            return parts.joined(separator: "\n\n")
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n\n")
+    }
+
+    func copyChat() { copy(chatAsText) }
+
+    /// Opens the chat as one text, to select from with the cursor.
+    func openChatAsText() {
+        let title = conversation.title.isEmpty ? "Chat" : conversation.title
+        ChatTextWindow.show(title: title, text: chatAsText)
     }
 
     func copy(_ text: String) {
