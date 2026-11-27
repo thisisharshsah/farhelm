@@ -578,6 +578,14 @@ final class Advanced: ObservableObject {
                 for try await piece in try await LLM.stream(request, config: config) {
                     answer += piece
                 }
+                // A model that answers nothing has not answered: the next
+                // one is asked. Taken as an answer, an empty one left
+                // reviews without a verdict ("It said:" and nothing after)
+                // and commits under a made-up message, three times over.
+                if answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    last = LLMError.network("\(engine.label) answered nothing.")
+                    continue
+                }
                 answered(by: engine, for: project)
                 return (answer, engine)
             } catch {
