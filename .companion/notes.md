@@ -4,7 +4,7 @@
 
 ## Where things are (hosts, user names, accounts, folders, files, pages, job or session numbers)
 
-- Checkout `~/Project/farhelm`. From `apple/`, build with `bash build.sh` or rebuild and restart with `bash build.sh restart`. The restart log is `apple/.build/restart.log`. The app runs from `apple/dist/Companion.app`.
+- Checkout `~/Project/farhelm`. From `apple/`, build with `bash build.sh` or rebuild and restart with `bash build.sh restart`. Restart log `apple/.build/restart.log`. App `apple/dist/Companion.app`.
 - Project notes are in `.companion/notes.md`. Companion learns from the Claude app through Settings > Skills.
 - Supervisor stops go through `AppState.swift` around line 4141 and `AgentJob.stoppedBySupervisor()` in `apple/Sources/Companion/Support/AgentJob.swift`. `Board.autopilotMayStart` (`Board.swift:410`) and `mayCarryOn` skip runs that ended as `.supervisor`.
 - Design files under `apple/` are `Sources/Companion/UI/Design/Theme.swift`, `Sources/Companion/UI/Design/GlassSurfaces.swift` and `Shared/CompanionDesign/Sources/CompanionDesign/OrbitMark.swift`. Chat selection lives in `ChatSelection.swift`.
@@ -14,7 +14,7 @@
 
 - `ls` or `wc` on a missing `.companion/` exits 1. Create the directory and notes file before appending.
 - Claude Opus 5.5, acting as supervisor, allowed read-only checks and file creation inside the owner's project.
-- Force-quits and crashes skip `applicationWillTerminate`. Debounced saves preserve state about 0.5 s after a change. Check `git log` before redoing work after a force-quit. The restore edits were already in `bd95506` when the tree looked clean.
+- Force-quits and crashes skip `applicationWillTerminate`. Debounced saves preserve state about 0.5 seconds after a change. Check `git log` before redoing work after a force-quit. The restore edits were already in `bd95506` when the tree looked clean.
 - Match U+2014 in code-server's window title with `\u{2014}`. Describe it in comments without quoting it. Before committing, scan added lines for U+2014 (`grep $'\u2014'`), keys and tokens.
 - Update notes before staging to keep the work in one commit. Fold in an accidental second commit with `git reset --soft HEAD~1` and `git commit --amend --no-edit` only before pushing.
 - If a session disables file edits, turn edits on before making changes.
@@ -25,16 +25,16 @@
 ## Done (results, with numbers)
 
 - Nov 24, 2026. Created `.companion/notes.md` with two sections covering the standing rule and eight changes, preserving existing content.
-- Nov 24, `bd95506`. Fixed the layout loop that froze Companion and required a force-quit. Companion restores the open chat, sidebar, zoom, panel position and frame before showing the panel. Changes save after about 0.5 s and on quit. Reported to the owner.
+- Nov 24, `bd95506`. Fixed the layout loop that froze Companion and required a force-quit. Companion restores the open chat, sidebar, zoom, panel position and frame before showing the panel. Changes save after about 0.5 seconds and on quit. Reported to the owner.
 - Nov 24, `4d5b3cc`. Dragging the circle while the panel is hidden now saves its position.
 - Nov 25, `6653988` on `main`, merged into `companion/main` as `32bbfb2`. Landed 77 files covering speed and memory, project notes, learning from Claude, scroll and restore, the VS Code bridge, passkeys, the browser and ADR 0020.
 - Nov 25, `5f2d44a` on `main`, merged into `companion/main` as `bf09c46`. Supervisor `stop` (`cancel`, `halt`) requires a run, records the reason, queues the task in `ChangeSummary.stopping`, ends the run as `.supervisor` and returns the task to To do to wait for the owner. The prompt calls for stopping and replanning in the same reply when a run exceeds 3× its estimate, repeats reads or failing edits, or loops after model fallback. All 147 board tests passed, including two new tests. `bash build.sh check` passed.
-- Nov 25, supervisor `approve` (`accept`, `pass`) on `main`. `Board.apply` requires Review, no active run, and a last run whose checks ran and passed. Refusals leave a reason in Review. `ChangeSummary.approving` feeds `Advanced.approveForSupervisor`, which checks `TaskCopies.wouldNotMerge` via `git merge-tree`. Conflicts leave a note in Review. Otherwise the card's `Advanced.approve` merges and moves the task to Done.
+- Nov 25, supervisor `approve` (`accept`, `pass`) on `main`. `Board.apply` requires Review, no active run and a last run whose checks ran and passed. Refusals leave a reason in Review. `ChangeSummary.approving` feeds `Advanced.approveForSupervisor`, which checks `TaskCopies.wouldNotMerge` via `git merge-tree`. Conflicts leave a note in Review. Otherwise the card's `Advanced.approve` merges and moves the task to Done.
 - Nov 25, supervisor `delete` (`trash`) on `main` is separate from `remove`. For a task with an active run or open copy, the owner must name the task in their own message. `Board.named(in:)` accepts `T-3`, `t3`, `#3` and `task 3`. Refusals leave a reason. Allowed deletions go through `ChangeSummary.deleting` and the card's `Advanced.remove`, with each run written to the board log before deletion.
 - The approve and delete rules are in the supervisor prompt under the standing review rule. All 151 board tests passed, including four new tests. `bash build.sh check` passed.
 - Nov 26. Made “Select across messages” the sole rendering path in `ChatSelection.swift` and removed its switch. Settings has about 30 switches, with no trial switches remaining.
 - Nov 26. An earlier `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15` produced a successful build, confirmed in the restart log. The process list confirmed Companion was running from `apple/dist/Companion.app`.
-- Latest restart. Ran exactly `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15`. It printed the line below. The build and restart outcome is unverified, as requested.
+- Latest task. Ran `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15` and stopped after capturing its output, as requested. The build and restart outcome remains unverified.
   > Building apart now; Companion restarts by itself when it is built (log: apple/.build/restart.log).
 
 ## Next

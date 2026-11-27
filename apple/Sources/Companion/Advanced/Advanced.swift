@@ -148,8 +148,22 @@ final class Advanced: ObservableObject {
 
     /// Projects whose board was opened since launch. Autopilot acts only
     /// for these: nothing starts spending on a project nobody has looked
-    /// at since the app started.
-    private var armed: Set<UUID> = []
+    /// at since the app started. Kept across a quit (`resumeBoards`): a
+    /// board the person had handed to the supervisor or Autopilot went on
+    /// being theirs to run, yet every restart (a rebuild, a crash) left it
+    /// idle until someone happened to open it again.
+    private var armed: Set<UUID> = [] {
+        didSet {
+            guard armed != oldValue else { return }
+            UserDefaults.standard.set(armed.map(\.uuidString), forKey: Self.armedKey)
+        }
+    }
+    private static let armedKey = "advancedArmedBoards"
+    /// The boards that were running when the app last quit, read before
+    /// anything this launch writes over them.
+    private let armedBefore: [UUID] = (UserDefaults.standard.stringArray(forKey: Advanced.armedKey) ?? [])
+        .compactMap(UUID.init(uuidString:))
+    private var resumed = false
     private var pulse: Task<Void, Never>?
 
     /// Chats that are no board's run where the supervisor has just said
@@ -204,6 +218,7 @@ final class Advanced: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 guard let self else { return }
+                self.resumeBoards()
                 // Once a minute, whether or not Autopilot is on.
                 beats += 1
                 if beats % 3 == 0 { self.stopRunaways() }
@@ -240,6 +255,24 @@ final class Advanced: ObservableObject {
 
     private func project(_ id: UUID) -> Project? {
         app.projects.first { $0.id == id }
+    }
+
+    /// Once after launch: the boards that were running before the app
+    /// quit run again, where the person had left them to run by
+    /// themselves (the supervisor answers, or Autopilot is on). A board
+    /// whose project is gone, or that was only being looked at, waits to
+    /// be opened as before.
+    private func resumeBoards() {
+        guard !resumed else { return }
+        resumed = true
+        for id in armedBefore where !armed.contains(id) && project(id) != nil {
+            let board = load(id)
+            guard board.settings.startsWorkByItself else { continue }
+            armed.insert(id)
+            refreshRoster()
+            lookForStrays(id)
+            tick(id)
+        }
     }
 
     /// A project's board, read the first time. Runs it still calls
