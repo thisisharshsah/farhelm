@@ -4650,6 +4650,26 @@ final class AppState: ObservableObject {
         pasteboard.setString(text, forType: .string)
     }
 
+    /// Reads a turn's answer aloud. The repository has no read-aloud
+    /// reader yet (T-73): this is the one app-side entry the chat
+    /// document page targets through its script handler, so later
+    /// speech work wires itself here and the page never threads
+    /// through the rest of the app.
+    func chatPageReadAloud(_ turnID: UUID) {
+        _ = turnID
+    }
+
+    /// Records thumbs up on a turn. The repository has no feedback
+    /// store yet (T-73): same role as `chatPageReadAloud`.
+    func chatPageThumbsUp(_ turnID: UUID) {
+        _ = turnID
+    }
+
+    /// Records thumbs down on a turn. Same role as `chatPageThumbsUp`.
+    func chatPageThumbsDown(_ turnID: UUID) {
+        _ = turnID
+    }
+
     /// Cmd+V with files or a picture on the clipboard attaches them, as
     /// dropping them on the chat would. Text is left to the text field.
     /// Returns whether something was attached.

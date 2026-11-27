@@ -185,4 +185,98 @@ final class ChatDocumentTests: XCTestCase {
             XCTAssertFalse(css.lowercased().contains(shadow), shadow)
         }
     }
+
+    // MARK: Tools row
+
+    func testToolsRowHasEveryButtonForFinishedTypedAnswer() {
+        let sent = turn(prompt: "Hi", answer: "Hey")
+        let row = ChatDocument.toolsRowHTML(for: sent, streaming: false)
+        let id = sent.id.uuidString
+        XCTAssertTrue(row.contains("class=\"tools\""))
+        XCTAssertTrue(row.contains("id=\"turn-\(id)-tools\""))
+        for action in ["copy", "readAloud", "thumbsUp", "thumbsDown", "regenerate", "edit", "delete"] {
+            XCTAssertTrue(row.contains("data-action=\"\(action)\""), "missing \(action)")
+        }
+        XCTAssertEqual(row.components(separatedBy: "data-turn=\"\(id)\"").count - 1, 7)
+    }
+
+    func testToolsRowOmitsAnswerToolsWhileStreaming() {
+        let sent = turn(prompt: "Hi", answer: "writing")
+        let row = ChatDocument.toolsRowHTML(for: sent, streaming: true)
+        XCTAssertFalse(row.contains("data-action=\"copy\""))
+        XCTAssertFalse(row.contains("data-action=\"readAloud\""))
+        XCTAssertFalse(row.contains("data-action=\"thumbsUp\""))
+        XCTAssertFalse(row.contains("data-action=\"thumbsDown\""))
+        XCTAssertTrue(row.contains("data-action=\"regenerate\""))
+        XCTAssertTrue(row.contains("data-action=\"delete\""))
+    }
+
+    func testToolsRowOmitsEditForOverheardReply() {
+        let overheard = turn(prompt: "What was that?", answer: "A bird.", origin: .auto)
+        let row = ChatDocument.toolsRowHTML(for: overheard, streaming: false)
+        XCTAssertFalse(row.contains("data-action=\"edit\""))
+        XCTAssertTrue(row.contains("data-action=\"regenerate\""))
+    }
+
+    func testTurnHTMLIncludesToolsRow() {
+        let sent = turn(prompt: "Hi", answer: "Hey")
+        let html = ChatDocument.html(for: sent)
+        XCTAssertTrue(html.contains("class=\"tools\""))
+    }
+
+    // MARK: Work timeline
+
+    func testWorkSectionFoldedByDefault() {
+        var sent = turn(prompt: "Go", answer: "OK")
+        sent.steps = [WorkStep(kind: .run, title: "ls"), WorkStep(kind: .read, title: "README")]
+        let steps = sent.steps ?? []
+        let html = ChatDocument.workSectionHTML(for: sent, steps: steps, open: false)
+        let id = ChatDocument.elementID(sent.id)
+        XCTAssertTrue(html.contains("class=\"work\""))
+        XCTAssertTrue(html.contains("id=\"\(id)-work\""))
+        XCTAssertTrue(html.contains("data-open=\"false\""))
+        XCTAssertTrue(html.contains("aria-expanded=\"false\""))
+        XCTAssertTrue(html.contains("data-action=\"openWork\""))
+        XCTAssertTrue(html.contains("data-turn=\"\(sent.id.uuidString)\""))
+        XCTAssertTrue(html.contains("<ol class=\"work-steps\""))
+        XCTAssertTrue(html.contains(">ls<"))
+        XCTAssertTrue(html.contains(">README<"))
+    }
+
+    func testWorkSectionOpenFlipsActionAndFlags() {
+        var sent = turn(prompt: "Go", answer: "OK")
+        sent.steps = [WorkStep(kind: .run, title: "ls")]
+        let steps = sent.steps ?? []
+        let html = ChatDocument.workSectionHTML(for: sent, steps: steps, open: true)
+        XCTAssertTrue(html.contains("data-open=\"true\""))
+        XCTAssertTrue(html.contains("aria-expanded=\"true\""))
+        XCTAssertTrue(html.contains("data-action=\"closeWork\""))
+    }
+
+    func testWorkSectionEscapesStepTitles() {
+        var sent = turn(prompt: "Go", answer: "OK")
+        sent.steps = [WorkStep(kind: .run, title: "ls <script>")]
+        let steps = sent.steps ?? []
+        let html = ChatDocument.workSectionHTML(for: sent, steps: steps, open: true)
+        XCTAssertFalse(html.contains("<script>"))
+        XCTAssertTrue(html.contains("ls &lt;script&gt;"))
+    }
+
+    func testTurnWithoutStepsHasNoWorkSection() {
+        let sent = turn(prompt: "Go", answer: "Done")
+        let html = ChatDocument.html(for: sent)
+        XCTAssertFalse(html.contains("class=\"work\""))
+        XCTAssertTrue(html.contains("class=\"tools\""))
+    }
+
+    func testTurnHTMLThreadsWorkOpenState() {
+        var sent = turn(prompt: "Go", answer: "OK")
+        sent.steps = [WorkStep(kind: .run, title: "ls")]
+        let closed = ChatDocument.html(for: sent, workOpen: false)
+        XCTAssertTrue(closed.contains("data-action=\"openWork\""))
+        XCTAssertTrue(closed.contains("data-open=\"false\""))
+        let open = ChatDocument.html(for: sent, workOpen: true)
+        XCTAssertTrue(open.contains("data-action=\"closeWork\""))
+        XCTAssertTrue(open.contains("data-open=\"true\""))
+    }
 }

@@ -42,7 +42,12 @@ extension ChatThread {
         let document = ChatDocument(turns: app.conversation.turns,
                                     streaming: app.streamingTurns,
                                     picture: { turn in turn.imageFile.map { store.imageURL(conversation: conversation, file: $0) } })
-        return ChatDocumentPane(document: document, style: .current(top: top, bottom: bottom))
+        return ChatDocumentPane(document: document,
+                                style: .current(top: top, bottom: bottom),
+                                onAction: { [weak app] action in
+                                    guard let app else { return }
+                                    runChatPageAction(action, app: app)
+                                })
     }
 }
 
@@ -51,13 +56,20 @@ extension ChatThread {
 struct ChatDocumentPane: NSViewRepresentable {
     var document: ChatDocument
     var style: ChatPageStyle
+    /// Called when the chat page posts a tool press or opens or closes a
+    /// work timeline. Run on the main actor by the coordinator.
+    var onAction: @MainActor (ChatPageAction) -> Void = { _ in }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    /// The one channel chat.js posts its messages on.
+    static let actionChannel = "chatPage"
+
+    func makeCoordinator() -> Coordinator { Coordinator(onAction: onAction) }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.userContentController.add(context.coordinator, name: Self.actionChannel)
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.allowsBackForwardNavigationGestures = false
@@ -73,20 +85,33 @@ struct ChatDocumentPane: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        view.configuration.userContentController.removeScriptMessageHandler(forName: actionChannel)
         view.navigationDelegate = nil
         view.uiDelegate = nil
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         private weak var view: WKWebView?
         private var folder: URL?
         var loaded = false
+        /// Called when a valid action from the page arrives. Set by the
+        /// pane; unknown or malformed messages never reach it.
+        var dispatch: (@MainActor (ChatPageAction) -> Void)?
         private var wanted: (document: ChatDocument, style: ChatPageStyle)?
         private(set) var shownSnapshots: [TranscriptDiff.TurnSnapshot] = []
         private var shownStyle: ChatPageStyle?
+        /// Which turns have their work timeline folded open on the page.
+        /// The coordinator tracks this so a full re-render keeps the state.
+        private(set) var workOpen: Set<UUID> = []
         /// Every JS expression evaluated, so tests can verify one call per piece.
         private(set) var jsCalls: [String] = []
+        /// Every action received, so tests can verify decoding end to end.
+        private(set) var receivedActions: [ChatPageAction] = []
+
+        init(onAction: (@MainActor (ChatPageAction) -> Void)? = nil) {
+            self.dispatch = onAction
+        }
 
         func start(_ view: WKWebView) {
             self.view = view
@@ -105,6 +130,8 @@ struct ChatDocumentPane: NSViewRepresentable {
         }
 
         func update(document: ChatDocument, style: ChatPageStyle) {
+            var document = document
+            document.workOpen = workOpen
             wanted = (document, style)
             guard loaded, let view else { return }
             if style != shownStyle {
@@ -183,6 +210,35 @@ struct ChatDocumentPane: NSViewRepresentable {
                 NSWorkspace.shared.open(url)
             }
             return nil
+        }
+
+        /// Only the `chatPage` channel is registered; any other name is
+        /// refused by not being wired. Messages that fail to decode as a
+        /// `ChatPageAction` are dropped silently, so a page with a stray
+        /// message runs nothing. WebKit calls this on the main thread,
+        /// but Swift's concurrency checker marks `WKScriptMessage` as
+        /// main-actor isolated, so the read and the decode both hop
+        /// onto the main actor before touching the message.
+        nonisolated func userContentController(_ userContentController: WKUserContentController,
+                                               didReceive message: WKScriptMessage) {
+            Task { @MainActor in
+                guard message.name == ChatDocumentPane.actionChannel,
+                      let action = ChatPageAction(json: message.body) else { return }
+                self.receive(action)
+            }
+        }
+
+        /// Entry point for tests: runs the same path as a message from
+        /// the page, so the coordinator's own state and the app's
+        /// handlers can be checked without a live web view.
+        func receive(_ action: ChatPageAction) {
+            receivedActions.append(action)
+            switch action {
+            case .openWork(let turn): workOpen.insert(turn)
+            case .closeWork(let turn): workOpen.remove(turn)
+            default: break
+            }
+            dispatch?(action)
         }
     }
 }
