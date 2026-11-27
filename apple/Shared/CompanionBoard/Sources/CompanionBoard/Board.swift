@@ -57,6 +57,10 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     /// asking, within `AutoPermission`. Off on a new board, and off again
     /// makes them ask again, since it is read at every step.
     public var auto: Bool
+    /// The PM reviews every finished run with the strongest model and
+    /// decides by the rules in `AutoReview`. On unless switched off, also
+    /// on boards saved before it existed.
+    public var autoReview: Bool
 
     /// Runs at once on a new board: as many as the app runs at once by
     /// default, so work spread across models goes on side by side.
@@ -65,8 +69,10 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     public init(autopilot: Bool = false, parallel: Int = BoardSettings.defaultParallel, reviewGate: Bool = true,
                 wipLimit: Int? = nil, runCeiling: Int? = nil,
                 runAccess: String? = nil, advice: Bool = true, followsAdvice: Bool = false,
-                copyPerTask: Bool = true, teamLimit: Int = TeamRules.defaultTeamLimit, auto: Bool = false) {
+                copyPerTask: Bool = true, teamLimit: Int = TeamRules.defaultTeamLimit, auto: Bool = false,
+                autoReview: Bool = true) {
         self.auto = auto
+        self.autoReview = autoReview
         self.autopilot = autopilot
         self.parallel = parallel
         self.reviewGate = reviewGate
@@ -96,7 +102,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case autopilot, parallel, reviewGate, wipLimit, runCeiling, runAccess, advice, followsAdvice, copyPerTask
-        case teamLimit, auto
+        case teamLimit, auto, autoReview
     }
 
     public init(from decoder: Decoder) throws {
@@ -111,6 +117,7 @@ public struct BoardSettings: Codable, Equatable, Sendable {
         followsAdvice = try values.decodeIfPresent(Bool.self, forKey: .followsAdvice) ?? false
         copyPerTask = try values.decodeIfPresent(Bool.self, forKey: .copyPerTask) ?? true
         auto = try values.decodeIfPresent(Bool.self, forKey: .auto) ?? false
+        autoReview = try values.decodeIfPresent(Bool.self, forKey: .autoReview) ?? true
         teamLimit = try values.decodeIfPresent(Int.self, forKey: .teamLimit)
             ?? (try values.decodeIfPresent(Int.self, forKey: .parallel) ?? TeamRules.defaultTeamLimit)
     }
@@ -183,6 +190,9 @@ public struct Board: Codable, Equatable, Sendable {
     public internal(set) var roles: [TeamRole]
     /// The team: each specialist holds one role.
     public internal(set) var specialists: [Specialist]
+    /// What the automatic reviewer decided, oldest first, the latest
+    /// `AutoReview.logLimit` of them (`Board.decide`).
+    public internal(set) var decisions: [DecisionEntry]
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -205,6 +215,7 @@ public struct Board: Codable, Equatable, Sendable {
         settings = BoardSettings()
         roles = []
         specialists = []
+        decisions = []
         supervisorChat = nil
         supervisor = nil
         createdAt = now
@@ -213,7 +224,7 @@ public struct Board: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version, project, goals, currentGoal, nextNumber, activity, budget, settings, supervisorChat, supervisor
-        case createdAt, updatedAt, earlierProjects, roles, specialists
+        case createdAt, updatedAt, earlierProjects, roles, specialists, decisions
         case allItems = "items"
     }
 
@@ -232,6 +243,7 @@ public struct Board: Codable, Equatable, Sendable {
         let next = try values.decodeIfPresent(Int.self, forKey: .nextNumber) ?? 1
         nextNumber = max(next, highest + 1)
         activity = try values.decodeIfPresent([Activity].self, forKey: .activity) ?? []
+        decisions = try values.decodeIfPresent([DecisionEntry].self, forKey: .decisions) ?? []
         budget = try values.decodeIfPresent(Budget.self, forKey: .budget) ?? Budget()
         settings = try values.decodeIfPresent(BoardSettings.self, forKey: .settings) ?? BoardSettings()
         supervisorChat = try values.decodeIfPresent(UUID.self, forKey: .supervisorChat)
@@ -424,7 +436,7 @@ extension Board {
     /// the person, as nobody can tell whether it was refused a step.
     public func mayCarryOn(_ item: WorkItem) -> Bool {
         guard item.status == .todo, let last = item.runs.last, !last.isRunning else { return false }
-        if last.ending == .overrun { return false }
+        if last.ending == .overrun || isHeld(item) { return false }
         switch last.outcome {
         case .stopped:
             return last.ending == .quit || (last.ending == nil && last.report == nil)
@@ -465,8 +477,14 @@ extension Board {
     /// for a person), and not when someone stopped or refused its last run.
     public func autopilotMayStart(_ item: WorkItem) -> Bool {
         if !BoardRules.hasTitle(item) { return false }
+        if isHeld(item) { return false }
         if let ending = item.runs.last?.ending, ending == .person || ending == .supervisor { return false }
-        return failuresInARow(of: item) < 2 && sentBackInARow(of: item) <= BoardRules.redoLimit
+        // A stronger model given the task by the automatic reviewer gets
+        // its one try; when that is sent back, the owner decides.
+        let reassigned = item.runs.last.map { run in
+            decisions.contains { $0.run == run.id && $0.decision == .reassign }
+        } ?? false
+        return failuresInARow(of: item) < 2 && (sentBackInARow(of: item) <= BoardRules.redoLimit || reassigned)
     }
 
     /// Whether a task that is not running will be started without a

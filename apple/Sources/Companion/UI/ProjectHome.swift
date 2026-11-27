@@ -182,6 +182,7 @@ struct ProjectHomeView: View {
         case .table: return "Open its tasks as a table"
         case .timeline: return "Open its timeline"
         case .usage: return "What its work has cost"
+        case .decisions: return "What the PM decided, and why"
         }
     }
 

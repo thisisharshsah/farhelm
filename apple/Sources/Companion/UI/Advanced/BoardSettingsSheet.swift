@@ -72,6 +72,20 @@ struct BoardSettingsSheet: View {
                     .toggleStyle(.switch)
                     .labelsHidden()
             }
+            BoardSettingsRow(title: "Automatic Review", icon: "checkmark.seal.fill",
+                             help: "When a run finishes, the PM reviews it with the strongest model and decides: approve and merge into the board's branch when its checks pass and Done means is met, or send it back with notes. Each decision is in the Decisions view. Merging into your branch, keys, deleting and pushing still wait for you.") {
+                Toggle("Automatic Review", isOn: Binding(
+                    get: { board.settings.autoReview },
+                    set: { on in
+                        advanced.change(project.id) { board in
+                            board.settings.autoReview = on
+                            board.log(on ? "Turned on Automatic Review" : "Turned off Automatic Review",
+                                      by: .person, now: Date())
+                        }
+                    }))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
             BoardSettingsRow(title: "Checks Before Review", icon: "checklist",
                              help: "The commands run on each task's work before it is reviewed (its build, its tests), written in \(Checks.file) in the project's folder. Work whose checks fail is never approved without you.") {
                 HStack(spacing: Design.Space.xs) {

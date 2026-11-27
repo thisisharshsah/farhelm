@@ -11,6 +11,8 @@ enum BoardViewKind: String, CaseIterable, Identifiable {
     case timeline
     /// What the work cost: per model, task, chat and day.
     case usage
+    /// What the automatic reviewer decided, and why.
+    case decisions
 
     var id: String { rawValue }
 
@@ -24,6 +26,7 @@ enum BoardViewKind: String, CaseIterable, Identifiable {
         case .table: return "Table"
         case .timeline: return "Timeline"
         case .usage: return "Usage"
+        case .decisions: return "Decisions"
         }
     }
 
@@ -33,6 +36,7 @@ enum BoardViewKind: String, CaseIterable, Identifiable {
         case .table: return "tablecells"
         case .timeline: return "chart.bar.xaxis"
         case .usage: return "gauge.with.dots.needle.50percent"
+        case .decisions: return "list.bullet.clipboard"
         }
     }
 }
@@ -141,6 +145,7 @@ struct BoardPane: View {
                 }
             case .timeline: BoardTimeline(project: project, board: board)
             case .usage: BoardUsage(project: project, board: board, ledger: ledger)
+            case .decisions: BoardDecisions(board: board)
             }
         }
     }

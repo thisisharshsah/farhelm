@@ -563,10 +563,18 @@ final class Advanced: ObservableObject {
     /// an answer to an agent, a look at a chat), from the first model in
     /// its chain that answers. A model that cannot answer for now says so
     /// before anything else: it is rested, and the next one is asked.
-    func askSupervisor(_ request: ChatRequest, project: UUID) async throws -> (answer: String, by: EngineChoice) {
+    func askSupervisor(_ request: ChatRequest, project: UUID,
+                       first: EngineChoice? = nil) async throws -> (answer: String, by: EngineChoice) {
         if roster.isEmpty { refreshRoster() }
         var last: Error = LLMError.notConfigured(Self.noSupervisor)
-        for engine in supervisorChain(for: project).prefix(Self.mostTried) {
+        var chain = supervisorChain(for: project)
+        // A model asked first (the strongest, for a review that decides)
+        // goes ahead of the chain only while it can answer.
+        if let first, rest(of: first) == nil {
+            chain.removeAll { $0 == first }
+            chain.insert(first, at: 0)
+        }
+        for engine in chain.prefix(Self.mostTried) {
             let config: LLMConfig
             do {
                 config = try engine.config()
@@ -994,9 +1002,12 @@ final class Advanced: ObservableObject {
                 let ceiling = max(3 * (item.estimateTokens ?? 0), Self.runawayFloor)
                 guard fresh > ceiling else { continue }
                 change(project) { board in
-                    board.note(item.id,
-                               "Stopped by the board: this run used \(fresh / 1000)k tokens, past its limit of \(ceiling / 1000)k (three times the estimate). Split the task or sharpen it before running it again.",
-                               author: "Board", now: now)
+                    let words = "Stopped by the board: this run used \(fresh / 1000)k tokens, past its limit of \(ceiling / 1000)k (three times the estimate). Split the task or sharpen it before running it again."
+                    if board.settings.autoReview {
+                        board.decide(item.id, AutoDecision(.stopAndReplan, reason: words), by: "Board", now: now)
+                    } else {
+                        board.note(item.id, words, author: "Board", now: now)
+                    }
                 }
                 stop(item.id, in: project, bySupervisor: true)
             }
@@ -1264,6 +1275,15 @@ final class Advanced: ObservableObject {
             ended = $0.endRun(in: chat, outcome: outcome, report: report, ending: ending, now: Date())
         }
         guard let ended else { return }
+        // Running it again cannot bring in work the person has not
+        // committed: it is held, and that is said once.
+        if outcome == .failed {
+            store.update(projectID) { board in
+                guard board.settings.autoReview, let task = board.item(ended.item.id),
+                      let held = AutoReview.hold(task, on: board) else { return }
+                board.decide(task.id, held, by: "Board", now: Date())
+            }
+        }
         // A run cut short because its model is out of its limit, rate
         // limited, overloaded or out of reach rests that model, as the
         // supervisor's own requests do: nothing more is started or carried
@@ -1359,10 +1379,11 @@ final class Advanced: ObservableObject {
     /// decides (the review gate, or the supervisor answering for the
     /// person), or one that recommends.
     private func reviewAfterChecks(_ itemID: UUID, in projectID: UUID, chat: UUID, report: String) {
-        guard let settings = store.boards[projectID]?.settings, settings.reviewGate || settings.advice else { return }
+        guard let settings = store.boards[projectID]?.settings,
+              settings.reviewGate || settings.advice || settings.autoReview else { return }
         let answers = settings.supervisorAnswers
-        review(itemID, in: projectID, chat: chat, report: report, decides: settings.reviewGate || answers,
-               carriesOn: answers)
+        review(itemID, in: projectID, chat: chat, report: report,
+               decides: settings.reviewGate || answers || settings.autoReview, carriesOn: answers)
     }
 
     /// Has the supervisor check a finished run against what its task says
@@ -1399,9 +1420,18 @@ final class Advanced: ObservableObject {
                                                                          branch: branch))
                 request.maxOutput = 1_500
                 let question = request.tagged("Review")
+                let automatic = self.store.boards[projectID]?.settings.autoReview == true
+                let changed = Array(Set(changes.map(\.path) + (branch?.files.map(\.path) ?? []))).sorted()
+                if automatic { self.refreshRoster() }
+                let strongest = automatic
+                    ? AutoReview.reviewer(among: self.roster.map(\.profile)).flatMap { best in
+                        self.roster.first { $0.profile.id == best.id }?.engine
+                    }
+                    : nil
                 do {
-                    // The supervisor's model, or the one standing in for it.
-                    let asked = try await self.askSupervisor(question, project: projectID)
+                    // The supervisor's model, or the one standing in for it;
+                    // the strongest set up first when the review decides alone.
+                    let asked = try await self.askSupervisor(question, project: projectID, first: strongest)
                     let answer = asked.answer
                     let reviewer = asked.by.label
                     // A task a person has moved on since is theirs.
@@ -1439,6 +1469,18 @@ final class Advanced: ObservableObject {
                         }
                         // Asked once is enough: it is not checked again by itself.
                         if let run = item.runs.last?.id { self.reviewTries[run] = Advanced.reviewTryLimit }
+                    } else if let found = Supervisor.verdict(in: answer), automatic,
+                              let board = self.store.boards[projectID], let task = board.item(itemID),
+                              let decision = AutoReview.decide(task, on: board, verdict: found.verdict,
+                                                               notes: found.notes, changed: changed,
+                                                               profiles: self.roster.map(\.profile)) {
+                        self.store.update(projectID) { board in
+                            _ = board.decide(itemID, decision, by: reviewer, now: Date())
+                        }
+                        // What is the owner's is asked once, not again by itself.
+                        if decision.decision == .askOwner, let run = item.runs.last?.id {
+                            self.reviewTries[run] = Advanced.reviewTryLimit
+                        }
                     } else if let found = Supervisor.verdict(in: answer) {
                         let checks = self.store.boards[projectID]?.item(itemID)?.runs.last?.checks
                         var verdict = Review(verdict: found.verdict, notes: found.notes, by: reviewer, date: Date())
