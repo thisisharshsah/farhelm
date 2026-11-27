@@ -290,64 +290,25 @@ enum BoardModelChoices {
     /// The row that confirms a model the supervisor or a rule chose.
     static let confirmID = "\u{1F}confirm"
 
-    private static func price(_ value: Double) -> String {
-        value == value.rounded() ? String(Int(value)) : String(format: "%.2f", value)
-    }
+    /// The row that keeps the chat box's model as the supervisor.
+    static let chatBoxID = "\u{1F}chat"
 
-    static func source(_ place: ModelProfile.Place) -> SelectionBadge {
-        switch place {
-        case .local: return SelectionBadge("Local", symbol: "lock", tone: .positive)
-        case .api: return SelectionBadge("API", symbol: "cloud", tone: .info)
-        case .account: return SelectionBadge("Account", symbol: "person", tone: .neutral)
+    /// The roster as the chat's own listing (`ModelChoices.Listing`), so the
+    /// shared `ModelPicker` draws it exactly as it draws the chat's models.
+    static func listing(_ roster: [ModelRoster.Entry], advised: ModelChoice?, current: String?) -> ModelChoices.Listing {
+        var choices: [String: ModelChoices.Choice] = [:]
+        var entries: [ModelChoices.Entry] = []
+        for entry in roster {
+            let id = entry.profile.choice.key
+            guard choices[id] == nil else { continue }
+            let engine = EngineCatalog.Engine(kind: entry.engine.kind, tool: entry.engine.tool, models: [entry.engine.model])
+            choices[id] = ModelChoices.Choice(engine: engine, model: entry.engine.model)
+            let recommended = advised != nil && advised == entry.engine.choice
+            entries.append(ModelChoices.entry(id: id, engine: entry.engine, profile: entry.profile,
+                                              extra: recommended ? ["Recommended by the supervisor"] : [],
+                                              symbol: recommended ? "star" : nil))
         }
-    }
-
-    static func cost(_ profile: ModelProfile) -> SelectionBadge {
-        let free = profile.inputPrice == 0 && profile.outputPrice == 0
-        let perMillion = "$\(price(profile.inputPrice)) in, $\(price(profile.outputPrice)) out per 1M"
-        switch profile.place {
-        case .local: return free ? SelectionBadge("Free", tone: .positive) : SelectionBadge(perMillion, tone: .caution)
-        case .account: return SelectionBadge("In your plan", tone: .neutral)
-        case .api: return free ? SelectionBadge("Price not set", tone: .caution) : SelectionBadge(perMillion, tone: .caution)
-        }
-    }
-
-    static func window(_ tokens: Int) -> SelectionBadge {
-        let text = tokens >= 1_000_000
-            ? "\(price(Double(tokens) / 1_000_000))M window"
-            : "\(tokens / 1_000)k window"
-        return SelectionBadge(text, symbol: "text.alignleft", tone: .neutral)
-    }
-
-    static func sections(_ roster: [ModelRoster.Entry], for item: WorkItem) -> [SelectionSection<String>] {
-        var result: [SelectionSection<String>] = []
-        if let assignment = item.assignment, !assignment.accepted, assignment.source != .person {
-            result.append(SelectionSection(id: "confirm", title: "Waiting for you", symbol: "checkmark.circle", items: [
-                SelectionItem(id: confirmID, title: "Confirm \(BoardText.modelName(assignment.label))",
-                              subtitle: "Keep the model this task was given", symbol: "checkmark"),
-            ]))
-        }
-        let places: [(ModelProfile.Place, String, String)] = [
-            (.local, "On this Mac", "lock"), (.api, "API", "cloud"), (.account, "Your accounts", "person"),
-        ]
-        for (place, title, symbol) in places {
-            let items = roster.filter { $0.profile.place == place }.map { entry -> SelectionItem<String> in
-                let profile = entry.profile
-                let advised = item.suggestion?.model == entry.engine.choice
-                var detail = [profile.tier.title]
-                if !profile.tools { detail.append("no native tool calls") }
-                if advised { detail.append("Recommended by the supervisor") }
-                return SelectionItem(id: profile.choice.key, title: profile.name,
-                                     subtitle: detail.joined(separator: " \u{00B7} "),
-                                     symbol: advised ? "star" : nil,
-                                     badges: [source(place), cost(profile), window(profile.window)],
-                                     keywords: [profile.tier.title, place.rawValue])
-            }
-            if !items.isEmpty {
-                result.append(SelectionSection(id: place.rawValue, title: title, symbol: symbol, items: items))
-            }
-        }
-        return result
+        return ModelChoices.Listing(sections: ModelChoices.sections(entries), choices: choices, current: current)
     }
 }
 
@@ -360,8 +321,6 @@ struct ModelMenu: View {
     var limit = 20
     @State private var isOpen = false
 
-    private static let recent = RecentChoices(key: "board.modelPicker.recent")
-
     private func choose(_ id: String) {
         isOpen = false
         if id == BoardModelChoices.confirmID {
@@ -369,8 +328,23 @@ struct ModelMenu: View {
             return
         }
         guard let entry = advanced.roster.first(where: { $0.profile.choice.key == id }) else { return }
-        Self.recent.record(id)
         advanced.assign(item.id, to: entry, in: project.id)
+    }
+
+    private var source: ModelPicker.Source {
+        var pinned: [ModelPicker.Source.Pinned] = []
+        if let assignment = item.assignment, !assignment.accepted, assignment.source != .person {
+            pinned.append(.init(id: BoardModelChoices.confirmID, title: "Confirm \(BoardText.modelName(assignment.label))",
+                                detail: "Keep the model this task was given", symbol: "checkmark"))
+        }
+        return ModelPicker.Source(
+            listing: BoardModelChoices.listing(advanced.roster, advised: item.suggestion?.model,
+                                               current: item.assignment?.model.key),
+            recentKey: "board.modelPicker.recent", pinned: pinned,
+            footers: [.init(title: "Suggest by rule", symbol: "wand.and.stars") {
+                advanced.suggestByRule(item.id, in: project.id)
+            }],
+            choose: choose)
     }
 
     var body: some View {
@@ -381,17 +355,9 @@ struct ModelMenu: View {
         .help("Choose the model for \(item.key)")
         .accessibilityLabel("Model for \(item.key)")
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
-            SearchablePicker(
-                title: "Model", sections: BoardModelChoices.sections(advanced.roster, for: item),
-                selection: item.assignment?.model.key, recents: Self.recent.ids(),
-                prompt: "Search models", maxHeight: 320, framed: false,
-                footer: SelectionFooter("Suggest by rule", symbol: "wand.and.stars") {
-                    isOpen = false
-                    advanced.suggestByRule(item.id, in: project.id)
-                },
-                onSelect: choose, onClose: { isOpen = false })
-                .environment(\.density, .compact)
-                .frame(width: 380)
+            ModelPicker(isOpen: $isOpen, source: source)
+                .environmentObject(AppSettings.shared)
+                .environmentObject(AppState.shared)
         }
         .onAppear { if advanced.roster.isEmpty { advanced.refreshRoster() } }
     }

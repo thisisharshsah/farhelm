@@ -27,6 +27,8 @@ struct BoardHeader: View {
     @State private var startingGoal = false
     /// The Board Settings sheet is shown.
     @State private var showSettings = false
+    /// The supervisor's model picker is open.
+    @State private var showSupervisor = false
 
     /// A goal has been made: it has words, or work was planned for it.
     private var goalMade: Bool { !board.goal.isEmpty || !board.items.isEmpty }
@@ -327,19 +329,7 @@ struct BoardHeader: View {
         // It answers in the person's place: said on the control itself,
         // so it is never on without being seen.
         let answers = board.settings.supervisorAnswers
-        return Menu {
-            Button("The Chat Box's Model" + check(board.supervisor == nil)) {
-                advanced.setSupervisor(nil, for: project.id)
-            }
-            Divider()
-            ForEach(advanced.roster) { entry in
-                Button(entry.profile.name + check(board.supervisor == entry.engine.choice)) {
-                    advanced.setSupervisor(entry.engine, for: project.id)
-                }
-            }
-            Divider()
-            answersItem
-        } label: {
+        return Button { showSupervisor.toggle() } label: {
             HStack(spacing: Design.Space.xxs) {
                 EngineLogo(kind: engine.kind, tool: engine.tool, size: Design.Icon.small.width - Design.Space.xxs)
                 Text("Supervisor: " + BoardText.modelName(engine.label) + (answers && !compact ? " · runs the board" : ""))
@@ -367,7 +357,29 @@ struct BoardHeader: View {
             .background(Capsule().fill(answers ? Design.Tone.positive.color.opacity(0.16) : Color.clear))
             .contentShape(Capsule())
         }
-        .boardMenu()
+        .buttonStyle(.plain)
+        .popover(isPresented: $showSupervisor, arrowEdge: .bottom) {
+            ModelPicker(isOpen: $showSupervisor, source: ModelPicker.Source(
+                listing: BoardModelChoices.listing(advanced.roster, advised: nil, current: board.supervisor?.key),
+                recentKey: "board.supervisorPicker.recent",
+                pinned: [.init(id: BoardModelChoices.chatBoxID, title: "The chat box's model",
+                               detail: "Whichever model the chat answers with", symbol: "bubble.left")],
+                footers: [.init(title: "Supervisor Mode: let it run the board" + check(answers), symbol: "star.fill",
+                                closes: false) {
+                    advanced.setFollowsAdvice(!answers, in: project.id)
+                }],
+                choose: { id in
+                    if id == BoardModelChoices.chatBoxID {
+                        advanced.setSupervisor(nil, for: project.id)
+                    } else if let entry = advanced.roster.first(where: { $0.profile.choice.key == id }) {
+                        advanced.setSupervisor(entry.engine, for: project.id)
+                    }
+                }))
+                .environmentObject(AppSettings.shared)
+                .environmentObject(AppState.shared)
+        }
+        .onAppear { if advanced.roster.isEmpty { advanced.refreshRoster() } }
+        .accessibilityLabel("Supervisor model")
         .help(supervisorHelp(chosen: chosen, shown: engine, rest: rest, answers: answers))
     }
 
