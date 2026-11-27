@@ -5471,6 +5471,7 @@ final class AppState: ObservableObject {
             }
         }
         conversation = loaded
+        Advanced.shared.showCardModel(for: loaded)
         restoreDraft()
         if jobs[id] == nil, queued[id]?.isEmpty == false {
             DispatchQueue.main.async { [weak self] in self?.sendNextQueued() }

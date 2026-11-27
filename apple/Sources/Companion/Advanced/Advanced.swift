@@ -2169,6 +2169,43 @@ final class Advanced: ObservableObject {
         return copy.directory
     }
 
+    /// The engine a task's card names, when it can still be asked: the same
+    /// test a run applies (`engine(for:roster:on:)`), so the chat and the
+    /// run it starts agree on the model.
+    static func cardEngine(of item: WorkItem?, in roster: [ModelRoster.Entry]) -> EngineChoice? {
+        guard let assigned = item?.assignment, let entry = ModelRoster.entry(for: assigned.model, in: roster) else { return nil }
+        return entry.engine
+    }
+
+    /// Makes an engine the one the chat box shows and sends to. The picker
+    /// and every send read the app's settings, so this is the one place a
+    /// task's model reaches both.
+    static func show(_ engine: EngineChoice) {
+        EngineCatalog.choose(EngineCatalog.Engine(kind: engine.kind, tool: engine.tool, models: []), engine.model)
+    }
+
+    /// Opening a task's chat shows its card's model in the chat box, and
+    /// the chat sends to it. A card with no usable model leaves the box as
+    /// it was.
+    func showCardModel(for chat: Conversation) {
+        guard chat.kind == .task, let projectID = chat.projectID else { return }
+        refreshRoster()
+        Self.showCardModel(for: chat, on: load(projectID), roster: roster)
+    }
+
+    /// The lookup behind `showCardModel(for:)`, with the board and the
+    /// roster given, so it can be run on its own. The task is found as a
+    /// chat's task is elsewhere: by the runs that worked in the chat, or by
+    /// the task the chat names. Returns whether the box now shows the card's model.
+    @discardableResult
+    static func showCardModel(for chat: Conversation, on board: Board, roster: [ModelRoster.Entry]) -> Bool {
+        guard chat.kind == .task else { return false }
+        let item = board.item(runIn: chat.id) ?? chat.taskID.flatMap { board.item($0) }
+        guard let engine = cardEngine(of: item, in: roster) else { return false }
+        show(engine)
+        return true
+    }
+
     /// The task a message in a board task's chat is about, for the agent,
     /// which starts each message knowing only what the message says: a
     /// message the person types there, or sends again, goes with the task
