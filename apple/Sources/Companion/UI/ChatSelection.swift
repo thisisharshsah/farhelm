@@ -195,8 +195,17 @@ struct SelectableText: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ChatTextView, context: Context) -> CGSize? {
         let offered = proposal.width ?? 480
         let width = offered.isFinite && offered > 0 ? offered : 480
-        let fitted = nsView.fitted(to: width)
-        return CGSize(width: hugs ? min(width, max(fitted.width, 4)) : width, height: max(fitted.height, 4))
+        // Hugging, it is as wide as its words are when set by themselves:
+        // the layout's own used width came out as the whole width offered,
+        // which stretched your message's bubble across the chat.
+        var taken = width
+        if hugs {
+            let natural = text.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude),
+                                            options: [.usesLineFragmentOrigin, .usesFontLeading])
+            taken = min(width, max(ceil(natural.width) + 1, 4))
+        }
+        let fitted = nsView.fitted(to: taken)
+        return CGSize(width: taken, height: max(fitted.height, 4))
     }
 }
 
