@@ -391,18 +391,19 @@ struct BoardHeader: View {
     /// board's own runs are, as the reason they wait.
     private var limitLabel: some View {
         let limit = advanced.runLimit
+        let text = "\(limit.limit) running: " + limit.reason
         let ceiling = board.settings.runCeiling.map { " This board keeps to at most \($0) at once (its cost ceiling)." } ?? ""
         return HStack(spacing: Design.Space.xxs) {
             Image(systemName: "gauge.with.dots.needle.33percent")
                 .font(Design.TextRole.caption.font.weight(.semibold))
                 .foregroundStyle(.tertiary)
-            Text("Up to \(limit.limit) at once · " + limit.reason)
+            Text(text)
                 .textRole(.number, .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
         .layoutPriority(-1)
-        .help("One limit for the whole app, set from the Mac's free processors and memory, what is left of each plan, and how many tasks can start. Your own chats always get a slot; board runs share the rest, \(limit.forBoards) now. Work over the limit waits in line and starts by itself, most pressing first." + ceiling)
+        .help(text + "." + ceiling)
     }
 
     /// Why nothing runs while work is left, on a board where work starts
