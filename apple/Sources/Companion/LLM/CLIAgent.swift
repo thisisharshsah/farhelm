@@ -1002,7 +1002,15 @@ enum CLIAgentClient {
             // told how to ask for.
             options += ["--disallowedTools", "Bash,Edit,Write,NotebookEdit,Agent,Task"]
         case "codex":
-            for picture in pictures { options += ["--image", picture] }
+            // Codex's --image takes every value after it, so the
+            // instruction that followed was read as one more picture (one
+            // that does not exist), and models said the attached picture
+            // "did not open". "--" ends the pictures: what comes after it
+            // is the instruction.
+            if !pictures.isEmpty {
+                for picture in pictures { options += ["--image", picture] }
+                options.append("--")
+            }
         default:
             break
         }
