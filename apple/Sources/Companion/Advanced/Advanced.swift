@@ -2240,6 +2240,20 @@ final class Advanced: ObservableObject {
                              "The project builds and its tests pass"],
                 status: .todo, priority: .urgent, kind: .chore, paths: files, by: .supervisor, now: now)
             key = made.key
+            // Given a model at once: made without one, it waited on the
+            // model in the chat box, which could be one out of its plan,
+            // and the board's merged work (sixteen tasks once) never
+            // reached the person's branch. The model of the latest task
+            // whose work was approved is one that does this board's work.
+            let proven = board.allItems
+                .filter { $0.status == .done && $0.assignment != nil && $0.runs.last?.review?.verdict == .approved }
+                .max { ($0.finishedAt ?? .distantPast) < ($1.finishedAt ?? .distantPast) }?.assignment
+            if var assignment = proven {
+                assignment.reason = "Settling a merge: the model of the latest approved task"
+                assignment.source = .rule
+                assignment.accepted = true
+                _ = board.assign(made.id, assignment, by: .supervisor, now: now)
+            }
         }
         noteDelivery("Your branch and the board's both changed \(list), so \(key) was added for an agent to settle that. Its work then goes into \(target) by itself.", in: projectID)
         tick(projectID)
