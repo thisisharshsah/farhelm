@@ -2465,6 +2465,19 @@ final class Advanced: ObservableObject {
         }
     }
 
+    // Auto is the board's one grant for every run, its supervisor and
+    // every chat in the project. Off again makes them ask again at the
+    // next step, since `AutoPermission` reads it each time.
+    func setAuto(_ on: Bool, in project: UUID) {
+        change(project) { board in
+            guard board.settings.auto != on else { return }
+            board.settings.auto = on
+            board.log(on ? "Switched Auto on for the whole board"
+                        : "Switched Auto off; the board asks again at each step",
+                      by: .person, now: Date())
+        }
+    }
+
     // MARK: What it cost
 
     private var ledgers: [UUID: (stamp: String, ledger: Ledger)] = [:]

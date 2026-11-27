@@ -88,6 +88,12 @@ public struct BoardSettings: Codable, Equatable, Sendable {
     /// so it also starts the work it planned).
     public var startsWorkByItself: Bool { autopilot || supervisorAnswers }
 
+    /// The small Auto badge in the board's header follows this one rule:
+    /// it is drawn when the board's Auto grant is on and never otherwise.
+    /// The UI reads it from here so a unit test can pin the rule without
+    /// loading SwiftUI.
+    public var showsAutoBadge: Bool { auto }
+
     private enum CodingKeys: String, CodingKey {
         case autopilot, parallel, reviewGate, wipLimit, runCeiling, runAccess, advice, followsAdvice, copyPerTask
         case teamLimit, auto

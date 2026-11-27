@@ -25,6 +25,8 @@ struct BoardHeader: View {
     @State private var commitMessage = ""
     /// They were opened to start a new goal.
     @State private var startingGoal = false
+    /// The Board Settings sheet is shown.
+    @State private var showSettings = false
 
     /// A goal has been made: it has words, or work was planned for it.
     private var goalMade: Bool { !board.goal.isEmpty || !board.items.isEmpty }
@@ -55,6 +57,14 @@ struct BoardHeader: View {
                     IconButton("plus", help: "Add a task") {
                         advanced.selectedItem = advanced.addTask(BoardRules.newTaskTitle, status: .todo, in: project.id)
                     }
+                    // One click to every setting and limit: the sheet
+                    // groups what the three-dot menu used to mix together.
+                    IconButton("slider.horizontal.3", help: "Board Settings") {
+                        showSettings = true
+                    }
+                    .popover(isPresented: $showSettings, arrowEdge: .bottom) {
+                        BoardSettingsSheet(project: project, board: board) { showSettings = false }
+                    }
                     moreMenu
                 }
             }
@@ -67,6 +77,7 @@ struct BoardHeader: View {
                 if let waiting = advanced.waiting[project.id] { waitingLabel(waiting) }
                 Spacer(minLength: Design.Space.xxs)
                 supervisorMenu
+                if BoardAutoBadge.shouldShow(for: board.settings) { autoBadge }
                 autopilot
             }
             if let notice = advanced.notices[project.id] {
@@ -170,19 +181,12 @@ struct BoardHeader: View {
 
     private func check(_ on: Bool) -> String { on ? "  ✓" : "" }
 
-    /// Opens the project's checks in the editor. Where there are none yet,
-    /// a first file is written to make them from, with the build the app
-    /// finds in the folder as its one check.
-    private func openChecks() {
-        guard let folder = project.folder else { return }
-        let path = (folder as NSString).appendingPathComponent(Checks.file)
-        if !FileManager.default.fileExists(atPath: path) {
-            try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
-                                                     withIntermediateDirectories: true)
-            try? Checks.starter(build: ProblemsModel.buildCommand(in: folder))
-                .write(toFile: path, atomically: true, encoding: .utf8)
-        }
-        app.openInWorkspace(path)
+    /// The small badge in the second line while the board's Auto grant is
+    /// on. The rule is `BoardAutoBadge.shouldShow(for:)`, pinned by a
+    /// unit test: the badge shows when, and only when, Auto is on.
+    private var autoBadge: some View {
+        Chip("Auto", icon: "bolt.shield.fill", tint: Design.Tone.positive.color)
+            .help("Auto is on for this board. Every run it starts, its supervisor and every chat in the project may edit, run commands, build, test and commit on their own branches without asking. Merging into main, pushing, deleting files or tasks outside the board's own cleanup, and anything touching keys still wait for you.")
     }
 
     /// What the supervisor running the board comes to, for the help on
@@ -199,114 +203,28 @@ struct BoardHeader: View {
         .help(Self.answersHelp)
     }
 
+    /// The three-dot menu: three actions and nothing else. Every setting
+    /// and limit that used to be here now lives in Board Settings; New
+    /// Goal already has its own button on the first line. Goals and
+    /// Earlier Goals are reached by clicking the goal itself.
     private var moreMenu: some View {
         Menu {
-            if goalMade {
-                Button {
-                    openGoals(new: true)
-                } label: {
-                    Label("New Goal…", systemImage: "flag")
-                }
-            }
-            if board.goals.count > 1 {
-                Button {
-                    openGoals(new: false)
-                } label: {
-                    Label("Earlier Goals…", systemImage: "clock.arrow.circlepath")
-                }
-            }
-            if goalMade || board.goals.count > 1 { Divider() }
             Button {
                 app.tellSupervisor(BoardPrompts.report, project: project)
             } label: {
                 Label("Status Report", systemImage: "chart.bar.doc.horizontal")
             }
             Button {
-                app.tellSupervisor(BoardPrompts.assign, project: project)
-            } label: {
-                Label("Suggest Models for the Tasks", systemImage: "person.crop.circle.badge.checkmark")
-            }
-            Button {
                 app.tellSupervisor(BoardPrompts.replan, project: project)
             } label: {
                 Label("Tidy the Plan", systemImage: "wand.and.stars")
             }
-            Divider()
-            Button {
-                advanced.change(project.id) { $0.settings.reviewGate.toggle() }
-            } label: {
-                Label("Review Finished Runs" + check(board.settings.reviewGate), systemImage: "checkmark.seal")
-            }
-            Button {
-                openChecks()
-            } label: {
-                Label("Checks Before Review…", systemImage: "checklist")
-            }
-            .disabled(project.folder == nil)
-            .help("The commands run on each task's work before it is reviewed (its build, its tests), written in \(Checks.file) in the project's folder. Work whose checks fail is never approved without you.")
-            Button {
-                advanced.setCopyPerTask(!board.settings.copyPerTask, in: project.id)
-            } label: {
-                Label("Give Each Task Its Own Branch" + check(board.settings.copyPerTask),
-                      systemImage: "arrow.triangle.branch")
-            }
-            Button {
-                // Without recommendations there is no answer to take.
-                if board.settings.advice, board.settings.followsAdvice {
-                    advanced.setFollowsAdvice(false, in: project.id)
-                }
-                advanced.change(project.id) { $0.settings.advice.toggle() }
-            } label: {
-                Label("Recommend an Answer Wherever I Am Asked" + check(board.settings.advice), systemImage: "star")
-            }
-            answersItem
-            // Only a cost ceiling: how many run at once is the app's limit,
-            // set from what is free, and this can only lower it.
-            Menu("Cost Ceiling on Runs") {
-                Button("None: Follow the App's Limit" + check(board.settings.runCeiling == nil)) {
-                    advanced.change(project.id) { $0.settings.runCeiling = nil }
-                    advanced.tick(project.id)
-                }
-                ForEach([1, 2, 4, 8], id: \.self) { count in
-                    Button("At Most \(count)" + check(board.settings.runCeiling == count)) {
-                        advanced.change(project.id) { $0.settings.runCeiling = count }
-                        advanced.tick(project.id)
-                    }
-                }
-            }
-            .help("How many of this board's runs go at once is set for the whole app from what is free. A ceiling here only keeps the board's runs, and what they spend, below it.")
-            Menu("Limit on In Progress") {
-                Button("None" + check(board.settings.wipLimit == nil)) {
-                    advanced.change(project.id) { $0.settings.wipLimit = nil }
-                }
-                ForEach([1, 2, 3, 4, 5, 8], id: \.self) { count in
-                    Button("\(count)" + check(board.settings.wipLimit == count)) {
-                        advanced.change(project.id) { $0.settings.wipLimit = count }
-                    }
-                }
-            }
-            Menu("What Runs May Do Unasked") {
-                Button("As Set for New Chats" + check(board.settings.runAccess == nil)) {
-                    advanced.change(project.id) { $0.settings.runAccess = nil }
-                }
-                ForEach(AgentAccess.allCases) { access in
-                    Button(access.title + check(board.settings.runAccess == access.rawValue)) {
-                        advanced.change(project.id) { $0.settings.runAccess = access.rawValue }
-                    }
-                }
-            }
-            Button {
-                viewName = BoardViewKind.usage.rawValue
-            } label: {
-                Label("Budget and Usage…", systemImage: "gauge.with.dots.needle.50percent")
-            }
-            Divider()
             Button {
                 let text = advanced.store.markdown(project.id, name: project.name)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
             } label: {
-                Label("Copy the Board as Markdown", systemImage: "doc.on.doc")
+                Label("Copy as Markdown", systemImage: "doc.on.doc")
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -316,7 +234,7 @@ struct BoardHeader: View {
                 .contentShape(Circle())
         }
         .boardMenu()
-        .help("Goals, reports, how the board is run, and copying it")
+        .help("Status Report, Tidy the Plan, Copy as Markdown")
     }
 
     // MARK: Second line
