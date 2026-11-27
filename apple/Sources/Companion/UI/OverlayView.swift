@@ -321,10 +321,10 @@ struct OverlayView: View {
                             VStack(alignment: .leading, spacing: 0) {
                             if showModels {
                                 ModelPicker(isOpen: $showModels)
-                                    // As wide as it likes to be, but never
-                                    // wider than the chat it hangs over: in a
-                                    // narrow chat column it narrows with it.
-                                    .frame(maxWidth: 326)
+                                    // As wide as it likes to be (compact, or
+                                    // widened with "More"), but never wider
+                                    // than the chat it hangs over.
+                                    .frame(maxWidth: 610)
                                     .padding(.horizontal, Theme.gutter)
                                     // A small gap between it and the pill it
                                     // hangs from.
