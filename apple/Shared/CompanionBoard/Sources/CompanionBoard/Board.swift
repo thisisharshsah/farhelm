@@ -300,7 +300,8 @@ public struct Board: Codable, Equatable, Sendable {
 
 extension Board {
     /// The tasks of the goal being worked toward: what the board shows.
-    public var items: [WorkItem] { allItems.filter { $0.goal == currentGoal } }
+    /// An archived task is off the board and not among them.
+    public var items: [WorkItem] { allItems.filter { $0.goal == currentGoal && $0.archivedAt == nil } }
 
     /// Nothing was ever said or planned on it: one goal with no words,
     /// and no tasks under any.
@@ -463,7 +464,7 @@ extension Board {
     /// it back more than `BoardRules.redoLimit` times in a row (it waits
     /// for a person), and not when someone stopped or refused its last run.
     public func autopilotMayStart(_ item: WorkItem) -> Bool {
-        if BoardRules.isBlank(item) { return false }
+        if !BoardRules.hasTitle(item) { return false }
         if let ending = item.runs.last?.ending, ending == .person || ending == .supervisor { return false }
         return failuresInARow(of: item) < 2 && sentBackInARow(of: item) <= BoardRules.redoLimit
     }
@@ -571,7 +572,10 @@ extension Board {
         item.id = allItems[index].id
         item.number = allItems[index].number
         item.goal = allItems[index].goal
-        item.title = BoardRules.title(item.title)
+        // A card cannot lose its title: a change that blanks it keeps the
+        // one it had.
+        let titled = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        item.title = titled.isEmpty ? allItems[index].title : BoardRules.title(item.title)
         item.updatedAt = now
         allItems[index] = item
         touch(now)
@@ -632,6 +636,35 @@ extension Board {
         let kept = gone.workingCopy.flatMap { $0.isOpen ? ". Its work is kept on branch \($0.branch)" : nil } ?? ""
         log("Removed \(gone.key): \(gone.title)" + kept, by: actor, item: gone.number, now: now)
         return true
+    }
+
+    /// Moves a task off the board but keeps it, with its runs and their
+    /// chats, in the project's history. Never while a run is going on.
+    /// Tasks that waited on it no longer do, as with `remove`.
+    @discardableResult
+    public mutating func archive(_ id: UUID, by actor: BoardActor, now: Date) -> Bool {
+        guard let index = allItems.firstIndex(where: { $0.id == id }), allItems[index].activeRun == nil,
+              allItems[index].archivedAt == nil else { return false }
+        allItems[index].archivedAt = now
+        allItems[index].updatedAt = now
+        let gone = allItems[index]
+        for other in allItems.indices {
+            allItems[other].dependsOn.removeAll { $0 == gone.number }
+        }
+        log("Archived \(gone.key): \(gone.title)", by: actor, item: gone.number, now: now)
+        return true
+    }
+
+    /// Takes abandoned placeholders off the board by themselves: cards
+    /// still untitled, with nothing in them and no runs, left alone past
+    /// the grace (`BoardRules.isAbandoned`). Returns how many went.
+    @discardableResult
+    public mutating func sweepAbandoned(now: Date) -> Int {
+        let gone = items.filter { BoardRules.isAbandoned($0, now: now) }
+        // Nobody did it by hand: the board acting by itself is closest
+        // to Autopilot among the actors the history can name.
+        for item in gone { remove(item.id, by: .autopilot, now: now) }
+        return gone.count
     }
 
     /// Sets what a task waits on, leaving out anything that is not a task
@@ -907,6 +940,27 @@ public enum BoardRules {
         let placeholder = [newTaskTitle, untitled].contains { title.caseInsensitiveCompare($0) == .orderedSame }
         return placeholder && item.details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && item.acceptance.isEmpty
+    }
+
+    /// A real title: not blank, and not one of the placeholders a card
+    /// starts with. A card cannot be run without one.
+    public static func hasTitle(_ item: WorkItem) -> Bool {
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return false }
+        return ![newTaskTitle, untitled].contains { title.caseInsensitiveCompare($0) == .orderedSame }
+    }
+
+    /// How long an untitled card with nothing in it and no runs is left
+    /// alone before the board takes it off by itself: long enough to
+    /// write a title, short enough that misclicks do not pile up.
+    public static let abandonedAfter: TimeInterval = 5 * 60
+
+    /// A placeholder card nobody came back to: still blank (`isBlank`),
+    /// no runs, and left alone past the grace. Such a card is taken off
+    /// the board by itself (`Board.sweepAbandoned`).
+    public static func isAbandoned(_ item: WorkItem, now: Date) -> Bool {
+        isBlank(item) && item.runs.isEmpty
+            && now.timeIntervalSince(item.updatedAt) >= abandonedAfter
     }
 
     /// Where a task goes when a run on it ends: finished work is looked

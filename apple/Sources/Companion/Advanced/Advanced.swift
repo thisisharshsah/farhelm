@@ -219,6 +219,7 @@ final class Advanced: ObservableObject {
                     self.deliver(project)
                     self.reviewAgain(project)
                     self.carryOnStopped(project)
+                    self.sweepAbandoned(project)
                     self.tick(project)
                     self.triageHeld(project)
                 }
@@ -756,6 +757,7 @@ final class Advanced: ObservableObject {
         }
         var lines: [String] = []
         if !summary.isEmpty { lines.append("**Board:** " + summary.sentence) }
+        if !summary.cleaned.isEmpty { lines.append(contentsOf: summary.cleaned.map { "- " + $0 }) }
         let problems = reply.problems + summary.problems + held
         if !problems.isEmpty {
             lines.append(contentsOf: problems.prefix(6).map { "- " + $0 })
@@ -773,6 +775,7 @@ final class Advanced: ObservableObject {
         // approval waits until its merge is known not to conflict.
         for item in summary.approving { approveForSupervisor(item, in: project) }
         for item in summary.deleting { remove(item, in: project, bySupervisor: true) }
+        for item in summary.archived { archive(item, in: project, bySupervisor: true) }
         if summary.goalStarted { settleSelection(in: project) }
         if !summary.isEmpty {
             // Past the answer's own task, so the board is settled first.
@@ -865,8 +868,8 @@ final class Advanced: ObservableObject {
         guard let project = self.project(projectID) else { return "This project is no longer on the list." }
         let board = load(projectID)
         guard let item = board.item(itemID) else { return "That task is no longer on the board." }
-        guard !BoardRules.isBlank(item) else {
-            return "\(item.key) is still blank. Give it a title, or say what it should do, then start it."
+        guard BoardRules.hasTitle(item) else {
+            return "\(item.key) has no title yet. Give it one that says what the work is, then start it."
         }
         guard item.activeRun == nil, !preparing.contains(itemID) else { return "\(item.key) already has a run going on." }
         guard !merging.contains(itemID), !discarding.contains(itemID) else {
@@ -1672,6 +1675,15 @@ final class Advanced: ObservableObject {
             + " ready and start by themselves, most pressing first, as runs end (" + limit.reason + ")."
     }
 
+    /// Takes abandoned placeholder cards off the board by themselves:
+    /// untitled, nothing in them, no runs, left alone past the grace
+    /// (`Board.sweepAbandoned`). The board is written only when one goes.
+    private func sweepAbandoned(_ projectID: UUID) {
+        guard let board = store.boards[projectID],
+              board.items.contains(where: { BoardRules.isAbandoned($0, now: Date()) }) else { return }
+        change(projectID) { _ = $0.sweepAbandoned(now: Date()) }
+    }
+
     /// Looks at every board with work that could start: after a run or a
     /// chat's task ends, a slot may have freed.
     func tickAll() {
@@ -2435,6 +2447,24 @@ final class Advanced: ObservableObject {
             }
             if let problem = await TaskCopies.shared.putAway(copy, key: task.key, title: task.title, folder: folder) {
                 self.notices[project] = "\(task.key) is off the board, but \(problem)."
+            }
+        }
+    }
+
+    /// Moves a task off the board but keeps it, with its runs and their
+    /// chats, in history (`Board.archive`): a person's Archive on the
+    /// card, or the board's tidy pass (then the board side is already
+    /// done and only the copy is put away here). The branch, with its
+    /// work, stays in the repository.
+    func archive(_ item: UUID, in project: UUID, bySupervisor: Bool = false) {
+        if selectedItem == item { selectedItem = nil }
+        let task = store.boards[project]?.item(item)
+        change(project) { $0.archive(item, by: bySupervisor ? .supervisor : .person, now: Date()) }
+        copyChanges[item] = nil
+        guard let task, let copy = task.workingCopy, copy.isOpen, let folder = self.project(project)?.folder else { return }
+        Task { @MainActor in
+            if let problem = await TaskCopies.shared.putAway(copy, key: task.key, title: task.title, folder: folder) {
+                self.notices[project] = "\(task.key) is archived, but \(problem)."
             }
         }
     }

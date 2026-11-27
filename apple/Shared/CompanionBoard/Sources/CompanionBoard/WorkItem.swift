@@ -344,6 +344,10 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
     /// until its first run, and for a task that works in the project's
     /// folder.
     public var workingCopy: WorkingCopy? = nil
+    /// When it was archived: off the board's columns, but kept, with its
+    /// runs and chats, in the project's history. nil while it is on the
+    /// board.
+    public var archivedAt: Date? = nil
 
     public init(id: UUID = UUID(), number: Int, title: String, details: String = "", acceptance: [String] = [],
                 status: WorkStatus = .todo, priority: WorkPriority = .medium, kind: WorkKind = .feature,
@@ -394,7 +398,7 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, number, title, details, acceptance, status, priority, kind, milestone, dependsOn, estimateTokens
         case assignment, suggestion, runs, notes, createdAt, updatedAt, startedAt, finishedAt, dueAt, order, goal
-        case workingCopy, paths, role
+        case workingCopy, paths, role, archivedAt
     }
 
     /// Read field by field, so a board saved before a field existed still
@@ -426,5 +430,6 @@ public struct WorkItem: Codable, Identifiable, Equatable, Sendable {
         workingCopy = try values.decodeIfPresent(WorkingCopy.self, forKey: .workingCopy)
         paths = try values.decodeIfPresent([String].self, forKey: .paths) ?? []
         role = try values.decodeIfPresent(String.self, forKey: .role)
+        archivedAt = try values.decodeIfPresent(Date.self, forKey: .archivedAt)
     }
 }

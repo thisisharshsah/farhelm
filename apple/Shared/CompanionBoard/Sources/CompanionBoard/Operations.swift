@@ -120,6 +120,12 @@ public struct ChangeSummary: Equatable, Sendable {
     /// They are still on the board when `apply` returns; the app takes
     /// each one off.
     public var deleting: [UUID] = []
+    /// What the board's own tidy pass cleaned after the changes: empty,
+    /// duplicate or broken cards removed or archived, in plain words.
+    public var cleaned: [String] = []
+    /// The cards the tidy pass archived. They stay in `allItems`, off the
+    /// columns; the app puts each one's open copy away.
+    public var archived: [UUID] = []
 
     public init() {}
 
@@ -164,7 +170,7 @@ extension Board {
     /// supervisor works on that goal: the tasks of earlier goals are the
     /// project's history, and not its to change.
     private func shown(_ number: Int) -> WorkItem? {
-        item(number: number).flatMap { $0.goal == currentGoal ? $0 : nil }
+        item(number: number).flatMap { $0.goal == currentGoal && $0.archivedAt == nil ? $0 : nil }
     }
 
     /// A task by the name a supervisor uses for it: "T-3", "t3", "#3",
@@ -287,7 +293,9 @@ extension Board {
                 }
                 var changed = false
                 update(found.id, now: now) { item in
-                    if let title = patch.title, !title.isEmpty, title != item.title { item.title = title; changed = true }
+                    // A card cannot be saved without a title: blank stays refused.
+                    let fresh = patch.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if !fresh.isEmpty, fresh != item.title { item.title = fresh; changed = true }
                     if let details = patch.details, details != item.details { item.details = details; changed = true }
                     if let acceptance = patch.acceptance {
                         let lines = BoardRules.lines(acceptance)
@@ -489,7 +497,61 @@ extension Board {
                 summary.problems.append("\(key) cannot wait on \(names): that would make a circle.")
             }
         }
+        // With the reply's changes in, the board's own rules clean what
+        // is left over: empty, duplicate or broken cards.
+        let tidied = tidy(by: actor, now: now)
+        summary.cleaned = tidied.words
+        summary.archived = tidied.archived
         return summary
+    }
+
+    /// The board's own tidy pass, run after a supervisor's changes: finds
+    /// empty, duplicate (same title and details) and broken cards (no
+    /// title, or waiting on a task that is not on the board), removes the
+    /// ones with no runs and no details, and archives the rest, so work
+    /// and words are never thrown away. A card with a run going on is
+    /// never touched, and an untitled one is left through its grace
+    /// (`BoardRules.abandonedAfter`): a person may still be writing it.
+    /// Returns what was cleaned, in plain words, and the archived ids.
+    public mutating func tidy(by actor: BoardActor = .supervisor,
+                              now: Date) -> (words: [String], archived: [UUID]) {
+        var reasons: [(id: UUID, why: String)] = []
+        // Of cards that say the same, the earliest stays.
+        var seen: [String: Int] = [:]
+        for item in items.sorted(by: { $0.number < $1.number }) {
+            guard item.activeRun == nil else { continue }
+            if !BoardRules.hasTitle(item) {
+                guard now.timeIntervalSince(item.updatedAt) >= BoardRules.abandonedAfter else { continue }
+                reasons.append((item.id, "it has no title"))
+                continue
+            }
+            let saying = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                + "\n" + item.details.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let kept = seen[saying] {
+                reasons.append((item.id, "it says the same as T-\(kept)"))
+                continue
+            }
+            seen[saying] = item.number
+            let missing = item.dependsOn.filter { number in !items.contains { $0.number == number } }
+            if !missing.isEmpty {
+                reasons.append((item.id, "it waits on " + missing.map { "T-\($0)" }.joined(separator: ", ")
+                    + ", which is not on the board"))
+            }
+        }
+        var words: [String] = []
+        var archived: [UUID] = []
+        for (id, why) in reasons {
+            guard let found = item(id) else { continue }
+            let bare = found.details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && found.acceptance.isEmpty
+            if found.runs.isEmpty && bare {
+                if remove(id, by: actor, now: now) { words.append("Removed \(found.key): \(why).") }
+            } else if archive(id, by: actor, now: now) {
+                words.append("Archived \(found.key): \(why).")
+                archived.append(id)
+            }
+        }
+        return (words, archived)
     }
 
     /// What a task holds that is not merged yet, in plain words, or nil.

@@ -371,7 +371,11 @@ struct TaskInspector: View {
     private var facts: some View {
         VStack(alignment: .leading, spacing: Design.Space.xxs) {
             CommitField(placeholder: "Title", value: item.title) { text in
-                edit { $0.title = text }
+                // A card cannot be saved without a title: a blank is not
+                // written, and the card keeps the title it had.
+                let title = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty else { return }
+                edit { $0.title = title }
             }
             row("Priority") {
                 let entries = WorkPriority.allCases.reversed().map { priority in
@@ -717,6 +721,12 @@ struct TaskInspector: View {
             Text("Made \(BoardText.when(item.createdAt))")
                 .textRole(.caption, .tertiary)
             Spacer()
+            if !item.runs.isEmpty, item.activeRun == nil {
+                BoardButton("Archive", icon: "archivebox") {
+                    advanced.archive(item.id, in: project.id)
+                }
+                .help("Move it off the board. Its runs and their chats stay in the project's history.")
+            }
             BoardButton(confirmingDelete ? "Delete for Good" : "Delete", icon: "trash", tint: Design.Tone.critical.color) {
                 if confirmingDelete {
                     advanced.remove(item.id, in: project.id)
