@@ -343,9 +343,6 @@ struct TaskCard: View {
         }
     }
 
-    /// What can be done with the task from its card. Where the supervisor
-    /// has looked at a finished run for the person who reviews it, the
-    /// answer it recommends says so.
     /// The card's buttons, in words where the column is wide enough for
     /// them and as symbols alone where it is not: a row wider than the
     /// card pushed the whole card out past its column's edges.

@@ -128,6 +128,56 @@ final class ChatDocumentTests: XCTestCase {
         XCTAssertEqual(first["type"], "block")
     }
 
+    // MARK: - TranscriptDiff
+
+    func testUnchangedTranscriptGivesNothing() {
+        let id = UUID()
+        let snap = TranscriptDiff.TurnSnapshot(
+            id: id, answerInnerHTML: "<p>Hello</p>",
+            articleHTML: "<article><section class=\"answer\"><p>Hello</p></section></article>")
+        XCTAssertEqual(TranscriptDiff.diff(old: [snap], new: [snap]), .unchanged)
+    }
+
+    func testGrowingAnswerGivesOneUpdateForItsElement() {
+        let id = UUID()
+        let eid = ChatDocument.elementID(id)
+        func snap(_ answer: String) -> TranscriptDiff.TurnSnapshot {
+            .init(id: id, answerInnerHTML: answer,
+                  articleHTML: "<article id=\"\(eid)\"><section class=\"answer\" id=\"\(eid)-answer\">\(answer)</section></article>")
+        }
+        let change = TranscriptDiff.diff(old: [snap("<p>Hel</p>")], new: [snap("<p>Hello world</p>")])
+        XCTAssertEqual(change, .update(elementID: "\(eid)-answer", innerHTML: "<p>Hello world</p>"))
+    }
+
+    func testNewTurnGivesOneAppend() {
+        let a = UUID(), b = UUID()
+        func snap(_ id: UUID, _ answer: String) -> TranscriptDiff.TurnSnapshot {
+            .init(id: id, answerInnerHTML: answer,
+                  articleHTML: "<article id=\"turn-\(id.uuidString)\">\(answer)</article>")
+        }
+        let old = [snap(a, "<p>Hi</p>")]
+        let appended = snap(b, "<p>There</p>")
+        let new = [snap(a, "<p>Hi</p>"), appended]
+        XCTAssertEqual(TranscriptDiff.diff(old: old, new: new), .append(html: appended.articleHTML))
+    }
+
+    func testEachStreamedPieceIsOneUpdateOfItsAnswer() {
+        let id = UUID()
+        let eid = ChatDocument.elementID(id)
+        func snap(_ answer: String) -> TranscriptDiff.TurnSnapshot {
+            .init(id: id, answerInnerHTML: answer,
+                  articleHTML: "<article id=\"\(eid)\"><section class=\"answer\" id=\"\(eid)-answer\">\(answer)</section></article>")
+        }
+        let pieces = ["<p>H</p>", "<p>He</p>", "<p>Hel</p>", "<p>Hell</p>", "<p>Hello</p>"]
+        var current = [snap(pieces[0])]
+        for piece in pieces.dropFirst() {
+            let next = [snap(piece)]
+            let change = TranscriptDiff.diff(old: current, new: next)
+            XCTAssertEqual(change, .update(elementID: "\(eid)-answer", innerHTML: piece))
+            current = next
+        }
+    }
+
     func testBundledCSSHasNoShadows() throws {
         let apple = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let css = try String(contentsOf: apple.appendingPathComponent("Resources/ChatDocument/page/chat.css"), encoding: .utf8)

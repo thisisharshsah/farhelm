@@ -32,6 +32,19 @@ struct ChatDocument {
             .map(\.element)
     }
 
+    /// The content inside a turn's answer section, without the `<section>` tag.
+    static func answerInnerHTML(for turn: ChatTurn, streaming: Bool = false) -> String {
+        var answer = ChatMarkdown.html(turn.answer)
+        if answer.isEmpty, streaming { answer = "<p class=\"pending\">Writing\u{2026}</p>" }
+        if let error = turn.error, !error.isEmpty {
+            answer += "<p class=\"error\">\(ChatMarkdown.escape(error))</p>"
+        }
+        if !turn.model.isEmpty, !turn.answer.isEmpty, !streaming {
+            answer += "<p class=\"model\">\(ChatMarkdown.escape(turn.model))</p>"
+        }
+        return answer
+    }
+
     static func html(for turn: ChatTurn, picture: URL? = nil, streaming: Bool = false) -> String {
         let id = elementID(turn.id)
         var parts: [String] = []
@@ -51,15 +64,19 @@ struct ChatDocument {
             }
             parts.append("<section class=\"prompt\" id=\"\(id)-prompt\">\(request)</section>")
         }
-        var answer = ChatMarkdown.html(turn.answer)
-        if answer.isEmpty, streaming { answer = "<p class=\"pending\">Writing…</p>" }
-        if let error = turn.error, !error.isEmpty {
-            answer += "<p class=\"error\">\(ChatMarkdown.escape(error))</p>"
-        }
-        if !turn.model.isEmpty, !turn.answer.isEmpty, !streaming {
-            answer += "<p class=\"model\">\(ChatMarkdown.escape(turn.model))</p>"
-        }
+        let answer = answerInnerHTML(for: turn, streaming: streaming)
         parts.append("<section class=\"answer\" id=\"\(id)-answer\">\(answer)</section>")
         return "<article class=\"turn \(turn.kind.rawValue)\" id=\"\(id)\">" + parts.joined() + "</article>"
+    }
+
+    /// A snapshot of each turn for diffing against what the page already shows.
+    var snapshots: [TranscriptDiff.TurnSnapshot] {
+        Self.ordered(turns).map { turn in
+            let isStreaming = streaming.contains(turn.id)
+            return TranscriptDiff.TurnSnapshot(
+                id: turn.id,
+                answerInnerHTML: Self.answerInnerHTML(for: turn, streaming: isStreaming),
+                articleHTML: Self.html(for: turn, picture: picture(turn), streaming: isStreaming))
+        }
     }
 }

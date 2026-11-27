@@ -47,8 +47,8 @@ final class ChatDocumentWebKitTests: XCTestCase {
         <script>window.transcriptProbe = true</script>
         """, model: "Local")
         coordinator.start(view)
-        coordinator.show(
-            html: ChatDocument.html(for: turn),
+        coordinator.update(
+            document: ChatDocument(turns: [turn]),
             style: ChatPageStyle(accent: "purple", ink: "black", light: true,
                                  scale: 1, serif: false, top: 0, bottom: 0)
         )
@@ -97,5 +97,36 @@ final class ChatDocumentWebKitTests: XCTestCase {
             }
         }
         XCTFail("Transcript did not render. Probe: \(lastProbe). Page: \(pageState)")
+    }
+
+    @MainActor
+    func testEachStreamedPieceProducesOneJSCallForItsAnswer() async throws {
+        _ = NSApplication.shared
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        let coordinator = ChatDocumentPane.Coordinator()
+        coordinator.start(view)
+        coordinator.loaded = true
+
+        var t = ChatTurn(kind: .reply, origin: .typed, prompt: "Hello", answer: "", model: "")
+        let answerID = ChatDocument.elementID(t.id) + "-answer"
+        let style = ChatPageStyle(accent: "purple", ink: "black", light: true,
+                                  scale: 1, serif: false, top: 0, bottom: 0)
+
+        coordinator.update(document: ChatDocument(turns: [t], streaming: [t.id]), style: style)
+        let baseline = coordinator.jsCalls.count
+
+        for piece in ["He", "Hello", "Hello world"] {
+            t.answer = piece
+            coordinator.update(document: ChatDocument(turns: [t], streaming: [t.id]), style: style)
+        }
+
+        let updateCalls = Array(coordinator.jsCalls.dropFirst(baseline))
+        XCTAssertEqual(updateCalls.count, 3, "One JS call per streamed piece.")
+        for call in updateCalls {
+            XCTAssertTrue(call.contains("ChatPage.updateElement("), "Should use updateElement.")
+            XCTAssertTrue(call.contains(answerID), "Should name the answer's element id.")
+        }
     }
 }

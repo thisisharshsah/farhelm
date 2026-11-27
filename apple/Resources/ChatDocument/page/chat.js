@@ -1,17 +1,17 @@
 "use strict";
 
-// The app calls these with HTML it has already escaped (ChatDocument), so
-// nothing in a message runs. Read-only for now: the whole conversation is
-// put in again when it changes; later work replaces single turns by id.
 (function () {
   const chat = () => document.getElementById("chat");
   const scroller = () => document.scrollingElement || document.documentElement;
 
-  // Follows what is new while the reader is at the end; once they scroll up
-  // the page stays where they put it.
   function atEnd() {
     const s = scroller();
     return s.scrollHeight - s.scrollTop - s.clientHeight < 48;
+  }
+
+  function settle(follow, keep) {
+    const s = scroller();
+    s.scrollTop = follow ? s.scrollHeight : keep;
   }
 
   window.ChatPage = {
@@ -19,7 +19,32 @@
       const follow = atEnd();
       const keep = scroller().scrollTop;
       chat().innerHTML = html;
-      scroller().scrollTop = follow ? scroller().scrollHeight : keep;
+      settle(follow, keep);
+    },
+
+    updateElement(id, innerHTML) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const follow = atEnd();
+      const keep = scroller().scrollTop;
+      el.innerHTML = innerHTML;
+      settle(follow, keep);
+    },
+
+    append(html) {
+      const follow = atEnd();
+      const keep = scroller().scrollTop;
+      chat().insertAdjacentHTML("beforeend", html);
+      settle(follow, keep);
+    },
+
+    removeElement(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const follow = atEnd();
+      const keep = scroller().scrollTop;
+      el.remove();
+      settle(follow, keep);
     },
 
     style(look) {
