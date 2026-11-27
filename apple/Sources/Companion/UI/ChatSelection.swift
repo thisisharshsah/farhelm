@@ -113,10 +113,27 @@ final class ChatTextView: NSTextView {
     /// The height its text takes at a width, and the width it really uses.
     func fitted(to width: CGFloat) -> NSSize {
         guard let container = textContainer, let layout = layoutManager else { return NSSize(width: width, height: 16) }
+        // Measured at the width asked about, then put back to the width
+        // it is really drawn at: SwiftUI asks about several widths (its
+        // ideal one among them), and the last one asked about was left
+        // set, so text wrapped at that width inside a wider frame and ran
+        // on under whatever came below.
+        let drawn = container.containerSize
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
+        if bounds.width > 1, abs(drawn.width - width) > 0.5 {
+            container.containerSize = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+        }
         return NSSize(width: ceil(used.width), height: ceil(used.height))
+    }
+
+    /// The text is laid out at the width the view is given.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        if let container = textContainer, abs(container.containerSize.width - newSize.width) > 0.5 {
+            container.containerSize = NSSize(width: newSize.width, height: .greatestFiniteMagnitude)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
