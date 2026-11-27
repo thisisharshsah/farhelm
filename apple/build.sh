@@ -364,6 +364,18 @@ case "${1:-run}" in
   build) build ;;
   restart)
     restart_allowed || exit 1
+    # From inside the app the whole of it runs apart, and this returns at
+    # once: a build of many files takes longer than the two minutes the
+    # agent's shell gives a command, and was cut off half way. The app it
+    # was started from stays up until the new one takes its place, so
+    # running apart is enough here (see below for after it quits).
+    if [[ ! -t 0 && "${COMPANION_RESTART_JOB:-}" != "1" ]]; then
+      mkdir -p .build
+      COMPANION_RESTART_JOB=1 /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$PWD/build.sh" restart \
+        </dev/null >.build/restart.log 2>&1 &
+      echo "Building apart now; $APP_NAME restarts by itself when it is built (log: apple/.build/restart.log)."
+      exit 0
+    fi
     build
     # Started from a chat inside the app that is being replaced (no
     # terminal behind it), this script cannot outlive that app: macOS ends

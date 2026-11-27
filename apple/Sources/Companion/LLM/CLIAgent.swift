@@ -921,7 +921,7 @@ final class CLIAgents: ObservableObject {
 }
 
 enum CLIAgentClient {
-    private static let instruction = "Follow the instructions and answer the last user message of the conversation given on standard input. Reply with the answer only."
+    private static let instruction = "Follow the instructions and answer the last user message of the conversation given on standard input. Reply with the answer only. You have no tools of your own here for changing files or running commands: where the instructions give a way to ask for a step, use that way and nothing else, and never report that you lack permission."
 
     /// What the run needs, gathered on the main actor.
     private struct Plan {
@@ -993,6 +993,14 @@ enum CLIAgentClient {
             for folder in Set(pictures.map { ($0 as NSString).deletingLastPathComponent }) {
                 options += ["--add-dir", folder]
             }
+            // Its own tools for changing things are taken out of its sight,
+            // not merely refused. Left in sight (and denied by the
+            // permission mode), the model kept trying them, took the
+            // refusals to mean the task could not be done, and said so run
+            // after run: millions of tokens on tasks that never wrote a
+            // line. Changes go through Companion's own steps, which it is
+            // told how to ask for.
+            options += ["--disallowedTools", "Bash,Edit,Write,NotebookEdit,Agent,Task"]
         case "codex":
             for picture in pictures { options += ["--image", picture] }
         default:

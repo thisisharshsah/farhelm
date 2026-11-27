@@ -2727,16 +2727,17 @@ struct TurnView: View {
                 }
 
                 if !turn.answer.isEmpty {
-                    // An answer that came back formatted (lists, tables, bold) is
-                    // always shown formatted, never as raw Markdown.
+                    // An answer is drawn so that one drag selects through it
+                    // and on into the messages around it (`ChatSelection`),
+                    // formatted, never as raw Markdown. Only a reply being
+                    // said aloud right now is drawn the older way, which
+                    // marks the words already spoken.
                     // New text fades in as it streams instead of popping.
                     Group {
-                        if AppSettings.shared.selectAcross {
-                            SelectableAnswer(text: turn.answer, size: 13)
-                        } else if MarkdownNotes.looksFormatted(turn.answer) {
-                            MarkdownNotes(text: turn.answer, size: 13)
-                        } else {
+                        if spokenWords > 0, !MarkdownNotes.looksFormatted(turn.answer) {
                             ReadAlongText(text: turn.answer, spokenWords: spokenWords, tint: tint, cursorID: cursorID)
+                        } else {
+                            SelectableAnswer(text: turn.answer, size: 13)
                         }
                     }
                     // Set as the Claude app sets replies: a serif with room
@@ -3702,7 +3703,7 @@ struct TurnInputBubble: View {
                 // it is plain text (right-click still copies it).
                 if pinned {
                     promptText
-                } else if AppSettings.shared.selectAcross, expanded || !isLong {
+                } else if expanded || !isLong {
                     // Selectable together with the messages around it.
                     SelectableText(text: MarkdownAttributed.plain(turn.prompt, size: 12.5), hugs: true)
                 } else {

@@ -139,10 +139,6 @@ final class AppSettings: ObservableObject {
     /// York): easier on long reading. Your messages and code keep theirs.
     /// No longer a choice: always on.
     let replySerif = true
-    /// One drag selects across the chat's messages, as in a document
-    /// (`ChatSelection`). Off until switched on: messages are then drawn
-    /// by a text view of AppKit's, not by SwiftUI's text.
-    @Published var selectAcross: Bool { didSet { d.set(selectAcross, forKey: "selectAcross") } }
 
     static let chatTextRange: ClosedRange<Double> = 0.85...1.6
     static let chatTextDefault = 1.12
@@ -272,7 +268,6 @@ final class AppSettings: ObservableObject {
         d.removeObject(forKey: "contentZoom")
         let chatText = d.double(forKey: "chatTextScale")
         chatTextScale = Self.chatTextRange.contains(chatText) ? chatText : Self.chatTextDefault
-        selectAcross = d.object(forKey: "selectAcross") as? Bool ?? false
         showInMenuBar = d.bool(forKey: "showInMenuBar")
         keepOnTop = d.object(forKey: "keepOnTop") as? Bool ?? true
         onAllDesktops = d.object(forKey: "onAllDesktops") as? Bool ?? true

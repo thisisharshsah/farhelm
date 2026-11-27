@@ -1777,12 +1777,6 @@ private struct LookSettings: View {
                     PillButton("Reset", icon: "arrow.counterclockwise") { settings.chatText(0) }
                 }
             }
-            RowLine()
-            // Temporary: it goes once the owner confirms the new drawing
-            // of messages, which then becomes the only one.
-            ToggleRow("Select across messages",
-                      detail: "One drag selects through several messages, as in a document, and Copy takes them all. New: switch it off if a reply looks wrong.",
-                      isOn: $settings.selectAcross)
         }
 
         LookColorCard()
