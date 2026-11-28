@@ -478,6 +478,7 @@ struct OverlayView: View {
                             .environment(\.layoutDirection, .leftToRight)
                         } else {
                             SidePanel(mode: side)
+                                .environment(\.boardCompact, boardLayout && codeRoom < AdvancedPaneLayout.detailMin + AdvancedPaneLayout.chatMin + Theme.panelGap)
                         }
                     }
                         // Each part is a panel of its own (SidePanel, and
@@ -660,9 +661,16 @@ struct OverlayView: View {
         if splitLayout, !sideIsFull {
             // The board or workspace and the chat share one span, split
             // by their own divider.
-            let work = boardLayout ? OverlayController.boardLeast : OverlayController.codeWorkspaceLeast
-            panes.append(.init(id: "main", wanted: work + 300 + Theme.panelGap,
-                               least: work + 240 + Theme.panelGap, rank: 2, fills: true))
+            if boardLayout {
+                panes.append(.init(id: "main",
+                    wanted: AdvancedPaneLayout.boardMin + AdvancedPaneLayout.chatPreferred + Theme.panelGap,
+                    least: AdvancedPaneLayout.boardMin + AdvancedPaneLayout.chatMin + Theme.panelGap,
+                    rank: 2, fills: true))
+            } else {
+                let work = OverlayController.codeWorkspaceLeast
+                panes.append(.init(id: "main", wanted: work + 300 + Theme.panelGap,
+                                   least: work + 240 + Theme.panelGap, rank: 2, fills: true))
+            }
         } else {
             panes.append(.init(id: "chat", wanted: OverlayController.chatLeast,
                                least: sideIsFull ? 0 : OverlayController.chatLeast, rank: 2, fills: !sideIsFull))
@@ -717,10 +725,12 @@ struct OverlayView: View {
         // The divider between the chat and the board or workspace is a gap too.
         max(0, paneLayout.width("main") - Theme.panelGap)
     }
-    /// The least the workspace (and the details beside it, when open) may
-    /// have, so the chat can never grow and push them off the screen.
+    /// The least the board area (or workspace with details) may have,
+    /// so the chat can never push it off the screen.
     private var codeLeftLeast: CGFloat {
-        if boardLayout { return OverlayController.boardLeast }
+        // When a task is selected the board hides and detail takes its
+        // place, so the floor is one pane's readable minimum.
+        if boardLayout { return AdvancedPaneLayout.detailMin }
         let details = codeDetailsShown ? CGFloat(min(max(codeDetailsWidth, 220), 460)) + Theme.panelGap : 0
         return codeWorkspaceLeast + details
     }

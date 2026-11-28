@@ -100,6 +100,16 @@ extension Design {
 
     /// The widest a column of running text gets: about 70 characters of body text.
     static let readableWidth: CGFloat = 680
+
+    /// Minimum and preferred widths for the panes that share
+    /// Advanced mode's space: board, task detail and task chat.
+    enum PaneWidth {
+        static let boardMin: CGFloat = 280
+        static let detailMin: CGFloat = 280
+        static let chatMin: CGFloat = 300
+        static let detailPreferred: CGFloat = 360
+        static let chatPreferred: CGFloat = 400
+    }
 }
 
 private struct WidthClassKey: EnvironmentKey {

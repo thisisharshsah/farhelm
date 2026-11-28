@@ -13,6 +13,11 @@ struct TaskInspector: View {
     let board: Board
     let item: WorkItem
     let used: UsageTotal
+    /// The board content is not shown beside this panel.
+    var boardHidden = false
+    /// Detail and chat share one slot at compact width.
+    var compactSwitcher = false
+    var compactFocus: Binding<AdvancedPaneLayout.CompactFocus> = .constant(.detail)
     /// Delete was pressed once: the next press deletes.
     @State private var confirmingDelete = false
     /// Throw Away was pressed once: the next press throws the copy away (copy section).
@@ -35,6 +40,24 @@ struct TaskInspector: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             top
+            if compactSwitcher {
+                HStack {
+                    SegmentedSwitcher("Focus", options: [
+                        SwitcherOption(id: AdvancedPaneLayout.CompactFocus.detail,
+                                       title: "Detail", symbol: "list.bullet"),
+                        SwitcherOption(id: AdvancedPaneLayout.CompactFocus.chat,
+                                       title: "Chat", symbol: "bubble.left"),
+                    ], selection: compactFocus)
+                    Spacer()
+                }
+                .padding(.horizontal, Design.Space.s)
+                .padding(.vertical, Design.Space.xs)
+                .onChange(of: compactFocus.wrappedValue) { _, focus in
+                    if focus == .chat, let chat = item.chat {
+                        app.openConversation(chat)
+                    }
+                }
+            }
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: Design.Space.m) {
                     // A floor from the design tokens, so this does not
@@ -64,6 +87,11 @@ struct TaskInspector: View {
 
     private var top: some View {
         HStack(spacing: Design.Space.xs) {
+            if boardHidden {
+                IconButton("chevron.left", help: "Back to board") {
+                    advanced.selectedItem = nil
+                }
+            }
             Text(item.key)
                 .font(Design.TextRole.label.font.monospaced().weight(.semibold))
                 .foregroundStyle(.secondary)

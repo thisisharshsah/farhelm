@@ -53,6 +53,8 @@ struct BoardPane: View {
     @ObservedObject private var usage = UsageStore.shared
     @AppStorage(BoardViewKind.storageKey) private var viewName = BoardViewKind.board.rawValue
     @State private var filters = BoardFilters()
+    @State private var compactFocus: AdvancedPaneLayout.CompactFocus = .detail
+    @Environment(\.boardCompact) private var boardCompact
 
     /// The board's project: the open chat's, or the last one shown while
     /// a chat outside any project is open.
@@ -90,27 +92,31 @@ struct BoardPane: View {
         let ledger = advanced.ledger(for: project.id)
         let selected = advanced.selectedItem.flatMap { board.item($0) }
         return GeometryReader { geometry in
-            // A task's details sit beside the view when there is room for
-            // both; in a narrow pane they take its place.
-            let beside = geometry.size.width >= 760
+            let layout = AdvancedPaneLayout(
+                available: geometry.size.width, gap: Theme.panelGap,
+                boardOpen: true, detailOpen: selected != nil, chatOpen: false)
             VStack(spacing: Theme.panelGap) {
-                BoardHeader(project: project, board: board, ledger: ledger, compact: geometry.size.width < 640,
+                BoardHeader(project: project, board: board, ledger: ledger,
+                            compact: geometry.size.width < 640,
                             viewName: $viewName)
                     .panelCard()
                 HStack(spacing: Theme.panelGap) {
-                    if selected == nil || beside {
+                    if layout.board != nil {
                         content(project, board, ledger)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .panelCard()
                     }
                     if let selected {
-                        // Its width comes from the column, not a fixed
-                        // number: a floor so its rows have room to lay
-                        // out, a ceiling so it never crowds the board.
-                        TaskInspector(project: project, board: board, item: selected, used: ledger.total(of: selected))
+                        let boardShown = layout.board != nil
+                        let showSwitcher = boardCompact && !boardShown
+                        TaskInspector(project: project, board: board, item: selected,
+                                      used: ledger.total(of: selected),
+                                      boardHidden: !boardShown,
+                                      compactSwitcher: showSwitcher,
+                                      compactFocus: $compactFocus)
                             .frame(maxHeight: .infinity, alignment: .top)
-                            .frame(minWidth: beside ? EmptyLayout.inspectorMinWidth : nil,
-                                   maxWidth: beside ? EmptyLayout.inspectorMaxWidth : .infinity)
+                            .frame(width: boardShown ? layout.detail : nil)
+                            .frame(maxWidth: boardShown ? nil : .infinity)
                             .panelCard()
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
@@ -155,12 +161,6 @@ struct BoardPane: View {
 private enum EmptyLayout {
     static let textWidth: CGFloat = 420
     static let fieldWidth: CGFloat = 440
-    /// The task detail's width when it sits beside the board: the same
-    /// floor the session details panel already uses elsewhere in the app
-    /// (`SidePanelMode.details`), and a ceiling at the workspace panel's
-    /// width, so it never crowds the board itself.
-    static let inspectorMinWidth: CGFloat = SidePanelMode.details.width
-    static let inspectorMaxWidth: CGFloat = SidePanelMode.workspace.width
 }
 
 /// No project is open: the projects there are, to choose the one to run.
