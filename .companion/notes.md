@@ -59,7 +59,7 @@
 - The approve and delete rules are in the supervisor prompt under the standing review rule. All 151 board tests passed, including four new tests. `bash build.sh check` passed.
 - Nov 26. Made “Select across messages” the sole rendering path in `ChatSelection.swift` and removed its switch. Settings has about 30 switches, with no trial switches remaining.
 - Nov 26. An earlier restart succeeded according to the restart log. The process list confirmed Companion was running from `apple/dist/Companion.app`.
-- Latest task. Ran `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15` and stopped after reporting the output as requested. The build and restart outcome remains unverified.
+- Latest task. Ran `cd ~/Project/farhelm/apple && bash build.sh restart 2>&1 | tail -15` and stopped after reporting the output as requested. Verified Nov 28: restart.log ends "Built dist/Companion.app" then "Restarting" (01:43), and Companion runs from `apple/dist/Companion.app` (started 01:45). The quit was the restart itself: no crash report after Nov 25. Newest report (Nov 25 19:16) is an older SIGSEGV on the main thread inside Chromium Embedded Framework (KERN_INVALID_ADDRESS at 0x40).
   > Building apart now; Companion restarts by itself when it is built (log: apple/.build/restart.log).
 
 ## Next
