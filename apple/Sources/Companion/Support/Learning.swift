@@ -71,6 +71,10 @@ final class LearningWatcher: ObservableObject {
            let saved = try? JSONDecoder().decode([LearnedItem].self, from: data) {
             proposals = saved
         }
+        // Started after init returns: the shared instance is not yet set here.
+        if AppSettings.shared.watchClaudeApp {
+            Task { @MainActor in LearningWatcher.shared.start() }
+        }
     }
 
     func toggle() { watching ? stop() : start() }
@@ -78,6 +82,7 @@ final class LearningWatcher: ObservableObject {
     func start() {
         guard !watching else { return }
         watching = true
+        AppSettings.shared.watchClaudeApp = true
         status = "Watching the Claude app"
         loop = Task { [weak self] in
             while !Task.isCancelled {
@@ -91,6 +96,7 @@ final class LearningWatcher: ObservableObject {
         loop?.cancel()
         loop = nil
         watching = false
+        AppSettings.shared.watchClaudeApp = false
         status = "Off"
         // What was seen but not yet looked over is not thrown away.
         if pending.joined().count > 400 { Task { await distill() } }

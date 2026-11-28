@@ -243,6 +243,9 @@ final class AppSettings: ObservableObject {
     /// Speech starting with "Companion, ..." is a task for the agent.
     @Published var voiceCommands: Bool { didSet { d.set(voiceCommands, forKey: "voiceCommands") } }
     @Published var autoScreenWatch: Bool { didSet { d.set(autoScreenWatch, forKey: "autoScreenWatch") } }
+    /// Whether Companion keeps watching the Claude app (`LearningWatcher`).
+    /// Saved so a restart resumes it rather than switching it off.
+    @Published var watchClaudeApp: Bool { didSet { d.set(watchClaudeApp, forKey: "watchClaudeApp") } }
     @Published var userDetails: String { didSet { ContextStore.shared.saveDetails(userDetails) } }
 
     private init() {
@@ -304,6 +307,7 @@ final class AppSettings: ObservableObject {
         agentDirectory = d.string(forKey: "agentDirectory") ?? NSHomeDirectory()
         voiceCommands = d.object(forKey: "voiceCommands") as? Bool ?? true
         autoScreenWatch = d.object(forKey: "autoScreenWatch") as? Bool ?? false
+        watchClaudeApp = Self.flag("watchClaudeApp", in: d)
         userDetails = ContextStore.shared.loadDetails()
         // Following the system: redraw when it changes.
         DistributedNotificationCenter.default().addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
