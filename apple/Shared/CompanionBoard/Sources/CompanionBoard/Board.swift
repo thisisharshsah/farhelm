@@ -899,23 +899,40 @@ extension Board {
     }
 
     /// Runs still marked as running when the app starts were cut off by
-    /// its quitting. They are closed as stopped and their tasks go back
-    /// to To do, so nothing stays "running" for ever. Returns how many.
+    /// its quitting. One that can be taken up where it stopped is closed
+    /// as stopped by the quit, so the supervisor or the person may carry
+    /// it on; one that cannot (`cannotResume` gives a reason, such as a
+    /// task whose copy of the repository is gone) is closed as failed with
+    /// that reason, so nothing resumes it onto nothing and the person
+    /// reads why. Either way its task leaves In progress and goes back to
+    /// To do, so nothing stays "running" for ever. Returns how many.
     @discardableResult
-    public mutating func closeLostRuns(except live: Set<UUID>, now: Date) -> Int {
+    public mutating func closeLostRuns(except live: Set<UUID>,
+                                       cannotResume: (WorkItem, WorkRun) -> String? = { _, _ in nil },
+                                       now: Date) -> Int {
         var closed = 0
         for index in allItems.indices {
+            let item = allItems[index]
             for place in allItems[index].runs.indices
             where allItems[index].runs[place].isRunning && !live.contains(allItems[index].runs[place].conversation) {
-                allItems[index].runs[place].outcome = .stopped
+                let reason = cannotResume(item, allItems[index].runs[place])
                 allItems[index].runs[place].endedAt = now
                 // Nobody stopped it: the app went away under it.
                 allItems[index].runs[place].ending = .quit
+                if let reason {
+                    // Failed, not stopped, so it is not carried on: with
+                    // the quit ending `mayCarryOn` leaves it to the person.
+                    allItems[index].runs[place].outcome = .failed
+                    allItems[index].runs[place].report = reason
+                } else {
+                    allItems[index].runs[place].outcome = .stopped
+                }
                 closed += 1
             }
         }
         for item in allItems where item.status == .inProgress && item.activeRun == nil && !item.runs.isEmpty
-            && item.runs.last?.outcome == .stopped && item.runs.last?.endedAt == now {
+            && item.runs.last?.endedAt == now
+            && (item.runs.last?.outcome == .stopped || item.runs.last?.outcome == .failed) {
             move(item.id, to: .todo, by: .run, now: now)
         }
         return closed

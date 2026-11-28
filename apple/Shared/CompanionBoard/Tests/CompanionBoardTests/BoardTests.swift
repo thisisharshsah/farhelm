@@ -307,6 +307,192 @@ final class BoardTests: XCTestCase {
         XCTAssertEqual(board.item(live.id)?.status, .inProgress)
     }
 
+    func testARunGoingOnAtQuitIsRestoredAndCarriesOnFromItsBranch() {
+        var board = Board(project: project, now: t0)
+        // A board the person left the supervisor to run in their place.
+        board.settings.followsAdvice = true
+        let item = board.add(title: "Long work", by: .person, now: t0)
+        let chat = UUID()
+        board.update(item.id, now: t0) {
+            $0.workingCopy = WorkingCopy(folder: "/copies/t-1", branch: "task/t-1-long-work",
+                                         base: "companion/main", baseCommit: "abc", madeAt: t0)
+        }
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        XCTAssertEqual(board.item(item.id)?.status, .inProgress)
+        // The app starts again with nothing running: the cut-off run is
+        // closed by the quit, not failed, so it may be carried on.
+        XCTAssertEqual(board.closeLostRuns(except: [], now: minutes(30)), 1)
+        let restored = board.item(item.id)!
+        XCTAssertEqual(restored.status, .todo)
+        XCTAssertEqual(restored.runs.last?.outcome, .stopped)
+        XCTAssertEqual(restored.runs.last?.ending, .quit)
+        // Its copy and branch are kept, so the next run takes up where it left off.
+        XCTAssertEqual(restored.workingCopy?.branch, "task/t-1-long-work")
+        XCTAssertTrue(board.mayCarryOn(restored))
+        XCTAssertTrue(board.movesOnByItself(restored))
+        // Carrying on starts a fresh run in the same chat, from the same
+        // copy and branch: "continues from its branch" is shown here, not
+        // only allowed. All the task's runs still share the one chat.
+        XCTAssertTrue(board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M",
+                                                      startedAt: minutes(31), carriesOn: true),
+                                     by: .supervisor, now: minutes(31)))
+        let carriedOn = board.item(item.id)!
+        XCTAssertEqual(carriedOn.status, .inProgress)
+        XCTAssertEqual(carriedOn.runs.count, 2)
+        XCTAssertEqual(carriedOn.runs.last?.conversation, chat)
+        XCTAssertEqual(Set(carriedOn.conversations), [chat])
+        XCTAssertEqual(carriedOn.runs.last?.carriesOn, true)
+        XCTAssertEqual(carriedOn.runs.last?.isRunning, true)
+        XCTAssertEqual(carriedOn.workingCopy?.branch, "task/t-1-long-work")
+        XCTAssertEqual(carriedOn.workingCopy?.folder, "/copies/t-1")
+    }
+
+    func testARunThatCannotResumeIsFailedWithAReasonNotLeftInProgress() {
+        var board = Board(project: project, now: t0)
+        board.settings.followsAdvice = true
+        let item = board.add(title: "Copy gone", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        let reason = "The task's copy of the repository is no longer on disk."
+        let closed = board.closeLostRuns(except: [], cannotResume: { _, _ in reason }, now: minutes(30))
+        XCTAssertEqual(closed, 1)
+        let failed = board.item(item.id)!
+        // Left In progress for ever is the fault to avoid; it goes back to To do.
+        XCTAssertEqual(failed.status, .todo)
+        XCTAssertEqual(failed.runs.last?.outcome, .failed)
+        XCTAssertEqual(failed.runs.last?.report, reason)
+        XCTAssertEqual(failed.runs.last?.ending, .quit)
+        // Not carried on onto a copy that is gone: the person reads why.
+        XCTAssertFalse(board.mayCarryOn(failed))
+        XCTAssertFalse(board.movesOnByItself(failed))
+    }
+
+    func testRelaunchingNeverClosesTheSameRunTwice() {
+        var board = Board(project: project, now: t0)
+        let cut = board.add(title: "Cut off", by: .person, now: t0)
+        let live = board.add(title: "Still live", by: .person, now: t0)
+        let cutChat = UUID(), liveChat = UUID()
+        board.beginRun(cut.id, WorkRun(conversation: cutChat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        board.beginRun(live.id, WorkRun(conversation: liveChat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        // First launch closes the one lost run.
+        XCTAssertEqual(board.closeLostRuns(except: [liveChat], now: minutes(30)), 1)
+        let runCount = board.item(cut.id)?.runs.count
+        // A second pass finds nothing still running to close: the closed run
+        // is not touched again (its end time stays), the live run is left be.
+        XCTAssertEqual(board.closeLostRuns(except: [liveChat], now: minutes(40)), 0)
+        XCTAssertEqual(board.item(cut.id)?.runs.count, runCount)
+        XCTAssertEqual(board.item(cut.id)?.runs.last?.endedAt, minutes(30))
+        XCTAssertEqual(board.item(live.id)?.status, .inProgress)
+        XCTAssertEqual(board.item(live.id)?.runs.last?.isRunning, true)
+    }
+
+    func testRelaunchingResumesACutOffRunOnlyOnce() {
+        var board = Board(project: project, now: t0)
+        // A board the person left the supervisor to run in their place.
+        board.settings.followsAdvice = true
+        let item = board.add(title: "Long work", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        // First launch: the cut-off run is closed and the task is waiting to
+        // be carried on, so the resume starts one run in the same chat.
+        XCTAssertEqual(board.closeLostRuns(except: [], now: minutes(30)), 1)
+        XCTAssertTrue(board.mayCarryOn(board.item(item.id)!))
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M",
+                                        startedAt: minutes(31), carriesOn: true), by: .supervisor, now: minutes(31))
+        XCTAssertEqual(board.item(item.id)?.runs.count, 2)
+        // Second launch, that carry-on run still live: nothing is closed, the
+        // task is no longer waiting to be carried on, and nothing lists it as
+        // stopped halfway. Exactly one new run came of the quit.
+        XCTAssertEqual(board.closeLostRuns(except: [chat], now: minutes(60)), 0)
+        XCTAssertFalse(board.mayCarryOn(board.item(item.id)!))
+        XCTAssertEqual(board.stoppedHalfway.map(\.id), [])
+        XCTAssertEqual(board.item(item.id)?.runs.count, 2)
+        XCTAssertEqual(board.item(item.id)?.runs.filter { $0.carriesOn == true }.count, 1)
+    }
+
+    func testCarryingOnReusesTheChatSoTokensAreNotDoubleCounted() {
+        var board = Board(project: project, now: t0)
+        let item = board.add(title: "Long work", by: .person, now: t0)
+        let chat = UUID()
+        // A run cut off by the quit, then carried on in the same chat.
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        XCTAssertEqual(board.closeLostRuns(except: [], now: minutes(30)), 1)
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M",
+                                        startedAt: minutes(31), carriesOn: true), by: .supervisor, now: minutes(31))
+        let runs = board.item(item.id)!.runs
+        // The carry-on reuses the chat, so the task has one chat, not two.
+        XCTAssertEqual(Set(runs.map(\.conversation)), [chat])
+        // Requests in that one chat, before the quit and after carrying on.
+        let entries = [
+            UsageEntry(date: minutes(10), conversation: chat, workItem: item.id, project: project,
+                       engine: "anthropic", model: "m", purpose: "Agent", input: 1_000, output: 200),
+            UsageEntry(date: minutes(40), conversation: chat, workItem: item.id, project: project,
+                       engine: "anthropic", model: "m", purpose: "Agent", input: 2_000, output: 300),
+        ]
+        let ledger = Ledger(entries)
+        // The task's total counts each request once: 1,200 + 2,300.
+        XCTAssertEqual(ledger.total(of: item).tokens, 3_500)
+        // Each run is told apart by time, so the two runs' totals add up to
+        // the task's total with nothing counted in both.
+        let before = ledger.total(of: runs[0], now: minutes(30)).tokens
+        let after = ledger.total(of: runs[1], now: minutes(60)).tokens
+        XCTAssertEqual(before, 1_200)
+        XCTAssertEqual(after, 2_300)
+        XCTAssertEqual(before + after, ledger.total(of: item).tokens)
+    }
+
+    func testARunThePersonStoppedIsNeverResumedAfterAQuit() {
+        var board = Board(project: project, now: t0)
+        board.settings.followsAdvice = true
+        let item = board.add(title: "Long work", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        // The person stopped the run before the app quit: it is already
+        // ended, by the person, with a report.
+        board.endRun(in: chat, outcome: .stopped, report: "", ending: .person, now: minutes(5))
+        // Relaunch: closing lost runs leaves the stopped run be (it is not
+        // running) and does not turn its ending into a quit.
+        XCTAssertEqual(board.closeLostRuns(except: [], now: minutes(30)), 0)
+        let after = board.item(item.id)!
+        XCTAssertEqual(after.runs.last?.ending, .person)
+        XCTAssertEqual(after.runs.last?.outcome, .stopped)
+        // So it is never carried on by itself: the person starts it again.
+        XCTAssertFalse(board.mayCarryOn(after))
+        XCTAssertFalse(board.movesOnByItself(after))
+        XCTAssertEqual(board.stoppedHalfway.map(\.id), [])
+    }
+
+    func testACutOffRunOnAPlainBoardGoesBackToTodoAndWaitsForThePerson() {
+        var board = Board(project: project, now: t0)
+        // No delegation: the person drives each run by hand.
+        XCTAssertFalse(board.settings.supervisorAnswers)
+        XCTAssertFalse(board.settings.startsWorkByItself)
+        let item = board.add(title: "Long work", by: .person, now: t0)
+        let chat = UUID()
+        board.beginRun(item.id, WorkRun(conversation: chat, model: choice("m"), modelLabel: "M", startedAt: t0),
+                       by: .person, now: t0)
+        // The quit still closes the cut-off run cleanly: it leaves In
+        // progress for To do, closed by the quit, not failed, never left
+        // running for ever.
+        XCTAssertEqual(board.closeLostRuns(except: [], now: minutes(30)), 1)
+        let restored = board.item(item.id)!
+        XCTAssertEqual(restored.status, .todo)
+        XCTAssertEqual(restored.runs.last?.outcome, .stopped)
+        XCTAssertEqual(restored.runs.last?.ending, .quit)
+        // It is ready to be carried on, but without delegation nothing starts
+        // it by itself: the person takes it up again. That boundary is the
+        // delegation rule (Delegation), not this task's to widen.
+        XCTAssertTrue(board.mayCarryOn(restored))
+        XCTAssertFalse(board.movesOnByItself(restored))
+    }
+
     func testTheHistoryKeepsOnlyItsNewestLines() {
         var board = Board(project: project, now: t0)
         for index in 0..<(Board.activityLimit + 25) {

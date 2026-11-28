@@ -44,9 +44,20 @@ final class BoardStore: ObservableObject {
     func load(_ project: UUID, live: Set<UUID> = []) -> Board {
         if let known = boards[project] { return known }
         var board = read(project) ?? Board(project: project, now: Date())
-        if board.closeLostRuns(except: live, now: Date()) > 0 { write(board) }
+        if board.closeLostRuns(except: live, cannotResume: Self.cannotResume, now: Date()) > 0 { write(board) }
         boards[project] = board
         return board
+    }
+
+    /// Why a cut-off run cannot be taken up where it stopped: its task's
+    /// own copy of the repository is gone from disk (deleted by hand, or
+    /// lost with the folder it lived in), so there is nothing left to
+    /// carry on in. A task that worked in the project's folder itself,
+    /// with no copy, has nothing to check here and can resume.
+    private static func cannotResume(_ item: WorkItem, _ run: WorkRun) -> String? {
+        guard let copy = item.workingCopy, copy.isOpen else { return nil }
+        if FileManager.default.fileExists(atPath: copy.folder) { return nil }
+        return "The task's copy of the repository is no longer on disk, so this run cannot carry on from where it stopped. Start the task again to make a fresh copy."
     }
 
     /// Changes a project's board and saves it. Nothing is written, and
