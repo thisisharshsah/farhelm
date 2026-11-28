@@ -90,9 +90,7 @@ struct OverlayView: View {
     @State private var sidebarPeek = false
     @State private var pointerOnSidebarButton = false
     @State private var pointerOnSidebar = false
-    /// Carries the sidebar toggle between the top bar (sidebar closed) and
-    /// the sidebar's search row (open), so it springs from one to the other.
-    @Namespace private var sidebarToggleSpace
+
     @Namespace private var panelGlassSpace
     private var access = DesignAccess()
     /// The text size popover is open: the tools at the top right stay up
@@ -166,7 +164,7 @@ struct OverlayView: View {
                 // Pinned, the sidebar takes its own column at the leading
                 // edge in every layout, while the window has room for it.
                 if paneLayout.shows("sidebar") {
-                    SidebarView(toggle: AnyView(sidebarToggle))
+                    SidebarView()
                         .panelCard()
                         .padding(.top, topHeight)
                         .frame(width: shownSidebarWidth)
@@ -191,16 +189,8 @@ struct OverlayView: View {
                         .transition(.opacity)
                 } else if let project = homeProject {
                     // A project's page, in place of the chat until a chat
-                    // is opened or started. The sidebar's toggle sits at
-                    // its top left while the sidebar is closed, as on a chat.
-                    ProjectHomeView(project: project, topInset: 10 + (toggleInChat ? 38 : 0))
-                        .overlay(alignment: .topLeading) {
-                            if toggleInChat {
-                                sidebarToggle
-                                    .padding(.leading, Theme.gutter)
-                                    .padding(.top, 8)
-                            }
-                        }
+                    // is opened or started.
+                    ProjectHomeView(project: project, topInset: 10)
                         .transition(.opacity)
                 } else {
                     // Notes, a warning or the setup guide sit at the top of
@@ -228,9 +218,7 @@ struct OverlayView: View {
                     // Aa button); its insets are given in its own, scaled,
                     // measure so it still clears the bars.
                     let zoom = CGFloat(settings.contentZoom * settings.chatTextScale)
-                    // Room under the bar for the sidebar's toggle row, so the
-                    // first message starts below it.
-                    ChatThread(topInset: (10 + (toggleInChat ? 38 : 0)) / zoom,
+                    ChatThread(topInset: 10 / zoom,
                                bottomInset: settledBottom / zoom,
                                toolsBottom: (8 + toolsHeight) / zoom)
                         // The room under the conversation follows the chat
@@ -265,22 +253,12 @@ struct OverlayView: View {
                                     .frame(height: max(0, bottomHeight + statusHeight - 14))
                             }
                         }
-                        // The sidebar's toggle, closed: at the chat's top
-                        // left, on the row of the chat's tools, in chat and in
-                        // code alike, so it always stays with the chat. Open,
-                        // it sits in the sidebar beside its search.
-                        .overlay(alignment: .topLeading) {
-                            if toggleInChat {
-                                sidebarToggle
-                                    .padding(.leading, Theme.gutter)
-                                    .padding(.top, 8)
-                            }
-                        }
+
                         // The agent acting in the browser or on the Mac: a
-                        // strip with Stop across the top, beside the toggle.
+                        // strip with Stop across the top.
                         .overlay(alignment: .top) {
                             AgentUseBanner()
-                                .padding(.leading, toggleInChat ? Theme.gutter + 38 : Theme.gutter)
+                                .padding(.leading, Theme.gutter)
                                 .padding(.trailing, Theme.gutter)
                                 .padding(.top, 7)
                                 .animation(.spring(response: 0.3, dampingFraction: 0.86), value: app.agentHere)
@@ -801,9 +779,7 @@ struct OverlayView: View {
     private var headerIdentity: some View {
         HStack(spacing: Design.Space.xs) {
             WindowControls()
-            // The button for the conversations sits inside the sidebar
-            // while it is open, and at the end of this bar while it is
-            // closed (see `sidebarToggle`).
+            sidebarToggle
             // In code, back and forward between files, beside the window
             // controls.
             if codeLayout, app.hasWorkFolder, panelWidth >= 900 {
@@ -987,15 +963,6 @@ struct OverlayView: View {
         }
     }
 
-    /// Opens the sidebar of conversations. Hover: the conversations float
-    /// open. Click: they are pinned beside the chat, which moves over to
-    /// make room. Its symbol points to the side they open on.
-    /// The pinned sidebar is on screen, so the toggle sits in it, beside
-    /// its search. (In chat, Settings takes the sidebar's place.)
-    /// The toggle sits at the chat's top left (the sidebar is closed).
-    private var toggleInChat: Bool {
-        !isPill && !sidebarToggleInSidebar && !app.showSettings
-    }
 
     /// The project whose page shows in the chat's panel (`ProjectHome`),
     /// while it is still on the list and Settings are not open.
@@ -1004,19 +971,11 @@ struct OverlayView: View {
         return app.projects.first { $0.id == id }
     }
 
-    private var sidebarToggleInSidebar: Bool {
-        app.sidebarPinned && (codeLayout || !app.showSettings)
-    }
-
-    /// The same glass pill wherever it is: in the sidebar beside the search
-    /// while the sidebar is open, at the top of the chat on the sidebar's
-    /// side while it is closed. A shared geometry id springs it between them.
+    /// Stays in the window's top bar so it remains available with the sidebar hidden.
     private var sidebarToggle: some View {
         ToolbarGroup {
             IconButton("sidebar.left",
-                       help: app.sidebarPinned
-                           ? "Close the sidebar"
-                           : (splitLayout ? "Conversations. Hover to peek, click to keep open." : "Conversations. Click to keep open."),
+                       help: app.sidebarPinned ? "Hide sidebar" : "Show sidebar",
                        tint: app.sidebarPinned ? Theme.accent : nil) {
                 sidebarPeek = false
                 app.refreshHistory()
@@ -1025,6 +984,7 @@ struct OverlayView: View {
                 }
                 app.overlay?.setSidebar(app.sidebarPinned)
             }
+            .accessibilityLabel(app.sidebarPinned ? "Hide sidebar" : "Show sidebar")
             .onHover { inside in
                 pointerOnSidebarButton = inside
                 // Hovering it floats the conversations open, as on the
@@ -1038,8 +998,7 @@ struct OverlayView: View {
                 }
             }
         }
-        .matchedGeometryEffect(id: "sidebarToggle", in: sidebarToggleSpace)
-        .transition(.opacity)
+
     }
 
     /// The agent at work: what it is doing, how far along it is, and a Stop

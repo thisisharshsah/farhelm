@@ -19,18 +19,6 @@ struct SidebarView: View {
     /// The project whose page is showing, if one is.
     @ObservedObject private var home = ProjectHome.shared
     @FocusState private var searchFocused: Bool
-    /// The sidebar's own toggle, beside the search while the sidebar is
-    /// pinned. The panel hands it in, so it is the same button that floats
-    /// in the top bar when the sidebar is closed and springs between them.
-    private let toggle: AnyView?
-    /// The toggle goes before the search (code: the sidebar is on the
-    /// right, the chat on its left) rather than after the new button.
-    private let toggleLeading: Bool
-
-    init(toggle: AnyView? = nil, toggleLeading: Bool = false) {
-        self.toggle = toggle
-        self.toggleLeading = toggleLeading
-    }
 
     private struct Bucket: Identifiable {
         let title: String
@@ -97,9 +85,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Search, always at hand, with the main action beside it.
             HStack(spacing: 6) {
-                if toggleLeading, let toggle {
-                    toggle
-                }
+
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 10.5, weight: .semibold))
@@ -134,9 +120,7 @@ struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Start a new conversation")
-                if !toggleLeading, let toggle {
-                    toggle
-                }
+
             }
             ScrollView(.vertical, showsIndicators: false) {
                 // The projects, one line each, then the recent chats,
