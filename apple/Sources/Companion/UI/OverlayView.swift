@@ -2,14 +2,20 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+/// Surface frames in the hosting view's coordinates while the window contains both forms.
+@MainActor
+final class PanelMorphLayout: ObservableObject {
+    struct Frames {
+        let compact: CGRect
+        let expanded: CGRect
+    }
+
+    @Published var frames: Frames?
+    @Published var presentsCompact = false
+}
+
 extension Animation {
     /// Moving between pages and opening or closing a pane beside the chat.
-    /// Short and without a spring: for as long as such a change animates,
-    /// every frame lays the whole window out again at a new width (the chat's
-    /// text wraps again, the board's cards are measured again), and a spring
-    /// kept that up for most of a second, which is what made switching feel
-    /// heavy. In a tenth of a second it reads as immediate and still not as
-    /// a jump.
     static let pageSwitch = Animation.easeOut(duration: 0.12)
 }
 
@@ -19,6 +25,7 @@ extension Animation {
 struct OverlayView: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject private var morphLayout: PanelMorphLayout
     @ObservedObject private var keys = Shortcuts.shared
     @ObservedObject private var usage = UsageStore.shared
     /// The command palette, open over the panel when asked for.
@@ -86,6 +93,8 @@ struct OverlayView: View {
     /// Carries the sidebar toggle between the top bar (sidebar closed) and
     /// the sidebar's search row (open), so it springs from one to the other.
     @Namespace private var sidebarToggleSpace
+    @Namespace private var panelGlassSpace
+    private var access = DesignAccess()
     /// The text size popover is open: the tools at the top right stay up
     /// while it is, though the pointer has left the conversation for it.
     @State private var textSizeOpen = false
@@ -95,22 +104,55 @@ struct OverlayView: View {
     /// than the panel and push the chat off the edge.
     var body: some View {
         GeometryReader { geometry in
-            panelContent
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .onAppear { panelWidth = geometry.size.width }
-                .onChange(of: geometry.size.width) { _, width in
-                    if abs(width - panelWidth) > 0.5 { panelWidth = width }
+            let windowBounds = CGRect(origin: .zero, size: geometry.size)
+            let compact = morphLayout.frames?.compact ?? windowBounds
+            let expanded = morphLayout.frames?.expanded ?? windowBounds
+            let expandedWidth: CGFloat? = isPill && morphLayout.frames == nil ? nil : expanded.width
+
+            GlassGroup(spacing: Design.Space.xs) {
+                if isPill {
+                    panelSurface(size: compact.size, interactive: true) { pill }
+                        .position(x: compact.midX, y: compact.midY)
+                        .transition(access.reduceMotion ? .opacity : .identity)
+                } else {
+                    panelSurface(size: expanded.size, interactive: false) { panelContent }
+                        .position(x: expanded.midX, y: expanded.midY)
+                        .transition(access.reduceMotion ? .opacity : .identity)
                 }
-                // Opening or starting a chat leaves a project's page.
-                .onChange(of: app.conversation.id) { _, _ in projectHome.close() }
+            }
+            .onChange(of: expandedWidth, initial: true) { _, width in
+                if let width, abs(width - panelWidth) > 0.5 { panelWidth = width }
+            }
+            .onChange(of: app.conversation.id) { _, _ in projectHome.close() }
+            .onHover { app.overlay?.hoverPill($0) }
+            .id("\(settings.appearance)-\(settings.themeTick)")
         }
+        .preferredColorScheme(Theme.isLight ? .light : .dark)
+    }
+
+    private func panelSurface<Content: View>(
+        size: CGSize, interactive: Bool, @ViewBuilder content: () -> Content
+    ) -> some View {
+        ZStack {
+            panelGlass(interactive: interactive)
+            content()
+                .frame(width: size.width, height: size.height)
+                .clipShape(Design.Radius.shape(Design.Radius.panel))
+                .transition(.opacity)
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.widthClass, Design.WidthClass(width: size.width))
+    }
+
+    private func panelGlass(interactive: Bool) -> some View {
+        Color.clear
+            .glassSurface(Design.Radius.shape(Design.Radius.panel), interactive: interactive)
+            .glassMorph("floating-panel", in: panelGlassSpace)
+            .allowsHitTesting(false)
     }
 
     private var panelContent: some View {
         VStack(spacing: 0) {
-            if app.compact && !app.pillExpanded {
-                pill
-            } else {
                 // The top bar runs across the window on its own glass, and
                 // under it each part is a panel of its own (the sidebar, the
                 // chat, the browser, details, the workspace's files, editor
@@ -503,10 +545,8 @@ struct OverlayView: View {
                                          minimize: { app.overlay?.setCompact(true) }))
                 .background(measure { if abs($0 - 10 - topHeight) > 0.5 { topHeight = $0 - 10 } })
                 }
-            }
         }
-        .frame(minWidth: isPill ? 240 : 540, maxWidth: .infinity,
-               minHeight: isPill ? 44 : 560, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The command palette drops from the top, over everything. A click
         // anywhere else closes it.
         .overlay(alignment: .top) {
@@ -524,48 +564,6 @@ struct OverlayView: View {
         .animation(.easeOut(duration: 0.14), value: commands.paletteOpen)
         // An attachment being looked at, over everything in the panel.
         .overlay { AttachmentPreviewOverlay() }
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { panelWidth = geometry.size.width }
-                    .onChange(of: geometry.size.width) { _, width in
-                        // Only a real change redraws the panel.
-                        if abs(width - panelWidth) > 0.5 { panelWidth = width }
-                    }
-            }
-        }
-        .background {
-            ZStack {
-                // The panel's base, as the look sets it: how much the desktop
-                // behind is blurred, and how far it is deepened so it never
-                // competes with the text. (`settings.look` is read so a
-                // change redraws this at once.)
-                let _ = settings.look
-                if Theme.behindBlur > 0 {
-                    VisualEffectView(light: Theme.isLight, strength: Theme.behindBlur)
-                }
-                Theme.shade.opacity(Theme.baseDim)
-                Theme.accent.opacity(0.05)
-            }
-        }
-        // Soft colored light in the corners plus a top sheen.
-        .overlay(alignment: .topLeading) {
-            RadialGradient(colors: [Theme.accent.opacity(0.20), .clear],
-                           center: .topLeading, startRadius: 0, endRadius: 260)
-                .frame(width: 260, height: 260)
-                .allowsHitTesting(false)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            RadialGradient(colors: [Theme.lilac.opacity(0.12), .clear],
-                           center: .bottomTrailing, startRadius: 0, endRadius: 240)
-                .frame(width: 240, height: 240)
-                .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
-            LinearGradient(colors: [Theme.ink.opacity(0.09), .clear], startPoint: .top, endPoint: .bottom)
-                .frame(height: 64)
-                .allowsHitTesting(false)
-        }
         // The floating conversations (on hover) sit over the chat column;
         // see the chat's own overlay above.
         .animation(.spring(response: 0.3, dampingFraction: 0.86), value: sidebarPeek)
@@ -575,21 +573,7 @@ struct OverlayView: View {
             sidebarPeek = false
             if app.sidebarPinned { app.refreshHistory() }
         }
-        .clipShape(RoundedRectangle(cornerRadius: isPill ? 18 : Theme.panelRadius, style: .continuous))
-        .glassBorder(radius: isPill ? 18 : Theme.panelRadius)
-        // The panel springs up as it appears and settles back as it hides;
-        // the window itself fades (see OverlayController).
-        .scaleEffect(app.panelVisible ? 1 : 0.955, anchor: .top)
-        .opacity(app.panelVisible ? 1 : 0)
-        .animation(.spring(response: 0.36, dampingFraction: 0.72), value: app.panelVisible)
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isPill)
-        // In compact mode the pill opens while the pointer is on it.
-        .onHover { inside in
-            app.overlay?.hoverPill(inside)
-        }
-        // A change of theme redraws everything in the new colors.
-        .id("\(settings.appearance)-\(settings.themeTick)")
-        .preferredColorScheme(Theme.isLight ? .light : .dark)
+
         // Moving between the conversation, history and settings is one
         // soft motion, not a jump.
         .animation(.pageSwitch, value: app.showSettings)
@@ -598,7 +582,7 @@ struct OverlayView: View {
     }
 
     /// Compact mode, with the pointer away: just the pill.
-    private var isPill: Bool { app.compact && !app.pillExpanded }
+    private var isPill: Bool { morphLayout.presentsCompact }
 
     /// The pill: what Companion is doing in one line. It opens on hover; a
     /// click (or Cmd+Shift+M) brings the full panel back for good.
@@ -791,7 +775,31 @@ struct OverlayView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 8) {
+        let layout = panelWidth < Design.WidthClass.wideFrom
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: Design.Space.xxs))
+            : AnyLayout(HStackLayout(spacing: Design.Space.xs))
+
+        return GlassGroup(spacing: Design.Space.xxs) {
+            layout {
+                headerIdentity
+                ViewThatFits(in: .horizontal) {
+                    headerActions.fixedSize(horizontal: true, vertical: false)
+                    ScrollView(.horizontal) {
+                        headerActions
+                    }
+                    .scrollIndicators(.hidden)
+                }
+            }
+        }
+        .padding(.horizontal, Theme.gutter)
+        .padding(.top, 12)
+        .padding(.bottom, 9)
+        .background(DragHandle())
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: app.agentRunning)
+    }
+
+    private var headerIdentity: some View {
+        HStack(spacing: Design.Space.xs) {
             WindowControls()
             // The button for the conversations sits inside the sidebar
             // while it is open, and at the end of this bar while it is
@@ -852,31 +860,18 @@ struct OverlayView: View {
             // short with an ellipsis and never squeezed out altogether.
             .frame(minWidth: 72, alignment: .leading)
             .layoutPriority(1)
-            // The three sides of the app, side by side: chat, code and
-            // Advanced. The one in use is colored.
-            ToolbarGroup {
-                IconButton(AppMode.chat.icon,
-                           help: app.mode == .chat ? AppMode.chat.help : "Chat: back to plain conversation",
-                           tint: app.mode == .chat ? Theme.accent : nil) {
-                    app.setCode(false)
+            SegmentedSwitcher("App mode", options: [
+                SwitcherOption(id: AppMode.chat, title: "Chat", symbol: AppMode.chat.icon),
+                SwitcherOption(id: AppMode.code, title: "Code", symbol: AppMode.code.icon),
+                SwitcherOption(id: AppMode.advanced, title: "Advanced", symbol: AppMode.advanced.icon)
+            ], selection: Binding(get: { app.mode }, set: { mode in
+                switch mode {
+                case .chat: app.setCode(false)
+                case .code: app.chooseCode()
+                case .advanced: app.setAdvanced(true)
                 }
-                // Code: files and editor, search, changes with undo, terminal.
-                // It works in a folder, so the first click asks for one.
-                IconButton(AppMode.code.icon,
-                           help: AppMode.code.help,
-                           tint: app.codeMode ? Theme.accent : nil) {
-                    // In a chat outside a project it says how to get code,
-                    // rather than doing nothing.
-                    app.chooseCode()
-                }
-                // Advanced: a project's board, planned and kept by its
-                // supervisor, with the supervisor's chat beside it.
-                IconButton(AppMode.advanced.icon,
-                           help: AppMode.advanced.help,
-                           tint: app.advancedMode ? Theme.accent : nil) {
-                    app.setAdvanced(true)
-                }
-            }
+            }))
+            .environment(\.density, .compact)
             // Every command and, in code, every file, by name, just after the
             // conversation's name. In a narrow panel it leaves the bar; its
             // keys still work.
@@ -898,6 +893,11 @@ struct OverlayView: View {
                          minimize: { app.overlay?.setCompact(true) })
                 .frame(minWidth: 8, maxWidth: .infinity)
                 .frame(height: 30)
+        }
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: Design.Space.xs) {
             if !isPill {
                 // This conversation's switches: mode, auto-reply, screen
                 // watch, notes. Colored means on.
@@ -985,11 +985,6 @@ struct OverlayView: View {
                 WorkspaceLayoutButtons(model: app.workspace, showsFiles: false)
             }
         }
-        .padding(.horizontal, Theme.gutter)
-        .padding(.top, 12)
-        .padding(.bottom, 9)
-        .background(DragHandle())
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: app.agentRunning)
     }
 
     /// Opens the sidebar of conversations. Hover: the conversations float
@@ -1120,14 +1115,13 @@ struct OverlayView: View {
     /// What kind of conversation this is: sets the reply style.
     private var modeMenu: some View {
         Menu {
-            ForEach(SessionMode.allCases) { mode in
-                Button {
-                    settings.sessionMode = mode
-                } label: {
-                    Label(mode.label + (settings.sessionMode == mode ? "  ✓" : ""), systemImage: mode.icon)
-                }
-                .help(mode.summary)
-            }
+            SectionedMenuItems(groups: [
+                MenuGroup(entries: SessionMode.allCases.map { mode in
+                    MenuEntry(mode.label, symbol: mode.icon, selected: settings.sessionMode == mode) {
+                        settings.sessionMode = mode
+                    }
+                })
+            ])
         } label: {
             Image(systemName: settings.sessionMode.icon)
                 .font(.system(size: 11.5, weight: .semibold))

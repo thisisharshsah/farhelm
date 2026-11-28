@@ -29,6 +29,7 @@ final class OrbitDock: ObservableObject {
     @Published private(set) var finished: AgentFinish?
 
     private var window: FloatingPanel?
+    private var wantsWindowVisible = false
     private weak var orbit: NSWindow?
     private weak var app: AppState?
     private var bag = Set<AnyCancellable>()
@@ -47,7 +48,7 @@ final class OrbitDock: ObservableObject {
         let window = FloatingPanel(size: Self.size, movable: false)
         window.contentView = NSHostingView(rootView: OrbitDockView()
             .environmentObject(app)
-            .preferredColorScheme(.dark))
+            .environmentObject(AppSettings.shared))
         window.level = orbit.level
         self.window = window
 
@@ -123,15 +124,18 @@ final class OrbitDock: ObservableObject {
             hovering = false
         }
         let show = hidden && (hovering || hasStatus)
+        if show { place() }
+        guard show != wantsWindowVisible else { return }
+        wantsWindowVisible = show
+
         if show {
-            place()
             if !window.isVisible {
                 window.alphaValue = 0
                 window.orderFrontRegardless()
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.18
-                    window.animator().alphaValue = 1
-                }
+            }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                window.animator().alphaValue = 1
             }
         } else if window.isVisible {
             NSAnimationContext.runAnimationGroup({ context in
@@ -139,9 +143,9 @@ final class OrbitDock: ObservableObject {
                 window.animator().alphaValue = 0
             }, completionHandler: { [weak self] in
                 Task { @MainActor in
-                    guard let self, let window = self.window else { return }
-                    // Shown again while it faded: leave it.
-                    if window.alphaValue < 0.05 { window.orderOut(nil) }
+                    guard let self, !self.wantsWindowVisible,
+                          let window = self.window, window.alphaValue < 0.05 else { return }
+                    window.orderOut(nil)
                 }
             })
         }
@@ -170,9 +174,11 @@ final class OrbitDock: ObservableObject {
         var x = orbit.frame.midX - size.width / 2
         x = min(max(x, visible.minX + 6), visible.maxX - size.width - 6)
         let gap: CGFloat = 2
-        var y = orbit.frame.minY - gap - size.height
-        let up = y < visible.minY
-        if up { y = orbit.frame.maxY + gap }
+        let below = orbit.frame.minY - gap - size.height
+        let upper = orbit.frame.maxY + gap
+        let up = below < visible.minY
+            && visible.maxY - upper > orbit.frame.minY - gap - visible.minY
+        let y = min(max(up ? upper : below, visible.minY), max(visible.minY, visible.maxY - size.height))
         if up != above { above = up }
         window.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
     }
@@ -183,6 +189,8 @@ final class OrbitDock: ObservableObject {
 /// underneath.
 struct OrbitDockView: View {
     @EnvironmentObject var app: AppState
+    @EnvironmentObject private var settings: AppSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var dock = OrbitDock.shared
 
     var body: some View {
@@ -192,8 +200,14 @@ struct OrbitDockView: View {
             if !dock.above { Spacer(minLength: 0) }
         }
         .frame(width: OrbitDock.size.width, height: OrbitDock.size.height)
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: dock.hovering)
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: dock.hasStatus)
+        .id("\(settings.appearance)-\(settings.themeTick)")
+        .preferredColorScheme(Theme.isLight ? .light : .dark)
+        .animation(cardAnimation, value: dock.hovering)
+        .animation(cardAnimation, value: dock.hasStatus)
+    }
+
+    private var cardAnimation: Animation {
+        Design.Motion.standard.animation(reduceMotion: reduceMotion)
     }
 
     private enum Status {
@@ -255,12 +269,12 @@ struct OrbitDockView: View {
     private var card: some View {
         if dock.hovering || dock.hasStatus {
             Button { app.overlay?.showPanel() } label: {
-                HStack(spacing: 10) {
+                let label = HStack(spacing: 10) {
                     LoadingMark(state: phase, size: 20)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title)
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.ink.opacity(0.95))
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                         Group {
                             if app.anyAgentRunning, app.leadJob?.waitsOnPerson != true,
@@ -274,7 +288,7 @@ struct OrbitDockView: View {
                             }
                         }
                             .font(.system(size: 12))
-                            .foregroundStyle(tint ?? Theme.ink.opacity(0.6))
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
@@ -282,14 +296,21 @@ struct OrbitDockView: View {
                 .padding(.horizontal, 14)
                 .frame(height: 52)
                 .frame(maxWidth: OrbitDock.size.width - 8)
-                .background(Capsule().fill(Theme.shade.opacity(0.55)))
-                .liquidGlass(in: Capsule())
-                .overlay(Capsule().strokeBorder((tint ?? Color.white).opacity(tint == nil ? 0.14 : 0.45), lineWidth: 0.8))
-                .contentShape(Capsule())
+
+                let shape = Design.Radius.shape(Design.Radius.panel)
+                label
+                    .glassSurface(shape, interactive: true)
+                    .overlay {
+                        if let tint {
+                            shape.strokeBorder(tint.opacity(0.45), lineWidth: 0.8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .contentShape(shape)
             }
             .buttonStyle(.plain)
             .help("Open the chat")
-            .transition(.scale(scale: 0.95, anchor: dock.above ? .bottom : .top).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .scale(scale: 0.95, anchor: dock.above ? .bottom : .top).combined(with: .opacity))
         }
     }
 }

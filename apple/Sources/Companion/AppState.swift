@@ -385,6 +385,8 @@ final class AppState: ObservableObject {
     private var writeUpSignature: Int?
 
     private init() {
+        // The snapshot window uses the initial, empty conversation.
+        if PanelSnapshots.outputDirectory != nil { return }
         wirePipelines()
         AppSettings.shared.$autoScreenWatch
             .removeDuplicates()

@@ -42,6 +42,10 @@ enum Launch {
         replaceRunning()
         _ = CEFApplication.shared
         SharedDesign.install()
+        if PanelSnapshots.outputDirectory != nil {
+            PanelSnapshotsApp.main()
+            return
+        }
         // `--design-gallery` opens the Design Gallery alone (UI/Design/DesignGallery.swift).
         if DesignGallery.launchesAlone {
             DesignGalleryApp.main()

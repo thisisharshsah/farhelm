@@ -34,6 +34,15 @@
 - `bash build.sh check` passes with one pre-existing warning in `AgentSession.swift`.
 - The first Nov 26 restart attempt was stopped after two minutes without output. The command can return while the build continues in the background. Companion restarts automatically after a successful build. When verification is requested, use the restart log and process list.
 
+## T-21 review follow-up
+
+- Worktree: `/Users/harshsah/.companion/worktrees/farhelm-879947/t-21`, branch `task/t-21-floating-panel-overlay-and-dock-as-true`.
+- The glass work and merge are committed in `b89d857` and `378370b`. The previous run reported a passing build check. Do not redo the restyle.
+- FloatingPanel.swift, OverlayView.swift and OrbitDock.swift are all still in use. Previous verification found a clear borderless panel, design-system glass, compact/expanded morphing, Reduce Motion fades and selection controls, with none of the prohibited blur or colour implementations.
+- Six panel snapshots were saved under `apple/.build/snapshots/`, at minimum, default and maximum sizes in light and dark. Earlier notes do not confirm that all six were visually reviewed.
+- Restored `.companion/checks.json` from the shared base, leaving no working-tree change to it. Restored shared notes from `companion/main`, preserving T-22 notes and user decisions.
+- Review verification: `bash apple/build.sh check` passed. The final diff contains only this T-21 notes section, the checks file matches the shared base exactly, and the whitespace check passed. The completed UI is unchanged.
+
 ## Done (results, with numbers)
 
 - Merged into main before T-22: T-16 (glass design system: tokens, glass surfaces, size rules) and T-18 (searchable picker, switcher, filter chips, settings rows).

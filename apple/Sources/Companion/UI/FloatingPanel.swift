@@ -117,28 +117,51 @@ final class FloatingPanel: NSPanel {
     }
 }
 
-/// Holds the panel to its smallest size while its edge is dragged. A
-/// borderless panel does not reliably keep to `minSize` on its own, and a
-/// panel dragged narrower than its content shows a slice of it.
+/// Applies the panel's size limits during a borderless window resize.
 @MainActor
 private final class ResizeFloor: NSObject, NSWindowDelegate {
     var size = NSSize.zero
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        NSSize(width: max(frameSize.width, size.width), height: max(frameSize.height, size.height))
+        bounded(frameSize, in: sender)
     }
+
+    func bounded(_ size: NSSize, in window: NSWindow) -> NSSize {
+        NSSize(width: min(max(size.width, window.minSize.width), window.maxSize.width),
+               height: min(max(size.height, window.minSize.height), window.maxSize.height))
+    }
+}
+
+enum FloatingPanelSize {
+    static let compact = NSSize(width: 320, height: 46)
+    static let standard = NSSize(width: 560, height: 720)
+    static let minimum = NSSize(width: 540, height: 560)
 }
 
 @MainActor
 final class OverlayController {
     private let floor = ResizeFloor()
+    private let morphLayout = PanelMorphLayout()
 
-    /// The smallest the panel may be: asked of the window every way it can
-    /// be, since any one of them alone has let it through.
-    private func setFloor(_ size: NSSize) {
+    /// Keep the requested minimum so it can be restored on a larger display.
+    private func setFloor(_ size: NSSize, within visible: NSRect? = nil) {
         floor.size = size
-        main.minSize = size
-        main.contentMinSize = size
+        let compact = app.compact && !app.pillExpanded
+        guard !animatingFrame, compact == morphLayout.presentsCompact else { return }
+        let limits = sizeLimits(within: visible)
+        main.minSize = limits.minimum
+        main.contentMinSize = limits.minimum
+        main.maxSize = limits.maximum
+        main.contentMaxSize = limits.maximum
+    }
+
+    private func sizeLimits(within visible: NSRect?) -> (minimum: NSSize, maximum: NSSize) {
+        let available = visible?.size
+            ?? (main.screen ?? indicator.screen ?? targetScreen)?.visibleFrame.size
+            ?? panelSize
+        let minimum = NSSize(width: min(floor.size.width, available.width),
+                             height: min(floor.size.height, available.height))
+        return (minimum, app.compact && !app.pillExpanded ? minimum : available)
     }
 
     private let app: AppState
@@ -148,9 +171,8 @@ final class OverlayController {
     private var bag = Set<AnyCancellable>()
 
     private let indicatorSize = IndicatorView.side
-    private let panelSize = NSSize(width: 560, height: 720)
-    // Wide enough that the top bar's buttons always fit side by side.
-    private let panelMinSize = NSSize(width: 540, height: 560)
+    private let panelSize = FloatingPanelSize.standard
+    private let panelMinSize = FloatingPanelSize.minimum
 
     // The narrowest each column can usefully be. Below these, content is
     // cut off at the panel's edges instead of fitting.
@@ -184,6 +206,7 @@ final class OverlayController {
             rootView: OverlayView()
                 .environmentObject(app)
                 .environmentObject(settings)
+                .environmentObject(morphLayout)
         )
         // The controller alone decides the panel's size. Left to itself the
         // hosting view also sizes the window from its content, and the two
@@ -377,15 +400,17 @@ final class OverlayController {
     /// circle sits near the bottom), clamped to the screen.
     func snapPanelToIndicator() {
         guard let visible = (indicator.screen ?? targetScreen)?.visibleFrame else { return }
-        // While the panel animates, its size is the one it is headed for.
-        let size = animatingFrame ? (targetFrame?.size ?? main.frame.size) : main.frame.size
+        // Pick a side using the size that will actually fit on the orbit's display.
+        let requested = targetFrame?.size ?? main.frame.size
+        let limits = sizeLimits(within: visible)
+        let size = NSSize(width: min(max(requested.width, limits.minimum.width), limits.maximum.width),
+                          height: min(max(requested.height, limits.minimum.height), limits.maximum.height))
         let orbit = indicator.frame
         let gap = followGap
-        /// Kept on the screen.
         func onScreen(_ rect: NSRect) -> NSRect {
             var rect = rect
-            rect.origin.x = min(max(rect.minX, visible.minX + 8), max(visible.minX + 8, visible.maxX - rect.width - 8))
-            rect.origin.y = min(max(rect.minY, visible.minY), max(visible.minY, visible.maxY - rect.height))
+            rect.origin.x = min(max(rect.minX, visible.minX), visible.maxX - rect.width)
+            rect.origin.y = min(max(rect.minY, visible.minY), visible.maxY - rect.height)
             return rect
         }
         // The circle stays where it is; the panel takes the first side of it
@@ -400,13 +425,13 @@ final class OverlayController {
         for side in sides {
             let placed = onScreen(side)
             if !placed.intersects(clear) {
-                setPanelFrame(placed)
+                setPanelFrame(placed, within: visible)
                 return
             }
         }
         // No side has room (a panel nearly the size of the screen): below,
         // and the circle steps aside.
-        setPanelFrame(onScreen(sides[0]))
+        setPanelFrame(onScreen(sides[0]), within: visible)
     }
 
     private func snapIfAttached() {
@@ -638,6 +663,8 @@ final class OverlayController {
         let panelOnScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(main.frame) }
         if !panelDetached || !panelOnScreen {
             snapPanelToIndicator()
+        } else {
+            setPanelFrame(main.frame)
         }
     }
 
@@ -645,23 +672,85 @@ final class OverlayController {
     /// Where the panel is headed, which is its frame once any animation ends.
     private var targetFrame: NSRect?
 
-    /// Moves or resizes the panel, in one step. The frame is never
-    /// animated: an animated window frame passes through sizes the content
-    /// does not fit, and can be left at one of them.
-    private func setPanelFrame(_ wanted: NSRect, animated: Bool = false, _ why: String = #function) {
-        // Never past the screen's edges, whatever asked for the size: the
-        // panes share the room that fits instead.
-        var rect = wanted
-        if let visible = (main.screen ?? targetScreen)?.visibleFrame {
-            rect = PaneWidths.clamp(wanted, to: visible)
+    /// Fits the panel to the display. During a compact transition the
+    /// clear window holds both frames while SwiftUI animates the glass.
+    private func setPanelFrame(_ rect: NSRect, animated: Bool = false,
+                               within destination: NSRect? = nil, _ why: String = #function) {
+        guard !animatingFrame else { return }
+        let visible = destination ?? (main.screen ?? indicator.screen ?? targetScreen)?.visibleFrame
+        let limits = sizeLimits(within: visible)
+        var fitted = rect
+        fitted.size = NSSize(
+            width: min(max(rect.width, limits.minimum.width), limits.maximum.width),
+            height: min(max(rect.height, limits.minimum.height), limits.maximum.height)
+        )
+        fitted.origin.y = rect.maxY - fitted.height
+        if let visible {
+            fitted.origin.x = min(max(fitted.minX, visible.minX), visible.maxX - fitted.width)
+            fitted.origin.y = min(max(fitted.minY, visible.minY), visible.maxY - fitted.height)
         }
-        lastProgrammaticOrigin = rect.origin
-        targetFrame = rect
-        // The frame is set and the content laid out on its own next pass,
-        // not inside this call.
-        main.setFrame(rect, display: false)
+
+        let compact = app.compact && !app.pillExpanded
+        if compact != morphLayout.presentsCompact {
+            if main.isVisible {
+                morphPanel(to: fitted, compact: compact, within: visible)
+                return
+            }
+            morphLayout.presentsCompact = compact
+        }
+
+        setFloor(floor.size, within: visible)
+        guard main.frame != fitted else { return }
+        lastProgrammaticOrigin = fitted.origin
+        targetFrame = fitted
+        main.setFrame(fitted, display: false)
         trace("set \(why) want=\(Self.text(rect)) got=\(Self.text(main.frame))")
         keepIndicatorClear()
+    }
+
+    private func morphPanel(to destination: NSRect, compact: Bool, within visible: NSRect?) {
+        let source = main.frame
+        let bounds = source.union(destination)
+
+        func local(_ frame: NSRect) -> CGRect {
+            CGRect(x: frame.minX - bounds.minX, y: bounds.maxY - frame.maxY,
+                   width: frame.width, height: frame.height)
+        }
+
+        animatingFrame = true
+        targetFrame = destination
+        main.minSize = .zero
+        main.contentMinSize = .zero
+        main.maxSize = bounds.size
+        main.contentMaxSize = bounds.size
+        morphLayout.frames = PanelMorphLayout.Frames(
+            compact: local(compact ? destination : source),
+            expanded: local(compact ? source : destination)
+        )
+        main.setFrame(bounds, display: true)
+        main.contentView?.layoutSubtreeIfNeeded()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            withAnimation(Design.Motion.morph.animation(reduceMotion: reduceMotion),
+                          completionCriteria: .removed) {
+                self.morphLayout.presentsCompact = compact
+            } completion: { [weak self] in
+                guard let self else { return }
+                self.lastProgrammaticOrigin = destination.origin
+                self.lastPanelOrigin = destination.origin
+                self.morphLayout.frames = nil
+                self.main.setFrame(destination, display: true)
+                self.targetFrame = nil
+                self.animatingFrame = false
+                self.setFloor(self.floor.size, within: visible)
+                self.keepIndicatorClear()
+                if self.app.pillExpanded, !destination.contains(NSEvent.mouseLocation) {
+                    self.hoverPill(false)
+                }
+            }
+        }
     }
 
     // MARK: Layout trace
@@ -855,25 +944,10 @@ final class OverlayController {
         return CGFloat(columns + 1) * Theme.panelGap
     }
 
-    /// Widens the panel if it has ended up too narrow for its columns.
+    /// Fits the window to the current display after live resizing.
     private func enforceFit() {
         guard !animatingFrame, !main.inLiveResize else { return }
-        if app.compact, !app.pillExpanded { return }
-        var frame = main.frame
-        var needed = neededWidth
-        if let screen = main.screen?.visibleFrame { needed = min(needed, screen.width) }
-        let tooShort = frame.height < panelMinSize.height - 0.5
-        guard frame.width < needed - 0.5 || tooShort else { return }
-        frame.size.width = max(frame.width, needed)
-        if tooShort {
-            // The top edge stays where it is.
-            frame.origin.y = frame.maxY - panelMinSize.height
-            frame.size.height = panelMinSize.height
-        }
-        if let screen = main.screen?.visibleFrame {
-            frame.origin.x = min(max(frame.origin.x, screen.minX), screen.maxX - frame.width)
-        }
-        setPanelFrame(frame)
+        setPanelFrame(main.frame)
     }
 
     /// The sidebar was pinned or unpinned.
@@ -894,7 +968,7 @@ final class OverlayController {
     private var frameBeforeZoom: NSRect?
     private var frameBeforeCompact: NSRect?
     /// The pill the panel shrinks to in compact mode.
-    private let pillSize = NSSize(width: 320, height: 46)
+    private let pillSize = FloatingPanelSize.compact
     private var hoverWork: Task<Void, Never>?
 
     /// Enlarges the panel to fill most of the screen, or puts it back.
@@ -994,7 +1068,7 @@ final class OverlayController {
     /// Compact mode: the panel shrinks to a small pill at its top edge, or
     /// comes back to full size. The pill opens while the pointer is on it.
     func setCompact(_ on: Bool) {
-        guard on != app.compact else { return }
+        guard !animatingFrame, on != app.compact else { return }
         hoverWork?.cancel()
         if on {
             if frameBeforeZoom != nil { toggleZoom() }
@@ -1018,7 +1092,7 @@ final class OverlayController {
     /// immediate; closing waits a moment, and does not happen while the
     /// user is typing in the panel or the agent is waiting for an answer.
     func hoverPill(_ inside: Bool) {
-        guard app.compact else { return }
+        guard !animatingFrame, app.compact else { return }
         hoverWork?.cancel()
         if inside {
             guard !app.pillExpanded else { return }
@@ -1050,16 +1124,11 @@ final class OverlayController {
                height: pillSize.height)
     }
 
-    /// The full panel hanging from a frame's top edge, kept on screen.
+    /// The requested expanded frame, anchored to the pill's top edge.
     private func fullFrame(under frame: NSRect) -> NSRect {
         let size = frameBeforeCompact?.size ?? panelSize
-        var rect = NSRect(x: frame.midX - size.width / 2, y: frame.maxY - size.height,
-                          width: size.width, height: size.height)
-        if let visible = (main.screen ?? targetScreen)?.visibleFrame {
-            rect.origin.x = min(max(rect.origin.x, visible.minX + 8), visible.maxX - size.width - 8)
-            rect.origin.y = max(rect.origin.y, visible.minY + 8)
-        }
-        return rect
+        return NSRect(x: frame.midX - size.width / 2, y: frame.maxY - size.height,
+                      width: size.width, height: size.height)
     }
 
     /// Hands keyboard focus back to the app underneath, so keys typed for
