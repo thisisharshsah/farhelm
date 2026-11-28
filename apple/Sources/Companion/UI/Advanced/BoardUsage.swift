@@ -18,6 +18,7 @@ struct BoardUsage: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: Design.Space.m) {
                 tiles
+                PlanUsageBars()
                 BudgetEditor(project: project, board: board, spent: ledger.total)
                 if ledger.total.isEmpty {
                     Text("Nothing has been asked of a model for this project yet. Every request shows here as it is made, with what it used.")
@@ -100,7 +101,7 @@ struct BoardUsage: View {
 
     /// One line of a breakdown: its name, its share as a bar, its numbers.
     private func line(_ name: String, _ total: UsageTotal, covered: UsageTotal = UsageTotal(), most: Int,
-                      tint: Color = Design.Tone.accent.color,
+                      tint: Color = Design.Tone.accent.color, fraction: Double? = nil,
                       detail: String = "", action: (() -> Void)? = nil) -> some View {
         HStack(spacing: Design.Space.xs) {
             VStack(alignment: .leading, spacing: Design.Space.xxs) {
@@ -115,7 +116,7 @@ struct BoardUsage: View {
                             .lineLimit(1)
                     }
                 }
-                ShareBar(fraction: most > 0 ? Double(total.tokens) / Double(most) : 0, tint: tint,
+                ShareBar(fraction: fraction ?? (most > 0 ? Double(total.tokens) / Double(most) : 0), tint: tint,
                          height: Design.Space.xxs)
             }
             Text(BoardText.tokens(total))
@@ -181,10 +182,14 @@ struct BoardUsage: View {
                     .textRole(.label, .tertiary)
             }
             ForEach(used, id: \.item.id) { entry in
-                let estimate = entry.item.estimateTokens ?? 0
+                // The bar is tokens against the task's estimate; the dollars
+                // (or "Covered by plan") stay in the number columns.
+                let estimate = entry.item.estimateTokens
+                let fresh = TokenBar.used(entry.total)
                 line("\(entry.item.key) \(entry.item.title)", entry.total, covered: plan.total(of: entry.item), most: most,
-                     tint: estimate > 0 && entry.total.tokens > estimate ? Design.Tone.caution.color : entry.item.status.tint,
-                     detail: estimate > 0 ? "est \(ContextUse.short(estimate))" : "") {
+                     tint: TokenBar.level(used: fresh, estimate: estimate).tone.color,
+                     fraction: TokenBar.fraction(used: fresh, estimate: estimate),
+                     detail: (estimate ?? 0) > 0 ? "of est \(ContextUse.short(estimate ?? 0))" : "no estimate") {
                     advanced.selectedItem = entry.item.id
                 }
             }
